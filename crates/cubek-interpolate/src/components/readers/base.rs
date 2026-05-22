@@ -12,13 +12,13 @@ impl<EA: Float, N: Size> ReaderType<EA, N> {
     pub fn read_weighted<EI: Float>(
         &self,
         input: &Tensor<Vector<EI, N>>,
-        x: usize,
-        y: usize,
+        row: usize,
+        col: usize,
         weight: Vector<EA, N>,
     ) -> Vector<EA, N> {
         match self {
-            ReaderType::Global(reader) => reader.read_weighted(input, x, y, weight),
-            ReaderType::Shared(reader) => reader.read_weighted::<EI>(x, y, weight),
+            ReaderType::Global(reader) => reader.read_weighted(input, row, col, weight),
+            ReaderType::Shared(reader) => reader.read_weighted::<EI>(row, col, weight),
         }
     }
 }
