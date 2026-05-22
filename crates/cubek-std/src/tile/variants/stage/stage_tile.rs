@@ -3,7 +3,8 @@ use cubecl::{prelude::*, std::Swizzle};
 use crate::{
     MatrixLayout,
     stage::{
-        StageMemoryConfig, StridedStageMemory, TilingLayout, TilingLayoutEnum, TilingOrderEnum,
+        StageMemoryConfig, StridedStageMemory, SwizzleMode, TilingLayout, TilingLayoutEnum,
+        TilingOrderEnum,
     },
     tile::SharedTile,
 };
@@ -57,67 +58,35 @@ impl<E: Numeric> StageTile<E> {
     /// [`SharedTile`] view of the tile at `coord`. Dispatches on the
     /// comptime [`TilingLayoutEnum`].
     pub fn get_tile(&self, coord: Coords2d) -> SharedTile<E> {
+        match comptime!(self.tiling_layout) {
+            TilingLayoutEnum::Strided => self.get_tile_strided(coord),
+            TilingLayoutEnum::Contiguous(order) => self.get_tile_contiguous(coord, order),
+            TilingLayoutEnum::Tma => match comptime!(self.config.swizzle) {
+                SwizzleMode::None => self.get_tile_contiguous(coord, TilingOrderEnum::Tma),
+                _ => self.get_tile_strided(coord),
+            },
+            TilingLayoutEnum::Other => {
+                panic!("StageTile::get_tile: TilingLayoutEnum::Other not supported")
+            }
+        }
+    }
+
+    fn get_tile_strided(&self, coord: Coords2d) -> SharedTile<E> {
         let (row, col) = coord;
         let stage_vector_size = comptime!(self.config.vector_size);
         let matrix_layout = comptime!(self.config.matrix_layout);
+        let tile_count_x = comptime!(self.config.tiles_per_stage_along_row());
+        let tile_count_y = comptime!(self.config.tiles_per_stage_along_col());
 
-        match comptime!(self.tiling_layout) {
-            TilingLayoutEnum::Strided => {
-                let tile_count_x = comptime!(self.config.tiles_per_stage_along_row());
-                let tile_count_y = comptime!(self.config.tiles_per_stage_along_col());
+        match matrix_layout {
+            MatrixLayout::RowMajor => {
+                let tile_size_x = comptime!(self.config.elements_per_tile_along_row);
+                let tile_size_y =
+                    comptime!(self.config.elements_per_tile_along_col / stage_vector_size);
 
-                match matrix_layout {
-                    MatrixLayout::RowMajor => {
-                        let tile_size_x = comptime!(self.config.elements_per_tile_along_row);
-                        let tile_size_y =
-                            comptime!(self.config.elements_per_tile_along_col / stage_vector_size);
-
-                        let stride = comptime!(tile_count_y * tile_size_y);
-                        let length = comptime!((tile_size_x - 1) * stride + tile_size_y);
-                        let start = row * tile_size_x * stride + col * tile_size_y;
-
-                        SharedTile::<E> {
-                            container: self.smem.clone(),
-                            start,
-                            end: start + length,
-                            stride,
-                            swizzle: self.swizzle,
-                            layout: matrix_layout,
-                        }
-                    }
-                    MatrixLayout::ColMajor => {
-                        let tile_size_x =
-                            comptime!(self.config.elements_per_tile_along_row / stage_vector_size);
-                        let tile_size_y = comptime!(self.config.elements_per_tile_along_col);
-
-                        let stride = comptime!(tile_count_x * tile_size_x);
-                        let length = comptime!((tile_size_y - 1) * stride + tile_size_x);
-                        let start = row * tile_size_x + col * tile_size_y * stride;
-
-                        SharedTile::<E> {
-                            container: self.smem.clone(),
-                            start,
-                            end: start + length,
-                            stride,
-                            swizzle: self.swizzle,
-                            layout: matrix_layout,
-                        }
-                    }
-                }
-            }
-            TilingLayoutEnum::Contiguous(order) => {
-                let tile_count_x = comptime!(self.config.tiles_per_stage_along_row());
-                let tile_count_y = comptime!(self.config.tiles_per_stage_along_col());
-                let nth =
-                    to_nth_tile_contiguous(order, coord, tile_count_x, tile_count_y, self.config);
-
-                let length = comptime!(self.config.elements_per_tile() / stage_vector_size);
-                let stride_elements = match matrix_layout {
-                    MatrixLayout::RowMajor => comptime!(self.config.elements_per_tile_along_col),
-                    MatrixLayout::ColMajor => comptime!(self.config.elements_per_tile_along_row),
-                };
-                let stride = comptime!(stride_elements / stage_vector_size);
-                let start = (comptime!(self.config.elements_per_tile()) * nth) / stage_vector_size;
+                let stride = comptime!(tile_count_y * tile_size_y);
+                let length = comptime!((tile_size_x - 1) * stride + tile_size_y);
+                let start = row * tile_size_x * stride + col * tile_size_y;
 
                 SharedTile::<E> {
                     container: self.smem.clone(),
@@ -128,9 +97,53 @@ impl<E: Numeric> StageTile<E> {
                     layout: matrix_layout,
                 }
             }
-            TilingLayoutEnum::Other => {
-                panic!("StageTile::get_tile: TilingLayoutEnum::Other (Tma/None) not supported")
+            MatrixLayout::ColMajor => {
+                let tile_size_x =
+                    comptime!(self.config.elements_per_tile_along_row / stage_vector_size);
+                let tile_size_y = comptime!(self.config.elements_per_tile_along_col);
+
+                let stride = comptime!(tile_count_x * tile_size_x);
+                let length = comptime!((tile_size_y - 1) * stride + tile_size_x);
+                let start = row * tile_size_x + col * tile_size_y * stride;
+
+                SharedTile::<E> {
+                    container: self.smem.clone(),
+                    start,
+                    end: start + length,
+                    stride,
+                    swizzle: self.swizzle,
+                    layout: matrix_layout,
+                }
             }
+        }
+    }
+
+    fn get_tile_contiguous(
+        &self,
+        coord: Coords2d,
+        #[comptime] order: TilingOrderEnum,
+    ) -> SharedTile<E> {
+        let stage_vector_size = comptime!(self.config.vector_size);
+        let matrix_layout = comptime!(self.config.matrix_layout);
+        let tile_count_x = comptime!(self.config.tiles_per_stage_along_row());
+        let tile_count_y = comptime!(self.config.tiles_per_stage_along_col());
+        let nth = to_nth_tile_contiguous(order, coord, tile_count_x, tile_count_y, self.config);
+
+        let length = comptime!(self.config.elements_per_tile() / stage_vector_size);
+        let stride_elements = match matrix_layout {
+            MatrixLayout::RowMajor => comptime!(self.config.elements_per_tile_along_col),
+            MatrixLayout::ColMajor => comptime!(self.config.elements_per_tile_along_row),
+        };
+        let stride = comptime!(stride_elements / stage_vector_size);
+        let start = (comptime!(self.config.elements_per_tile()) * nth) / stage_vector_size;
+
+        SharedTile::<E> {
+            container: self.smem.clone(),
+            start,
+            end: start + length,
+            stride,
+            swizzle: self.swizzle,
+            layout: matrix_layout,
         }
     }
 }
@@ -155,8 +168,9 @@ fn to_nth_tile_contiguous(
             let pos_within_group = col * group_rows + local_row;
             group * tiles_per_group + pos_within_group
         }
-        TilingOrderEnum::Tma => {
-            panic!("StageTile::get_tile: Tma tiling not yet supported on type-erased view")
-        }
+        TilingOrderEnum::Tma => match comptime!(config.matrix_layout) {
+            MatrixLayout::RowMajor => col * tile_count_rows + row,
+            MatrixLayout::ColMajor => row * tile_count_cols + col,
+        },
     }
 }
