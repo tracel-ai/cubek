@@ -55,6 +55,11 @@ pub enum TilingOrderEnum {
 pub enum TilingLayoutEnum {
     Strided,
     Contiguous(TilingOrderEnum),
+    /// TMA layout. The concrete tile mapping is selected at use-site from
+    /// `StageMemoryConfig::swizzle` (no swizzle → contiguous TMA order;
+    /// any swizzle → strided).
+    Tma,
+    /// Catch-all for layouts that don't expose tiles (e.g. `NoTilingLayout`).
     Other,
 }
 
@@ -467,7 +472,7 @@ impl TilingLayout for TmaTilingLayout {
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {
-        TilingLayoutEnum::Other
+        TilingLayoutEnum::Tma
     }
 }
 
