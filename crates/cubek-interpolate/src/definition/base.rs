@@ -53,7 +53,7 @@ pub fn compute_weights<EA: Float, N: Size>(
     #[comptime] options: InterpolateOptions,
 ) -> Array<Vector<EA, N>> {
     let halo = comptime!(get_halo(options.mode));
-    let mut weights = Array::<Vector<EA, N>>::new(halo);
+    let mut weights = Array::new(halo);
     let radius_offset = (halo - 1) / 2;
 
     #[unroll]

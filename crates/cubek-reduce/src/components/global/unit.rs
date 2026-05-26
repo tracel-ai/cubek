@@ -28,14 +28,15 @@ impl GlobalFullUnitReduce {
         let acc_format = I::accumulator_format(inst);
         let write_index = reduction_output_base::<Out::T, Out::N>(
             ABSOLUTE_POS,
-            output,
+            &*output,
             reduce_axis,
             comptime!(acc_format.len()),
         );
 
+        let mut out = output.clone();
         let mut writer = Writer::<Out>::new::<P>(
             input,
-            output,
+            &mut out,
             reduce_axis,
             out_vec_axis,
             write_index,
@@ -48,7 +49,7 @@ impl GlobalFullUnitReduce {
 
         let idle = idle_check::<P, Out>(
             input,
-            output,
+            &*output,
             reduce_index_start,
             vectorization_mode,
             blueprint.unit_idle,

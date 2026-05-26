@@ -156,7 +156,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
-        _barrier: &mut Shared<Barrier>,
+        _barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut stage = stage.with_buffer_index(this.stage_index);
@@ -207,7 +207,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialStridedL
     fn barrier_post_init() {}
 
     fn arrive<MP: MatmulTypes>(
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();

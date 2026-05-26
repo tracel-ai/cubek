@@ -24,7 +24,7 @@ pub fn mma_load_strided<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, NE>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] tile_size: TileSize,
@@ -60,7 +60,7 @@ fn load_manual_transposed<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -104,7 +104,7 @@ fn load_manual_plain<
 >(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
 ) {
@@ -142,7 +142,7 @@ fn load_manual_plain<
 fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numeric, CD: Numeric>(
     tile: &StridedTile<V, NV>,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -173,7 +173,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 #[cube]
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] stage_vector_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
@@ -227,7 +227,7 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
 pub fn mma_fill_fragment<E: Numeric, N: Size, V: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     value: &V,
     fragment: &mut Array<Vector<E, N>>,
-    def: MmaDefinition<A, B, CD>,
+    def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
 ) {
     let num_vectors = def.vectors_per_lane(ident);

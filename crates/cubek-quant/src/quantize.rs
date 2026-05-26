@@ -3,14 +3,15 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
-    std::tensor::into_contiguous,
-    std::tensor::layout::linear::LinearView,
-    std::tensor::{View, layout::linear::linear_view},
+    std::tensor::{
+        View, ViewMut, into_contiguous,
+        layout::linear::{LinearView, LinearViewMut, linear_view},
+    },
     tensor_vector_size_parallel,
 };
 
 use crate::{
-    layout::{ScalesLayout, scales_view},
+    layout::{ScalesLayout, ScalesViewMut, scales_view},
     utils::check_block_size_compat,
 };
 use crate::{
@@ -83,8 +84,8 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
 #[cube]
 fn write_scale<F: Float, FS: CubePrimitive>(
     in_pos: usize,
-    scale: &View<F, usize>,
-    out_scale: &mut View<FS, usize, ReadWrite>,
+    scale: View<F, usize>,
+    mut out_scale: ViewMut<FS, usize>,
     scales_layout: ScalesLayout,
 ) -> FS {
     let scale = FS::cast_from(scale.read(in_pos));
@@ -99,12 +100,12 @@ fn write_scale<F: Float, FS: CubePrimitive>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
-    input: &LinearView<Vector<F, N>>,
-    scale: &ScalesView<F>,
+    input: LinearView<'_, Vector<F, N>>,
+    scale: ScalesView<'_, F>,
     range_min: InputScalar,
     range_max: InputScalar,
-    output: &mut LinearView<Vector<Q, N>, ReadWrite>,
-    out_scale: &mut ScalesView<FS, ReadWrite>,
+    mut output: LinearViewMut<'_, Vector<Q, N>>,
+    out_scale: ScalesViewMut<'_, FS>,
     scales_layout: ScalesLayout,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
@@ -130,12 +131,12 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
-    input: &LinearView<Vector<F, N>>,
-    scale: &ScalesView<F>,
+    input: LinearView<'_, Vector<F, N>>,
+    scale: ScalesView<'_, F>,
     range_min: InputScalar,
     range_max: InputScalar,
-    output: &mut LinearView<u32, ReadWrite>,
-    out_scale: &mut ScalesView<FS, ReadWrite>,
+    mut output: LinearViewMut<'_, u32>,
+    out_scale: ScalesViewMut<'_, FS>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS)] _dtypes: [StorageType; 2],

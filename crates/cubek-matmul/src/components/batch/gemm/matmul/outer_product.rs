@@ -1,5 +1,5 @@
-use cubecl::prelude::*;
 use cubecl::{cube, num_traits::Zero, std::tensor::View, std::tensor::layout::Coords2d};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 
 use crate::components::batch::{
     CheckBounds,
@@ -37,7 +37,7 @@ pub(super) fn execute_outer_product<
 >(
     lhs: View<Vector<L, LS>, Coords2d>,
     rhs: View<Vector<R, RS>, Coords2d>,
-    out: View<O, Coords2d, ReadWrite>,
+    out: ViewMut<O, Coords2d>,
     m_pos: u32,
     n_pos: u32,
     k_dim: u32,
@@ -60,7 +60,7 @@ pub(super) fn execute_outer_product<
         let k_base = tile_index * vector_size;
 
         // Gather `vs` scalars from the K-axis side into an AccR-typed array.
-        let mut scalars = Array::<AccR>::new(vector_size as usize);
+        let mut scalars = Array::new(vector_size as usize);
         if comptime!(scalar_side_strided) {
             // Col-Row: lhs is M-contig (strided in K). Each read returns a
             // Vector along M; pick this plane's row by `m_pos % vs`.
@@ -107,9 +107,9 @@ pub(super) fn execute_outer_product<
     for j in 0..vector_size {
         let out_val = O::cast_from(acc.extract(j as usize));
         if comptime!(vec_axis_is_n) {
-            write(&out, (m_pos, n_pos + j), out_val, check_bounds);
+            write(out, (m_pos, n_pos + j), out_val, check_bounds);
         } else {
-            write(&out, (m_pos + j, n_pos), out_val, check_bounds);
+            write(out, (m_pos + j, n_pos), out_val, check_bounds);
         }
     }
 }

@@ -18,7 +18,7 @@ use super::layout::TilingLayout;
 /// abstracting its layout
 pub struct StridedStageMemory<ES: Numeric, NS: Size, T: TilingLayout> {
     /// Underlying shared memory
-    pub smem: SharedMemory<Vector<ES, NS>>,
+    pub smem: Shared<[Vector<ES, NS>]>,
     /// Swizzling of the shared memory, if any
     pub swizzle: Swizzle,
     pub(crate) buffer_index: u32,
@@ -54,7 +54,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
         // Ensure all stages are aligned properly
         let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
-        let smem = Shared::new_aligned_array(config.num_stages as usize * stage_size, align);
+        let smem = Shared::new_aligned_slice(config.num_stages as usize * stage_size, align);
 
         StridedStageMemory::<ES, NS, T> {
             smem,
@@ -68,7 +68,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
 
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
         StridedStageMemory::<ES, NS, T> {
-            smem: self.smem,
+            smem: self.smem.clone(),
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,
@@ -81,7 +81,7 @@ impl<ES: Numeric, NS: Size, T: TilingLayout> StridedStageMemory<ES, NS, T> {
     /// Allows comptime switching tiling.
     pub fn with_layout<TNew: TilingLayout>(&self) -> StridedStageMemory<ES, NS, TNew> {
         StridedStageMemory::<ES, NS, TNew> {
-            smem: self.smem,
+            smem: self.smem.clone(),
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,

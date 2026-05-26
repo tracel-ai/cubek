@@ -145,10 +145,10 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
         let format = I::accumulator_format(inst);
         match comptime!(format) {
             AccumulatorFormat::Single => {
-                let elements = SharedMemory::new(length);
+                let elements = Shared::new_slice(length);
                 // TODO how to put multiple?
                 let args = if coordinate {
-                    let args = SharedMemory::new(length);
+                    let args = Shared::new_slice(length);
                     SharedAccumulatorKind::new_Single(args)
                 } else {
                     SharedAccumulatorKind::new_None()
@@ -162,7 +162,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                 let mut elements = Sequence::new();
                 #[unroll]
                 for _ in 0..len {
-                    elements.push(SharedMemory::new(length));
+                    elements.push(Shared::new_slice(length));
                 }
 
                 if comptime!(!coordinate) {
@@ -174,7 +174,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     let mut args = Sequence::new();
                     #[unroll]
                     for _ in 0..len {
-                        args.push(SharedMemory::new(length));
+                        args.push(Shared::new_slice(length));
                     }
                     DynamicSharedAccumulator::<P> {
                         elements: SharedAccumulatorKind::new_Multiple(elements),

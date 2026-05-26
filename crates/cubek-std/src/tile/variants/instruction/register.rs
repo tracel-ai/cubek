@@ -121,7 +121,7 @@ impl<A: Numeric> RegisterTile<A> {
 #[cube]
 impl<N: Numeric> RegisterTile<N> {
     /// Copies into the register tile from `source`. Supported sources:
-    /// `SharedMemory` (product-type-aware load) and `None` (zero-init).
+    /// `Shared` (product-type-aware load) and `None` (zero-init).
     pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
         source: &Tile<SE, Sc>,

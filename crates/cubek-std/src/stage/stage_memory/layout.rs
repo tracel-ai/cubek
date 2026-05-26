@@ -342,7 +342,7 @@ impl<TO: TilingOrder> TilingLayout for ContiguousTilingLayout<TO> {
             );
         let start = start / config.vector_size;
 
-        StridedTile::new_contiguous(stage_memory.as_slice::<NS>(), start, config)
+        StridedTile::new_contiguous(stage_memory.as_slice(), start, config)
     }
 
     fn to_enum() -> comptime_type!(TilingLayoutEnum) {

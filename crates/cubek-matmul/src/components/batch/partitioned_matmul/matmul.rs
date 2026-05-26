@@ -44,19 +44,18 @@ pub(crate) fn matmul_entry<
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            config,
-            blueprint.lhs_global_layout_config(),
-            blueprint.rhs_global_layout_config(),
-            blueprint.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        config,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
 
     let vector_size_lhs = Args::view_lhs(&state).vector_size();
     let vector_size_rhs = Args::view_rhs(&state).vector_size();
-    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_size_out = Args::view_out(&state).vector_size();
     let vector_sizes = comptime!(MatmulVectorSizes {
         lhs: vector_size_lhs,
         rhs: vector_size_rhs,
@@ -158,7 +157,7 @@ pub(crate) fn matmul_entry<
             ),
         )>,
         GPM,
-    >::execute::<Args>(&mut state, cube_mapping, config);
+    >::execute::<Args>(&state, cube_mapping, config);
 }
 
 /// Executes matrix multiplication at the batch level,
@@ -185,11 +184,11 @@ impl<RC: RuntimeConfig, MP: MatmulTypes, GMM: GlobalMatmul<RC, MP>, GPMM: Global
     type Config = PartitionedBatchConfig<GMM::Config>;
 
     fn execute<Args: MatmulArgs<Config = RC>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
-        let (_, _, problem_k) = Args::view_lhs(&*state).shape();
+        let (_, _, problem_k) = Args::view_lhs(state).shape();
         let k_range = (0, problem_k);
 
         let (m_index, n_index, batch_index) = cube_pos_to_m_n_batch(&cube_mapping);

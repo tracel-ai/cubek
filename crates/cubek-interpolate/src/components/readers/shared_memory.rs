@@ -1,9 +1,10 @@
 use crate::routines::SharedMemoryBlueprint;
 use cubecl::prelude::*;
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct SharedMemoryReader<EA: Float, N: Size> {
-    smem: SharedMemory<Vector<EA, N>>,
+    smem: Shared<[Vector<EA, N>]>,
     min_row: isize,
     min_col: isize,
     smem_width: usize,
@@ -26,7 +27,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         #[comptime] blueprint: SharedMemoryBlueprint,
     ) -> SharedMemoryReader<EA, N> {
         let smem_size = blueprint.smem_width * blueprint.smem_height * blueprint.channel_groups;
-        let mut smem = SharedMemory::<Vector<EA, N>>::new(smem_size);
+        let mut smem = Shared::new_slice(smem_size);
         let cube_dim = CUBE_DIM as usize;
 
         let mut i = UNIT_POS as usize;

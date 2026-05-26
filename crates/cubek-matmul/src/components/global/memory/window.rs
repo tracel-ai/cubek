@@ -17,7 +17,7 @@ use crate::components::global::memory::GlobalMemoryConfig;
 /// The caller must do the padding if necessary.
 #[cube]
 pub fn load_window_in_tile<EG: Numeric>(
-    view: &View<EG, Coords2d>,
+    view: View<'_, EG, Coords2d>,
     tile: Coords2d,
     nth_window: u32,
     #[comptime] smem_config: StageMemoryConfig,
@@ -48,7 +48,7 @@ pub fn load_window_in_tile<EG: Numeric>(
 /// The caller must do the padding if necessary.
 #[cube]
 pub fn load_window_in_stage<EG: CubePrimitive>(
-    view: &View<EG, Coords2d>,
+    view: View<'_, EG, Coords2d>,
     nth_window: u32,
     #[comptime] smem_config: StageMemoryConfig,
     #[comptime] gmem_config: GlobalMemoryConfig,
@@ -63,7 +63,7 @@ pub fn load_window_in_stage<EG: CubePrimitive>(
 
 #[cube]
 fn load_window<EG: CubePrimitive>(
-    view: &View<EG, Coords2d>,
+    view: View<'_, EG, Coords2d>,
     nth_window: u32,
     size: Coords2d,
     #[comptime] gmem_config: GlobalMemoryConfig,

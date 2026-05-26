@@ -8,15 +8,15 @@ use crate::{
 use cubecl::prelude::*;
 
 #[derive(CubeType)]
-pub struct CubeReader<P: ReducePrecision> {
-    reader: Reader<P>,
+pub struct CubeReader<'a, P: ReducePrecision> {
+    reader: Reader<'a, P>,
 }
 
 #[cube]
 #[allow(clippy::len_without_is_empty)]
-impl<P: ReducePrecision> CubeReader<P> {
-    pub fn new(reader: Reader<P>) -> CubeReader<P> {
-        CubeReader::<P> { reader }
+impl<'a, P: ReducePrecision> CubeReader<'a, P> {
+    pub fn new(reader: Reader<'a, P>) -> CubeReader<'a, P> {
+        CubeReader::<'a, P> { reader }
     }
 
     pub fn read(&self, vector_index: usize) -> Item<P> {

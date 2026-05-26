@@ -98,7 +98,7 @@ impl<A: Numeric> PlaneVecTile<A> {
 #[cube]
 impl<N: Numeric> PlaneVecTile<N> {
     /// Copies into the plane-vec tile from `source`. Supported sources:
-    /// `SharedMemory` and `None` (zero-init).
+    /// `Shared` and `None` (zero-init).
     pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
         source: &Tile<SE, Sc>,
@@ -153,7 +153,7 @@ pub fn planevec_execute<L: Numeric, R: Numeric, A: Numeric>(
         let mut acc_vec = acc[n_idx];
         #[unroll]
         for vi in 0..NPlaneVec::value() {
-            let lhs_elem = A::cast_from(lhs[0usize].extract(vi));
+            let lhs_elem = A::cast_from(lhs[0].extract(vi));
             let rhs_elem = A::cast_from(rhs[n_idx].extract(vi));
             acc_vec.insert(vi, acc_vec.extract(vi) + plane_sum(lhs_elem * rhs_elem));
         }
@@ -173,7 +173,7 @@ pub fn planevec_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
     match ident {
         StageIdent::Lhs => {
             let offset = shared.stage_offset(UNIT_POS_X);
-            arr[0usize] = Vector::cast_from(shared.container[offset as usize]);
+            arr[0] = Vector::cast_from(shared.container[offset as usize]);
         }
         StageIdent::Rhs | StageIdent::Acc => {
             let n = tile_size.n();

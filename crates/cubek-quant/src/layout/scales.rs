@@ -1,7 +1,7 @@
 use cubecl::std::{
     FastDivmod,
     tensor::{
-        View,
+        View, ViewMut,
         layout::{Coords1d, Layout, LayoutExpand},
     },
 };
@@ -196,7 +196,8 @@ impl BlockScaledLayout {
 
 /// TensorView with a linear layout inferred from the shape/strides at launch.
 /// Useful for elementwise kernels.
-pub type ScalesView<E, IO = ReadOnly> = View<E, Coords1d, IO>;
+pub type ScalesView<'a, E> = View<'a, E, Coords1d>;
+pub type ScalesViewMut<'a, E> = ViewMut<'a, E, Coords1d>;
 /// Launch type for LinearTensorView.
 pub type ScalesViewLaunch<R> = ViewArg<Coords1d, R>;
 

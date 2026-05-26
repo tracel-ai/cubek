@@ -52,7 +52,7 @@ pub fn run_interpolate_backward_test(
         input.clone().binding(),
         out_grad.clone().binding(),
         output.clone().binding(),
-        problem.options.clone(),
+        problem.options,
         out_grad.dtype,
     );
 

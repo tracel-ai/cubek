@@ -1,6 +1,7 @@
 use cubecl::prelude::*;
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct GlobalMemoryReader {
     base_offset: usize,
     vector_size: usize,

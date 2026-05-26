@@ -51,7 +51,7 @@ where
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> = SimpleMatmul<MP, SP, RC, LL, RL, AL, GW::Writer<MP::Acc>>;
+    type Matmul<MP: MatmulTypes> = SimpleMatmul<MP, SP, RC, LL, RL, AL, GW>;
     type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(

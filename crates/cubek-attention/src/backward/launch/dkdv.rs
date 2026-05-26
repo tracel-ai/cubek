@@ -48,7 +48,7 @@ fn flash_attention_backward_dv_kernel<E: Float>(
 
     let scale_e = E::cast_from(scale);
 
-    let mut dv_acc = Array::<E>::new(val_dim);
+    let mut dv_acc = Array::new(val_dim);
     for dd in 0..val_dim {
         dv_acc[dd] = E::new(0.0);
     }
@@ -113,7 +113,7 @@ fn flash_attention_backward_dk_kernel<E: Float>(
 
     let scale_e = E::cast_from(scale);
 
-    let mut dk_acc = Array::<E>::new(head_dim);
+    let mut dk_acc = Array::new(head_dim);
     for dd in 0..head_dim {
         dk_acc[dd] = E::new(0.0);
     }

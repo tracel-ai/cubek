@@ -89,7 +89,7 @@ impl<E: Numeric> StageTile<E> {
                 let start = row * tile_size_x * stride + col * tile_size_y;
 
                 SharedTile::<E> {
-                    container: self.smem.clone(),
+                    container: unsafe { self.smem.as_boxed_unchecked() },
                     start,
                     end: start + length,
                     stride,
@@ -107,7 +107,7 @@ impl<E: Numeric> StageTile<E> {
                 let start = row * tile_size_x + col * tile_size_y * stride;
 
                 SharedTile::<E> {
-                    container: self.smem.clone(),
+                    container: unsafe { self.smem.as_boxed_unchecked() },
                     start,
                     end: start + length,
                     stride,
@@ -138,7 +138,7 @@ impl<E: Numeric> StageTile<E> {
         let start = (comptime!(self.config.elements_per_tile()) * nth) / stage_vector_size;
 
         SharedTile::<E> {
-            container: self.smem.clone(),
+            container: unsafe { self.smem.as_boxed_unchecked() },
             start,
             end: start + length,
             stride,

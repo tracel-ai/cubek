@@ -46,7 +46,7 @@ pub enum InnerLayout {
 #[cube]
 impl<E: Numeric> WhiteboxFragment<E> {
     pub fn new(#[comptime] layout: WhiteboxFragmentLayout) -> WhiteboxFragment<E> {
-        let array = Array::<E>::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
+        let array = Array::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
 
         WhiteboxFragment::<E> { array, layout }
     }
@@ -114,7 +114,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
     pub fn rowwise_max(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
-        let mut vals = Array::<E>::new(num_rows);
+        let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -134,7 +134,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
     pub fn rowwise_sum(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
-        let mut vals = Array::<E>::new(num_rows);
+        let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -320,7 +320,7 @@ fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &WhiteboxFragm
 
 #[cube]
 fn rowwise_plane_broadcast<E: Float>(rowwise: &RowWise<E>, source_unit: u32) -> RowWise<E> {
-    let mut result = Array::<E>::new(rowwise.num_rows);
+    let mut result = Array::new(rowwise.num_rows);
 
     for r in 0..rowwise.num_rows {
         result[r] = plane_shuffle(rowwise.vals[r], source_unit);

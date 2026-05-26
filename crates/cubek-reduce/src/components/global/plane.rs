@@ -40,14 +40,15 @@ impl GlobalFullPlaneReduce {
         let reduction_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
         let write_index = reduction_output_base::<Out::T, Out::N>(
             reduction_index,
-            output,
+            &*output,
             reduce_axis,
             comptime!(acc_format.len()),
         );
 
+        let mut out = output.clone();
         let mut writer = Writer::<Out>::new::<P>(
             input,
-            output,
+            &mut out,
             reduce_axis,
             out_vec_axis,
             write_index,
@@ -60,7 +61,7 @@ impl GlobalFullPlaneReduce {
 
         let idle = idle_check::<P, Out>(
             input,
-            output,
+            &*output,
             reduce_index_start,
             vectorization_mode,
             blueprint.plane_idle,

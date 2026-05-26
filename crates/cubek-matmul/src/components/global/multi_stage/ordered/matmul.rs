@@ -1,7 +1,10 @@
 use crate::components::global::{Specializer, read::sync::Synchronous};
 use crate::components::{
-    global::multi_stage::double_buffer_execution::{
-        execute_current_and_read_next, execute_last_and_write_results, read_first,
+    global::{
+        GlobalWriterFamily,
+        multi_stage::double_buffer_execution::{
+            execute_current_and_read_next, execute_last_and_write_results, read_first,
+        },
     },
     stage::{
         {StagePartitioner, partition_coordinates},
@@ -22,7 +25,7 @@ use crate::{
 };
 use cubecl::{
     prelude::*,
-    std::tensor::{View, layout::Coords2d},
+    std::tensor::{View, ViewMut, layout::Coords2d},
 };
 use cubek_std::tile::{PartitionScheduler, Tile, load_partition_from_stage};
 use std::marker::PhantomData;
@@ -44,7 +47,7 @@ pub struct OrderedDoubleBufferingMatmul<
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
-    GW: GlobalWriter<MP::Acc>,
+    GW: GlobalWriterFamily,
 > {
     _ms: PhantomData<MP>,
     _sp: PhantomData<SP>,
@@ -63,10 +66,11 @@ where
     RC: RuntimeConfig,
     RL: PartialLoadingStrategy<RC, SyncStrategy = Synchronous>,
     AL: FullLoadingStrategy<RC, SyncStrategy = Synchronous>,
-    GW: GlobalWriter<MP::Acc>,
+    GW: GlobalWriterFamily,
 {
     type Config = SharedGlobalMatmulConfig;
-    type LhsGlobalReader = FullStageGlobalReader<
+    type LhsGlobalReader<'a> = FullStageGlobalReader<
+        'a,
         <MP::Lhs as MatrixTypes>::Global,
         <MP::Lhs as MatrixTypes>::GlobalSize,
         <MP::Lhs as MatrixTypes>::Stage,
@@ -74,7 +78,8 @@ where
         RC,
         LL,
     >;
-    type RhsGlobalReader = PartialStageGlobalReader<
+    type RhsGlobalReader<'a> = PartialStageGlobalReader<
+        'a,
         <MP::Rhs as MatrixTypes>::Global,
         <MP::Rhs as MatrixTypes>::GlobalSize,
         <MP::Rhs as MatrixTypes>::Stage,
@@ -82,8 +87,9 @@ where
         RC,
         RL,
     >;
-    type AccGlobalReader = ComptimeOption<
+    type AccGlobalReader<'a> = ComptimeOption<
         FullStageGlobalReader<
+            'a,
             <MP::Acc as MatrixTypes>::Global,
             <MP::Acc as MatrixTypes>::GlobalSize,
             <MP::Acc as MatrixTypes>::Stage,
@@ -92,14 +98,14 @@ where
             AL,
         >,
     >;
-    type GlobalWriter = GW;
+    type GlobalWriter<'a> = GW::Writer<'a, MP::Acc>;
     type Accumulators = Tile<AccRE<MP>, SP::Scope>;
 
     fn execute(
-        mut lhs_reader: Self::LhsGlobalReader,
-        mut rhs_reader: Self::RhsGlobalReader,
-        acc_reader: Self::AccGlobalReader,
-        mut out_writer: Self::GlobalWriter,
+        mut lhs_reader: Self::LhsGlobalReader<'_>,
+        mut rhs_reader: Self::RhsGlobalReader<'_>,
+        acc_reader: Self::AccGlobalReader<'_>,
+        mut out_writer: Self::GlobalWriter<'_>,
         k_range: (u32, u32),
         #[comptime] config: Self::Config,
     ) {
@@ -142,10 +148,10 @@ where
         let num_stage_matmuls = needed_stage_matmuls + (needed_stage_matmuls % 2);
         let num_loops = (num_stage_matmuls - 2) / 2;
 
-        let mut barrier = ();
+        let barrier = ();
 
         let acc_stage = acc_reader.map(|mut reader| {
-            reader.load_stage(&mut barrier, config.acc_reader_config);
+            reader.load_stage(&barrier, config.acc_reader_config);
             sync_cube();
             reader.stage()
         });
@@ -199,10 +205,10 @@ where
             config.specialized_loading_sides(),
         );
 
-        read_first::<Synchronous, Self::LhsGlobalReader, Self::RhsGlobalReader>(
+        read_first::<Synchronous, Self::LhsGlobalReader<'_>, Self::RhsGlobalReader<'_>>(
             &mut lhs_reader,
             &mut rhs_reader,
-            &mut barrier,
+            &barrier,
             &specializer,
             StageBuffer::A,
             config.lhs_reader_config,
@@ -218,8 +224,8 @@ where
                 MP,
                 SP,
                 Synchronous,
-                Self::LhsGlobalReader,
-                Self::RhsGlobalReader,
+                Self::LhsGlobalReader<'_>,
+                Self::RhsGlobalReader<'_>,
                 Self::Config,
             >(
                 &lhs_stage_tile,
@@ -229,7 +235,7 @@ where
                 &mut acc,
                 &mut lhs_reader,
                 &mut rhs_reader,
-                &mut barrier,
+                &barrier,
                 &specializer,
                 &partition_scheduler,
                 StageBuffer::B,
@@ -245,8 +251,8 @@ where
                 MP,
                 SP,
                 Synchronous,
-                Self::LhsGlobalReader,
-                Self::RhsGlobalReader,
+                Self::LhsGlobalReader<'_>,
+                Self::RhsGlobalReader<'_>,
                 Self::Config,
             >(
                 &lhs_stage_tile,
@@ -256,7 +262,7 @@ where
                 &mut acc,
                 &mut lhs_reader,
                 &mut rhs_reader,
-                &mut barrier,
+                &barrier,
                 &specializer,
                 &partition_scheduler,
                 StageBuffer::A,
@@ -272,8 +278,8 @@ where
             MP,
             SP,
             Synchronous,
-            Self::LhsGlobalReader,
-            Self::RhsGlobalReader,
+            Self::LhsGlobalReader<'_>,
+            Self::RhsGlobalReader<'_>,
             Self::Config,
         >(
             &lhs_stage_tile,
@@ -283,7 +289,7 @@ where
             &mut acc,
             &mut lhs_reader,
             &mut rhs_reader,
-            &mut barrier,
+            &barrier,
             &specializer,
             &partition_scheduler,
             StageBuffer::B,
@@ -292,7 +298,7 @@ where
 
         sync_cube();
 
-        execute_last_and_write_results::<MP, GW, SP, Self::Config>(
+        execute_last_and_write_results::<MP, Self::GlobalWriter<'_>, SP, Self::Config>(
             &lhs_stage_tile,
             &rhs_stage_b_tile,
             &mut lhs_tile,
@@ -306,39 +312,39 @@ where
     }
 
     fn init_lhs_global_reader(
-        lhs: View<LhsG<MP>, Coords2d>,
+        lhs: View<'_, LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsGlobalReader {
+    ) -> Self::LhsGlobalReader<'_> {
         // We always advance by only k for Lhs
         let k_step = config.stage_config.elements_in_stage_k();
         FullStageGlobalReader::new(lhs, runtime_config, k_step, config.lhs_reader_config)
     }
 
     fn init_rhs_global_reader(
-        rhs: View<RhsG<MP>, Coords2d>,
+        rhs: View<'_, RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsGlobalReader {
+    ) -> Self::RhsGlobalReader<'_> {
         // We always advance by 2 * k for Rhs only
         let k_step = config.stage_config.elements_in_stage_k() * 2;
         PartialStageGlobalReader::new(rhs, runtime_config, k_step, config.rhs_reader_config)
     }
 
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
+        acc: ComptimeOption<View<'_, AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::AccGlobalReader {
+    ) -> Self::AccGlobalReader<'_> {
         acc.map(|view| {
             FullStageGlobalReader::new(view, runtime_config, 0, config.acc_reader_config)
         })
     }
 
     fn init_global_writer(
-        out: View<AccG<MP>, Coords2d, ReadWrite>,
+        out: ViewMut<'_, AccG<MP>, Coords2d>,
         #[comptime] config: Self::Config,
-    ) -> Self::GlobalWriter {
+    ) -> Self::GlobalWriter<'_> {
         Self::GlobalWriter::init(out, config.writer_config)
     }
 

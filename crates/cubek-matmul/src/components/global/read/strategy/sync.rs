@@ -15,7 +15,7 @@ impl SyncStrategy for Synchronous {
     fn create_barrier() -> Self::Barrier {}
 
     fn sync<MP: MatmulTypes>(
-        _barrier: &mut Self::Barrier,
+        _barrier: &Self::Barrier,
         #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         sync_cube();

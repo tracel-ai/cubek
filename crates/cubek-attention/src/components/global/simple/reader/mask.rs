@@ -40,8 +40,8 @@ impl LogicalIterator {
 }
 
 #[derive(CubeType)]
-pub struct MaterializedMaskReader<M: Numeric, N: Size> {
-    global_iter: GlobalIterator<Vector<M, N>>,
+pub struct MaterializedMaskReader<'a, M: Numeric, N: Size> {
+    global_iter: GlobalIterator<'a, Vector<M, N>>,
     logical_iter: LogicalIterator,
     // TODO not sure if mandatory, but i need for the stride when reading in global memory
     seq_kv_shape: u32,
@@ -50,13 +50,13 @@ pub struct MaterializedMaskReader<M: Numeric, N: Size> {
 }
 
 #[derive(CubeType)]
-pub enum MaskReader<AP: AttentionPrecision> {
-    Materialized(MaterializedMaskReader<MSK<AP>, MSKS<AP>>),
+pub enum MaskReader<'a, AP: AttentionPrecision> {
+    Materialized(MaterializedMaskReader<'a, MSK<AP>, MSKS<AP>>),
     Logical(LogicalIterator),
 }
 
 #[cube]
-impl<AP: AttentionPrecision> MaskReader<AP> {
+impl<'a, AP: AttentionPrecision> MaskReader<'a, AP> {
     pub fn new_logical(partition_q_offset: u32, step: u32) -> Self {
         MaskReader::<AP>::new_Logical(LogicalIterator::init(partition_q_offset, step))
     }
@@ -64,13 +64,13 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
     pub fn new_materialized(
         stage_q_offset: u32,
         partition_q_offset: u32,
-        mask: View<Vector<MSK<AP>, MSKS<AP>>, Coords2d>,
+        mask: View<'a, Vector<MSK<AP>, MSKS<AP>>, Coords2d>,
         step: u32,
         seq_kv_shape: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
         let mask = mask.slice((stage_q_offset, 0), mask.shape());
-        let global_iter = GlobalIterator::new(*mask, step, gmem_config.view_direction, false);
+        let global_iter = GlobalIterator::new(mask, step, gmem_config.view_direction, false);
 
         MaskReader::<AP>::new_Materialized(MaterializedMaskReader::new(
             global_iter,
@@ -118,14 +118,14 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
 }
 
 #[cube]
-impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
+impl<'a, M: Numeric, N: Size> MaterializedMaskReader<'a, M, N> {
     fn new(
-        global_iter: GlobalIterator<Vector<M, N>>,
+        global_iter: GlobalIterator<'a, Vector<M, N>>,
         logical_iter: LogicalIterator,
         seq_kv_shape: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
-        MaterializedMaskReader::<M, N> {
+        MaterializedMaskReader::<'a, M, N> {
             global_iter,
             logical_iter,
             seq_kv_shape,

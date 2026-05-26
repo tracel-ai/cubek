@@ -273,8 +273,8 @@ fn rfft_pack_kernel<F: Float>(
     let k = pos % m;
     let window = pos / m;
     let signal_view = signal.view(BatchSignalLayout::new(signal, window, dim));
-    let packed_re_view = packed_re.view_mut(BatchSignalLayout::new(&*packed_re, window, dim));
-    let packed_im_view = packed_im.view_mut(BatchSignalLayout::new(&*packed_im, window, dim));
+    let mut packed_re_view = packed_re.view_mut(BatchSignalLayout::new(&*packed_re, window, dim));
+    let mut packed_im_view = packed_im.view_mut(BatchSignalLayout::new(&*packed_im, window, dim));
     let even = 2 * k;
     let odd = even + 1;
     let even_active = even < signal_len as usize;
@@ -321,8 +321,10 @@ fn rfft_post_kernel<F: Float>(
     let window = pos / n_freq;
     let packed_re_view = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));
     let packed_im_view = packed_im.view(BatchSignalLayout::new(packed_im, window, dim));
-    let spectrum_re_view = spectrum_re.view_mut(BatchSignalLayout::new(&*spectrum_re, window, dim));
-    let spectrum_im_view = spectrum_im.view_mut(BatchSignalLayout::new(&*spectrum_im, window, dim));
+    let mut spectrum_re_view =
+        spectrum_re.view_mut(BatchSignalLayout::new(&*spectrum_re, window, dim));
+    let mut spectrum_im_view =
+        spectrum_im.view_mut(BatchSignalLayout::new(&*spectrum_im, window, dim));
 
     if k == 0 {
         let y0_re = packed_re_view.read_checked(0);
@@ -391,8 +393,8 @@ fn irfft_pre_kernel<F: Float>(
     let window = pos / m;
     let spectrum_re_view = spectrum_re.view(BatchSignalLayout::new(spectrum_re, window, dim));
     let spectrum_im_view = spectrum_im.view(BatchSignalLayout::new(spectrum_im, window, dim));
-    let packed_re_view = packed_re.view_mut(BatchSignalLayout::new(&*packed_re, window, dim));
-    let packed_im_view = packed_im.view_mut(BatchSignalLayout::new(&*packed_im, window, dim));
+    let mut packed_re_view = packed_re.view_mut(BatchSignalLayout::new(&*packed_re, window, dim));
+    let mut packed_im_view = packed_im.view_mut(BatchSignalLayout::new(&*packed_im, window, dim));
 
     if k == 0 {
         let has_nyquist = m < spec_bins as usize;
@@ -463,7 +465,7 @@ fn irfft_unpack_kernel<F: Float>(
     let window = pos / m;
     let packed_re_view = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));
     let packed_im_view = packed_im.view(BatchSignalLayout::new(packed_im, window, dim));
-    let signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window, dim));
+    let mut signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window, dim));
     let scale = F::new(1.0) / F::cast_from(m);
     signal_view.write_checked(2 * k, packed_re_view.read_checked(k) * scale);
     signal_view.write_checked(2 * k + 1, packed_im_view.read_checked(k) * scale);

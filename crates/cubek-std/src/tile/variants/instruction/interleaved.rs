@@ -93,7 +93,7 @@ impl<A: Numeric> InterleavedTile<A> {
 #[cube]
 impl<N: Numeric> InterleavedTile<N> {
     /// Copies into the interleaved tile from `source`. Supported sources:
-    /// `SharedMemory` and `None` (zero-init).
+    /// `Shared` and `None` (zero-init).
     pub fn copy_from<SE: Numeric, SS: Size, Sc: TileScope>(
         &mut self,
         source: &Tile<SE, Sc>,

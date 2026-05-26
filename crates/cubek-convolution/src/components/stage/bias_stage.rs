@@ -55,7 +55,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
         // Ensure all stages are aligned properly
         let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
-        let smem = Shared::new_aligned_array(config.num_stages as usize * stage_size, align);
+        let smem = Shared::new_aligned_slice(config.num_stages as usize * stage_size, align);
 
         BiasStageMemory::<ES, NS> {
             smem,
@@ -68,7 +68,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
         BiasStageMemory::<ES, NS> {
-            smem: self.smem,
+            smem: self.smem.clone(),
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,

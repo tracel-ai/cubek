@@ -122,7 +122,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut stage = stage.with_buffer_index(this.stage_index);
@@ -163,7 +163,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (load_col + offs_row, offs_col),
             };
 
-            global_view.tensor_map_load(barrier.inner_ref(), slice.downcast_mut(), pos);
+            global_view.tensor_map_load(barrier, slice.downcast_mut(), pos);
         }
     }
 
@@ -183,7 +183,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
     }
 
     fn arrive<MP: MatmulTypes>(
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();

@@ -60,18 +60,18 @@ impl ComputeTask for DummyCompute {
 
 #[cube]
 trait CopyStrategy: Send + Sync + 'static {
-    type Barrier: CubeType<ExpandType: Copy> + Copy + Clone;
+    type Barrier: CubeType;
 
     fn barrier() -> Self::Barrier;
 
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     );
 
-    fn wait(_barrier: Self::Barrier);
+    fn wait(_barrier: &mut Self::Barrier);
 }
 
 #[derive(CubeType)]
@@ -85,13 +85,13 @@ impl CopyStrategy for DummyCopy {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        _barrier: Self::Barrier,
+        _barrier: &mut Self::Barrier,
         #[comptime] _config: Config,
     ) {
         destination.copy_from_slice(source);
     }
 
-    fn wait(_barrier: Self::Barrier) {
+    fn wait(_barrier: &mut Self::Barrier) {
         sync_cube();
     }
 }
@@ -107,7 +107,7 @@ impl CopyStrategy for CoalescedCopy {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        _barrier: Self::Barrier,
+        _barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let num_units = config.num_planes * config.plane_dim;
@@ -118,7 +118,7 @@ impl CopyStrategy for CoalescedCopy {
         }
     }
 
-    fn wait(_barrier: Self::Barrier) {
+    fn wait(_barrier: &mut Self::Barrier) {
         sync_cube();
     }
 }
@@ -136,13 +136,13 @@ impl CopyStrategy for MemcpyAsyncSingleSliceDuplicatedAll {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] _config: Config,
     ) {
         barrier.memcpy_async(source, destination)
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -160,7 +160,7 @@ impl CopyStrategy for MemcpyAsyncSingleSliceElected {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] _config: Config,
     ) {
         if UNIT_POS == 0 {
@@ -168,7 +168,7 @@ impl CopyStrategy for MemcpyAsyncSingleSliceElected {
         }
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -186,7 +186,7 @@ impl CopyStrategy for MemcpyAsyncSingleSliceElectedCooperative {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] _config: Config,
     ) {
         if UNIT_POS == 0 {
@@ -194,7 +194,7 @@ impl CopyStrategy for MemcpyAsyncSingleSliceElectedCooperative {
         }
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -212,7 +212,7 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneDuplicatedUnit {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let sub_length = source.len() as u32 / config.num_planes;
@@ -225,7 +225,7 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneDuplicatedUnit {
         )
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -243,7 +243,7 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneElectedUnit {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let sub_length = source.len() as u32 / config.num_planes;
@@ -258,7 +258,7 @@ impl CopyStrategy for MemcpyAsyncSplitPlaneElectedUnit {
         }
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -276,7 +276,7 @@ impl CopyStrategy for MemcpyAsyncSplitDuplicatedAll {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let sub_length = source.len() as u32 / config.num_planes;
@@ -291,7 +291,7 @@ impl CopyStrategy for MemcpyAsyncSplitDuplicatedAll {
         }
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -309,7 +309,7 @@ impl CopyStrategy for MemcpyAsyncSplitLargeUnitWithIdle {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let sub_length = source.len() as u32 / config.num_planes;
@@ -325,7 +325,7 @@ impl CopyStrategy for MemcpyAsyncSplitLargeUnitWithIdle {
         }
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -343,7 +343,7 @@ impl CopyStrategy for MemcpyAsyncSplitSmallUnitCoalescedLoop {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let num_units = config.num_planes * config.plane_dim;
@@ -360,7 +360,7 @@ impl CopyStrategy for MemcpyAsyncSplitSmallUnitCoalescedLoop {
         }
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -378,7 +378,7 @@ impl CopyStrategy for MemcpyAsyncSplitMediumUnitCoalescedOnce {
     fn memcpy<E: Float, N: Size>(
         source: &[Vector<E, N>],
         destination: &mut [Vector<E, N>],
-        barrier: Self::Barrier,
+        barrier: &mut Self::Barrier,
         #[comptime] config: Config,
     ) {
         let sub_length = source.len() as u32 / (config.num_planes * config.plane_dim);
@@ -391,7 +391,7 @@ impl CopyStrategy for MemcpyAsyncSplitMediumUnitCoalescedOnce {
         )
     }
 
-    fn wait(barrier: Self::Barrier) {
+    fn wait(barrier: &mut Self::Barrier) {
         barrier.arrive_and_wait();
     }
 }
@@ -425,24 +425,29 @@ fn memcpy_test_single_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut acc = Array::<Vector<E, N>>::new(config.acc_len);
+    let mut acc = Array::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
-    let mut smem = SharedMemory::<Vector<E, N>>::new(config.smem_size);
-    let barrier = Cpy::barrier();
+    let mut smem = Shared::new_slice(config.smem_size);
+    let mut barrier = Cpy::barrier();
 
     for i in 0..num_iterations {
         let start = i * config.smem_size;
         let end = start + config.smem_size;
 
-        Cpy::memcpy(&input[start..end], smem.as_mut_slice(), barrier, config);
+        Cpy::memcpy(
+            &input[start..end],
+            smem.as_mut_slice(),
+            &mut barrier,
+            config,
+        );
 
-        Cpy::wait(barrier);
+        Cpy::wait(&mut barrier);
 
         Cpt::compute(smem.as_slice(), &mut acc, config);
     }
 
-    Cpy::wait(barrier);
+    Cpy::wait(&mut barrier);
     Cpt::compute(smem.as_slice(), &mut acc, config);
     Cpt::to_output(&mut acc, output.as_mut_slice(), config);
 }
@@ -454,13 +459,13 @@ fn memcpy_test_double_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut smem1 = SharedMemory::<Vector<E, N>>::new(config.smem_size);
-    let mut smem2 = SharedMemory::<Vector<E, N>>::new(config.smem_size);
-    let mut acc = Array::<Vector<E, N>>::new(config.acc_len);
+    let mut smem1 = Shared::new_slice(config.smem_size);
+    let mut smem2 = Shared::new_slice(config.smem_size);
+    let mut acc = Array::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
-    let barrier1 = Cpy::barrier();
-    let barrier2 = Cpy::barrier();
+    let mut barrier1 = Cpy::barrier();
+    let mut barrier2 = Cpy::barrier();
 
     for i in 0..num_iterations {
         let start = i * config.smem_size;
@@ -471,20 +476,30 @@ fn memcpy_test_double_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
         };
 
         if i % 2 == 0 {
-            Cpy::memcpy(&input[start..end], smem1.as_mut_slice(), barrier1, config);
+            Cpy::memcpy(
+                &input[start..end],
+                smem1.as_mut_slice(),
+                &mut barrier1,
+                config,
+            );
             if i > 0 {
-                Cpy::wait(barrier2);
+                Cpy::wait(&mut barrier2);
                 Cpt::compute(smem2.as_slice(), &mut acc, config);
             }
         } else {
-            Cpy::memcpy(&input[start..end], smem2.as_mut_slice(), barrier2, config);
+            Cpy::memcpy(
+                &input[start..end],
+                smem2.as_mut_slice(),
+                &mut barrier2,
+                config,
+            );
 
-            Cpy::wait(barrier1);
+            Cpy::wait(&mut barrier1);
             Cpt::compute(smem1.as_slice(), &mut acc, config);
         }
     }
 
-    Cpy::wait(barrier2);
+    Cpy::wait(&mut barrier2);
     Cpt::compute(smem2.as_slice(), &mut acc, config);
     Cpt::to_output(&mut acc, output.as_mut_slice(), config);
 }

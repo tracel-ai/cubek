@@ -1,7 +1,7 @@
 //! Intra-cube-parallel radix-2 FFT primitives used by the RFFT kernels.
 //!
 //! Each cube processes one FFT window with `CUBE_DIM` units. Inputs and
-//! outputs live in per-cube `SharedMemory<F>`; callers load a bit-reversed
+//! outputs live in per-cube `Shared<[F]>`; callers load a bit-reversed
 //! window before calling [`fft_butterfly_parallel`].
 
 use core::f32::consts::PI;
@@ -26,8 +26,8 @@ pub(crate) fn bit_reverse(i: usize, #[comptime] log2_n: usize) -> usize {
 /// Parallel radix-2 butterfly stages on an already-bit-reversed window.
 #[cube]
 pub(crate) fn fft_butterfly_parallel<F: Float>(
-    shared_re: &mut SharedMemory<F>,
-    shared_im: &mut SharedMemory<F>,
+    shared_re: &mut Shared<[F]>,
+    shared_im: &mut Shared<[F]>,
     #[comptime] n_fft: usize,
     #[comptime] log2_n: usize,
     #[comptime] threads_per_cube: usize,

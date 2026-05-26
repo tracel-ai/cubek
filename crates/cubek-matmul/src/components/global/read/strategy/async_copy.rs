@@ -12,7 +12,7 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 
 #[cube]
 pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: TilingLayout>(
-    view: &View<Vector<EG, NG>, Coords2d>,
+    view: View<Vector<EG, NG>, Coords2d>,
     pos: Coords2d,
     stage: &mut StridedStageMemory<ES, NS, T>,
     stage_offset: u32,

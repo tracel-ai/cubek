@@ -4,16 +4,15 @@ use crate::kernel::forward::{Position, view4d};
 use cubecl::{
     CubeDim, Runtime, calculate_cube_count_elemwise,
     num_traits::Zero,
-    prelude::TensorBinding,
-    prelude::*,
-    std::{FastDivmod, tensor::View},
+    prelude::{TensorBinding, *},
+    std::{FastDivmod, tensor::ViewMut},
     tensor_vector_size_parallel,
 };
 
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool2d_backward_direct<E: Numeric, N: Size>(
     grad: &Tensor<Vector<E, N>>,
-    output: &mut View<Vector<E, N>, Position, ReadWrite>,
+    mut output: ViewMut<'_, Vector<E, N>, Position>,
     out_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
     #[define(E)] _dtype: StorageType,

@@ -30,7 +30,7 @@ pub struct BounceConfig {
 #[derive(CubeType)]
 pub struct BounceTile<N: Numeric> {
     pub cmma: CmmaTile<N>,
-    pub smem: Box<[N]>,
+    pub smem: Shared<[N]>,
     pub fragment: WhiteboxFragment<N>,
 }
 
@@ -41,8 +41,7 @@ impl<N: Numeric> BounceTile<N> {
         let smem_size = comptime!(total_tile_size * cfg.num_planes as usize);
         let start = UNIT_POS_Y as usize * total_tile_size;
         let end = start + total_tile_size;
-        let smem = SharedMemory::new(smem_size);
-        let smem = unsafe { smem[start..end].as_boxed_unchecked() };
+        let smem = Shared::new_slice(smem_size).map(|smem| &smem[start..end]);
 
         let layout = comptime!(WhiteboxFragmentLayout::new(
             cfg.tile_shape,

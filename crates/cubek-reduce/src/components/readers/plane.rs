@@ -8,14 +8,14 @@ use crate::{
 use cubecl::prelude::*;
 
 #[derive(CubeType)]
-pub struct PlaneReader<P: ReducePrecision> {
-    reader: Reader<P>,
+pub struct PlaneReader<'a, P: ReducePrecision> {
+    reader: Reader<'a, P>,
 }
 
 #[cube]
-impl<P: ReducePrecision> PlaneReader<P> {
-    pub fn new(reader: Reader<P>) -> PlaneReader<P> {
-        PlaneReader::<P> { reader }
+impl<'a, P: ReducePrecision> PlaneReader<'a, P> {
+    pub fn new(reader: Reader<'a, P>) -> PlaneReader<'a, P> {
+        PlaneReader::<'a, P> { reader }
     }
 
     pub fn read(&self, vector_index: usize) -> Item<P> {

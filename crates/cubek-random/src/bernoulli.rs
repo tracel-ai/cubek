@@ -1,8 +1,4 @@
-use cubecl::{
-    prelude::*,
-    std::tensor::View,
-    {CubeType, Runtime},
-};
+use cubecl::{CubeType, Runtime, prelude::*, std::tensor::ViewMut};
 
 use crate::RandomFamily;
 
@@ -34,7 +30,7 @@ impl PrngRuntime for Bernoulli {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Vector<E, N>, usize, ReadWrite>,
+        output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
         let prob = args.probability;
 

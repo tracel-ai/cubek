@@ -166,11 +166,13 @@ fn cfft_shared_kernel<F: Float>(
 
     let input_re_view = input_re.view(BatchSignalLayout::new(input_re, window_index, dim));
     let input_im_view = input_im.view(BatchSignalLayout::new(input_im, window_index, dim));
-    let output_re_view = output_re.view_mut(BatchSignalLayout::new(&*output_re, window_index, dim));
-    let output_im_view = output_im.view_mut(BatchSignalLayout::new(&*output_im, window_index, dim));
+    let mut output_re_view =
+        output_re.view_mut(BatchSignalLayout::new(&*output_re, window_index, dim));
+    let mut output_im_view =
+        output_im.view_mut(BatchSignalLayout::new(&*output_im, window_index, dim));
 
-    let mut shared_re = SharedMemory::<F>::new(n_fft);
-    let mut shared_im = SharedMemory::<F>::new(n_fft);
+    let mut shared_re = Shared::new_slice(n_fft);
+    let mut shared_im = Shared::new_slice(n_fft);
 
     let mut i = UNIT_POS as usize;
     while i < n_fft {
@@ -336,11 +338,13 @@ fn cfft_four_step_radix1_kernel<F: Float>(
     let n2_idx = cube_pos - window * n2;
     let input_re_view = input_re.view(BatchSignalLayout::new(input_re, window, dim));
     let input_im_view = input_im.view(BatchSignalLayout::new(input_im, window, dim));
-    let scratch_re_view = scratch_re.view_mut(BatchSignalLayout::new(&*scratch_re, window, dim));
-    let scratch_im_view = scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
+    let mut scratch_re_view =
+        scratch_re.view_mut(BatchSignalLayout::new(&*scratch_re, window, dim));
+    let mut scratch_im_view =
+        scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
 
-    let mut shared_re = SharedMemory::<F>::new(n1);
-    let mut shared_im = SharedMemory::<F>::new(n1);
+    let mut shared_re = Shared::new_slice(n1);
+    let mut shared_im = Shared::new_slice(n1);
 
     // Load x[window, n1, n2] at bit-reversed destinations so the butterfly
     // can run directly without a pre-permute pass.
@@ -406,11 +410,13 @@ fn cfft_four_step_radix2_kernel<F: Float>(
     let window = cube_pos / n1;
     let k1 = cube_pos - window * n1;
     let row_base = k1 * n2;
-    let scratch_re_view = scratch_re.view_mut(BatchSignalLayout::new(&*scratch_re, window, dim));
-    let scratch_im_view = scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
+    let mut scratch_re_view =
+        scratch_re.view_mut(BatchSignalLayout::new(&*scratch_re, window, dim));
+    let mut scratch_im_view =
+        scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
 
-    let mut shared_re = SharedMemory::<F>::new(n2);
-    let mut shared_im = SharedMemory::<F>::new(n2);
+    let mut shared_re = Shared::new_slice(n2);
+    let mut shared_im = Shared::new_slice(n2);
 
     let mut i = UNIT_POS as usize;
     while i < n2 {
@@ -465,8 +471,8 @@ fn cfft_four_step_transpose_kernel<F: Float>(
     let window = pos_u / m;
     let scratch_re_view = scratch_re.view(BatchSignalLayout::new(scratch_re, window, dim));
     let scratch_im_view = scratch_im.view(BatchSignalLayout::new(scratch_im, window, dim));
-    let output_re_view = output_re.view_mut(BatchSignalLayout::new(&*output_re, window, dim));
-    let output_im_view = output_im.view_mut(BatchSignalLayout::new(&*output_im, window, dim));
+    let mut output_re_view = output_re.view_mut(BatchSignalLayout::new(&*output_re, window, dim));
+    let mut output_im_view = output_im.view_mut(BatchSignalLayout::new(&*output_im, window, dim));
     // pos's inner index is the destination linear index k = k1 + k2 * N1.
     let k2 = inner / n1;
     let k1 = inner - k2 * n1;

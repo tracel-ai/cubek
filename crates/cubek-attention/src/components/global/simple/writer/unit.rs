@@ -1,7 +1,7 @@
 use cubecl::{
+    self as cubecl,
     prelude::*,
-    std::tensor::{View, layout::Coords2d},
-    {self as cubecl},
+    std::tensor::{ViewMut, layout::Coords2d},
 };
 use cubek_matmul::components::global::{
     GlobalWriterConfig, PartitionedStage, WriteEvent, WriteEventExpand, WriteEventListener,
@@ -16,8 +16,8 @@ use crate::components::{
 };
 
 #[derive(CubeType)]
-pub struct UnitAttentionWriter<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> {
-    global: View<Vector<EG, EGS>, TiledCoords, ReadWrite>,
+pub struct UnitAttentionWriter<'a, ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> {
+    global: ViewMut<'a, Vector<EG, EGS>, TiledCoords>,
     stage: PartitionedStage<ES, ESS>,
 
     #[cube(comptime)]
@@ -26,7 +26,7 @@ pub struct UnitAttentionWriter<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> {
 
 #[cube]
 impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> WriteEventListener
-    for UnitAttentionWriter<ES, ESS, EG, EGS>
+    for UnitAttentionWriter<'_, ES, ESS, EG, EGS>
 {
     fn on_event(this: &mut Self, event: WriteEvent) {
         #[allow(clippy::single_match)]
@@ -43,17 +43,17 @@ impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> WriteEventListener
 }
 
 #[cube]
-impl<ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> AttentionWriter<ES, ESS, EG, EGS>
-    for UnitAttentionWriter<ES, ESS, EG, EGS>
+impl<'a, ES: Numeric, ESS: Size, EG: Numeric, EGS: Size> AttentionWriter<'a, ES, ESS, EG, EGS>
+    for UnitAttentionWriter<'a, ES, ESS, EG, EGS>
 {
     fn init<S: StageAttentionConfig>(
-        global: View<Vector<EG, EGS>, Coords2d, ReadWrite>,
+        global: ViewMut<'a, Vector<EG, EGS>, Coords2d>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let stage =
             PartitionedStage::new((UnitPartitioner::seq_q_index(), 0u32), config.smem_config);
 
-        UnitAttentionWriter::<ES, ESS, EG, EGS> {
+        UnitAttentionWriter::<'a, ES, ESS, EG, EGS> {
             global: global.view_mut(TiledLayout::new(StageIdent::Out, config.smem_config)),
             stage,
             config,

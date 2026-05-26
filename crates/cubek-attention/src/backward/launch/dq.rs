@@ -43,7 +43,7 @@ fn flash_attention_backward_dq_kernel<E: Float>(
     let d_i = d[row_idx];
     let scale_e = E::cast_from(scale);
 
-    let mut dq_acc = Array::<E>::new(head_dim);
+    let mut dq_acc = Array::new(head_dim);
     for dd in 0..head_dim {
         dq_acc[dd] = E::new(0.0);
     }

@@ -1,6 +1,6 @@
 use cubecl::{
     prelude::*,
-    std::tensor::{View, layout::Coords2d},
+    std::tensor::{ViewMut, layout::Coords2d},
 };
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
@@ -17,8 +17,8 @@ use crate::definition::{MatrixTypes, StageIdent};
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory
 /// using a unit for each tile
-pub struct UnitWriter<IP: MatrixTypes> {
-    global: View<Vector<IP::Global, IP::GlobalSize>, TiledCoords, ReadWrite>,
+pub struct UnitWriter<'a, IP: MatrixTypes> {
+    global: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, TiledCoords>,
     stage: PartitionedStage<IP::Stage, IP::StageSize>,
 
     #[cube(comptime)]
@@ -26,9 +26,9 @@ pub struct UnitWriter<IP: MatrixTypes> {
 }
 
 #[cube]
-impl<IP: MatrixTypes> UnitWriter<IP> {
+impl<'a, IP: MatrixTypes> UnitWriter<'a, IP> {
     pub fn new(
-        global: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        global: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, Coords2d>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         let smem_config = config.smem_config;
@@ -41,7 +41,7 @@ impl<IP: MatrixTypes> UnitWriter<IP> {
             smem_config,
         );
 
-        UnitWriter::<IP> {
+        UnitWriter::<'a, IP> {
             global: global.view_mut(TiledLayout::new(StageIdent::Out, smem_config)),
             stage,
             smem_config,
@@ -60,7 +60,7 @@ impl<IP: MatrixTypes> UnitWriter<IP> {
 
 #[cube]
 pub fn unit_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
-    global: &mut View<Vector<EG, NG>, TiledCoords, ReadWrite>,
+    global: &mut ViewMut<Vector<EG, NG>, TiledCoords>,
     smem_tile: &StridedTile<ES, NS>,
     tile_pos: Coords2d,
     #[comptime] elements_in_tile: u32,
@@ -80,7 +80,7 @@ pub fn unit_write<ES: Numeric, NS: Size, EG: Numeric, NG: Size>(
 }
 
 #[cube]
-impl<IP: MatrixTypes> WriteEventListener for UnitWriter<IP> {
+impl<IP: MatrixTypes> WriteEventListener for UnitWriter<'_, IP> {
     fn on_event(this: &mut Self, event: super::WriteEvent) {
         #[allow(clippy::single_match)]
         match event {
@@ -91,11 +91,11 @@ impl<IP: MatrixTypes> WriteEventListener for UnitWriter<IP> {
 }
 
 #[cube]
-impl<IP: MatrixTypes> GlobalWriter<IP> for UnitWriter<IP> {
+impl<'a, IP: MatrixTypes> GlobalWriter<'a, IP> for UnitWriter<'a, IP> {
     type Stage = PartitionedStage<IP::Stage, IP::StageSize>;
 
     fn init(
-        tensor: View<Vector<IP::Global, IP::GlobalSize>, Coords2d, ReadWrite>,
+        tensor: ViewMut<'a, Vector<IP::Global, IP::GlobalSize>, Coords2d>,
         #[comptime] config: GlobalWriterConfig,
     ) -> Self {
         Self::new(tensor, config)
@@ -110,5 +110,5 @@ pub struct UnitWriterFamily;
 
 impl GlobalWriterFamily for UnitWriterFamily {
     type Stage = PartitionedStageFamily;
-    type Writer<IP: MatrixTypes> = UnitWriter<IP>;
+    type Writer<'a, IP: MatrixTypes> = UnitWriter<'a, IP>;
 }

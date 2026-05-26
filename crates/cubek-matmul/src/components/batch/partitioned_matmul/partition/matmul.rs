@@ -30,7 +30,7 @@ pub struct PartitionRangeDim {
 /// Iterates on several global matmul across a global partition
 pub trait GlobalPartitionMatmul: 'static + Send + Sync {
     fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         partition_ranges: PartitionRanges,
         k_range: (u32, u32),
         #[comptime] config: GMM::Config,
@@ -76,7 +76,7 @@ impl PartitionRangeDim {
 #[cube]
 impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
     fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
         #[comptime] config: GMM::Config,
@@ -110,7 +110,7 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
 #[cube]
 impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
     fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
         #[comptime] config: GMM::Config,
@@ -149,7 +149,7 @@ pub(crate) fn execute_global_matmul<
     MP: MatmulTypes,
     GMM: global::GlobalMatmul<Args::Config, MP>,
 >(
-    state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+    state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
     nth_batch: u32,
     m_offset: u32,
     n_offset: u32,
@@ -160,33 +160,33 @@ pub(crate) fn execute_global_matmul<
     let stage_n = config.stage_config().elements_in_stage_n().runtime();
     let k_size = k_range.1 - k_range.0;
 
-    let a = Args::view_lhs(&*state);
-    let b = Args::view_rhs(&*state);
-    let c = Args::view_acc(&*state);
+    let a = Args::view_lhs(state);
+    let b = Args::view_rhs(state);
+    let c = Args::view_acc(state);
     let out = Args::view_out(state);
 
-    let runtime_config = Args::runtime_config(&*state);
+    let runtime_config = Args::runtime_config(state);
 
-    let a_batch = Args::batch_lhs(&*state, nth_batch as usize);
+    let a_batch = Args::batch_lhs(state, nth_batch as usize);
     let a = a.view(SliceIndex::new(a_batch, a.shape()));
-    let b_batch = Args::batch_rhs(&*state, nth_batch as usize);
+    let b_batch = Args::batch_rhs(state, nth_batch as usize);
     let b = b.view(SliceIndex::new(b_batch, b.shape()));
-    let c_batch = Args::batch_acc(&*state, nth_batch as usize);
+    let c_batch = Args::batch_acc(state, nth_batch as usize);
     let c = c.map(|c| {
         let c = c.view(SliceIndex::new(c_batch, c.shape()));
-        *c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n))
+        c.slice_unchecked((m_offset, n_offset), (stage_m, stage_n))
     });
-    let out_batch = Args::batch_out(&*state, nth_batch as usize);
+    let out_batch = Args::batch_out(state, nth_batch as usize);
     let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
     GMM::execute(
         GMM::init_lhs_global_reader(
-            *a.slice_unchecked((m_offset, k_range.0), (stage_m, k_size)),
+            a.slice_unchecked((m_offset, k_range.0), (stage_m, k_size)),
             runtime_config.clone(),
             config,
         ),
         GMM::init_rhs_global_reader(
-            *b.slice_unchecked((k_range.0, n_offset), (k_size, stage_n)),
+            b.slice_unchecked((k_range.0, n_offset), (k_size, stage_n)),
             runtime_config.clone(),
             config,
         ),
