@@ -425,10 +425,10 @@ fn memcpy_test_single_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut acc = Array::<Vector<E, N>>::new(config.acc_len);
+    let mut acc = Array::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
-    let mut smem = Shared::<[Vector<E, N>]>::new_slice(config.smem_size);
+    let mut smem = Shared::new_slice(config.smem_size);
     let mut barrier = Cpy::barrier();
 
     for i in 0..num_iterations {
@@ -459,9 +459,9 @@ fn memcpy_test_double_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
     #[comptime] config: Config,
 ) {
     let data_count = input.shape(0);
-    let mut smem1 = Shared::<[Vector<E, N>]>::new_slice(config.smem_size);
-    let mut smem2 = Shared::<[Vector<E, N>]>::new_slice(config.smem_size);
-    let mut acc = Array::<Vector<E, N>>::new(config.acc_len);
+    let mut smem1 = Shared::new_slice(config.smem_size);
+    let mut smem2 = Shared::new_slice(config.smem_size);
+    let mut acc = Array::new(config.acc_len);
     let num_iterations = data_count.div_ceil(config.smem_size);
 
     let mut barrier1 = Cpy::barrier();

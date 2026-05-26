@@ -185,8 +185,8 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
     #[comptime] k: usize,
     #[comptime] has_coords: bool,
 ) {
-    let mut final_elements = Array::<Vector<N, S>>::new(k);
-    let mut final_coords = Array::<Vector<u32, S>>::new(k);
+    let mut final_elements = Array::new(k);
+    let mut final_coords = Array::new(k);
     let mut cursor = Vector::new(0u32);
     let lane_id = Vector::new(UNIT_POS_X);
 
@@ -247,7 +247,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
     pub fn get(&self, i: usize) -> Value<X> {
         match self {
             SharedAccumulatorKind::Multiple(sequence) => {
-                let mut array = Array::<X>::new(sequence.len());
+                let mut array = Array::new(sequence.len());
                 #[unroll]
                 for k_iter in 0..sequence.len() {
                     array[k_iter] = sequence[k_iter][i];

@@ -60,7 +60,7 @@ pub(super) fn execute_outer_product<
         let k_base = tile_index * vector_size;
 
         // Gather `vs` scalars from the K-axis side into an AccR-typed array.
-        let mut scalars = Array::<AccR>::new(vector_size as usize);
+        let mut scalars = Array::new(vector_size as usize);
         if comptime!(scalar_side_strided) {
             // Col-Row: lhs is M-contig (strided in K). Each read returns a
             // Vector along M; pick this plane's row by `m_pos % vs`.

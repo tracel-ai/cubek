@@ -141,7 +141,7 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     #[comptime] num_vectors_per_unit: usize,
     #[define(T)] _dtype: ElemType,
 ) {
-    let mut shared_memory = Shared::<[Vector<T, N>]>::new_slice(shared_memory_size);
+    let mut shared_memory = Shared::new_slice(shared_memory_size);
     shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
 
     // Each unit reduce `num_vectors_per_unit` vectors.

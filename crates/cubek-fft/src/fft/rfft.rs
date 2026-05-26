@@ -183,8 +183,8 @@ fn rfft_kernel<F: Float>(
     let mut spectrum_im_view =
         spectrum_im.view_mut(BatchSignalLayout::new(&*spectrum_im, window_index, dim));
 
-    let mut shared_re = Shared::<[F]>::new_slice(n_fft);
-    let mut shared_im = Shared::<[F]>::new_slice(n_fft);
+    let mut shared_re = Shared::new_slice(n_fft);
+    let mut shared_im = Shared::new_slice(n_fft);
 
     let mut i = UNIT_POS as usize;
     while i < n_fft {

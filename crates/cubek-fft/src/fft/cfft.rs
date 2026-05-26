@@ -171,8 +171,8 @@ fn cfft_shared_kernel<F: Float>(
     let mut output_im_view =
         output_im.view_mut(BatchSignalLayout::new(&*output_im, window_index, dim));
 
-    let mut shared_re = Shared::<[F]>::new_slice(n_fft);
-    let mut shared_im = Shared::<[F]>::new_slice(n_fft);
+    let mut shared_re = Shared::new_slice(n_fft);
+    let mut shared_im = Shared::new_slice(n_fft);
 
     let mut i = UNIT_POS as usize;
     while i < n_fft {
@@ -343,8 +343,8 @@ fn cfft_four_step_radix1_kernel<F: Float>(
     let mut scratch_im_view =
         scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
 
-    let mut shared_re = Shared::<[F]>::new_slice(n1);
-    let mut shared_im = Shared::<[F]>::new_slice(n1);
+    let mut shared_re = Shared::new_slice(n1);
+    let mut shared_im = Shared::new_slice(n1);
 
     // Load x[window, n1, n2] at bit-reversed destinations so the butterfly
     // can run directly without a pre-permute pass.
@@ -415,8 +415,8 @@ fn cfft_four_step_radix2_kernel<F: Float>(
     let mut scratch_im_view =
         scratch_im.view_mut(BatchSignalLayout::new(&*scratch_im, window, dim));
 
-    let mut shared_re = Shared::<[F]>::new_slice(n2);
-    let mut shared_im = Shared::<[F]>::new_slice(n2);
+    let mut shared_re = Shared::new_slice(n2);
+    let mut shared_im = Shared::new_slice(n2);
 
     let mut i = UNIT_POS as usize;
     while i < n2 {

@@ -27,7 +27,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         #[comptime] blueprint: SharedMemoryBlueprint,
     ) -> SharedMemoryReader<EA, N> {
         let smem_size = blueprint.smem_width * blueprint.smem_height * blueprint.channel_groups;
-        let mut smem = Shared::<[Vector<EA, N>]>::new_slice(smem_size);
+        let mut smem = Shared::new_slice(smem_size);
         let cube_dim = CUBE_DIM as usize;
 
         let mut i = UNIT_POS as usize;

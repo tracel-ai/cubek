@@ -172,8 +172,8 @@ fn irfft_kernel<F: Float>(
     let spectrum_im_view = spectrum_im.view(BatchSignalLayout::new(spectrum_im, window_index, dim));
     let mut signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window_index, dim));
 
-    let mut shared_re = Shared::<[F]>::new_slice(n_fft);
-    let mut shared_im = Shared::<[F]>::new_slice(n_fft);
+    let mut shared_re = Shared::new_slice(n_fft);
+    let mut shared_im = Shared::new_slice(n_fft);
 
     let n_freq = comptime![n_fft / 2 + 1];
 
