@@ -4,7 +4,9 @@
 
 use cubecl::prelude::*;
 
-use super::{Axis, ByAxis, MAX_AXES, Space};
+use crate::std::tile_dsl::{Grid, Point};
+
+use super::{Axis, ByAxis, Space};
 
 /// How a single axis is distributed when partitioned. `Sequential` is one
 /// instance walking the whole axis; `Spatial` splits it across hardware
@@ -75,192 +77,288 @@ pub enum ComputePrimitive {
     Unit,
 }
 
-/// Where a tile sits along one axis at a walk [`Cell`], distribution folded in.
-/// `Fixed` is a grid index chosen at walk time; `Affine` is
-/// `hw_index · stride + offset` (how a `Spatial` axis turns its instance into a
-/// grid coordinate). Resolved to a runtime index by `axis_pos`.
+impl Coverage {
+    /// The pinned instance count, if this coverage pins instances (comptime).
+    fn instances_const(self) -> Option<u32> {
+        match self {
+            Coverage::Instances(n) => Some(n),
+            Coverage::TilesEach(_) => None,
+        }
+    }
+
+    /// The pinned per-instance tile count, if this coverage pins tiles (comptime).
+    fn tiles_const(self) -> Option<u32> {
+        match self {
+            Coverage::TilesEach(t) => Some(t),
+            Coverage::Instances(_) => None,
+        }
+    }
+}
+
+impl Distribution {
+    fn coverage(self) -> Coverage {
+        match self {
+            Distribution::Spatial { coverage, .. } => coverage,
+            Distribution::Sequential => panic!("coverage: not a Spatial axis"),
+        }
+    }
+
+    fn unit(self) -> ComputePrimitive {
+        match self {
+            Distribution::Spatial { unit, .. } => unit,
+            Distribution::Sequential => panic!("unit: not a Spatial axis"),
+        }
+    }
+
+    fn spread(self) -> Spread {
+        match self {
+            Distribution::Spatial { spread, .. } => spread,
+            Distribution::Sequential => panic!("spread: not a Spatial axis"),
+        }
+    }
+}
+
+/// The order a [`Partitioner`] visits its `total` walk steps — the blackbox of
+/// strategies. A new order is a new variant here (plus a [`walk_index`] arm);
+/// nothing downstream branches on which one it is.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Coord {
-    Fixed(u32),
-    Affine {
-        unit: ComputePrimitive,
-        stride: u32,
-        offset: u32,
-    },
+pub enum WalkOrder {
+    /// Ascending: step `i` visits odometer index `i`.
+    RowMajor,
+    /// Descending: step `i` visits `total - i - 1`.
+    Reversed,
 }
 
-impl Coord {
-    /// The hardware-independent part: index for `Fixed`, offset for `Affine`.
-    pub fn base(self) -> u32 {
-        match self {
-            Coord::Fixed(index) => index,
-            Coord::Affine { offset, .. } => offset,
-        }
-    }
-
-    pub fn is_affine(self) -> bool {
-        matches!(self, Coord::Affine { .. })
-    }
-
-    pub fn unit(self) -> ComputePrimitive {
-        match self {
-            Coord::Affine { unit, .. } => unit,
-            Coord::Fixed(_) => panic!("Coord::unit: not an Affine coordinate"),
-        }
-    }
-
-    pub fn stride(self) -> u32 {
-        match self {
-            Coord::Affine { stride, .. } => stride,
-            Coord::Fixed(_) => panic!("Coord::stride: not an Affine coordinate"),
-        }
-    }
-}
-
-/// One cell of a [`Partitioner::walk`]: each axis's [`Coord`]. `resolve` turns it
-/// into a runtime [`Point`].
-pub type Cell = ByAxis<Coord>;
-
-/// A resolved grid coordinate: one index per axis of its frame (the operation
-/// [`Space`] the walk ranges over). Tiles read it [by axis](Point::get), so they
-/// need only their own axes.
-#[derive(CubeType)]
-pub struct Point {
-    coords: Sequence<u32>,
-    #[cube(comptime)]
-    frame: Space,
-}
-
-#[cube]
-impl Point {
-    /// Wrap per-axis runtime coordinates (in `frame` order) as a point.
-    pub fn new(coords: Sequence<u32>, #[comptime] frame: Space) -> Point {
-        Point { coords, frame }
-    }
-
-    /// The coordinate along `axis`, located via the point's frame.
-    pub fn get(&self, #[comptime] axis: Axis) -> u32 {
-        *self.coords.index(comptime!(self.frame.position(axis)))
-    }
-}
-
-/// A named strategy for descending one level of the space: the split
+/// A descent strategy for one level of the space: the split
 /// ([`sub_tile_edge`](Partitioner::sub_tile_edge) /
-/// [`distribution`](Partitioner::distribution)) and the ordered
-/// [`walk`](Partitioner::walk).
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum Partitioner {
-    /// Declared axis order, last axis fastest — the natural nested walk.
-    RowMajor {
-        sub_tile: ByAxis<u32>,
-        dists: ByAxis<Distribution>,
-    },
-    /// Same split, walked back-to-front.
-    Reversed {
-        sub_tile: ByAxis<u32>,
-        dists: ByAxis<Distribution>,
-    },
+/// [`distribution`](Partitioner::distribution)) and the [`WalkOrder`]. A
+/// `CubeType` of comptime fields, so once [hydrated](Partitioner::hydrate) into a
+/// runtime instance it answers queries as methods — comptime ones (sizes,
+/// distribution) via `comptime_type!`, the walk via
+/// [`get_walk`](Partitioner::get_walk).
+#[derive(CubeType, CubeLaunch, Clone, PartialEq, Eq, Hash, Debug)]
+#[expand(derive(Clone))]
+pub struct Partitioner {
+    #[cube(comptime)]
+    sub_tile: ByAxis<u32>,
+    #[cube(comptime)]
+    dists: ByAxis<Distribution>,
+    #[cube(comptime)]
+    order: WalkOrder,
 }
 
 impl Partitioner {
-    /// Sub-tile edge along an axis.
-    pub fn sub_tile_edge(&self, axis: Axis) -> u32 {
-        match self {
-            Partitioner::RowMajor { sub_tile, .. } | Partitioner::Reversed { sub_tile, .. } => {
-                sub_tile.get(axis)
-            }
+    /// Declared axis order, last axis fastest — the natural nested walk.
+    pub fn row_major(sub_tile: ByAxis<u32>, dists: ByAxis<Distribution>) -> Self {
+        Partitioner {
+            sub_tile,
+            dists,
+            order: WalkOrder::RowMajor,
         }
+    }
+
+    /// Same split, walked back-to-front.
+    pub fn reversed(sub_tile: ByAxis<u32>, dists: ByAxis<Distribution>) -> Self {
+        Partitioner {
+            sub_tile,
+            dists,
+            order: WalkOrder::Reversed,
+        }
+    }
+}
+
+#[cube]
+impl Partitioner {
+    /// Lift the comptime config (a launch arg) into a runtime instance whose
+    /// `#[cube]` methods can be called.
+    pub fn hydrate(#[comptime] cfg: Partitioner) -> Partitioner {
+        Partitioner {
+            sub_tile: comptime!(cfg.sub_tile),
+            dists: comptime!(cfg.dists),
+            order: comptime!(cfg.order),
+        }
+    }
+
+    /// Sub-tile edge along an axis — comptime, since it sizes shared memory.
+    pub fn sub_tile_edge(&self, #[comptime] axis: Axis) -> comptime_type!(u32) {
+        comptime!(self.sub_tile.get(axis))
     }
 
     /// How an axis is distributed.
-    pub fn distribution(&self, axis: Axis) -> Distribution {
-        match self {
-            Partitioner::RowMajor { dists, .. } | Partitioner::Reversed { dists, .. } => {
-                dists.get(axis)
-            }
+    pub fn distribution(&self, #[comptime] axis: Axis) -> comptime_type!(Distribution) {
+        comptime!(self.dists.get(axis))
+    }
+
+    /// The order this partitioner visits its steps in.
+    pub fn order(&self) -> comptime_type!(WalkOrder) {
+        comptime!(self.order)
+    }
+
+    /// The [`Walk`] over `grid` (per-axis tile counts, which carry their own
+    /// frame). The caller supplies the grid — an operation reads it from its
+    /// operands — and the partitioner only owns the order it's walked in.
+    pub fn walk(&self, grid: Grid) -> Walk {
+        Walk::new(grid, self.clone())
+    }
+}
+
+/// A [`Partitioner`] instantiated against a [`Grid`]: the runtime half of the
+/// walk, so the odometer lives here as methods ([`total`](Walk::total) /
+/// [`point`](Walk::point)). The partitioner rides along as comptime config.
+#[derive(CubeType)]
+pub struct Walk {
+    grid: Grid,
+    steps: u32,
+    partitioner: Partitioner,
+}
+
+#[cube]
+impl Walk {
+    /// Instantiate over `grid`; the total step count is the product of its tile
+    /// counts.
+    pub fn new(grid: Grid, partitioner: Partitioner) -> Walk {
+        let frame = grid.frame();
+        let mut steps = 1u32;
+        #[unroll]
+        for p in 0..comptime!(frame.rank()) {
+            let axis = comptime!(frame.axis_at(p));
+            let dist = partitioner.distribution(axis);
+            steps *= axis_count(grid.tiles(axis), dist);
+        }
+        Walk {
+            grid,
+            steps,
+            partitioner,
         }
     }
 
-    /// Steps the current instance takes along an axis (its local share).
-    fn count(&self, space: &Space, axis: Axis) -> u32 {
-        let grid = space.extent(axis) / self.sub_tile_edge(axis);
-        match self.distribution(axis) {
-            Distribution::Sequential => grid,
-            Distribution::Spatial { coverage, .. } => coverage.tiles_each(grid),
-        }
+    /// Number of steps the walk visits.
+    pub fn total(&self) -> u32 {
+        self.steps
     }
 
-    /// The [`Coord`] one axis takes at local `step`.
-    fn locate(&self, space: &Space, axis: Axis, step: u32) -> Coord {
-        match self.distribution(axis) {
-            Distribution::Sequential => Coord::Fixed(step),
-            Distribution::Spatial {
-                unit,
-                spread,
-                coverage,
-            } => {
-                let grid = space.extent(axis) / self.sub_tile_edge(axis);
-                match spread {
-                    Spread::Contiguous => Coord::Affine {
-                        unit,
-                        stride: coverage.tiles_each(grid),
-                        offset: step,
-                    },
-                    Spread::Interleaved => Coord::Affine {
-                        unit,
-                        stride: 1,
-                        offset: step * coverage.instances(grid),
-                    },
-                }
-            }
-        }
+    /// The [`Point`] at walk step `i`. The partitioner decides which odometer
+    /// index step `i` maps to ([`walk_index`]), so the consumer just iterates
+    /// `0..total` and the order stays the partitioner's business.
+    pub fn point(&self, i: u32) -> Point {
+        let idx = walk_index(i, self.steps, self.partitioner.order());
+        self.resolve(idx)
     }
 
-    /// The ordered [`Cell`]s this level visits, as an odometer over the space's
-    /// axes (last axis fastest).
-    pub fn walk(&self, space: &Space) -> Vec<Cell> {
-        let n = space.rank();
-
-        let mut counts = [1u32; MAX_AXES];
-        let mut total = 1u32;
-        let mut p = 0;
-        while p < n {
-            counts[p] = self.count(space, space.axis_at(p));
-            total *= counts[p];
-            p += 1;
+    /// Unravel a runtime step `idx` to a [`Point`]: the odometer (last axis
+    /// fastest) read off the grid's tile counts, each step mapped to its grid
+    /// coordinate. Only the axis structure (order, distribution) is comptime.
+    fn resolve(&self, idx: u32) -> Point {
+        let frame = self.grid.frame();
+        // Per-axis tile counts (runtime), in frame order.
+        let mut counts = Sequence::<u32>::new();
+        #[unroll]
+        for p in 0..comptime!(frame.rank()) {
+            let axis = comptime!(frame.axis_at(p));
+            let dist = self.partitioner.distribution(axis);
+            counts.push(axis_count(self.grid.tiles(axis), dist));
         }
 
-        let mut cells = Vec::with_capacity(total as usize);
-        let mut index = [0u32; MAX_AXES];
-        let mut visited = 0u32;
-        while visited < total {
-            let mut entries = [(Axis(0), Coord::Fixed(0)); MAX_AXES];
-            let mut q = 0;
-            while q < n {
-                let axis = space.axis_at(q);
-                entries[q] = (axis, self.locate(space, axis, index[q]));
-                q += 1;
+        let mut coords = Sequence::<u32>::new();
+        #[unroll]
+        for p in 0..comptime!(frame.rank()) {
+            // weight = product of later axes' counts (last axis fastest).
+            let mut weight = 1u32;
+            #[unroll]
+            for e in comptime!(p + 1)..comptime!(frame.rank()) {
+                weight *= *counts.index(e);
             }
-            cells.push(ByAxis::new(&entries[..n]));
-
-            // Increment the odometer: last axis fastest.
-            let mut d = n;
-            while d > 0 {
-                d -= 1;
-                index[d] += 1;
-                if index[d] < counts[d] {
-                    break;
-                }
-                index[d] = 0;
-            }
-            visited += 1;
+            let local = (idx / weight) % *counts.index(p);
+            let axis = comptime!(frame.axis_at(p));
+            let dist = self.partitioner.distribution(axis);
+            coords.push(coord_of(local, self.grid.tiles(axis), dist));
         }
-
-        if matches!(self, Partitioner::Reversed { .. }) {
-            cells.reverse();
-        }
-        cells
+        Point::new(coords, frame)
     }
+}
+
+/// The odometer index visited at walk step `i` of `total` — one arm per
+/// [`WalkOrder`]. The caller never learns which order it is; a new order is just
+/// a new arm.
+#[cube]
+fn walk_index(i: u32, total: u32, #[comptime] order: WalkOrder) -> u32 {
+    match order {
+        WalkOrder::RowMajor => i,
+        WalkOrder::Reversed => total - i - 1,
+    }
+}
+
+/// Tiles this instance walks along an axis with `grid` tiles total: the whole
+/// grid when `Sequential`, else its `Spatial` share.
+#[cube]
+fn axis_count(grid: u32, #[comptime] dist: Distribution) -> u32 {
+    let mut count = grid;
+    if comptime!(matches!(dist, Distribution::Spatial { .. })) {
+        count = tiles_each_rt(grid, comptime!(dist.coverage()));
+    }
+    count
+}
+
+/// Grid coordinate for a runtime local `step`: `step` for `Sequential`, else the
+/// `Spatial` axis folds its hardware instance in (`Contiguous`: instance owns a
+/// run; `Interleaved`: instances take turns).
+#[cube]
+fn coord_of(step: u32, grid: u32, #[comptime] dist: Distribution) -> u32 {
+    let mut coord = step;
+    if comptime!(matches!(dist, Distribution::Spatial { .. })) {
+        let cov = comptime!(dist.coverage());
+        let unit = comptime!(dist.unit());
+        if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
+            coord = step + hw_pos(unit) * tiles_each_rt(grid, cov);
+        } else {
+            coord = step * instances_rt(grid, cov) + hw_pos(unit);
+        }
+    }
+    coord
+}
+
+/// Tiles each instance covers, given the axis's runtime tile `grid`. `TilesEach`
+/// pins it; `Instances` splits the grid.
+#[cube]
+fn tiles_each_rt(grid: u32, #[comptime] cov: Coverage) -> u32 {
+    let mut out = u32::from_int(comptime!(cov.tiles_const().unwrap_or(0) as i64));
+    if comptime!(cov.instances_const().is_some()) {
+        out = grid / comptime!(cov.instances_const().unwrap());
+    }
+    out
+}
+
+/// Instances covering the axis, given its runtime tile `grid`. `Instances` pins
+/// it; `TilesEach` derives it from the grid.
+#[cube]
+fn instances_rt(grid: u32, #[comptime] cov: Coverage) -> u32 {
+    let mut out = u32::from_int(comptime!(cov.instances_const().unwrap_or(0) as i64));
+    if comptime!(cov.tiles_const().is_some()) {
+        out = grid / comptime!(cov.tiles_const().unwrap());
+    }
+    out
+}
+
+/// This cube's position along the dimension a `Cube` primitive rides. (Plane and
+/// Unit spreading land with the inner levels.)
+#[cube]
+fn hw_pos(#[comptime] unit: ComputePrimitive) -> u32 {
+    #[comptime]
+    let dim = match unit {
+        ComputePrimitive::Cube(dim) => dim,
+        _ => {
+            panic!("hw_pos: only Cube spreading is implemented (Plane/Unit are inner-level seams)")
+        }
+    };
+    // Comptime selection: only the matched arm's builtin is emitted.
+    let mut pos = CUBE_POS_X;
+    if comptime!(matches!(dim, CubeDimension::Y)) {
+        pos = CUBE_POS_Y;
+    }
+    if comptime!(matches!(dim, CubeDimension::Z)) {
+        pos = CUBE_POS_Z;
+    }
+    pos
 }
 
 /// The launch geometry a partitioner implies: cube dimension `d` gets the

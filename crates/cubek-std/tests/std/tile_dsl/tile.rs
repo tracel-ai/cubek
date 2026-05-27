@@ -21,7 +21,6 @@ pub struct Tile<E: Numeric, S: Size> {
     pub kind: TileKind<E, S>,
     #[cube(comptime)]
     pub(crate) space: Space,
-    #[cube(comptime)]
     pub(crate) partitioner: Partitioner,
 }
 
@@ -49,19 +48,20 @@ impl<E: Numeric, S: Size> Tile<E, S> {
     pub fn partition(&self, point: &Point) -> Tile<E, S> {
         let g0 = point.get(comptime!(self.space.axis_at(0)));
         let g1 = point.get(comptime!(self.space.axis_at(1)));
-        let rows = comptime!(self.partitioner.sub_tile_edge(self.space.axis_at(0)));
-        let cols = comptime!(self.partitioner.sub_tile_edge(self.space.axis_at(1)));
-        let layout = TileSelectLayout::new(g0, g1, rows, cols);
+        let rows = self.partitioner.sub_tile_edge(comptime!(self.space.axis_at(0)));
+        let cols = self.partitioner.sub_tile_edge(comptime!(self.space.axis_at(1)));
+        // The tile's origin in semantic coords: its grid index times its size.
+        let layout = TileWindow::new(g0 * rows, g1 * cols, rows, cols);
         match &self.kind {
             TileKind::GmemTiledRead(grid) => Gmem::read_leaf::<E, S>(
                 grid.view(layout),
                 comptime!(self.space.clone()),
-                comptime!(self.partitioner.clone()),
+                self.partitioner.clone(),
             ),
             TileKind::GmemTiledWrite(grid) => Gmem::write_leaf::<E, S>(
                 grid.view_mut(layout),
                 comptime!(self.space.clone()),
-                comptime!(self.partitioner.clone()),
+                self.partitioner.clone(),
             ),
             TileKind::GmemRead(_) | TileKind::GmemWrite(_) | TileKind::Smem(_) => {
                 panic!("Tile::partition: only a whole tiled tensor can be partitioned")
@@ -92,6 +92,27 @@ impl<E: Numeric, S: Size> Tile<E, S> {
             }
         }
     }
+
+    /// The runtime number of tiles along `axis`: the tensor's semantic extent on
+    /// that axis divided by the sub-tile size. Read from the view's *semantic*
+    /// shape, so it's the same whether or not the storage is physically tiled.
+    pub fn tiles(&self, #[comptime] axis: Axis) -> u32 {
+        let shape = self.semantic_shape();
+        let extent = *shape.index(comptime!(self.space.position(axis)));
+        extent / self.partitioner.sub_tile_edge(axis)
+    }
+
+    /// The semantic (logical) shape of a whole tensor view (panics for
+    /// leaves/smem).
+    fn semantic_shape(&self) -> CoordsDyn {
+        match &self.kind {
+            TileKind::GmemTiledRead(v) => v.shape(),
+            TileKind::GmemTiledWrite(v) => v.shape(),
+            TileKind::GmemRead(_) | TileKind::GmemWrite(_) | TileKind::Smem(_) => {
+                panic!("Tile::tiles: only a whole tensor has a tile grid")
+            }
+        }
+    }
 }
 
 /// Factory for global-memory tiles. The client supplies the [`Space`] each
@@ -104,7 +125,7 @@ impl Gmem {
     pub fn tiled_read<E: Numeric, S: Size>(
         view: View<Vector<E, S>, CoordsDyn>,
         #[comptime] space: Space,
-        #[comptime] partitioner: Partitioner,
+        partitioner: Partitioner,
     ) -> Tile<E, S> {
         Tile::<E, S> {
             kind: TileKind::new_GmemTiledRead(view),
@@ -117,7 +138,7 @@ impl Gmem {
     pub fn tiled_write<E: Numeric, S: Size>(
         view: View<Vector<E, S>, CoordsDyn, ReadWrite>,
         #[comptime] space: Space,
-        #[comptime] partitioner: Partitioner,
+        partitioner: Partitioner,
     ) -> Tile<E, S> {
         Tile::<E, S> {
             kind: TileKind::new_GmemTiledWrite(view),
@@ -130,7 +151,7 @@ impl Gmem {
     pub fn read_leaf<E: Numeric, S: Size>(
         view: View<Vector<E, S>, Coords2d>,
         #[comptime] space: Space,
-        #[comptime] partitioner: Partitioner,
+        partitioner: Partitioner,
     ) -> Tile<E, S> {
         Tile::<E, S> {
             kind: TileKind::new_GmemRead(view),
@@ -143,7 +164,7 @@ impl Gmem {
     pub fn write_leaf<E: Numeric, S: Size>(
         view: View<Vector<E, S>, Coords2d, ReadWrite>,
         #[comptime] space: Space,
-        #[comptime] partitioner: Partitioner,
+        partitioner: Partitioner,
     ) -> Tile<E, S> {
         Tile::<E, S> {
             kind: TileKind::new_GmemWrite(view),
@@ -161,7 +182,7 @@ impl Smem {
     pub fn stage<E: Numeric, S: Size>(
         view: View<Vector<E, S>, Coords2d, ReadWrite>,
         #[comptime] space: Space,
-        #[comptime] partitioner: Partitioner,
+        partitioner: Partitioner,
     ) -> Tile<E, S> {
         Tile::<E, S> {
             kind: TileKind::new_Smem(view),

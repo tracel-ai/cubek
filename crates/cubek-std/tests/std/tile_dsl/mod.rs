@@ -10,8 +10,8 @@
 //!   operation's space is the [union](Space::union) of its operands' spaces, and
 //!   the contracted axes are `union ∖ output`.
 //! - [`partitioner`] — how a level is split ([`Distribution`]/[`Coverage`]/
-//!   [`Spread`]), the walk [`Coord`]s/[`Cell`]s/[`Point`] that produces, and the
-//!   [`Partitioner`] that walks the space as an odometer.
+//!   [`Spread`]) and the [`Walk`] over a [`Grid`] (the space sized in tiles — the
+//!   runtime sibling of [`Space`]) whose odometer turns a step into a [`Point`].
 //! - [`tile`] — the [`Tile`] itself, its memory-space [`TileKind`]s, the three
 //!   verbs (`mma`/`partition`/`copy_from`), and the [`Gmem`]/[`Smem`] factories.
 //! - [`mma`] — the lowering strategies the verbs dispatch to.

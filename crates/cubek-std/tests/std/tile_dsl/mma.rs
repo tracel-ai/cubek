@@ -14,8 +14,6 @@ use super::*;
 /// (→ [`mma_leaf`]).
 #[cube]
 pub fn mma_gmem<E: Numeric, S: Size>(out: &Tile<E, S>, lhs: &Tile<E, S>, rhs: &Tile<E, S>) {
-    let partitioner = comptime!(out.partitioner.clone());
-
     // The operation ranges over the union of its operands' spaces
     // ({M,N} ∪ {M,K} ∪ {K,N} = {M,N,K}) and contracts the axes the output drops
     // (union ∖ out = {K}). `out.partition` ignores those, so each contracted fiber
@@ -27,30 +25,34 @@ pub fn mma_gmem<E: Numeric, S: Size>(out: &Tile<E, S>, lhs: &Tile<E, S>, rhs: &T
         "mma: the output must drop at least one (contracted) axis"
     ));
 
-    // Stage each operand at its own axes' sub-tile size.
-    let a_rows = comptime!(partitioner.sub_tile_edge(lhs.space.axis_at(0)));
-    let a_cols = comptime!(partitioner.sub_tile_edge(lhs.space.axis_at(1)));
-    let b_rows = comptime!(partitioner.sub_tile_edge(rhs.space.axis_at(0)));
-    let b_cols = comptime!(partitioner.sub_tile_edge(rhs.space.axis_at(1)));
+    // Stage each operand at its own axes' sub-tile size (comptime, from the
+    // partitioner).
+    let a_rows = lhs.partitioner.sub_tile_edge(comptime!(lhs.space.axis_at(0)));
+    let a_cols = lhs.partitioner.sub_tile_edge(comptime!(lhs.space.axis_at(1)));
+    let b_rows = rhs.partitioner.sub_tile_edge(comptime!(rhs.space.axis_at(0)));
+    let b_cols = rhs.partitioner.sub_tile_edge(comptime!(rhs.space.axis_at(1)));
 
     let mut a_smem = SharedMemory::<Vector<E, S>>::new(comptime!((a_rows * a_cols) as usize));
     let mut b_smem = SharedMemory::<Vector<E, S>>::new(comptime!((b_rows * b_cols) as usize));
     let a_tile = Smem::stage::<E, S>(
         a_smem.view_mut(smem_tile_layout(a_rows, a_cols)),
         comptime!(lhs.space.clone()),
-        partitioner.clone(),
+        lhs.partitioner.clone(),
     );
     let b_tile = Smem::stage::<E, S>(
         b_smem.view_mut(smem_tile_layout(b_rows, b_cols)),
         comptime!(rhs.space.clone()),
-        partitioner.clone(),
+        rhs.partitioner.clone(),
     );
 
-    let walk = comptime!(partitioner.walk(&space));
-    let steps = comptime!(walk.len() as u32);
-    #[unroll]
-    for i in 0..steps {
-        let point = resolve(comptime!(walk[i as usize].clone()), space.clone());
+    // Build this matmul's tile grid from the operands, then let the partitioner
+    // walk it. The grid is the matmul-specific half; the walk (order, iteration)
+    // is generic, so no index arithmetic leaks here.
+    let grid = mma_grid::<E, S>(out, lhs, rhs, comptime!(space.clone()));
+    let walk = out.partitioner.walk(grid);
+    let total = walk.total();
+    for i in 0..total {
+        let point = walk.point(i);
 
         let a_leaf = lhs.partition(&point);
         let b_leaf = rhs.partition(&point);
@@ -62,50 +64,40 @@ pub fn mma_gmem<E: Numeric, S: Size>(out: &Tile<E, S>, lhs: &Tile<E, S>, rhs: &T
     }
 }
 
-/// Resolve a walk [`Cell`] to a runtime [`Point`]: one index per axis in the
-/// space's order, tagged with that space as the point's frame.
+/// This matmul's tile [`Grid`] for `space`, each axis's tile count read from an
+/// operand that carries it. The matmul-specific half of building a walk; the
+/// partitioner takes the grid from here ([`Partitioner::walk`]).
 #[cube]
-fn resolve(#[comptime] cell: Cell, #[comptime] space: Space) -> Point {
-    let mut coords = Sequence::<u32>::new();
+fn mma_grid<E: Numeric, S: Size>(
+    out: &Tile<E, S>,
+    lhs: &Tile<E, S>,
+    rhs: &Tile<E, S>,
+    #[comptime] space: Space,
+) -> Grid {
+    let mut counts = Sequence::<u32>::new();
     #[unroll]
-    for i in 0..comptime!(space.rank()) {
-        let coord = comptime!(cell.get(space.axis_at(i)));
-        coords.push(axis_pos(coord, comptime!(coord.base())));
+    for p in 0..comptime!(space.rank()) {
+        counts.push(tiles_of::<E, S>(out, lhs, rhs, comptime!(space.axis_at(p))));
     }
-    Point::new(coords, comptime!(space.clone()))
+    Grid::new(counts, space)
 }
 
-/// One axis of [`resolve`]: `base` (the `Fixed` index or `Affine` offset) seeds a
-/// runtime value; an `Affine` axis adds its hardware term `hw_pos · stride`.
+/// The runtime tile count along `axis`, read from whichever operand carries it
+/// (comptime choice, runtime read). Every union axis is in at least one operand.
 #[cube]
-fn axis_pos(#[comptime] coord: Coord, base: u32) -> u32 {
-    let mut pos = base;
-    if comptime!(coord.is_affine()) {
-        pos = hw_pos(comptime!(coord.unit())) * comptime!(coord.stride()) + base;
+fn tiles_of<E: Numeric, S: Size>(
+    out: &Tile<E, S>,
+    lhs: &Tile<E, S>,
+    rhs: &Tile<E, S>,
+    #[comptime] axis: Axis,
+) -> u32 {
+    if comptime!(out.space.contains(axis)) {
+        out.tiles(axis)
+    } else if comptime!(lhs.space.contains(axis)) {
+        lhs.tiles(axis)
+    } else {
+        rhs.tiles(axis)
     }
-    pos
-}
-
-/// This cube's position along the dimension a `Cube` primitive rides. (Plane and
-/// Unit spreading land with the inner levels.)
-#[cube]
-fn hw_pos(#[comptime] unit: ComputePrimitive) -> u32 {
-    #[comptime]
-    let dim = match unit {
-        ComputePrimitive::Cube(dim) => dim,
-        _ => {
-            panic!("hw_pos: only Cube spreading is implemented (Plane/Unit are inner-level seams)")
-        }
-    };
-    // Comptime selection: only the matched arm's builtin is emitted.
-    let mut pos = CUBE_POS_X;
-    if comptime!(matches!(dim, CubeDimension::Y)) {
-        pos = CUBE_POS_Y;
-    }
-    if comptime!(matches!(dim, CubeDimension::Z)) {
-        pos = CUBE_POS_Z;
-    }
-    pos
 }
 
 /// Leaf accumulator (shared memory or the output tile). Lowers to [`mma_smem`].

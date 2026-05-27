@@ -1,27 +1,30 @@
-//! 2-D [`Layout`]s that re-present a tiled tensor's storage to the leaf: one
-//! pins a tile out of the physical 4-D grid, the other strides a flat smem tile.
+//! 2-D [`Layout`]s presenting a tensor's storage to the leaf: one windows a tile
+//! out of a tensor by its semantic origin, the other strides a flat smem tile.
 
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
 };
 
-/// Re-presents one tile of a tiled tensor (physical 4-D coords
-/// `[Grid0, Grid1, Tile0, Tile1]`) as a 2-D `[Tile0, Tile1]` view by pinning the
-/// grid coordinates.
+/// Re-presents one tile as a 2-D `[Tile0, Tile1]` view by offsetting local tile
+/// coords to the tile's **semantic origin** `(row0, col0)`. It works in the
+/// tensor's logical coordinates; whatever tiling the underlying view encodes (or
+/// doesn't) is the view's own business, not this layout's.
 #[derive(CubeType, Clone)]
-pub struct TileSelectLayout {
-    g0: u32,
-    g1: u32,
+pub struct TileWindow {
+    row0: u32,
+    col0: u32,
     tile_shape: Coords2d,
 }
 
 #[cube]
-impl TileSelectLayout {
-    pub fn new(g0: u32, g1: u32, #[comptime] rows: u32, #[comptime] cols: u32) -> Self {
-        TileSelectLayout {
-            g0,
-            g1,
+impl TileWindow {
+    /// Window the tile whose origin is `(row0, col0)` in semantic coords, of size
+    /// `rows × cols`.
+    pub fn new(row0: u32, col0: u32, #[comptime] rows: u32, #[comptime] cols: u32) -> Self {
+        TileWindow {
+            row0,
+            col0,
             tile_shape: (
                 u32::from_int(comptime!(rows as i64)),
                 u32::from_int(comptime!(cols as i64)),
@@ -31,17 +34,15 @@ impl TileSelectLayout {
 }
 
 #[cube]
-impl Layout for TileSelectLayout {
+impl Layout for TileWindow {
     type Coordinates = Coords2d;
     type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (t0, t1) = pos;
         let mut out = CoordsDyn::new();
-        out.push(self.g0);
-        out.push(self.g1);
-        out.push(t0);
-        out.push(t1);
+        out.push(self.row0 + t0);
+        out.push(self.col0 + t1);
         out
     }
 

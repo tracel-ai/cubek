@@ -4,7 +4,7 @@
 //! `out = {M, N}`.
 #![allow(non_snake_case)]
 
-use cubecl::std::tensor::layout::tiled_tensor::{TiledTensorView, tiled_tensor_view};
+use cubecl::std::tensor::layout::semantic_tensor::{SemanticTensorView, semantic_tensor_view};
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{
     HostData, HostDataType, LayoutSpec, StridedLayout, TestInput, assert_equals_approx,
@@ -28,14 +28,14 @@ fn ___matmul_sequential_single_cube() {
         8,
         8,
         8,
-        Partitioner::RowMajor {
-            sub_tile: ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            dists: ByAxis::new(&[
+        Partitioner::row_major(
+            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
+            ByAxis::new(&[
                 (M, Distribution::Sequential),
                 (N, Distribution::Sequential),
                 (K, Distribution::Sequential),
             ]),
-        },
+        ),
     );
 }
 
@@ -47,9 +47,9 @@ fn ___matmul_one_tile_per_cube() {
         8,
         8,
         8,
-        Partitioner::RowMajor {
-            sub_tile: ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            dists: ByAxis::new(&[
+        Partitioner::row_major(
+            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
+            ByAxis::new(&[
                 (
                     M,
                     Distribution::Spatial {
@@ -68,7 +68,7 @@ fn ___matmul_one_tile_per_cube() {
                 ),
                 (K, Distribution::Sequential),
             ]),
-        },
+        ),
     );
 }
 
@@ -80,14 +80,14 @@ fn ___matmul_reversed_walk_single_cube() {
         8,
         8,
         8,
-        Partitioner::Reversed {
-            sub_tile: ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            dists: ByAxis::new(&[
+        Partitioner::reversed(
+            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
+            ByAxis::new(&[
                 (M, Distribution::Sequential),
                 (N, Distribution::Sequential),
                 (K, Distribution::Sequential),
             ]),
-        },
+        ),
     );
 }
 
@@ -99,9 +99,9 @@ fn ___matmul_contiguous_m_across_cubes() {
         16,
         8,
         8,
-        Partitioner::RowMajor {
-            sub_tile: ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            dists: ByAxis::new(&[
+        Partitioner::row_major(
+            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
+            ByAxis::new(&[
                 (
                     M,
                     Distribution::Spatial {
@@ -113,7 +113,7 @@ fn ___matmul_contiguous_m_across_cubes() {
                 (N, Distribution::Sequential),
                 (K, Distribution::Sequential),
             ]),
-        },
+        ),
     );
 }
 
@@ -125,9 +125,9 @@ fn ___matmul_interleaved_m_across_cubes() {
         16,
         8,
         8,
-        Partitioner::RowMajor {
-            sub_tile: ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            dists: ByAxis::new(&[
+        Partitioner::row_major(
+            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
+            ByAxis::new(&[
                 (
                     M,
                     Distribution::Spatial {
@@ -139,7 +139,7 @@ fn ___matmul_interleaved_m_across_cubes() {
                 (N, Distribution::Sequential),
                 (K, Distribution::Sequential),
             ]),
-        },
+        ),
     );
 }
 
@@ -187,9 +187,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         &client,
         cube_count,
         cube_dim,
-        tiled_tensor_view(a_handle.binding()),
-        tiled_tensor_view(b_handle.binding()),
-        tiled_tensor_view(c_handle.clone().binding()),
+        semantic_tensor_view(a_handle.binding()),
+        semantic_tensor_view(b_handle.binding()),
+        semantic_tensor_view(c_handle.clone().binding()),
         m,
         n,
         k,
@@ -245,9 +245,9 @@ fn build_tile_permuted<F: Fn(usize, usize) -> f32>(
 /// engine's `mma` do the rest.
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, S: Size>(
-    a: TiledTensorView<Vector<E, S>>,
-    b: TiledTensorView<Vector<E, S>>,
-    c: TiledTensorView<Vector<E, S>, ReadWrite>,
+    a: SemanticTensorView<Vector<E, S>>,
+    b: SemanticTensorView<Vector<E, S>>,
+    c: SemanticTensorView<Vector<E, S>, ReadWrite>,
     #[comptime] m: usize,
     #[comptime] n: usize,
     #[comptime] k: usize,
@@ -255,7 +255,10 @@ fn launch_staged_matmul<E: Numeric, S: Size>(
     #[define(E)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {
-    // Each operand lives in its own space; `mma` unions them into {M,N,K}.
+    // Lift the comptime partitioner config into a runtime instance whose methods
+    // the tiles can call. Each operand lives in its own space; `mma` unions them
+    // into {M,N,K}.
+    let partitioner = Partitioner::hydrate(partitioner);
     let lhs = Gmem::tiled_read::<E, S>(
         a,
         comptime!(Space::new(&[(M, m as u32), (K, k as u32)])),
