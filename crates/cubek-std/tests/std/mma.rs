@@ -81,17 +81,17 @@ pub fn print_mma_layout<AB: CubeElement + Numeric, CD: CubeElement + Numeric>(
     let lane_tensor = TestInput::builder(client.clone(), [rows, cols])
         .dtype(dtype)
         .zeros()
-        .generate();
+        .generate_without_host_data();
 
     let vector_tensor = TestInput::builder(client.clone(), [rows, cols])
         .dtype(dtype)
         .zeros()
-        .generate();
+        .generate_without_host_data();
 
     let within_vector_tensor = TestInput::builder(client.clone(), [rows, cols])
         .dtype(dtype)
         .zeros()
-        .generate();
+        .generate_without_host_data();
 
     match ident {
         MatrixIdent::A | MatrixIdent::B => {

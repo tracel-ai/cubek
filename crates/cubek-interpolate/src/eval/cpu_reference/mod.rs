@@ -29,7 +29,7 @@ pub(crate) fn make_zero_handle(
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)
         .zeros()
-        .generate()
+        .generate_without_host_data()
 }
 
 pub(crate) fn output_shape_for(input_shape: &[usize; 4], output_size: &[usize; 2]) -> Vec<usize> {

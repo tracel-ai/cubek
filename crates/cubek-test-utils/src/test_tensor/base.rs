@@ -206,10 +206,6 @@ impl TestInput {
 
     // Public API returning only TensorHandle
     pub fn generate_without_host_data(self) -> TensorHandle<TestRuntime> {
-        self.generate()
-    }
-
-    pub fn generate(self) -> TensorHandle<TestRuntime> {
         let (shape, strides, dtype) = (
             self.base_spec.shape.clone(),
             self.base_spec.strides(),
@@ -238,7 +234,7 @@ impl TestInput {
     ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.base_spec.client.clone();
 
-        let tensor_handle = self.generate();
+        let tensor_handle = self.generate_without_host_data();
         let host_data =
             HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);
 

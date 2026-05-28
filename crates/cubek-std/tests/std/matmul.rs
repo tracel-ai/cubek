@@ -12,7 +12,7 @@ use super::tile_dsl::{
     Axis, ByAxis, ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Space,
     Spread, Tile, TileKind, TileLaunch, cube_count_for,
 };
-use super::tile_input::{TileInput, tile_permuted};
+use super::tile_input::{TileInput, tile_permute};
 
 // Matmul's three axes — the labels this client gives the engine's opaque `Axis`.
 const M: Axis = Axis(0);
@@ -146,18 +146,22 @@ fn ___matmul_interleaved_m_across_cubes() {
 /// `partitioner`; the launch geometry is derived from it via [`cube_count_for`].
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let tile = partitioner.sub_tile_edge(M) as usize;
+    let tile_edge = partitioner.sub_tile_edge(M) as usize;
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let vector_size = 1;
 
-    // Each operand is a launchable tile: "a tile over these axes with `tile`-sized
-    // subtiles", stored tiled, presented in its logical space.
-    let a = TileInput::read(&client, (M, m), (K, k), tile, |i, j| (i * k + j) as f32);
-    let b = TileInput::read(&client, (K, k), (N, n), tile, |i, j| (i * n + j) as f32);
-    let c = TileInput::write(&client, (M, m), (N, n), tile);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]);
+    let a = TileInput::builder(&client, space.select(&[M, K]))
+        .tile_edge(tile_edge)
+        .arange();
+    let b = TileInput::builder(&client, space.select(&[K, N]))
+        .tile_edge(tile_edge)
+        .arange();
+    let c = TileInput::builder(&client, space.select(&[M, N]))
+        .tile_edge(tile_edge)
+        .zeros();
 
-    let space = Space::new(&[(M, m as u32), (N, n as u32), (K, k as u32)]);
     let cube_count = cube_count_for(&partitioner, &space);
     let cube_dim = CubeDim::new_single();
 
@@ -166,20 +170,44 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         &client,
         cube_count,
         cube_dim,
-        TileLaunch::new(a.view(), partitioner.launch(), a.space(), TileKind::GmemWhole),
-        TileLaunch::new(b.view(), partitioner.launch(), b.space(), TileKind::GmemWhole),
-        TileLaunch::new(c.view(), partitioner.launch(), c.space(), TileKind::GmemWhole),
+        TileLaunch::new(
+            a.view(),
+            partitioner.launch(),
+            a.space(),
+            TileKind::GmemWhole,
+        ),
+        TileLaunch::new(
+            b.view(),
+            partitioner.launch(),
+            b.space(),
+            TileKind::GmemWhole,
+        ),
+        TileLaunch::new(
+            c.view(),
+            partitioner.launch(),
+            c.space(),
+            TileKind::GmemWhole,
+        ),
         dtype,
         vector_size,
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let expected = tile_permuted(m, n, tile, |i, j| {
-        (0..k)
-            .map(|kk| (i * k + kk) as f32 * (kk * n + j) as f32)
-            .sum::<f32>()
-    });
-    let (_, expected) = TestInput::builder(client, shape![m / tile, n / tile, tile, tile])
+    let mut semantic = Vec::with_capacity(m * n);
+    for i in 0..m {
+        for j in 0..n {
+            semantic.push(
+                (0..k)
+                    .map(|kk| (i * k + kk) as f32 * (kk * n + j) as f32)
+                    .sum::<f32>(),
+            );
+        }
+    }
+    let expected = tile_permute(&semantic, m, n, tile_edge);
+    let (_, expected) = TestInput::builder(
+        client,
+        shape![m / tile_edge, n / tile_edge, tile_edge, tile_edge],
+    )
         .custom(expected)
         .generate_with_f32_host_data();
 

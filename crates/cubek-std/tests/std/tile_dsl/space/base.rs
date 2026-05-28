@@ -12,19 +12,19 @@ use super::{Axis, ByAxis, MAX_AXES};
 /// come in this order.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Space {
-    extents: ByAxis<u32>,
+    extents: ByAxis<usize>,
 }
 
 impl Space {
     /// Build from an ordered `(axis, extent)` list — the canonical axis order.
-    pub fn new(extents: &[(Axis, u32)]) -> Self {
+    pub fn new(extents: &[(Axis, usize)]) -> Self {
         Space {
             extents: ByAxis::new(extents),
         }
     }
 
     /// Extent (size) of the space along an axis.
-    pub fn extent(&self, axis: Axis) -> u32 {
+    pub fn extent(&self, axis: Axis) -> usize {
         self.extents.get(axis)
     }
 
@@ -54,7 +54,7 @@ impl Space {
     /// both operands — and panics otherwise. This is how an operation recovers the
     /// space it ranges over from its operands (`{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`).
     pub fn union(parts: &[&Space]) -> Space {
-        let mut entries: SmallVec<[(Axis, u32); MAX_AXES]> = SmallVec::new();
+        let mut entries: SmallVec<[(Axis, usize); MAX_AXES]> = SmallVec::new();
         for part in parts {
             let mut i = 0;
             while i < part.rank() {
@@ -73,6 +73,16 @@ impl Space {
         Space {
             extents: ByAxis::new(&entries),
         }
+    }
+
+    /// The subspace over `axes` (in the given order), extents copied from self.
+    pub fn select(&self, axes: &[Axis]) -> Space {
+        Space::new(
+            &axes
+                .iter()
+                .map(|&a| (a, self.extent(a)))
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// The axes this space contracts when an operation projects it onto `output`:

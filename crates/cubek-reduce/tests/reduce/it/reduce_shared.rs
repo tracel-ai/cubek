@@ -50,7 +50,7 @@ impl TestCase {
             .dtype(input_dtype)
             .layout(StridedLayout::Explicit(vec![1]))
             .zeros()
-            .generate();
+            .generate_without_host_data();
 
         let cube_count = 3;
         let result = shared_sum(

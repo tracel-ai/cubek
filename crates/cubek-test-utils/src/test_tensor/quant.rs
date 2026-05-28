@@ -28,7 +28,7 @@ pub(crate) fn apply_quantization(
     let (scales_shape, scales_data) = compute_input_scales(&tensor.host, &scheme);
     let scale_handle = TestInput::builder(client.clone(), scales_shape.clone())
         .custom(scales_data)
-        .generate();
+        .generate_without_host_data();
 
     // Determine the correct storage type for the quantized output buffer.
     let output_storage_type = match &scheme.store {
@@ -54,11 +54,11 @@ pub(crate) fn apply_quantization(
     let output_handle = TestInput::builder(client.clone(), quant_shape)
         .dtype(output_storage_type)
         .zeros()
-        .generate();
+        .generate_without_host_data();
 
     let out_scale_handle = TestInput::builder(client.clone(), scales_shape)
         .zeros()
-        .generate();
+        .generate_without_host_data();
 
     let input_elem = match tensor.handle.dtype {
         StorageType::Scalar(elem) => elem,
