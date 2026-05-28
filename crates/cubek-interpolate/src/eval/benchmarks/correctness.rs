@@ -1,10 +1,10 @@
 use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
-use crate::definition::InterpolateProblem;
-use crate::eval::{
-    benchmarks::strategy::InterpolateStrategy,
-    cpu_reference::{cpu_reference_result, strategy_result},
+use crate::{
+    definition::InterpolateProblem,
+    eval::cpu_reference::{cpu_reference_result, strategy_result},
+    launch::InterpolateStrategy,
 };
 
 pub struct InterpolateCorrectness;
@@ -15,13 +15,13 @@ impl cubek_test_utils::Correctness for InterpolateCorrectness {
 
     fn kernel_result(
         &self,
-        _strategy: &InterpolateStrategy,
+        strategy: &InterpolateStrategy,
         problem: &InterpolateProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
         let device = <TestRuntime as Runtime>::Device::default();
         let client = <TestRuntime as Runtime>::client(&device);
-        strategy_result(client, problem.clone(), seeds[0])
+        strategy_result(client, problem.clone(), *strategy, seeds[0])
     }
 
     fn reference_result(

@@ -7,7 +7,7 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
-use cubek_std::InputBinding;
+use cubek_std::{InputBinding, tile::ColMajorTilingOrder};
 
 use crate::{
     components::{
@@ -15,7 +15,6 @@ use crate::{
             async_full_cooperative::AsyncFullCooperativeLoading,
             async_full_cyclic::AsyncFullCyclicLoading,
         },
-        stage::ColMajorTilingOrder,
         tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},

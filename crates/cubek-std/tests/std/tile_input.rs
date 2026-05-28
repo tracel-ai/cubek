@@ -1,14 +1,16 @@
-//! A clean, launchable [`Tile`] input for tests. Describe a tile as "a [`Space`]
-//! with `tile_edge`-sized square subtiles" and get a launchable tile: the buffer
-//! is a plain `[grid…, tile…]` strided tensor, presented in its logical space via
-//! an explicit `tiled_view`. No `Tiler`, no semantic-view juggling.
+//! A clean, launchable [`Tile`] input for tests. Describe a tile as a [`Space`]
+//! with a stack of `.split`/`.tile` levels and get a launchable tile: the buffer
+//! is a plain `[grid…, tile…]` strided tensor (or `[grid…, level1…, …]` when
+//! recursively tiled), presented in its logical space via an explicit
+//! `tiled_view`. No `Tiler`, no semantic-view juggling.
+#![allow(dead_code)]
 
 use cubecl::std::tensor::{
     TensorHandle,
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
-use cubecl::{TestRuntime, client::ComputeClient, zspace::shape};
-use cubek_test_utils::TestInput;
+use cubecl::{TestRuntime, client::ComputeClient, zspace::Shape};
+use cubek_test_utils::{TestInput, TestInputBuilder};
 
 use super::tile_dsl::Space;
 
@@ -18,28 +20,34 @@ use super::tile_dsl::Space;
 pub struct TileInput {
     handle: TensorHandle<TestRuntime>,
     space: Space,
+    levels: usize,
 }
 
 impl TileInput {
-    /// Start building a tile over `space`. Set the subtile size with
-    /// [`tile_edge`](TileInputBuilder::tile_edge), then a data finalizer
-    /// ([`arange`](TileInputBuilder::arange) / [`zeros`](TileInputBuilder::zeros)).
+    /// Start building a tile over `space`. Stack tiling levels coarse→fine with
+    /// [`split`](TileInputBuilder::split) (by count) or
+    /// [`tile`](TileInputBuilder::tile) (by element edge) — chain them for
+    /// recursion, or [`untiled`](TileInputBuilder::untiled) for none — then a data
+    /// finalizer ([`arange`](TileInputBuilder::arange) /
+    /// [`zeros`](TileInputBuilder::zeros)).
     pub fn builder(client: &ComputeClient<TestRuntime>, space: Space) -> TileInputBuilder {
         TileInputBuilder {
             client: client.clone(),
             space,
-            tile_edge: None,
+            levels: None,
         }
     }
 
     /// Launch arg for this tile's view — the buffer seen in its logical space.
-    /// Every logical axis is tiled, so `num_tiled = space.rank()`.
+    /// Every logical axis is tiled (`num_tiled = space.rank()`), recursively for
+    /// `levels` nested tile levels.
     pub fn view(&self) -> TiledViewLaunch<TestRuntime> {
         TiledViewLaunch::new_tensor::<TiledViewLayout>(
             self.handle.clone().binding().into_tensor_arg(),
             TileSpec {
                 start_axis: 0,
                 num_tiled: self.space.rank(),
+                levels: self.levels,
             },
         )
     }
@@ -55,82 +63,117 @@ impl TileInput {
     }
 }
 
-/// Fluent builder for a [`TileInput`]: a [`Space`], a square subtile edge, and a
-/// data finalizer that fills the `[grid…, tile…]` buffer.
+/// One tiling level, added coarse→fine. [`Split`](TileLevel::Split) and
+/// [`Tile`](TileLevel::Tile) are duals against the running tile edge: `Tile(e)`
+/// sets the current tile to `e` elements; `Split(n)` divides it into `n`.
+enum TileLevel {
+    /// Divide the current tile into this many subtiles per axis.
+    Split(Vec<usize>),
+    /// Set the current tile to this many elements per axis.
+    Tile(Vec<usize>),
+}
+
+/// Fluent builder for a [`TileInput`]: a [`Space`], a coarse→fine stack of tiling
+/// levels (each a [`split`](Self::split) or [`tile`](Self::tile)), and a data
+/// finalizer that fills the `[grid…, level…, finest…]` buffer.
 pub struct TileInputBuilder {
     client: ComputeClient<TestRuntime>,
     space: Space,
-    tile_edge: Option<usize>,
+    levels: Option<Vec<TileLevel>>,
 }
 
 impl TileInputBuilder {
-    /// Square subtiles of edge `tile_edge` on every axis: the buffer becomes
-    /// `[grid…, tile…]` with `grid = extent / tile_edge` per axis.
-    pub fn tile_edge(mut self, tile_edge: usize) -> Self {
-        self.tile_edge = Some(tile_edge);
+    /// Divide the current tile into `counts[axis]` subtiles per axis — a finer
+    /// level. Chain for recursion: `.split(&[4, 4]).split(&[2, 2])`.
+    pub fn split(mut self, counts: &[usize]) -> Self {
+        self.levels
+            .get_or_insert_with(Vec::new)
+            .push(TileLevel::Split(counts.to_vec()));
         self
     }
 
-    /// Semantic row-major `0, 1, 2, …` over the space, stored tiled so a
-    /// `tiled_view` reads `value(i, j) = i * cols + j` back at logical `(i, j)`.
+    /// Set the current tile to `edges[axis]` elements per axis — a finer level.
+    /// The dual of [`split`](Self::split) (it divides the current edge down to
+    /// `edges`), so `.tile(&[16, 16]).tile(&[8, 8])` ≡ `.tile(&[16, 16]).split(&[2, 2])`.
+    pub fn tile(mut self, edges: &[usize]) -> Self {
+        self.levels
+            .get_or_insert_with(Vec::new)
+            .push(TileLevel::Tile(edges.to_vec()));
+        self
+    }
+
+    /// No subtiling: the buffer is the logical shape itself, row-major (zero tile
+    /// levels — the view is the identity).
+    pub fn untiled(mut self) -> Self {
+        self.levels = Some(Vec::new());
+        self
+    }
+
+    /// Arange `0, 1, 2, …` written straight onto the physical buffer; the
+    /// `tiled_view` then presents it in logical coordinates.
     pub fn arange(self) -> TileInput {
-        let (rows, cols) = self.extents();
-        let tile = self
-            .tile_edge
-            .expect("TileInput: call .tile_edge(...) before a data finalizer");
-        let semantic: Vec<f32> = (0..(rows * cols)).map(|x| x as f32).collect();
-        let tiled = tile_permute(&semantic, rows, cols, tile);
-        self.finalize(tiled)
+        self.build(TestInputBuilder::arange)
     }
 
-    /// All-zeros tiled buffer — e.g. a matmul output.
+    /// All-zeros physical buffer — e.g. a matmul output.
     pub fn zeros(self) -> TileInput {
-        let (rows, cols) = self.extents();
-        self.finalize(vec![0.0; rows * cols])
+        self.build(TestInputBuilder::zeros)
     }
 
-    fn extents(&self) -> (usize, usize) {
-        assert_eq!(self.space.rank(), 2, "TileInput supports 2-D spaces only");
-        let rows = self.space.extent(self.space.axis_at(0));
-        let cols = self.space.extent(self.space.axis_at(1));
-        (rows, cols)
-    }
+    /// Build the `[grid…, level…, finest…]` device buffer, filled by `fill` (a
+    /// `TestInput` finalizer like `arange`/`zeros`) in physical row-major order.
+    /// Walking coarse→fine, each level becomes one block of `rank` dims and the
+    /// leftover edge is the finest block — `(levels + 1) * rank` dims, the layout
+    /// the `tiled_view` reads back.
+    fn build(self, fill: fn(TestInputBuilder) -> TestInput) -> TileInput {
+        let levels = self
+            .levels
+            .expect("TileInput: set .split/.tile(...) or .untiled() before a finalizer");
+        let rank = self.space.rank();
 
-    fn finalize(self, tiled: Vec<f32>) -> TileInput {
-        let (rows, cols) = self.extents();
-        let tile = self
-            .tile_edge
-            .expect("TileInput: call .tile_edge(...) before a data finalizer");
-        let handle = TestInput::builder(
-            self.client.clone(),
-            shape![rows / tile, cols / tile, tile, tile],
-        )
-        .custom(tiled)
-        .generate_without_host_data();
+        let mut current: Vec<usize> = (0..rank)
+            .map(|i| self.space.extent(self.space.axis_at(i)))
+            .collect();
+        let mut blocks: Vec<Vec<usize>> = Vec::with_capacity(levels.len() + 1);
+        for level in &levels {
+            let (values, is_split) = match level {
+                TileLevel::Split(values) => (values, true),
+                TileLevel::Tile(values) => (values, false),
+            };
+            assert_eq!(
+                values.len(),
+                rank,
+                "TileInput: a tile level needs one value per axis (rank {rank})"
+            );
+            let block: Vec<usize> = (0..rank)
+                .map(|i| {
+                    let (edge, value) = (current[i], values[i]);
+                    assert!(
+                        value != 0 && edge % value == 0,
+                        "TileInput: tile value {value} does not divide the current edge {edge} on axis {i}"
+                    );
+                    let (dim, next) = if is_split {
+                        (value, edge / value)
+                    } else {
+                        (edge / value, value)
+                    };
+                    current[i] = next;
+                    dim
+                })
+                .collect();
+            blocks.push(block);
+        }
+        blocks.push(current);
+
+        let mut dims = Vec::with_capacity(blocks.len() * rank);
+        for block in &blocks {
+            dims.extend_from_slice(block);
+        }
+        let builder = TestInput::builder(self.client, Shape::from(dims));
         TileInput {
-            handle,
+            handle: fill(builder).generate_without_host_data(),
             space: self.space,
+            levels: levels.len(),
         }
     }
-}
-
-/// Rearrange a row-major `rows × cols` buffer into `[grid_r, grid_c, tile, tile]`
-/// storage order, so a `tiled_view` reads `semantic[i * cols + j]` back at logical
-/// `(i, j)`. Used for tile inputs and for the expected (matmul) result.
-pub fn tile_permute(semantic: &[f32], rows: usize, cols: usize, tile: usize) -> Vec<f32> {
-    let grid_rows = rows / tile;
-    let grid_cols = cols / tile;
-    let mut out = vec![0.0; rows * cols];
-    for gm in 0..grid_rows {
-        for gn in 0..grid_cols {
-            for tm in 0..tile {
-                for tn in 0..tile {
-                    let offset = gm * grid_cols * tile * tile + gn * tile * tile + tm * tile + tn;
-                    let (i, j) = (gm * tile + tm, gn * tile + tn);
-                    out[offset] = semantic[i * cols + j];
-                }
-            }
-        }
-    }
-    out
 }

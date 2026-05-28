@@ -6,7 +6,6 @@ use cubecl::std::{
 };
 
 pub mod backward;
-pub mod forward;
 
 pub(crate) fn shape_divmod<R: Runtime>(
     binding: &TensorBinding<R>,

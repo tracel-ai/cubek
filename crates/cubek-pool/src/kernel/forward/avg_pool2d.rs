@@ -7,8 +7,11 @@ use super::{
 };
 use crate::definition::{AvgPoolOptions, PoolError};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding,
-    prelude::*, std::tensor::View, tensor_vector_size_parallel,
+    CubeDim, Runtime, calculate_cube_count_elemwise,
+    num_traits::Zero,
+    prelude::{TensorBinding, *},
+    std::tensor::ViewMut,
+    tensor_vector_size_parallel,
 };
 
 struct AvgPoolStrategy;
@@ -77,7 +80,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
     fn store(
         #[comptime] _config: &Self::Config,
         position: Position,
-        output: &mut View<Vector<T, N>, Position, ReadWrite>,
+        output: &mut ViewMut<Vector<T, N>, Position>,
         _output_indices: &mut (),
         accumulator: Self::Accumulator,
     ) {

@@ -5,7 +5,10 @@ use cubecl::{
 
 use crate::{
     MatrixLayout, as_cmma_layout,
-    tile::variants::{MmaIOConfig, StoreMethod, StridedTile},
+    tile::{
+        StridedTile,
+        variants::{MmaIOConfig, StoreMethod},
+    },
 };
 
 /// Writer for storing the output registers.
@@ -172,7 +175,7 @@ fn store_stmatrix<
         let row_slice = row_slice.downcast_mut();
         def.store_matrix::<Vector<E, NV>, N>(row_slice, fragment, ident, num_regs, transposed);
     } else {
-        let mut frag = Array::<Vector<V, N>>::new(num_regs);
+        let mut frag = Array::new(num_regs);
         #[unroll]
         for i in 0..num_regs {
             frag[i] = Vector::cast_from(fragment[i]);

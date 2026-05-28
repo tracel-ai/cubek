@@ -1,5 +1,5 @@
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_std::tile::Strided;
+use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -11,7 +11,7 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{ColMajorTilingOrder, RowMajorTilingOrder, UnitMatmulFamily},
+        stage::UnitPartitioner,
         tile::TileMatmulKind,
     },
     definition::{
@@ -54,26 +54,14 @@ impl Display for SimpleUnitSelectionArgs {
 impl<RC, LL, RL, AL> Routine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC, TileKind = Strided>,
-    RL: FullLoadingStrategy<
-            RC,
-            Stage = LL::Stage,
-            TileKind = Strided,
-            SyncStrategy = LL::SyncStrategy,
-        >,
-    AL: FullLoadingStrategy<RC, TileKind = Strided, SyncStrategy = LL::SyncStrategy>,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, Stage = LL::Stage, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleUnitSelectionArgs;
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
-        SimpleMatmulFamily<
-            UnitMatmulFamily<LL::Stage, Option<AL::Stage>>,
-            RC,
-            LL,
-            RL,
-            AL,
-            UnitWriterFamily,
-        >,
+        SimpleMatmulFamily<UnitPartitioner, RC, LL, RL, AL, UnitWriterFamily>,
         RowMajorGlobalPartitionMatmul,
     >;
     type Blueprint = TilingBlueprint;

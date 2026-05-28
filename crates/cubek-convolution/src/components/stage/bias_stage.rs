@@ -1,10 +1,10 @@
 use cubecl::prelude::*;
-use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily, TilingLayout};
+use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily};
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{
     stage::{StageMemoryConfig, as_swizzle_object},
-    tile::{SharedTile, StridedTile, Tile, TileScope},
+    tile::{SharedTile, StridedTile, Tile, TileScope, TilingLayout},
 };
 
 use crate::components::stage::reader::BiasTilingLayout;
@@ -15,12 +15,13 @@ impl StageFamily for BiasStageFamily {
     type Stage<ES: Numeric, NS: Size, T: TilingLayout> = BiasStageMemory<ES, NS>;
 }
 
-#[derive(CubeType, Clone, Copy)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 /// Wrapper over the shared memory used for staging,
 /// abstracting its layout
 pub struct BiasStageMemory<ES: Numeric, NS: Size> {
     /// Underlying shared memory
-    pub smem: SharedMemory<Vector<ES, NS>>,
+    pub smem: Shared<[Vector<ES, NS>]>,
     /// Swizzling of the shared memory, if any
     pub swizzle: Swizzle,
     buffer_index: u32,
@@ -54,7 +55,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
         // Ensure all stages are aligned properly
         let stage_size = stage_size_bytes.next_multiple_of(align) / type_size / vector_size;
 
-        let smem = Shared::new_aligned_array(config.num_stages as usize * stage_size, align);
+        let smem = Shared::new_aligned_slice(config.num_stages as usize * stage_size, align);
 
         BiasStageMemory::<ES, NS> {
             smem,
@@ -67,7 +68,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 
     pub fn with_buffer_index(&self, buffer_idx: u32) -> Self {
         BiasStageMemory::<ES, NS> {
-            smem: self.smem,
+            smem: self.smem.clone(),
             swizzle: self.swizzle,
             stage_size: self.stage_size,
             config: self.config,
@@ -105,7 +106,11 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
 #[cube]
 impl<ES: Numeric, NS: Size> Stage<ES> for BiasStageMemory<ES, NS> {
     fn tile<Sc: TileScope>(this: &Self, tile: Coords2d) -> Tile<ES, Sc> {
-        Tile::new_SharedMemory(SharedTile::wrap::<NS>(this.get_tile(tile)))
+        Tile::new_SharedTile(SharedTile::wrap::<NS>(this.get_tile(tile)))
+    }
+
+    fn as_stage_tile<Sc: TileScope>(_this: &Self) -> Tile<ES, Sc> {
+        Tile::new_None()
     }
 }
 

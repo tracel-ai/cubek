@@ -310,8 +310,7 @@ impl TestInputBuilder {
         self
     }
 
-    /// Override the layout. Defaults to a row-major base with no tile. Use
-    /// [`LayoutSpec::tiled`] to attach a tile spec to a base stride layout.
+    /// Override the layout. Defaults to a row-major base stride layout.
     pub fn layout(mut self, layout: impl Into<LayoutSpec>) -> Self {
         self.layout = layout.into();
         self

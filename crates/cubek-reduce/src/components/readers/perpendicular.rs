@@ -16,8 +16,8 @@ use cubecl::{
 };
 
 #[derive(CubeType)]
-pub struct PerpendicularReader<P: ReducePrecision> {
-    view: View<Vector<P::EI, P::SI>, Coords1d>,
+pub struct PerpendicularReader<'a, P: ReducePrecision> {
+    view: View<'a, Vector<P::EI, P::SI>, Coords1d>,
     /// The global offset that points where the vector to reduce is located in global memory.
     batch_offset: usize,
     vector_offset_stride: usize,
@@ -28,10 +28,10 @@ pub struct PerpendicularReader<P: ReducePrecision> {
 }
 
 #[cube]
-impl<P: ReducePrecision> PerpendicularReader<P> {
+impl<'a, P: ReducePrecision> PerpendicularReader<'a, P> {
     #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: NumericVector>(
-        input: &VirtualTensor<P::EI, P::SI>,
+        input: &'a VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,
         reduce_axis: usize,
@@ -39,7 +39,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
         idle: ComptimeOption<bool>,
         effective_plane_dim: u32,
         #[comptime] bound_checks: BoundChecks,
-    ) -> PerpendicularReader<P> {
+    ) -> PerpendicularReader<'a, P> {
         let vector_size = input.vector_size();
         let output_index = reduce_index * vector_size;
 
@@ -56,7 +56,7 @@ impl<P: ReducePrecision> PerpendicularReader<P> {
 
         let bound_checks = ReaderBoundChecks::new::<I>(inst, shape, idle, bound_checks);
 
-        PerpendicularReader::<P> {
+        PerpendicularReader::<'a, P> {
             view: input.view(PlainLayout::new(input.len())),
             batch_offset,
             vector_offset_stride,

@@ -4,6 +4,7 @@ use cubecl::{Runtime, client::ComputeClient};
 use cubek_std::{
     PartitionSize, TileSize,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
+    tile::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
 
 use crate::{
@@ -18,10 +19,7 @@ use crate::{
             },
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{
-            ColMajorTilingOrder, PartitionBuffering, PlaneMatmulFamily, RowMajorTilingOrder,
-            StridedStageFamily,
-        },
+        stage::{PartitionBuffering, PlanePartitioner},
         tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint, TilingScheme},
@@ -51,7 +49,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         SimpleMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             SyncFullCyclicLoading<RowMajorTilingOrder>,
             SyncFullCyclicLoading<ColMajorTilingOrder>,
@@ -135,7 +133,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         DoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncPartialCyclicLoading<ColMajorTilingOrder>,

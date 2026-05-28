@@ -12,7 +12,7 @@ use super::tile_dsl::{
     Axis, ByAxis, ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Space,
     Spread, Tile, TileKind, TileLaunch, cube_count_for,
 };
-use super::tile_input::{TileInput, tile_permute};
+use super::tile_input::TileInput;
 
 // Matmul's three axes — the labels this client gives the engine's opaque `Axis`.
 const M: Axis = Axis(0);
@@ -153,13 +153,13 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 
     let space = Space::new(&[(M, m), (N, n), (K, k)]);
     let a = TileInput::builder(&client, space.select(&[M, K]))
-        .tile_edge(tile_edge)
+        .tile(&[tile_edge, tile_edge])
         .arange();
     let b = TileInput::builder(&client, space.select(&[K, N]))
-        .tile_edge(tile_edge)
+        .tile(&[tile_edge, tile_edge])
         .arange();
     let c = TileInput::builder(&client, space.select(&[M, N]))
-        .tile_edge(tile_edge)
+        .tile(&[tile_edge, tile_edge])
         .zeros();
 
     let cube_count = cube_count_for(&partitioner, &space);
@@ -193,23 +193,36 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    let mut semantic = Vec::with_capacity(m * n);
-    for i in 0..m {
-        for j in 0..n {
-            semantic.push(
-                (0..k)
-                    .map(|kk| (i * k + kk) as f32 * (kk * n + j) as f32)
-                    .sum::<f32>(),
-            );
+
+    // Inputs are physical-order aranges over their `[grid, grid, tile, tile]`
+    // buffers, so the value the kernel reads at logical `(i, j)` is the element's
+    // flat physical index. Build the expected matmul in that same physical order.
+    let at = |i: usize, j: usize, cols: usize| -> f32 {
+        let grid_c = cols / tile_edge;
+        let (gi, ti) = (i / tile_edge, i % tile_edge);
+        let (gj, tj) = (j / tile_edge, j % tile_edge);
+        (((gi * grid_c + gj) * tile_edge + ti) * tile_edge + tj) as f32
+    };
+    let (grid_m, grid_n) = (m / tile_edge, n / tile_edge);
+    let mut expected = vec![0.0f32; m * n];
+    for gm in 0..grid_m {
+        for gn in 0..grid_n {
+            for tm in 0..tile_edge {
+                for tn in 0..tile_edge {
+                    let (i, j) = (gm * tile_edge + tm, gn * tile_edge + tn);
+                    let value = (0..k).map(|kk| at(i, kk, k) * at(kk, j, n)).sum::<f32>();
+                    let offset = ((gm * grid_n + gn) * tile_edge + tm) * tile_edge + tn;
+                    expected[offset] = value;
+                }
+            }
         }
     }
-    let expected = tile_permute(&semantic, m, n, tile_edge);
     let (_, expected) = TestInput::builder(
         client,
         shape![m / tile_edge, n / tile_edge, tile_edge, tile_edge],
     )
-        .custom(expected)
-        .generate_with_f32_host_data();
+    .custom(expected)
+    .generate_with_f32_host_data();
 
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
@@ -220,9 +233,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// partitioner), so the whole matmul is one line.
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, S: Size>(
-    a: Tile<E, S, CoordsDyn>,
-    b: Tile<E, S, CoordsDyn>,
-    c: Tile<E, S, CoordsDyn>,
+    a: Tile<'_, E, S, CoordsDyn>,
+    b: Tile<'_, E, S, CoordsDyn>,
+    c: Tile<'_, E, S, CoordsDyn>,
     #[define(E)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {

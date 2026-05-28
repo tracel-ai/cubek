@@ -10,7 +10,7 @@ use super::{Axis, Space};
 /// never positionally. A `Point` is a coordinate *within* a grid.
 #[derive(CubeType)]
 pub struct Grid {
-    counts: Sequence<u32>,
+    counts: Sequence<usize>,
     #[cube(comptime)]
     frame: Space,
 }
@@ -18,12 +18,12 @@ pub struct Grid {
 #[cube]
 impl Grid {
     /// Wrap per-axis tile `counts` (runtime, in `frame` order).
-    pub fn new(counts: Sequence<u32>, #[comptime] frame: Space) -> Grid {
+    pub fn new(counts: Sequence<usize>, #[comptime] frame: Space) -> Grid {
         Grid { counts, frame }
     }
 
     /// Tiles along `axis`, located via the grid's frame.
-    pub fn tiles(&self, #[comptime] axis: Axis) -> u32 {
+    pub fn tiles(&self, #[comptime] axis: Axis) -> usize {
         *self.counts.index(comptime!(self.frame.position(axis)))
     }
 

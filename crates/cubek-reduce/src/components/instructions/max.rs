@@ -17,7 +17,7 @@ impl ReduceFamily for Max {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Max {
-    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
+    type SharedAccumulator = Shared<[Vector<P::EA, P::SI>]>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {

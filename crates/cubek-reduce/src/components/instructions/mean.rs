@@ -22,7 +22,7 @@ fn null_input<P: ReducePrecision, SI: ReduceInstruction<P>>(sum: &SI) -> Vector<
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
-    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
+    type SharedAccumulator = Shared<[Vector<P::EA, P::SI>]>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {

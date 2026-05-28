@@ -33,14 +33,28 @@ impl<
     AP: AttentionPrecision,
 > GlobalAttention<AP> for SimpleGlobalAttention<AP, SA>
 {
-    type KeyReader =
-        FullStageGlobalReader<KG<AP>, KGS<AP>, KS<AP>, KSS<AP>, (), AttentionLoadingStrategy>;
-    type ValueReader =
-        FullStageGlobalReader<VG<AP>, VGS<AP>, VS<AP>, VSS<AP>, (), AttentionLoadingStrategy>;
-    type MaskReader = MaskReader<AP>;
+    type KeyReader = FullStageGlobalReader<
+        'static,
+        KG<AP>,
+        KGS<AP>,
+        KS<AP>,
+        KSS<AP>,
+        (),
+        AttentionLoadingStrategy,
+    >;
+    type ValueReader = FullStageGlobalReader<
+        'static,
+        VG<AP>,
+        VGS<AP>,
+        VS<AP>,
+        VSS<AP>,
+        (),
+        AttentionLoadingStrategy,
+    >;
+    type MaskReader = MaskReader<'static, AP>;
 
-    type Writer =
-        <SA::Partitioner as AttentionPartitioner>::Writer<OS<AP>, OSS<AP>, OG<AP>, OGS<AP>>;
+    type Writer<'a> =
+        <SA::Partitioner as AttentionPartitioner>::Writer<'a, OS<AP>, OSS<AP>, OG<AP>, OGS<AP>>;
 
     type Config = SimpleGlobalAttentionConfig<SA::Config>;
 
@@ -49,7 +63,7 @@ impl<
         mut key_reader: Self::KeyReader,
         mut value_reader: Self::ValueReader,
         mut mask_reader: Self::MaskReader,
-        mut writer: Self::Writer,
+        mut writer: Self::Writer<'_>,
         seq_q: u32,
         seq_kv: u32,
         #[comptime] config: Self::Config,
@@ -75,13 +89,13 @@ impl<
         let num_stage_iterations =
             seq_kv.div_ceil(config.stage_config.elements_in_partition_seq_kv());
 
-        let mut barrier = ();
+        let barrier = ();
 
         // Global loop over seq_kv
         for _ in 0..num_stage_iterations {
             // Put key and value into stage
-            key_reader.load_stage(&mut barrier, config.key_reader_config);
-            value_reader.load_stage(&mut barrier, config.value_reader_config);
+            key_reader.load_stage(&barrier, config.key_reader_config);
+            value_reader.load_stage(&barrier, config.value_reader_config);
 
             sync_cube();
 
@@ -113,7 +127,7 @@ impl<
 
         // Write accumulators to output
         let mut out_stage = writer.stage();
-        SA::write::<Self::Writer, Self::Config>(
+        SA::write::<Self::Writer<'_>, Self::Config>(
             &mut output_registers,
             &mut out_stage,
             &mut writer,
@@ -126,10 +140,14 @@ impl<
         stage_q_offset: u32,
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
-    ) -> QueryReader<AP> {
+    ) -> QueryReader<'static, AP> {
         let layout = AttentionGlobalLayout::new(&query, batch_index, config.query_gmem_config);
 
-        QueryReader::<AP>::new(stage_q_offset, query.view(layout), config.query_gmem_config)
+        QueryReader::<AP>::new(
+            stage_q_offset,
+            query.into_view(layout),
+            config.query_gmem_config,
+        )
     }
 
     fn init_key_reader(
@@ -140,7 +158,7 @@ impl<
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
         let layout =
             AttentionGlobalLayout::new(&key, batch_index, config.key_reader_config.gmem_config);
-        FullStageGlobalReader::new(key.view(layout), (), step, config.key_reader_config)
+        FullStageGlobalReader::new(key.into_view(layout), (), step, config.key_reader_config)
     }
 
     fn init_value_reader(
@@ -151,7 +169,12 @@ impl<
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
         let layout =
             AttentionGlobalLayout::new(&value, batch_index, config.value_reader_config.gmem_config);
-        FullStageGlobalReader::new(value.view(layout), (), step, config.value_reader_config)
+        FullStageGlobalReader::new(
+            value.into_view(layout),
+            (),
+            step,
+            config.value_reader_config,
+        )
     }
 
     fn init_mask_reader(
@@ -174,7 +197,7 @@ impl<
                 MaskReader::new_materialized(
                     stage_q_offset,
                     partition_q_offset,
-                    mask.view(layout),
+                    mask.into_view(layout),
                     step,
                     seq_kv_shape,
                     config.mask_gmem_config,
@@ -191,13 +214,14 @@ impl<
         stage_q_offset: u32,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,
-    ) -> Self::Writer {
+    ) -> Self::Writer<'static> {
         let layout =
             AttentionGlobalLayout::new(&out, batch_index, config.writer_config.gmem_config);
-        let out = out.view_mut(layout);
+        let out = out.into_view_mut(layout);
+        let shape = out.shape();
 
         Self::Writer::init::<SA::Config>(
-            out.slice_mut((stage_q_offset, 0), out.shape()),
+            out.slice_mut((stage_q_offset, 0), shape),
             config.writer_config,
         )
     }

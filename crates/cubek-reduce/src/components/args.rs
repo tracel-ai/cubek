@@ -240,7 +240,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         _scope: &Scope,
         _index: NativeExpand<usize>,
         _value: NativeExpand<Vector<P::In, P::SizeIn>>,
@@ -311,7 +311,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
     }
 
     fn __expand_write_method(
-        &self,
+        &mut self,
         scope: &Scope,
         index: NativeExpand<usize>,
         value: NativeExpand<Vector<P::Out, P::SizeOut>>,

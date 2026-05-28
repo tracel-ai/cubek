@@ -2,10 +2,9 @@ use cubecl::std::tensor::layout::Coords2d;
 use cubecl::{self, prelude::*};
 
 use crate::tile::{
-    LOGIT_MASKED, Plane, RowWise, Tile, TileKind, TileKindExpand,
+    LOGIT_MASKED, Plane, RowWise, StridedTile, Tile, TileKind, TileKindExpand,
     mask::{Mask, MaskExpand},
     scope::TileScope,
-    variants::strided::StridedTile,
 };
 
 #[derive(CubeType)]
@@ -36,7 +35,7 @@ impl UnitTileLayout {
 #[cube]
 impl<E: Numeric> UnitTile<E> {
     pub fn new(#[comptime] layout: UnitTileLayout) -> UnitTile<E> {
-        let data = Array::<E>::new(comptime!(layout.num_rows * layout.num_cols) as usize);
+        let data = Array::new(comptime!(layout.num_rows * layout.num_cols) as usize);
         UnitTile::<E> { data, layout }
     }
 
@@ -74,7 +73,7 @@ impl<E: Numeric> UnitTile<E> {
     pub fn rowwise_max(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.num_rows) as usize;
         let num_cols = comptime!(self.layout.num_cols) as usize;
-        let mut vals = Array::<E>::new(num_rows);
+        let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -94,7 +93,7 @@ impl<E: Numeric> UnitTile<E> {
     pub fn rowwise_sum(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.num_rows) as usize;
         let num_cols = comptime!(self.layout.num_cols) as usize;
-        let mut vals = Array::<E>::new(num_rows);
+        let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;

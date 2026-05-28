@@ -12,7 +12,7 @@ mod common;
 
 mod advanced;
 mod alt_shapes;
-mod gemm_plane_parallel;
+mod gemm;
 mod layouts;
 mod quantization;
 mod tiling_scheme;

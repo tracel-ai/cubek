@@ -8,8 +8,8 @@ use crate::matmul::test_matmul_strategy;
 
 #[cfg(feature = "heavy")]
 #[test]
-fn gemv_plane_parallel_vecmat() {
-    // GemvPlaneParallel on GPU requires ColMajor rhs for vec-mat problems.
+fn gemm_vecmat() {
+    // Gemm handles VecMatCol (m=1, rhs ColMajor) on GPU via the Dot variant.
     test_matmul_strategy(
         client(),
         rect_with_layouts(
@@ -20,7 +20,7 @@ fn gemv_plane_parallel_vecmat() {
             MatrixLayout::ColMajor,
             f16_elems(),
         ),
-        Strategy::GemvPlaneParallel(Default::default()),
+        Strategy::Gemm(Default::default()),
     );
 }
 

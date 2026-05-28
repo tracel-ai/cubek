@@ -1,13 +1,11 @@
 use std::fmt::Display;
 
 use cubecl::Runtime;
+use cubek_std::tile::RowMajorTilingOrder;
 
+use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
 use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
-};
-use crate::components::{
-    batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
-    stage::StridedStageFamily,
 };
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
@@ -15,8 +13,7 @@ use crate::definition::{
 use crate::{
     components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
     components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
-    components::stage::{PlaneMatmulFamily, RowMajorTilingOrder},
-    components::tile::TileMatmulKind,
+    components::stage::PlanePartitioner, components::tile::TileMatmulKind,
 };
 use crate::{
     launch::RuntimeConfig,
@@ -77,7 +74,7 @@ where
     type BatchMatmul = PartitionedBatchMatmulFamily<
         RC,
         OrderedDoubleBufferingMatmulFamily<
-            PlaneMatmulFamily<StridedStageFamily, StridedStageFamily, Option<StridedStageFamily>>,
+            PlanePartitioner,
             RC,
             SyncPartialCyclicLoading<RowMajorTilingOrder>,
             SyncFullCyclicLoading<RowMajorTilingOrder>,

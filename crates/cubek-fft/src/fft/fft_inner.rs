@@ -2,7 +2,7 @@ use std::f32::consts::PI;
 
 use cubecl::{
     prelude::*,
-    std::tensor::{View, layout::Coords1d},
+    std::tensor::{ViewMut, layout::Coords1d},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,8 +25,8 @@ impl FftMode {
 /// In-place FFT of a 1D complex signal.
 /// Reorders input with bit-reversal and applies butterfly stages
 pub(crate) fn fft_inner_compute<F: Float>(
-    spectrum_re: &mut View<F, Coords1d, ReadWrite>,
-    spectrum_im: &mut View<F, Coords1d, ReadWrite>,
+    spectrum_re: &mut ViewMut<'_, F, Coords1d>,
+    spectrum_im: &mut ViewMut<'_, F, Coords1d>,
     #[comptime] fft_mode: FftMode,
 ) {
     let num_samples = spectrum_re.shape();
@@ -42,8 +42,8 @@ pub(crate) fn fft_inner_compute<F: Float>(
 /// Reorders elements so index `i` maps to the index formed by
 /// reversing the `log2(n)` bits of `i`.
 fn bit_reverse_permutation<F: Float>(
-    view_re: &mut View<F, Coords1d, ReadWrite>,
-    view_im: &mut View<F, Coords1d, ReadWrite>,
+    view_re: &mut ViewMut<'_, F, Coords1d>,
+    view_im: &mut ViewMut<'_, F, Coords1d>,
     n: usize,
 ) {
     let mut j = 0;
@@ -63,7 +63,7 @@ fn bit_reverse_permutation<F: Float>(
 
 #[cube]
 /// Swap two elements of a 1D array.
-fn swap<F: Float>(view_1d: &mut View<F, Coords1d, ReadWrite>, i: usize, j: usize) {
+fn swap<F: Float>(view_1d: &mut ViewMut<'_, F, Coords1d>, i: usize, j: usize) {
     let tmp = view_1d.read(i);
     view_1d.write(i, view_1d.read(j));
     view_1d.write(j, tmp);
@@ -73,8 +73,8 @@ fn swap<F: Float>(view_1d: &mut View<F, Coords1d, ReadWrite>, i: usize, j: usize
 /// Iterative radix-2 FFT butterfly computation.
 /// Combines pairs of elements using twiddle factors to compute higher-level FFT outputs.
 fn fft_butterfly_stages<F: Float>(
-    spectrum_re: &mut View<F, Coords1d, ReadWrite>,
-    spectrum_im: &mut View<F, Coords1d, ReadWrite>,
+    spectrum_re: &mut ViewMut<'_, F, Coords1d>,
+    spectrum_im: &mut ViewMut<'_, F, Coords1d>,
     #[comptime] fft_mode: FftMode,
 ) {
     let n = spectrum_re.shape();

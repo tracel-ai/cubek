@@ -1,9 +1,13 @@
 mod base;
 mod error;
-mod mode;
-mod options;
+mod modes;
+mod precision;
+mod problem;
+mod tile_size;
 
 pub use base::*;
 pub use error::*;
-pub use mode::*;
-pub use options::*;
+pub use modes::*;
+pub use precision::*;
+pub use problem::*;
+pub use tile_size::*;

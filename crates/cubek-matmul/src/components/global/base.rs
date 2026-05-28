@@ -1,4 +1,4 @@
-use cubecl::{ir::DeviceProperties, prelude::*};
+use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::ViewMut};
 use cubek_std::stage::StageMemoryConfig;
 
 use crate::components::global::{
@@ -8,7 +8,7 @@ use crate::{
     components::global::multi_stage::EventLoadingMode, components::global::read::ReaderMode,
 };
 use crate::{
-    components::stage::StageConfig,
+    components::stage::StageMatmul as StageMatmulInstance,
     components::{global::memory::GlobalMemoryConfig, stage::NumStages},
     definition::StageIdent,
     definition::TilingBlueprint,
@@ -79,13 +79,13 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
     type Config: GlobalConfig;
 
     /// Global reader for matrix A (Lhs)
-    type LhsGlobalReader: CubeType;
+    type LhsGlobalReader<'a>: CubeType;
     /// Global reader for matrix B (Rhs)
-    type RhsGlobalReader: CubeType;
+    type RhsGlobalReader<'a>: CubeType;
     /// Global reader for matrix C (Accumulator/Bias)
-    type AccGlobalReader: CubeType;
+    type AccGlobalReader<'a>: CubeType;
     /// Writer to store the output stage into global memory
-    type GlobalWriter: CubeType;
+    type GlobalWriter<'a>: CubeType;
 
     /// The accumulator type for the tile matmul
     type Accumulators: CubeType;
@@ -97,48 +97,48 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
     /// To compute the whole range of k values, use k_range=(0, K) where
     /// K is the K dimension of Lhs and Rhs.
     fn execute(
-        lhs_reader: Self::LhsGlobalReader,
-        rhs_reader: Self::RhsGlobalReader,
-        acc_reader: Self::AccGlobalReader,
-        writer: Self::GlobalWriter,
+        lhs_reader: Self::LhsGlobalReader<'_>,
+        rhs_reader: Self::RhsGlobalReader<'_>,
+        acc_reader: Self::AccGlobalReader<'_>,
+        writer: Self::GlobalWriter<'_>,
         k_range: (u32, u32),
         #[comptime] config: Self::Config,
     );
 
     /// Initialize the global reader for Lhs, starting at row m and column k
     fn init_lhs_global_reader(
-        lhs: View<LhsG<MP>, Coords2d>,
+        lhs: View<'_, LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsGlobalReader;
+    ) -> Self::LhsGlobalReader<'_>;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_rhs_global_reader(
-        rhs: View<RhsG<MP>, Coords2d>,
+        rhs: View<'_, RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsGlobalReader;
+    ) -> Self::RhsGlobalReader<'_>;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
+        acc: ComptimeOption<View<'_, AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::AccGlobalReader;
+    ) -> Self::AccGlobalReader<'_>;
 
     /// Initialize the accumulator without data
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators;
 
     /// Initialize the global writer at row m and column n
     fn init_global_writer(
-        out: View<AccG<MP>, Coords2d, ReadWrite>,
+        out: ViewMut<'_, AccG<MP>, Coords2d>,
         #[comptime] config: Self::Config,
-    ) -> Self::GlobalWriter;
+    ) -> Self::GlobalWriter<'_>;
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SharedGlobalMatmulConfig<S: StageConfig> {
-    pub stage_config: S,
+pub struct SharedGlobalMatmulConfig {
+    pub stage_config: StageMatmulInstance,
     pub num_planes: u32,
     pub lhs_reader_config: GlobalReaderConfig,
     pub rhs_reader_config: GlobalReaderConfig,
@@ -147,7 +147,7 @@ pub struct SharedGlobalMatmulConfig<S: StageConfig> {
     pub must_sync_plane_after_execution: bool,
 }
 
-impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
+impl SharedGlobalMatmulConfig {
     pub fn check_k_bounds(&self) -> bool {
         let from_lhs = self.lhs_reader_config.gmem_config.check_col_bounds;
         let from_rhs = self.rhs_reader_config.gmem_config.check_row_bounds;
@@ -172,10 +172,8 @@ impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
     }
 }
 
-impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
-    type StageConfig = S;
-
-    fn stage_config(&self) -> Self::StageConfig {
+impl GlobalConfig for SharedGlobalMatmulConfig {
+    fn stage_config(&self) -> StageMatmulInstance {
         self.stage_config
     }
 
@@ -212,10 +210,8 @@ impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
 pub trait GlobalConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    type StageConfig: StageConfig;
-
     /// Convert itself to the underlying stage matmul config
-    fn stage_config(&self) -> Self::StageConfig;
+    fn stage_config(&self) -> StageMatmulInstance;
     fn lhs_reader_config(&self) -> GlobalReaderConfig;
     fn rhs_reader_config(&self) -> GlobalReaderConfig;
     fn writer_config(&self) -> GlobalWriterConfig;

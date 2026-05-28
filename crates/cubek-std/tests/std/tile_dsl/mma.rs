@@ -4,7 +4,7 @@
 use cubecl::{
     prelude::*,
     std::tensor::{
-        AsViewMut, AsViewMutExpand, View,
+        AsViewMut, AsViewMutExpand, ViewMut,
         layout::{Coords2d, CoordsDyn},
     },
 };
@@ -17,9 +17,9 @@ use super::*;
 /// leaf.
 #[cube]
 pub fn mma_gmem<E: Numeric, S: Size>(
-    out: &Tile<E, S, CoordsDyn>,
-    lhs: &Tile<E, S, CoordsDyn>,
-    rhs: &Tile<E, S, CoordsDyn>,
+    out: &Tile<'_, E, S, CoordsDyn>,
+    lhs: &Tile<'_, E, S, CoordsDyn>,
+    rhs: &Tile<'_, E, S, CoordsDyn>,
 ) {
     // The operation ranges over the union of its operands' spaces
     // ({M,N} ∪ {M,K} ∪ {K,N} = {M,N,K}) and contracts the axes the output drops.
@@ -36,14 +36,14 @@ pub fn mma_gmem<E: Numeric, S: Size>(
     let b_rows = rhs.partitioner.sub_tile_edge(comptime!(rhs.space.axis_at(0)));
     let b_cols = rhs.partitioner.sub_tile_edge(comptime!(rhs.space.axis_at(1)));
 
-    let mut a_smem = SharedMemory::<Vector<E, S>>::new(comptime!((a_rows * a_cols) as usize));
-    let mut b_smem = SharedMemory::<Vector<E, S>>::new(comptime!((b_rows * b_cols) as usize));
-    let a_tile = stage_smem::<E, S>(
+    let mut a_smem = Shared::<[Vector<E, S>]>::new_slice(comptime!((a_rows * a_cols) as usize));
+    let mut b_smem = Shared::<[Vector<E, S>]>::new_slice(comptime!((b_rows * b_cols) as usize));
+    let mut a_tile = stage_smem::<E, S>(
         a_smem.view_mut(smem_tile_layout(a_rows, a_cols)),
         comptime!(lhs.space.clone()),
         lhs.partitioner.clone(),
     );
-    let b_tile = stage_smem::<E, S>(
+    let mut b_tile = stage_smem::<E, S>(
         b_smem.view_mut(smem_tile_layout(b_rows, b_cols)),
         comptime!(rhs.space.clone()),
         rhs.partitioner.clone(),
@@ -59,7 +59,7 @@ pub fn mma_gmem<E: Numeric, S: Size>(
 
         let a_leaf = lhs.partition(&point);
         let b_leaf = rhs.partition(&point);
-        let acc = out.partition(&point);
+        let mut acc = out.partition(&point);
 
         a_tile.copy_from(&a_leaf);
         b_tile.copy_from(&b_leaf);
@@ -71,12 +71,12 @@ pub fn mma_gmem<E: Numeric, S: Size>(
 /// operand that carries it. The partitioner takes the grid from here.
 #[cube]
 fn mma_grid<E: Numeric, S: Size>(
-    out: &Tile<E, S, CoordsDyn>,
-    lhs: &Tile<E, S, CoordsDyn>,
-    rhs: &Tile<E, S, CoordsDyn>,
+    out: &Tile<'_, E, S, CoordsDyn>,
+    lhs: &Tile<'_, E, S, CoordsDyn>,
+    rhs: &Tile<'_, E, S, CoordsDyn>,
     #[comptime] space: Space,
 ) -> Grid {
-    let mut counts = Sequence::<u32>::new();
+    let mut counts = Sequence::<usize>::new();
     #[unroll]
     for p in 0..comptime!(space.rank()) {
         counts.push(tiles_of::<E, S>(out, lhs, rhs, comptime!(space.axis_at(p))));
@@ -88,11 +88,11 @@ fn mma_grid<E: Numeric, S: Size>(
 /// Every union axis is in at least one operand.
 #[cube]
 fn tiles_of<E: Numeric, S: Size>(
-    out: &Tile<E, S, CoordsDyn>,
-    lhs: &Tile<E, S, CoordsDyn>,
-    rhs: &Tile<E, S, CoordsDyn>,
+    out: &Tile<'_, E, S, CoordsDyn>,
+    lhs: &Tile<'_, E, S, CoordsDyn>,
+    rhs: &Tile<'_, E, S, CoordsDyn>,
     #[comptime] axis: Axis,
-) -> u32 {
+) -> usize {
     if comptime!(out.space.contains(axis)) {
         out.tiles(axis)
     } else if comptime!(lhs.space.contains(axis)) {
@@ -106,9 +106,9 @@ fn tiles_of<E: Numeric, S: Size>(
 /// from the views.
 #[cube]
 pub fn mma_smem<E: Numeric, S: Size>(
-    acc: &View<Vector<E, S>, Coords2d, ReadWrite>,
-    lhs: &View<Vector<E, S>, Coords2d, ReadWrite>,
-    rhs: &View<Vector<E, S>, Coords2d, ReadWrite>,
+    acc: &mut ViewMut<'_, Vector<E, S>, Coords2d>,
+    lhs: &ViewMut<'_, Vector<E, S>, Coords2d>,
+    rhs: &ViewMut<'_, Vector<E, S>, Coords2d>,
 ) {
     let (m, k) = lhs.shape();
     let (_, n) = rhs.shape();
@@ -127,8 +127,8 @@ pub fn mma_smem<E: Numeric, S: Size>(
 /// Element-wise copy of `src` into `dst` (same 2-D shape).
 #[cube]
 pub fn copy_2d<E: Numeric, S: Size>(
-    dst: &View<Vector<E, S>, Coords2d, ReadWrite>,
-    src: &View<Vector<E, S>, Coords2d, ReadWrite>,
+    dst: &mut ViewMut<'_, Vector<E, S>, Coords2d>,
+    src: &ViewMut<'_, Vector<E, S>, Coords2d>,
 ) {
     let (h, w) = src.shape();
     for i in 0..h {

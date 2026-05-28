@@ -1,11 +1,11 @@
 #![allow(missing_docs)] // pub cube modules
 
-use cubecl::prelude::*;
 use cubecl::{
     calculate_cube_count_elemwise,
     ir::{ElemType, FloatKind, IntKind},
 };
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
+use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
@@ -90,7 +90,7 @@ pub fn dequantize_symmetric_packed_value<
 ) -> Array<Vector<F, NF>> {
     let vector_size_values = values.vector_size();
     let num_quants = scheme.num_quants();
-    let mut tmp = Array::<Vector<F, NF>>::new(vector_size_values);
+    let mut tmp = Array::new(vector_size_values);
 
     #[unroll]
     for i in 0..vector_size_values {
@@ -142,9 +142,9 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>(
-    input: &LinearView<Vector<u32, NQ>>,
-    scales: &ScalesView<FS>,
-    output: &mut LinearView<Vector<F, NF>, ReadWrite>,
+    input: LinearView<'_, Vector<u32, NQ>>,
+    scales: ScalesView<'_, FS>,
+    mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS)] _dtypes: [StorageType; 2],
 ) {
@@ -162,8 +162,9 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
     let values = input.read(ABSOLUTE_POS);
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
-    let out =
-        dequantize_symmetric_packed_value::<F, NF, FS, u32, NQ>(values, scales, packed_pos, scheme);
+    let out = dequantize_symmetric_packed_value::<F, NF, FS, u32, NQ>(
+        values, &scales, packed_pos, scheme,
+    );
 
     #[unroll]
     for i in 0..vector_size_in {
@@ -173,9 +174,9 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeric, NQ: Size>(
-    input: &LinearView<Vector<Q, NQ>>,
-    scale: &ScalesView<FS>,
-    output: &mut LinearView<Vector<F, NF>, ReadWrite>,
+    input: LinearView<'_, Vector<Q, NQ>>,
+    scale: ScalesView<'_, FS>,
+    mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {

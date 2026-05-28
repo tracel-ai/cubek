@@ -1,21 +1,21 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::{
-    components::{
-        global::{
-            GlobalReaderConfig, PlaneFlowPartition,
-            memory::GlobalIterator,
-            multi_stage::LoadMaxRoundPlaneCount,
-            read::{
-                FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
-                validate_swizzle_atom_size,
-            },
+    components::global::{
+        GlobalReaderConfig, PlaneFlowPartition,
+        memory::GlobalIterator,
+        multi_stage::LoadMaxRoundPlaneCount,
+        read::{
+            FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
+            validate_swizzle_atom_size,
         },
-        stage::{NoTilingLayout, TilingValidation},
     },
     definition::{MatmulElems, MatmulProblem},
     launch::RuntimeConfig,
 };
-use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, StageIdent,
+    tile::{NoTilingLayout, TilingValidation},
+};
 
 use crate::components::stage::{
     bias_stage::{BiasStageFamily, BiasStageMemory},
@@ -67,8 +67,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncBiasLoading {
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncBiasJob;
     type Stage = BiasStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
@@ -124,7 +122,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut BiasStageMemory<ES, NS>,
-        _barrier: &mut (),
+        _barrier: &(),
         #[comptime] _config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;

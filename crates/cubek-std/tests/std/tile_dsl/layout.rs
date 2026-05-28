@@ -12,8 +12,8 @@ use cubecl::{
 /// doesn't) is the view's own business, not this layout's.
 #[derive(CubeType, Clone)]
 pub struct TileWindow {
-    row0: u32,
-    col0: u32,
+    row0: usize,
+    col0: usize,
     tile_shape: Coords2d,
 }
 
@@ -21,7 +21,7 @@ pub struct TileWindow {
 impl TileWindow {
     /// Window the tile whose origin is `(row0, col0)` in semantic coords, of size
     /// `rows × cols`.
-    pub fn new(row0: u32, col0: u32, #[comptime] rows: u32, #[comptime] cols: u32) -> Self {
+    pub fn new(row0: usize, col0: usize, #[comptime] rows: usize, #[comptime] cols: usize) -> Self {
         TileWindow {
             row0,
             col0,
@@ -41,8 +41,8 @@ impl Layout for TileWindow {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (t0, t1) = pos;
         let mut out = CoordsDyn::new();
-        out.push(self.row0 + t0);
-        out.push(self.col0 + t1);
+        out.push(self.row0 as u32 + t0);
+        out.push(self.col0 as u32 + t1);
         out
     }
 
@@ -96,7 +96,7 @@ impl Layout for SmemTileLayout {
 }
 
 #[cube]
-pub fn smem_tile_layout(#[comptime] rows: u32, #[comptime] cols: u32) -> SmemTileLayout {
+pub fn smem_tile_layout(#[comptime] rows: usize, #[comptime] cols: usize) -> SmemTileLayout {
     SmemTileLayout {
         shape: (
             u32::from_int(comptime!(rows as i64)),

@@ -1,4 +1,4 @@
-use cubecl::{prelude::*, std::tensor::View};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 
 use crate::{
     RandomFamily, lcg_step, taus_step_0, taus_step_1, taus_step_2, to_unit_interval_closed_open,
@@ -30,7 +30,7 @@ impl PrngRuntime for Uniform {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Vector<E, N>, usize, ReadWrite>,
+        output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
         let lower_bound = args.lower_bound;
         let upper_bound = args.upper_bound;

@@ -31,7 +31,7 @@ pub struct TopkAccumulator<E: Scalar, S: Size> {
 
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
-    elements: Sequence<SharedMemory<Vector<P::EA, P::SI>>>,
+    elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
 }
@@ -41,7 +41,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
         let mut elements = Sequence::new();
         for _ in 0..inst.k {
-            elements.push(SharedMemory::new(length));
+            elements.push(Shared::new_slice(length));
         }
         TopKSharedAccumulator::<P> {
             elements,
@@ -50,7 +50,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let mut values = Array::<Vector<P::EA, P::SI>>::new(accumulator.k);
+        let mut values = Array::new(accumulator.k);
         #[unroll]
         for i in 0..accumulator.k {
             values[i] = accumulator.elements[i][index];
@@ -94,7 +94,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let mut elements = Array::<Vector<P::EA, P::SI>>::new(comptime!(this.k));
+        let mut elements = Array::new(comptime!(this.k));
         #[unroll]
         for i in 0..this.k {
             elements[i] = Vector::new(P::EA::min_value());
@@ -175,7 +175,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let accumulators = accumulator.elements.multiple();
         let vector_size = accumulators[0].size().comptime();
 
-        let mut topk = Array::<Out>::new(this.k);
+        let mut topk = Array::new(this.k);
         #[unroll]
         for slot in 0..this.k {
             topk[slot] = Out::min_value();
@@ -208,7 +208,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         _shape_axis_reduce: usize,
     ) -> Value<Vector<Out, P::SI>> {
         let acc_values = accumulator.elements.multiple();
-        let mut output = Array::<Vector<Out, P::SI>>::new(this.k);
+        let mut output = Array::new(this.k);
 
         #[unroll]
         for i in 0..this.k {

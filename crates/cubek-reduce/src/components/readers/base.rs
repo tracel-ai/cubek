@@ -9,16 +9,16 @@ use crate::{
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
-pub enum Reader<P: ReducePrecision> {
-    Parallel(ParallelReader<P>),
-    Perpendicular(PerpendicularReader<P>),
+pub enum Reader<'a, P: ReducePrecision> {
+    Parallel(ParallelReader<'a, P>),
+    Perpendicular(PerpendicularReader<'a, P>),
 }
 
 #[cube]
-impl<P: ReducePrecision> Reader<P> {
+impl<'a, P: ReducePrecision> Reader<'a, P> {
     #[allow(clippy::too_many_arguments)]
     pub fn new<I: ReduceInstruction<P>, Out: NumericVector>(
-        input: &VirtualTensor<P::EI, P::SI>,
+        input: &'a VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,
         reduce_axis: usize,
@@ -27,7 +27,7 @@ impl<P: ReducePrecision> Reader<P> {
         #[comptime] bound_checks: BoundChecks,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] plane_dim_ceil: bool,
-    ) -> Reader<P> {
+    ) -> Reader<'a, P> {
         let effective_plane_dim = if plane_dim_ceil {
             min(CUBE_DIM_X, PLANE_DIM)
         } else {

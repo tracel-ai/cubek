@@ -1,10 +1,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    components::{
-        global::{SharedGlobalMatmulConfig, read::SyncStrategy},
-        stage::StageConfig,
-    },
+    components::global::{SharedGlobalMatmulConfig, read::SyncStrategy},
     definition::MatmulTypes,
 };
 
@@ -17,9 +14,9 @@ impl SyncStrategy for Synchronous {
 
     fn create_barrier() -> Self::Barrier {}
 
-    fn sync<MP: MatmulTypes, S: StageConfig>(
-        _barrier: &mut Self::Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+    fn sync<MP: MatmulTypes>(
+        _barrier: &Self::Barrier,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         sync_cube();
     }

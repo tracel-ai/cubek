@@ -3,10 +3,7 @@ use cubecl::{
     prelude::*,
 };
 
-use crate::components::{
-    global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
-    stage::StageConfig,
-};
+use crate::components::global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy};
 use crate::definition::{LhsS, MatmulTypes, RhsS};
 
 /// Asynchronous barrier for TMA loads
@@ -22,9 +19,9 @@ impl SyncStrategy for AsyncTma {
         bar
     }
 
-    fn sync<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Self::Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
+    fn sync<MP: MatmulTypes>(
+        barrier: &Self::Barrier,
+        #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();
         let rhs_elem_size = RhsS::<MP>::type_size().comptime();
@@ -33,7 +30,7 @@ impl SyncStrategy for AsyncTma {
         let rhs_bytes =
             config.rhs_reader_config().smem_config.elements_per_stage() * rhs_elem_size as u32;
         let num_bytes = lhs_bytes + rhs_bytes;
-        let token = arrive_tma(barrier.inner_ref(), num_bytes);
+        let token = arrive_tma(barrier, num_bytes);
         barrier.wait(token);
     }
 }

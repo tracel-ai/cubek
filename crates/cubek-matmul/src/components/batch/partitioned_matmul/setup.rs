@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::components::stage::StageConfig;
 use crate::components::{
     batch::partitioned_matmul::config::PartitionedBatchConfig, global::GlobalConfig,
     stage::NumStages,

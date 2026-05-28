@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 #[cube]
 pub fn reduction_output_base<T: Numeric, N: Size>(
     reduction_index: usize,
-    output: &mut VirtualTensor<T, N, ReadWrite>,
+    output: &VirtualTensor<T, N, ReadWrite>,
     reduce_axis: usize,
     #[comptime] accumulator_length: usize,
 ) -> usize {
@@ -34,7 +34,7 @@ pub(crate) fn reduce_count(
 #[cube]
 pub fn idle_check<P: ReducePrecision, Out: NumericVector>(
     input: &VirtualTensor<P::EI, P::SI>,
-    output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
+    output: &VirtualTensor<Out::T, Out::N, ReadWrite>,
     reduce_index_start: usize,
     #[comptime] vectorization_mode: VectorizationMode,
     #[comptime] idle_mode: IdleMode,

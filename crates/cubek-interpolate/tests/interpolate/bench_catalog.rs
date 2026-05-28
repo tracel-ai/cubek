@@ -2,8 +2,8 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubek_interpolate::definition::InterpolateProblem;
-use cubek_interpolate::eval::benchmarks::{InterpolateCorrectness, InterpolateStrategy};
+use cubek_interpolate::eval::benchmarks::InterpolateCorrectness;
+use cubek_interpolate::{definition::InterpolateProblem, launch::InterpolateStrategy};
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
@@ -37,7 +37,7 @@ fn run(strategy_id: &str, problem_id: &str) {
         .enforce();
 }
 
-const STRATEGY: &str = "default";
+const STRATEGY: &str = "global_memory";
 
 #[test]
 fn nearest_downsample_default() {

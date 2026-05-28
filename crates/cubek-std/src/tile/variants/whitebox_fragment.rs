@@ -3,10 +3,9 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::tile::LOGIT_MASKED;
 use crate::tile::{
-    Plane, RowWise, Tile, TileKind, TileKindExpand,
+    Plane, RowWise, StridedTile, Tile, TileKind, TileKindExpand,
     mask::{Mask, MaskExpand},
     scope::{TileScope, assert_plane_scope},
-    variants::strided::StridedTile,
 };
 
 #[derive(CubeType)]
@@ -47,7 +46,7 @@ pub enum InnerLayout {
 #[cube]
 impl<E: Numeric> WhiteboxFragment<E> {
     pub fn new(#[comptime] layout: WhiteboxFragmentLayout) -> WhiteboxFragment<E> {
-        let array = Array::<E>::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
+        let array = Array::new(comptime!(layout.unit_size.0 * layout.unit_size.1) as usize);
 
         WhiteboxFragment::<E> { array, layout }
     }
@@ -115,7 +114,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
     pub fn rowwise_max(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
-        let mut vals = Array::<E>::new(num_rows);
+        let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -135,7 +134,7 @@ impl<E: Numeric> WhiteboxFragment<E> {
     pub fn rowwise_sum(&self) -> RowWise<E> {
         let num_rows = comptime!(self.layout.unit_size.0) as usize;
         let num_cols = comptime!(self.layout.unit_size.1) as usize;
-        let mut vals = Array::<E>::new(num_rows);
+        let mut vals = Array::new(num_rows);
 
         for r in 0..num_rows {
             let row_offset = r * num_cols;
@@ -321,7 +320,7 @@ fn reduce<E: Float, RO: ReduceOp<E>>(vals: &mut RowWise<E>, data: &WhiteboxFragm
 
 #[cube]
 fn rowwise_plane_broadcast<E: Float>(rowwise: &RowWise<E>, source_unit: u32) -> RowWise<E> {
-    let mut result = Array::<E>::new(rowwise.num_rows);
+    let mut result = Array::new(rowwise.num_rows);
 
     for r in 0..rowwise.num_rows {
         result[r] = plane_shuffle(rowwise.vals[r], source_unit);
@@ -411,9 +410,7 @@ impl<Acc: Float> WhiteboxFragment<Acc> {
     }
 }
 
-/// Writes a free-standing `WhiteboxFragment` of post-softmax values into
-/// `softmaxed`. Used by `WhiteboxFragment::softmax`; the `Bounce` source path
-/// lives on `BounceTile::write_fragment_to`.
+/// Write post-softmax `WhiteboxFragment` values into `softmaxed`.
 #[cube]
 fn write_fragment_into<Acc: Float, Lhs: Float>(
     src: &WhiteboxFragment<Acc>,

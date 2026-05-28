@@ -3,11 +3,8 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_matmul::components::{
-    global::GlobalReaderConfig,
-    stage::{StridedStageMemory, TilingLayout},
-};
-use cubek_std::{MatrixLayout, StageIdent};
+use cubek_matmul::components::{global::GlobalReaderConfig, stage::StridedStageMemory};
+use cubek_std::{MatrixLayout, StageIdent, tile::TilingLayout};
 
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 
@@ -18,7 +15,7 @@ pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;
 #[cube]
 #[expect(clippy::overly_complex_bool_expr, reason = "override")]
 pub(crate) fn async_copy_from<EG: Scalar, EGS: Size, ES: Numeric, ESS: Size, T: TilingLayout>(
-    view: &View<Vector<EG, EGS>, Coords2d>,
+    view: View<Vector<EG, EGS>, Coords2d>,
     pos: Coords2d,
     stage: &mut StridedStageMemory<ES, ESS, T>,
     stage_offset: u32,

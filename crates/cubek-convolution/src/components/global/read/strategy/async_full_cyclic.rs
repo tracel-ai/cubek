@@ -16,10 +16,13 @@ use cubek_matmul::components::{
             async_full_cyclic::AsyncFullCyclicLoading as MatmulCyclicLoading, tiled::TiledLayout,
         },
     },
-    stage::{ContiguousTilingLayout, StridedStageFamily, StridedStageMemory, TilingOrder},
+    stage::{StridedStageFamily, StridedStageMemory},
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
-use cubek_std::{InvalidConfigError, StageIdent, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, StageIdent,
+    tile::{ContiguousTilingLayout, TilingOrder},
+};
 
 use crate::components::global::{
     args::RuntimeArgs,
@@ -75,8 +78,6 @@ impl<TO: TilingOrder> FullLoadingStrategy<RuntimeArgs> for AsyncFullCyclicLoadin
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCyclicJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         runtime_args: RuntimeArgs,
         #[comptime] config: GlobalReaderConfig,
@@ -145,7 +146,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
-        _barrier: &mut Shared<Barrier>,
+        _barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;

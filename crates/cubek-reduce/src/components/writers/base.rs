@@ -13,22 +13,22 @@ use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 ///
 /// Depending on the problem kind, writes might be buffered to optimize vectorization, only
 /// happening when [Writer::commit()] is called.
-pub enum Writer<Out: NumericVector> {
-    Parallel(ParallelWriter<Out>),
-    Perpendicular(PerpendicularWriter<Out>),
+pub enum Writer<'a, Out: NumericVector> {
+    Parallel(ParallelWriter<'a, Out>),
+    Perpendicular(PerpendicularWriter<'a, Out>),
 }
 
 #[cube]
-impl<Out: NumericVector> Writer<Out> {
+impl<'a, Out: NumericVector> Writer<'a, Out> {
     pub fn new<P: ReducePrecision>(
         input: &VirtualTensor<P::EI, P::SI>,
-        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
+        output: &'a mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
         out_vec_axis: usize,
         write_index: usize,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] acc_format: AccumulatorFormat,
-    ) -> Writer<Out> {
+    ) -> Writer<'a, Out> {
         match vectorization_mode {
             VectorizationMode::Parallel => {
                 Writer::<Out>::new_Parallel(ParallelWriter::<Out>::new::<P>(

@@ -95,7 +95,7 @@ pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
 
     /// Performs batchwise matrix multiplication over tensors.
     fn execute<Args: MatmulArgs<Config = RC>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );
