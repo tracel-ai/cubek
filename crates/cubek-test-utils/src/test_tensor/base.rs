@@ -210,14 +210,10 @@ impl TestInput {
     }
 
     pub fn generate(self) -> TensorHandle<TestRuntime> {
-        let (shape, strides, dtype, tile) = (
+        let (shape, strides, dtype) = (
             self.base_spec.shape.clone(),
             self.base_spec.strides(),
             self.base_spec.dtype,
-            self.base_spec
-                .layout
-                .tile()
-                .map(|(start_axis, tile_shape)| (start_axis, tile_shape.to_vec())),
         );
 
         let mut handle = match self.data_kind {
@@ -232,10 +228,6 @@ impl TestInput {
         handle.metadata.shape = shape;
         handle.metadata.strides = strides;
         handle.dtype = dtype;
-
-        if let Some((start_axis, tile_shape)) = tile {
-            *handle.metadata = handle.metadata.to_tiled(start_axis, &tile_shape);
-        }
 
         handle
     }
