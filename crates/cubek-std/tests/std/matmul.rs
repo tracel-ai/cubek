@@ -4,16 +4,15 @@
 //! `out = {M, N}`.
 #![allow(non_snake_case)]
 
-use cubecl::std::tensor::layout::{CoordsDyn, tiled_view::tiled_view};
+use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
-use cubek_test_utils::{
-    HostData, HostDataType, LayoutSpec, StridedLayout, TestInput, assert_equals_approx,
-};
+use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
 
 use super::tile_dsl::{
     Axis, ByAxis, ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Space,
     Spread, Tile, TileKind, TileLaunch, cube_count_for,
 };
+use super::tile_input::{TileInput, tile_permuted};
 
 // Matmul's three axes — the labels this client gives the engine's opaque `Axis`.
 const M: Axis = Axis(0);
@@ -147,109 +146,46 @@ fn ___matmul_interleaved_m_across_cubes() {
 /// `partitioner`; the launch geometry is derived from it via [`cube_count_for`].
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-
-    // Square tiles here, so M's sub-tile edge is the tile size for the layout.
-    let tile_size = partitioner.sub_tile_edge(M) as usize;
-    let shape = shape![m, n];
-    let shape_a = shape![m, k];
-    let shape_b = shape![k, n];
+    let tile = partitioner.sub_tile_edge(M) as usize;
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let vector_size = 1;
 
-    let tiled_layout = LayoutSpec::tiled(
-        StridedLayout::RowMajor,
-        0,
-        vec![tile_size as u16, tile_size as u16],
-    );
-
-    let a_storage = build_tile_permuted(m, k, tile_size, |i, j| (i * k + j) as f32);
-    let b_storage = build_tile_permuted(k, n, tile_size, |i, j| (i * n + j) as f32);
-
-    let a_handle = TestInput::builder(client.clone(), shape_a.clone())
-        .layout(tiled_layout.clone())
-        .custom(a_storage)
-        .generate();
-    let b_handle = TestInput::builder(client.clone(), shape_b.clone())
-        .layout(tiled_layout.clone())
-        .custom(b_storage)
-        .generate();
-    let c_handle = TestInput::builder(client.clone(), shape.clone())
-        .layout(tiled_layout.clone())
-        .zeros()
-        .generate_without_host_data();
+    // Each operand is a launchable tile: "a tile over these axes with `tile`-sized
+    // subtiles", stored tiled, presented in its logical space.
+    let a = TileInput::read(&client, (M, m), (K, k), tile, |i, j| (i * k + j) as f32);
+    let b = TileInput::read(&client, (K, k), (N, n), tile, |i, j| (i * n + j) as f32);
+    let c = TileInput::write(&client, (M, m), (N, n), tile);
 
     let space = Space::new(&[(M, m as u32), (N, n as u32), (K, k as u32)]);
     let cube_count = cube_count_for(&partitioner, &space);
     let cube_dim = CubeDim::new_single();
 
-    // Each operand is a launchable Tile: a semantic view + the space it lives in
-    // + the partitioner. The kernel just does `c.mma(&a, &b)`.
-    let tiles = vec![tile_size as u16, tile_size as u16];
-    let a_tile = TileLaunch::new(
-        tiled_view(a_handle.binding(), 0, tiles.clone()),
-        partitioner.launch(),
-        Space::new(&[(M, m as u32), (K, k as u32)]),
-        TileKind::GmemWhole,
-    );
-    let b_tile = TileLaunch::new(
-        tiled_view(b_handle.binding(), 0, tiles.clone()),
-        partitioner.launch(),
-        Space::new(&[(K, k as u32), (N, n as u32)]),
-        TileKind::GmemWhole,
-    );
-    let c_tile = TileLaunch::new(
-        tiled_view(c_handle.clone().binding(), 0, tiles),
-        partitioner.launch(),
-        Space::new(&[(M, m as u32), (N, n as u32)]),
-        TileKind::GmemWhole,
-    );
-
+    // The whole matmul is `c.mma(&a, &b)` over the launched tiles.
     launch_staged_matmul::launch::<TestRuntime>(
-        &client, cube_count, cube_dim, a_tile, b_tile, c_tile, dtype, vector_size,
+        &client,
+        cube_count,
+        cube_dim,
+        TileLaunch::new(a.view(), partitioner.launch(), a.space(), TileKind::GmemWhole),
+        TileLaunch::new(b.view(), partitioner.launch(), b.space(), TileKind::GmemWhole),
+        TileLaunch::new(c.view(), partitioner.launch(), c.space(), TileKind::GmemWhole),
+        dtype,
+        vector_size,
     );
 
-    let output = HostData::from_tensor_handle(&client, c_handle, HostDataType::F32);
-
-    let c_storage = build_tile_permuted(m, n, tile_size, |i, j| {
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = tile_permuted(m, n, tile, |i, j| {
         (0..k)
             .map(|kk| (i * k + kk) as f32 * (kk * n + j) as f32)
             .sum::<f32>()
     });
-    let (_, expected_values) = TestInput::builder(client, shape)
-        .layout(tiled_layout)
-        .custom(c_storage)
+    let (_, expected) = TestInput::builder(client, shape![m / tile, n / tile, tile, tile])
+        .custom(expected)
         .generate_with_f32_host_data();
 
-    assert_equals_approx(&output, &expected_values, 1e-3)
+    assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
         .enforce()
-}
-
-/// Build a buffer whose *storage order* matches a 2D tiled layout
-/// `[Grid_m, Grid_n, Tile_m, Tile_n]`, populated so the semantic-coord view
-/// returns `semantic_at(i, j)` at position `(i, j)`.
-fn build_tile_permuted<F: Fn(usize, usize) -> f32>(
-    rows: usize,
-    cols: usize,
-    tile: usize,
-    semantic_at: F,
-) -> Vec<f32> {
-    let grid_rows = rows / tile;
-    let grid_cols = cols / tile;
-    let mut out = vec![0.0; rows * cols];
-    for gm in 0..grid_rows {
-        for gn in 0..grid_cols {
-            for tm in 0..tile {
-                for tn in 0..tile {
-                    let storage_offset =
-                        gm * grid_cols * tile * tile + gn * tile * tile + tm * tile + tn;
-                    out[storage_offset] = semantic_at(gm * tile + tm, gn * tile + tn);
-                }
-            }
-        }
-    }
-    out
 }
 
 /// The kernel: every operand is a [`Tile`] (a semantic view + its space +
