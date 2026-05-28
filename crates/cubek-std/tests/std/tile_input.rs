@@ -12,12 +12,12 @@ use cubek_test_utils::TestInput;
 
 use super::tile_dsl::{Axis, Space};
 
-/// A tile-shaped test input: the device buffer plus the logical [`Space`] and
-/// sub-tile sizes needed to view it as a tile.
+/// A tile-shaped test input: the device buffer plus the logical [`Space`] it's
+/// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view
+/// reads them from there.
 pub struct TileInput {
     handle: TensorHandle<TestRuntime>,
     space: Space,
-    subtiles: Vec<u16>,
 }
 
 impl TileInput {
@@ -35,7 +35,7 @@ impl TileInput {
         let handle = TestInput::builder(client.clone(), shape![r / tile, c / tile, tile, tile])
             .custom(tile_permuted(r, c, tile, at))
             .generate();
-        Self::new(handle, rows, cols, tile)
+        Self::new(handle, rows, cols)
     }
 
     /// A zero-filled write output over the logical 2-D space `(rows, cols)`.
@@ -50,25 +50,20 @@ impl TileInput {
         let handle = TestInput::builder(client.clone(), shape![r / tile, c / tile, tile, tile])
             .zeros()
             .generate_without_host_data();
-        Self::new(handle, rows, cols, tile)
+        Self::new(handle, rows, cols)
     }
 
-    fn new(
-        handle: TensorHandle<TestRuntime>,
-        rows: (Axis, usize),
-        cols: (Axis, usize),
-        tile: usize,
-    ) -> Self {
+    fn new(handle: TensorHandle<TestRuntime>, rows: (Axis, usize), cols: (Axis, usize)) -> Self {
         TileInput {
             handle,
             space: Space::new(&[(rows.0, rows.1 as u32), (cols.0, cols.1 as u32)]),
-            subtiles: vec![tile as u16, tile as u16],
         }
     }
 
     /// Launch arg for this tile's view — the buffer seen in its logical space.
+    /// Every logical axis is tiled, so `num_tiled = space.rank()`.
     pub fn view(&self) -> TiledViewLaunch<TestRuntime> {
-        tiled_view(self.handle.clone().binding(), 0, self.subtiles.clone())
+        tiled_view(self.handle.clone().binding(), 0, self.space.rank())
     }
 
     /// The semantic space the tile lives in.
