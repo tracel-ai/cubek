@@ -4,15 +4,15 @@
 //! `out = {M, N}`.
 #![allow(non_snake_case)]
 
-use cubecl::std::tensor::layout::semantic_tensor::{SemanticTensorView, semantic_tensor_view};
+use cubecl::std::tensor::layout::{CoordsDyn, semantic_tensor::semantic_tensor_view};
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{
     HostData, HostDataType, LayoutSpec, StridedLayout, TestInput, assert_equals_approx,
 };
 
 use super::tile_dsl::{
-    Axis, ByAxis, ComputePrimitive, Coverage, CubeDimension, Distribution, Gmem, Partitioner,
-    Space, Spread, cube_count_for,
+    Axis, ByAxis, ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Space,
+    Spread, Tile, TileKind, TileLaunch, cube_count_for,
 };
 
 // Matmul's three axes — the labels this client gives the engine's opaque `Axis`.
@@ -183,19 +183,29 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let cube_count = cube_count_for(&partitioner, &space);
     let cube_dim = CubeDim::new_single();
 
-    launch_staged_matmul::launch::<TestRuntime>(
-        &client,
-        cube_count,
-        cube_dim,
+    // Each operand is a launchable Tile: a semantic view + the space it lives in
+    // + the partitioner. The kernel just does `c.mma(&a, &b)`.
+    let a_tile = TileLaunch::new(
         semantic_tensor_view(a_handle.binding()),
+        partitioner.launch(),
+        Space::new(&[(M, m as u32), (K, k as u32)]),
+        TileKind::GmemWhole,
+    );
+    let b_tile = TileLaunch::new(
         semantic_tensor_view(b_handle.binding()),
+        partitioner.launch(),
+        Space::new(&[(K, k as u32), (N, n as u32)]),
+        TileKind::GmemWhole,
+    );
+    let c_tile = TileLaunch::new(
         semantic_tensor_view(c_handle.clone().binding()),
-        m,
-        n,
-        k,
-        partitioner,
-        dtype,
-        vector_size,
+        partitioner.launch(),
+        Space::new(&[(M, m as u32), (N, n as u32)]),
+        TileKind::GmemWhole,
+    );
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client, cube_count, cube_dim, a_tile, b_tile, c_tile, dtype, vector_size,
     );
 
     let output = HostData::from_tensor_handle(&client, c_handle, HostDataType::F32);
@@ -241,39 +251,15 @@ fn build_tile_permuted<F: Fn(usize, usize) -> f32>(
     out
 }
 
-/// The kernel: build the per-operand spaces (matmul's knowledge), then let the
-/// engine's `mma` do the rest.
+/// The kernel: every operand is a [`Tile`] (a semantic view + its space +
+/// partitioner), so the whole matmul is one line.
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, S: Size>(
-    a: SemanticTensorView<Vector<E, S>>,
-    b: SemanticTensorView<Vector<E, S>>,
-    c: SemanticTensorView<Vector<E, S>, ReadWrite>,
-    #[comptime] m: usize,
-    #[comptime] n: usize,
-    #[comptime] k: usize,
-    #[comptime] partitioner: Partitioner,
+    a: Tile<E, S, CoordsDyn>,
+    b: Tile<E, S, CoordsDyn>,
+    c: Tile<E, S, CoordsDyn>,
     #[define(E)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {
-    // Lift the comptime partitioner config into a runtime instance whose methods
-    // the tiles can call. Each operand lives in its own space; `mma` unions them
-    // into {M,N,K}.
-    let partitioner = Partitioner::hydrate(partitioner);
-    let lhs = Gmem::tiled_read::<E, S>(
-        a,
-        comptime!(Space::new(&[(M, m as u32), (K, k as u32)])),
-        partitioner.clone(),
-    );
-    let rhs = Gmem::tiled_read::<E, S>(
-        b,
-        comptime!(Space::new(&[(K, k as u32), (N, n as u32)])),
-        partitioner.clone(),
-    );
-    let out = Gmem::tiled_write::<E, S>(
-        c,
-        comptime!(Space::new(&[(M, m as u32), (N, n as u32)])),
-        partitioner,
-    );
-
-    out.mma(&lhs, &rhs);
+    c.mma(&a, &b);
 }

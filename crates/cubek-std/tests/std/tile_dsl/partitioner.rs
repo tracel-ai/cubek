@@ -165,6 +165,11 @@ impl Partitioner {
             order: WalkOrder::Reversed,
         }
     }
+
+    /// The launch arg for carrying this partitioner on a tile.
+    pub fn launch<R: Runtime>(&self) -> PartitionerLaunch<R> {
+        PartitionerLaunch::new(self.sub_tile.clone(), self.dists.clone(), self.order)
+    }
 }
 
 #[cube]
