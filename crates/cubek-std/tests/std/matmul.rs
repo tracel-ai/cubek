@@ -4,7 +4,7 @@
 //! `out = {M, N}`.
 #![allow(non_snake_case)]
 
-use cubecl::std::tensor::layout::{CoordsDyn, semantic_tensor::semantic_tensor_view};
+use cubecl::std::tensor::layout::{CoordsDyn, tiled_view::tiled_view};
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{
     HostData, HostDataType, LayoutSpec, StridedLayout, TestInput, assert_equals_approx,
@@ -185,20 +185,21 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 
     // Each operand is a launchable Tile: a semantic view + the space it lives in
     // + the partitioner. The kernel just does `c.mma(&a, &b)`.
+    let tiles = vec![tile_size as u16, tile_size as u16];
     let a_tile = TileLaunch::new(
-        semantic_tensor_view(a_handle.binding()),
+        tiled_view(a_handle.binding(), 0, tiles.clone()),
         partitioner.launch(),
         Space::new(&[(M, m as u32), (K, k as u32)]),
         TileKind::GmemWhole,
     );
     let b_tile = TileLaunch::new(
-        semantic_tensor_view(b_handle.binding()),
+        tiled_view(b_handle.binding(), 0, tiles.clone()),
         partitioner.launch(),
         Space::new(&[(K, k as u32), (N, n as u32)]),
         TileKind::GmemWhole,
     );
     let c_tile = TileLaunch::new(
-        semantic_tensor_view(c_handle.clone().binding()),
+        tiled_view(c_handle.clone().binding(), 0, tiles),
         partitioner.launch(),
         Space::new(&[(M, m as u32), (N, n as u32)]),
         TileKind::GmemWhole,
