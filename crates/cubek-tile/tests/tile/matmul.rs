@@ -457,7 +457,11 @@ fn mma_gmem<E: Numeric, S: Size>(
         let matrices = acc_leaf.matrices();
         for j in 0..matrices {
             let mut acc = acc_leaf.matrix(j);
-            mma_smem::<E, S>(&mut acc.view, &a_tile.matrix(j).view, &b_tile.matrix(j).view);
+            mma_smem::<E, S>(
+                &mut acc.view,
+                &a_tile.matrix(j).view,
+                &b_tile.matrix(j).view,
+            );
         }
     }
 }
