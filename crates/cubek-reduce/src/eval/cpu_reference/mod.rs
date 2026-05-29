@@ -65,7 +65,7 @@ pub fn strategy_result(
     let output_handle = TestInput::builder(client.clone(), out_shape)
         .dtype(output_dtype)
         .zeros()
-        .generate();
+        .generate_without_host_data();
 
     let dtypes = ReduceDtypes {
         input: input_dtype,

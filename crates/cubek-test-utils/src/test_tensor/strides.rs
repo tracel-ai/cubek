@@ -10,21 +10,11 @@ pub enum StridedLayout {
     Explicit(Vec<usize>),
 }
 
-/// The full layout of a test tensor. Mirrors cubecl's `Metadata` model
-/// (strides + `Option<Tiler>`): the base [`StridedLayout`] drives the physical
-/// strides; for `Tiled`, the rank-expanded metadata is applied after the
-/// buffer is written (see [`cubecl::zspace::metadata::Metadata::to_tiled`]).
+/// The layout of a test tensor: a base [`StridedLayout`] that drives the
+/// physical strides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutSpec {
     Strided(StridedLayout),
-    /// Splits each axis in `[start_axis, start_axis + tile_shape.len())` into a
-    /// grid component and a tile component (`D -> [D/T, T]`), producing
-    /// `[Pre-axes, Grid-axes, Tile-axes, Post-axes]` in row-major order.
-    Tiled {
-        base: StridedLayout,
-        start_axis: u8,
-        tile_shape: Vec<u16>,
-    },
 }
 
 impl Default for LayoutSpec {
@@ -34,35 +24,14 @@ impl Default for LayoutSpec {
 }
 
 impl LayoutSpec {
-    /// Compose a base stride layout with a tile.
-    pub fn tiled(base: StridedLayout, start_axis: u8, tile_shape: Vec<u16>) -> Self {
-        Self::Tiled {
-            base,
-            start_axis,
-            tile_shape,
-        }
-    }
-
-    /// The base stride layout, with or without tiling.
+    /// The base stride layout.
     pub fn base(&self) -> &StridedLayout {
         match self {
-            LayoutSpec::Strided(base) | LayoutSpec::Tiled { base, .. } => base,
+            LayoutSpec::Strided(base) => base,
         }
     }
 
-    /// `(start_axis, tile_shape)` if this layout is tiled.
-    pub fn tile(&self) -> Option<(u8, &[u16])> {
-        match self {
-            LayoutSpec::Tiled {
-                start_axis,
-                tile_shape,
-                ..
-            } => Some((*start_axis, tile_shape)),
-            LayoutSpec::Strided(_) => None,
-        }
-    }
-
-    /// Compute the strides of the base (un-tiled) layout for `shape`.
+    /// Compute the strides of the layout for `shape`.
     pub fn compute_strides(&self, shape: &Shape) -> Strides {
         self.base().compute_strides(shape)
     }

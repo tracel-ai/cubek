@@ -11,7 +11,9 @@ fn eye_handle_row_major() {
 
     let shape = [2, 3];
 
-    let handle = TestInput::builder(client.clone(), shape).eye().generate();
+    let handle = TestInput::builder(client.clone(), shape)
+        .eye()
+        .generate_without_host_data();
 
     let expected = TestInput::builder(client.clone(), [2, 3])
         .custom(vec![1., 0., 0., 0., 1., 0.])
@@ -33,7 +35,7 @@ fn eye_handle_col_major() {
     let handle = TestInput::builder(client.clone(), shape)
         .layout(StridedLayout::ColMajor)
         .eye()
-        .generate();
+        .generate_without_host_data();
 
     let expected = TestInput::builder(client.clone(), [2, 3])
         .custom(vec![1., 0., 0., 0., 1., 0.])
@@ -54,7 +56,7 @@ fn arange_handle_row_major() {
 
     let handle = TestInput::builder(client.clone(), shape)
         .arange()
-        .generate();
+        .generate_without_host_data();
 
     let expected = TestInput::builder(client.clone(), shape![2, 3])
         .custom(vec![0., 1., 2., 3., 4., 5.])
@@ -76,7 +78,7 @@ fn arange_handle_col_major() {
     let handle = TestInput::builder(client.clone(), shape)
         .layout(StridedLayout::ColMajor)
         .arange()
-        .generate();
+        .generate_without_host_data();
 
     let expected = TestInput::builder(client.clone(), shape![2, 3])
         .custom(vec![0., 1., 2., 3., 4., 5.])

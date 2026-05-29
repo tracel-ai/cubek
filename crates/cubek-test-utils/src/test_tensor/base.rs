@@ -206,18 +206,10 @@ impl TestInput {
 
     // Public API returning only TensorHandle
     pub fn generate_without_host_data(self) -> TensorHandle<TestRuntime> {
-        self.generate()
-    }
-
-    pub fn generate(self) -> TensorHandle<TestRuntime> {
-        let (shape, strides, dtype, tile) = (
+        let (shape, strides, dtype) = (
             self.base_spec.shape.clone(),
             self.base_spec.strides(),
             self.base_spec.dtype,
-            self.base_spec
-                .layout
-                .tile()
-                .map(|(start_axis, tile_shape)| (start_axis, tile_shape.to_vec())),
         );
 
         let mut handle = match self.data_kind {
@@ -233,10 +225,6 @@ impl TestInput {
         handle.metadata.strides = strides;
         handle.dtype = dtype;
 
-        if let Some((start_axis, tile_shape)) = tile {
-            *handle.metadata = handle.metadata.to_tiled(start_axis, &tile_shape);
-        }
-
         handle
     }
 
@@ -246,7 +234,7 @@ impl TestInput {
     ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.base_spec.client.clone();
 
-        let tensor_handle = self.generate();
+        let tensor_handle = self.generate_without_host_data();
         let host_data =
             HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);
 
@@ -322,8 +310,7 @@ impl TestInputBuilder {
         self
     }
 
-    /// Override the layout. Defaults to a row-major base with no tile. Use
-    /// [`LayoutSpec::tiled`] to attach a tile spec to a base stride layout.
+    /// Override the layout. Defaults to a row-major base stride layout.
     pub fn layout(mut self, layout: impl Into<LayoutSpec>) -> Self {
         self.layout = layout.into();
         self

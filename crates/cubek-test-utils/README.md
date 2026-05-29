@@ -228,6 +228,6 @@ Builder finalizers (each returns a `TestInput` ready to generate):
 | `.linspace(start, end)`    | `Custom { data }` with N evenly-spaced values from `start..=end` |
 | `.custom(data)`            | `Custom { data }`                                                |
 
-After a finalizer, call any of: `.generate()`, `.generate_with_f32_host_data()`,
-`.generate_with_bool_host_data()`, `.generate_test_tensor()`,
-`.f32_host_data()`, `.bool_host_data()`.
+After a finalizer, call any of: `.generate_without_host_data()`,
+`.generate_with_f32_host_data()`, `.generate_with_bool_host_data()`,
+`.generate_test_tensor()`, `.f32_host_data()`, `.bool_host_data()`.

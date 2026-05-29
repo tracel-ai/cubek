@@ -32,7 +32,7 @@ pub(crate) fn make_zero_handle(
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)
         .zeros()
-        .generate()
+        .generate_without_host_data()
 }
 
 pub fn strategy_result(

@@ -231,7 +231,7 @@ impl TestCase {
             .dtype(output_dtype)
             .layout(StridedLayout::Explicit(strides.iter().copied().collect()))
             .zeros()
-            .generate()
+            .generate_without_host_data()
     }
 }
 
