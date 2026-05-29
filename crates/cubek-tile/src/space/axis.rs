@@ -6,23 +6,20 @@ use cubecl::zspace::SmallVec;
 /// declares more.
 pub const MAX_AXES: usize = 6;
 
-/// An opaque axis label. The engine never matches on a specific one — it only
-/// compares, hashes, and looks them up. A client declares its own set (matmul:
-/// `M`, `N`, `K`); the count and meaning are the client's, not the engine's.
+/// An opaque axis label. The engine only compares/hashes/looks up axes, never
+/// matching a specific one; a client declares its own set (matmul: `M`, `N`, `K`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Axis(pub u8);
 
-/// A comptime map from [`Axis`] to a value, kept in declared order (the space's
-/// canonical axis order, and the order a `Point`'s coordinates come in). Backed
-/// by a [`SmallVec`] inline up to [`MAX_AXES`].
+/// A comptime map from [`Axis`] to a value, in declared order (the canonical axis
+/// order, and the order a `Point`'s coordinates come in).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ByAxis<T: Copy> {
     entries: SmallVec<[(Axis, T); MAX_AXES]>,
 }
 
 impl<T: Copy> ByAxis<T> {
-    /// Build from an ordered `(axis, value)` list. The order is significant: it
-    /// defines the axis order the engine iterates and the layout of a `Point`.
+    /// Build from an ordered `(axis, value)` list; the order is significant.
     pub fn new(entries: &[(Axis, T)]) -> Self {
         ByAxis {
             entries: SmallVec::from_slice(entries),

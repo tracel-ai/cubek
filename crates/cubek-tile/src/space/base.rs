@@ -5,11 +5,10 @@ use cubecl::zspace::SmallVec;
 
 use super::{Axis, ByAxis, MAX_AXES};
 
-/// A coordinate space: every axis with its extent. A tile lives in its own space
-/// (matmul's `lhs ∈ {M, K}`, `rhs ∈ {K, N}`, `out ∈ {M, N}`); an operation ranges
-/// over their [`union`](Space::union), `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`. The
-/// axes are ordered: the leaf reads them positionally and a `Point`'s coordinates
-/// come in this order.
+/// A coordinate space: every axis with its extent, ordered (the leaf and a
+/// `Point` read them positionally). A tile lives in its own space (matmul's
+/// `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over their
+/// [`union`](Space::union).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Space {
     extents: ByAxis<usize>,
@@ -48,11 +47,9 @@ impl Space {
         self.extents.contains(axis)
     }
 
-    /// The smallest space containing every `part`: each axis any part carries,
-    /// with its extent, in first-appearance order. A shared axis must agree on
-    /// extent across the parts that carry it — matmul's `K` is the same size in
-    /// both operands — and panics otherwise. This is how an operation recovers the
-    /// space it ranges over from its operands (`{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`).
+    /// The smallest space containing every `part`: each axis carried by any part,
+    /// in first-appearance order. A shared axis must agree on extent across parts
+    /// (panics otherwise). E.g. `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
     pub fn union(parts: &[&Space]) -> Space {
         let mut entries: SmallVec<[(Axis, usize); MAX_AXES]> = SmallVec::new();
         for part in parts {
@@ -85,9 +82,8 @@ impl Space {
         )
     }
 
-    /// The axes this space contracts when an operation projects it onto `output`:
-    /// those in the space but not in `output`. A matmul over `{M,N,K}` with output
-    /// `{M,N}` contracts `{K}`.
+    /// The axes in this space but not in `output` — those an operation contracts.
+    /// Matmul over `{M,N,K}` with output `{M,N}` contracts `{K}`.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         let mut contracted = SmallVec::new();
         let mut i = 0;

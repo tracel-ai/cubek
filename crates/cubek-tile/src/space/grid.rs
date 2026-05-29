@@ -4,10 +4,9 @@ use cubecl::prelude::*;
 
 use super::{Axis, Space};
 
-/// A [`Space`] measured in tiles: the runtime tile count per axis, in its `frame`
-/// order. The runtime counterpart to `Space`'s extents — `Space` names the axes,
-/// `Grid` gives their size in tiles. Read by label ([`tiles`](Grid::tiles)),
-/// never positionally. A `Point` is a coordinate *within* a grid.
+/// A [`Space`] measured in tiles: the runtime tile count per axis. `Space` names
+/// the axes, `Grid` gives their size in tiles. Read by label
+/// ([`tiles`](Grid::tiles)); a `Point` is a coordinate within a grid.
 #[derive(CubeType)]
 pub struct Grid {
     counts: Sequence<usize>,
