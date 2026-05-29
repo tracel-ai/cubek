@@ -3,7 +3,7 @@ use cubek_test_utils::CatalogEntry;
 use crate::launch::Strategy;
 use crate::routines::{
     BlueprintStrategy, TileSizeSelection, double_buffering::DoubleBufferingArgs,
-    double_unit::DoubleUnitSelectionArgs, gemm::GemmStrategy,
+    double_unit::DoubleUnitSelectionArgs, gemm::GemmStrategy, mosaic::MosaicStrategy,
     ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
     simple_unit::SimpleUnitSelectionArgs,
 };
@@ -101,6 +101,11 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
                 target_num_planes: None,
             })),
+        ),
+        CatalogEntry::new(
+            "mosaic",
+            "Mosaic (tile-DSL CPU)",
+            Strategy::Mosaic(MosaicStrategy::default()),
         ),
     ]
 }

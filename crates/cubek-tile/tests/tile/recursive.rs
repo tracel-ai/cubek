@@ -87,8 +87,8 @@ fn physical_index(i: usize, j: usize) -> usize {
 /// Copy every logical element of `input` into `output` through their views.
 #[cube(launch)]
 fn copy_logical<E: Numeric, S: Size>(
-    input: Tile<'_, E, S, CoordsDyn>,
-    mut output: Tile<'_, E, S, CoordsDyn>,
+    input: &Tile<'_, E, S>,
+    output: &mut Tile<'_, E, S>,
     #[define(E)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {

@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, ByAxis, Grid};
+use crate::{Axis, ByAxis, Grid, Space};
 
 use super::{Distribution, Walk, WalkOrder};
 
@@ -43,6 +43,18 @@ impl Partitioner {
     /// Sub-tile edge along an axis — comptime, since it sizes shared memory.
     pub fn sub_tile_edge(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
         comptime!(self.sub_tile.get(axis))
+    }
+
+    /// Element count of a whole leaf over `space`: the product of every axis's
+    /// sub-tile edge. Comptime — sizes the shared-memory staging buffer.
+    pub fn leaf_size(&self, #[comptime] space: Space) -> comptime_type!(usize) {
+        comptime!({
+            let mut size = 1usize;
+            for p in 0..space.rank() {
+                size *= self.sub_tile.get(space.axis_at(p));
+            }
+            size
+        })
     }
 
     /// How an axis is distributed.

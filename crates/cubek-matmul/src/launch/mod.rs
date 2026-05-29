@@ -1,5 +1,6 @@
 pub mod launch_gemm;
 pub mod launch_gemv_unit_perpendicular;
+pub mod launch_mosaic;
 pub mod launch_naive;
 pub mod launch_tiling;
 #[cfg(feature = "extended")]

@@ -5,10 +5,7 @@
 //! tile machinery (`partition`/`copy_from`/`stage_smem`).
 #![allow(non_snake_case)]
 
-use cubecl::std::tensor::{
-    AsViewMut, AsViewMutExpand, ViewMut,
-    layout::{Coords2d, CoordsDyn},
-};
+use cubecl::std::tensor::{AsViewMut, AsViewMutExpand, ViewMut, layout::Coords2d};
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
 
@@ -16,10 +13,12 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equa
 // companions the lowering below needs.
 use cubek_tile::*;
 
-// Matmul's three axes — the labels this client gives the engine's opaque `Axis`.
+// Matmul's axes — the labels this client gives the engine's opaque `Axis`. `B`
+// is the leading batch axis; `M`/`N`/`K` are the matrix axes.
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
+const B: Axis = Axis(3);
 
 /// Staged matmul on tile-permuted tensors, single cube: every axis is
 /// `Sequential`, so the `RowMajor` partitioner walks every output tile in turn.
@@ -144,6 +143,152 @@ fn matmul_interleaved_m_across_cubes() {
     );
 }
 
+/// Batched matmul, single cube: a leading `B` axis (one batch per tile, since its
+/// sub-tile edge is 1) plus the `{M, N, K}` matrix axes, all `Sequential`. Each
+/// operand is `{B, …}`, so `partition`'s trailing-two leaf is the matrix tile and
+/// the batch is pinned per walk point. Validates that the same code path matmuls
+/// the right 2-D subspace independently per batch.
+///
+/// `batch_edge` is the batch sub-tile size — a pure layout decision: `1` walks
+/// one batch per tile, `b` puts the whole batch *inside* one leaf (the matmul
+/// then iterates it in-leaf), and anything between splits the two. All three are
+/// the same kernel; only the partitioner changes.
+#[test]
+fn matmul_batched_walked() {
+    check_matmul_batched(3, 8, 8, 8, 4, 1);
+}
+
+#[test]
+fn matmul_batched_in_leaf() {
+    check_matmul_batched(4, 8, 8, 8, 4, 4);
+}
+
+#[test]
+fn matmul_batched_split() {
+    check_matmul_batched(4, 8, 8, 8, 4, 2);
+}
+
+fn check_matmul_batched(
+    b: usize,
+    m: usize,
+    n: usize,
+    k: usize,
+    tile_edge: usize,
+    batch_edge: usize,
+) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let vector_size = 1;
+
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[
+            (B, batch_edge),
+            (M, tile_edge),
+            (N, tile_edge),
+            (K, tile_edge),
+        ]),
+        ByAxis::new(&[
+            (B, Distribution::Sequential),
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    );
+
+    let space = Space::new(&[(B, b), (M, m), (N, n), (K, k)]);
+    let a = TileInput::builder(&client, space.select(&[B, M, K]))
+        .tile(&[batch_edge, tile_edge, tile_edge])
+        .arange();
+    let rhs = TileInput::builder(&client, space.select(&[B, K, N]))
+        .tile(&[batch_edge, tile_edge, tile_edge])
+        .arange();
+    let c = TileInput::builder(&client, space.select(&[B, M, N]))
+        .tile(&[batch_edge, tile_edge, tile_edge])
+        .zeros();
+
+    let cube_count = cube_count_for(&partitioner, &space);
+    let cube_dim = CubeDim::new_single();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        cube_count,
+        cube_dim,
+        TileLaunch::new(
+            a.view(),
+            partitioner.launch(),
+            a.space(),
+            TileKind::GmemWhole,
+        ),
+        TileLaunch::new(
+            rhs.view(),
+            partitioner.launch(),
+            rhs.space(),
+            TileKind::GmemWhole,
+        ),
+        TileLaunch::new(
+            c.view(),
+            partitioner.launch(),
+            c.space(),
+            TileKind::GmemWhole,
+        ),
+        dtype,
+        vector_size,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+
+    // Each operand is a physical-order arange over its `[grid_b, grid…, batch_edge,
+    // tile, tile]` buffer, so the value at logical `(batch, i, j)` is its flat
+    // physical index. Build the expected batched matmul in that same order.
+    let (grid_m, grid_n, grid_k) = (m / tile_edge, n / tile_edge, k / tile_edge);
+    let e = batch_edge;
+    let lhs_at = |bb: usize, i: usize, kk: usize| -> f32 {
+        let (gb, tb) = (bb / e, bb % e);
+        let (gi, ti) = (i / tile_edge, i % tile_edge);
+        let (gk, tk) = (kk / tile_edge, kk % tile_edge);
+        (((((gb * grid_m + gi) * grid_k + gk) * e + tb) * tile_edge + ti) * tile_edge + tk) as f32
+    };
+    let rhs_at = |bb: usize, kk: usize, j: usize| -> f32 {
+        let (gb, tb) = (bb / e, bb % e);
+        let (gk, tk) = (kk / tile_edge, kk % tile_edge);
+        let (gj, tj) = (j / tile_edge, j % tile_edge);
+        (((((gb * grid_k + gk) * grid_n + gj) * e + tb) * tile_edge + tk) * tile_edge + tj) as f32
+    };
+
+    let mut expected = vec![0.0f32; b * m * n];
+    for bb in 0..b {
+        let (gb, tb) = (bb / e, bb % e);
+        for gm in 0..grid_m {
+            for gn in 0..grid_n {
+                for tm in 0..tile_edge {
+                    for tn in 0..tile_edge {
+                        let (i, j) = (gm * tile_edge + tm, gn * tile_edge + tn);
+                        let value = (0..k)
+                            .map(|kk| lhs_at(bb, i, kk) * rhs_at(bb, kk, j))
+                            .sum::<f32>();
+                        let offset = ((((gb * grid_m + gm) * grid_n + gn) * e + tb) * tile_edge
+                            + tm)
+                            * tile_edge
+                            + tn;
+                        expected[offset] = value;
+                    }
+                }
+            }
+        }
+    }
+    let (_, expected) = TestInput::builder(
+        client,
+        shape![b / e, grid_m, grid_n, e, tile_edge, tile_edge],
+    )
+    .custom(expected)
+    .generate_with_f32_host_data();
+
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// Drives `launch_staged_matmul` for `C = A @ B` under an arbitrary
 /// `partitioner`; the launch geometry is derived from it via [`cube_count_for`].
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
@@ -167,7 +312,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let cube_count = cube_count_for(&partitioner, &space);
     let cube_dim = CubeDim::new_single();
 
-    // The whole matmul is `mma_gmem(&c, &a, &b)` over the launched tiles.
+    // The whole matmul is `mma_gmem(c, a, b)` over the launched tiles.
     launch_staged_matmul::launch::<TestRuntime>(
         &client,
         cube_count,
@@ -235,13 +380,13 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// partitioner), so the whole matmul is one line.
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, S: Size>(
-    a: Tile<'_, E, S, CoordsDyn>,
-    b: Tile<'_, E, S, CoordsDyn>,
-    c: Tile<'_, E, S, CoordsDyn>,
+    a: &Tile<'_, E, S>,
+    b: &Tile<'_, E, S>,
+    c: &mut Tile<'_, E, S>,
     #[define(E)] _dtype: StorageType,
     #[define(S)] _vector_size: usize,
 ) {
-    mma_gmem::<E, S>(&c, &a, &b);
+    mma_gmem::<E, S>(c, a, b);
 }
 
 // ---------------------------------------------------------------------------
@@ -255,12 +400,17 @@ fn launch_staged_matmul<E: Numeric, S: Size>(
 /// leaf.
 #[cube]
 fn mma_gmem<E: Numeric, S: Size>(
-    out: &Tile<'_, E, S, CoordsDyn>,
-    lhs: &Tile<'_, E, S, CoordsDyn>,
-    rhs: &Tile<'_, E, S, CoordsDyn>,
+    out: &mut Tile<'_, E, S>,
+    lhs: &Tile<'_, E, S>,
+    rhs: &Tile<'_, E, S>,
 ) {
+    // The accumulator is written through its (interior-mutable) views, so a
+    // shared reborrow is all the lowering needs.
+    let out = &*out;
+
     // The operation ranges over the union of its operands' spaces
-    // ({M,N} ∪ {M,K} ∪ {K,N} = {M,N,K}) and contracts the axes the output drops.
+    // ({M,N} ∪ {M,K} ∪ {K,N} = {M,N,K}, or with a leading batch axis B) and
+    // contracts the axes the output drops.
     let space = comptime!(Space::union(&[&out.space, &lhs.space, &rhs.space]));
     let contracted = comptime!(space.contracting(&out.space));
     comptime!(assert!(
@@ -268,29 +418,21 @@ fn mma_gmem<E: Numeric, S: Size>(
         "mma: the output must drop at least one (contracted) axis"
     ));
 
-    // Stage each operand at its own axes' sub-tile size (comptime).
-    let a_rows = lhs
-        .partitioner
-        .sub_tile_edge(comptime!(lhs.space.axis_at(0)));
-    let a_cols = lhs
-        .partitioner
-        .sub_tile_edge(comptime!(lhs.space.axis_at(1)));
-    let b_rows = rhs
-        .partitioner
-        .sub_tile_edge(comptime!(rhs.space.axis_at(0)));
-    let b_cols = rhs
-        .partitioner
-        .sub_tile_edge(comptime!(rhs.space.axis_at(1)));
-
-    let mut a_smem = Shared::<[Vector<E, S>]>::new_slice(comptime!((a_rows * a_cols) as usize));
-    let mut b_smem = Shared::<[Vector<E, S>]>::new_slice(comptime!((b_rows * b_cols) as usize));
+    // A shared-memory twin of each operand's whole leaf — addressed by `matrix`
+    // exactly like the global leaf, so staging is a single `copy_from`.
+    let mut a_smem = Shared::<[Vector<E, S>]>::new_slice(
+        lhs.partitioner.leaf_size(comptime!(lhs.space.clone())),
+    );
+    let mut b_smem = Shared::<[Vector<E, S>]>::new_slice(
+        rhs.partitioner.leaf_size(comptime!(rhs.space.clone())),
+    );
     let mut a_tile = stage_smem::<E, S>(
-        a_smem.view_mut(smem_tile_layout(a_rows, a_cols)),
+        a_smem.view_mut(smem_layout(comptime!(lhs.space.clone()), &lhs.partitioner)),
         comptime!(lhs.space.clone()),
         lhs.partitioner.clone(),
     );
     let mut b_tile = stage_smem::<E, S>(
-        b_smem.view_mut(smem_tile_layout(b_rows, b_cols)),
+        b_smem.view_mut(smem_layout(comptime!(rhs.space.clone()), &rhs.partitioner)),
         comptime!(rhs.space.clone()),
         rhs.partitioner.clone(),
     );
@@ -305,11 +447,18 @@ fn mma_gmem<E: Numeric, S: Size>(
 
         let a_leaf = lhs.partition(&point);
         let b_leaf = rhs.partition(&point);
-        let mut acc = out.partition(&point);
+        let acc_leaf = out.partition(&point);
 
+        // Stage both operand leaves into shared memory (the `copy_from` pillar),
+        // then contract each 2-D matrix of the leaf (more than one when the batch
+        // axis is sub-tiled wider than 1).
         a_tile.copy_from(&a_leaf);
         b_tile.copy_from(&b_leaf);
-        mma_smem::<E, S>(&mut acc.view, &a_tile.view, &b_tile.view);
+        let matrices = acc_leaf.matrices();
+        for j in 0..matrices {
+            let mut acc = acc_leaf.matrix(j);
+            mma_smem::<E, S>(&mut acc.view, &a_tile.matrix(j).view, &b_tile.matrix(j).view);
+        }
     }
 }
 
@@ -317,9 +466,9 @@ fn mma_gmem<E: Numeric, S: Size>(
 /// operand that carries it. The partitioner takes the grid from here.
 #[cube]
 fn mma_grid<E: Numeric, S: Size>(
-    out: &Tile<'_, E, S, CoordsDyn>,
-    lhs: &Tile<'_, E, S, CoordsDyn>,
-    rhs: &Tile<'_, E, S, CoordsDyn>,
+    out: &Tile<'_, E, S>,
+    lhs: &Tile<'_, E, S>,
+    rhs: &Tile<'_, E, S>,
     #[comptime] space: Space,
 ) -> Grid {
     let mut counts = Sequence::<usize>::new();
@@ -334,9 +483,9 @@ fn mma_grid<E: Numeric, S: Size>(
 /// Every union axis is in at least one operand.
 #[cube]
 fn tiles_of<E: Numeric, S: Size>(
-    out: &Tile<'_, E, S, CoordsDyn>,
-    lhs: &Tile<'_, E, S, CoordsDyn>,
-    rhs: &Tile<'_, E, S, CoordsDyn>,
+    out: &Tile<'_, E, S>,
+    lhs: &Tile<'_, E, S>,
+    rhs: &Tile<'_, E, S>,
     #[comptime] axis: Axis,
 ) -> usize {
     if comptime!(out.space.contains(axis)) {
