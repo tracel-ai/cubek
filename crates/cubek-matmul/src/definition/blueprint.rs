@@ -155,13 +155,25 @@ impl TilingBlueprint {
         let plane_dim = device_settings.plane_dim;
         let cube_dim = cubedim_resource.to_cube_dim(plane_dim)?;
 
+        // The number of elements per global partition must be non-zero on every axis,
+        // otherwise the `div_ceil` below panics with "attempt to divide by zero". A
+        // zero here means the tiling scheme is degenerate (e.g. `stage_size == 0`);
+        // reject it so autotune skips the candidate instead of crashing.
+        let part_m = self.tiling_scheme.elements_per_global_partition_along_m();
+        let part_n = self.tiling_scheme.elements_per_global_partition_along_n();
+        let part_b = self.tiling_scheme.global_partition_size.batches;
+        if part_m == 0 || part_n == 0 || part_b == 0 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Degenerate tiling scheme: elements per global partition is zero \
+                 (m={part_m}, n={part_n}, batches={part_b}) for {:?}",
+                self.tiling_scheme
+            ))));
+        }
+
         let target_cube_count = Count3d {
-            x: (problem.m as u32)
-                .div_ceil(self.tiling_scheme.elements_per_global_partition_along_m()),
-            y: (problem.n as u32)
-                .div_ceil(self.tiling_scheme.elements_per_global_partition_along_n()),
-            z: (problem.num_batches() as u32)
-                .div_ceil(self.tiling_scheme.global_partition_size.batches),
+            x: (problem.m as u32).div_ceil(part_m),
+            y: (problem.n as u32).div_ceil(part_n),
+            z: (problem.num_batches() as u32).div_ceil(part_b),
         };
         let cube_count_plan = CubeCountPlan::from_blueprint(
             &self.hypercube_blueprint,

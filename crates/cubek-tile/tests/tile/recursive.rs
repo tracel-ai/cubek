@@ -12,7 +12,7 @@ use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Tile, TileKind,
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 
-/// An 8×8 tile, two nested levels of 2×2 subtiles (so per axis `grid=2, level1=2,
+/// An 8×8 tile, two nested levels of 2×2 sub-tiles (so per axis `grid=2, level1=2,
 /// level2=2`), filled with a physical-order arange. Reading it logically must
 /// yield the mixed-radix physical index of each `(i, j)`.
 #[test]

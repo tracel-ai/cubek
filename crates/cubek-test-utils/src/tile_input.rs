@@ -67,7 +67,7 @@ impl TileInput {
 /// [`Tile`](TileLevel::Tile) are duals against the running tile edge: `Tile(e)`
 /// sets the current tile to `e` elements; `Split(n)` divides it into `n`.
 enum TileLevel {
-    /// Divide the current tile into this many subtiles per axis.
+    /// Divide the current tile into this many sub-tiles per axis.
     Split(Vec<usize>),
     /// Set the current tile to this many elements per axis.
     Tile(Vec<usize>),
@@ -83,7 +83,7 @@ pub struct TileInputBuilder {
 }
 
 impl TileInputBuilder {
-    /// Divide the current tile into `counts[axis]` subtiles per axis — a finer
+    /// Divide the current tile into `counts[axis]` sub-tiles per axis — a finer
     /// level. Chain for recursion: `.split(&[4, 4]).split(&[2, 2])`.
     pub fn split(mut self, counts: &[usize]) -> Self {
         self.levels
@@ -102,7 +102,7 @@ impl TileInputBuilder {
         self
     }
 
-    /// No subtiling: the buffer is the logical shape itself, row-major (zero tile
+    /// No sub-tiling: the buffer is the logical shape itself, row-major (zero tile
     /// levels — the view is the identity).
     pub fn untiled(mut self) -> Self {
         self.levels = Some(Vec::new());
