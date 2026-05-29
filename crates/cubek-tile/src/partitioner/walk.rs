@@ -4,8 +4,8 @@ use cubecl::prelude::*;
 
 use crate::{Grid, Point};
 
-use super::{ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Spread};
 use super::walk_order::walk_index;
+use super::{ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Spread};
 
 /// A [`Partitioner`] instantiated against a [`Grid`]: the runtime half of the
 /// walk, so the odometer ([`total`](Walk::total) / [`point`](Walk::point)) lives

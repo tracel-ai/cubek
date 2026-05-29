@@ -11,7 +11,9 @@ fn eye_handle_row_major() {
 
     let shape = [2, 3];
 
-    let handle = TestInput::builder(client.clone(), shape).eye().generate_without_host_data();
+    let handle = TestInput::builder(client.clone(), shape)
+        .eye()
+        .generate_without_host_data();
 
     let expected = TestInput::builder(client.clone(), [2, 3])
         .custom(vec![1., 0., 0., 0., 1., 0.])
