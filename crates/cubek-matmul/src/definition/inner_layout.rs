@@ -1,15 +1,5 @@
 //! Inner (physical) layout of a matmul operand — a generalization of
 //! [`MatrixLayout`](cubek_std::MatrixLayout).
-//!
-//! Where `MatrixLayout` says only row- vs col-major of the trailing 2-D matrix,
-//! an [`InnerLayout`] also covers batch-major and (recursively) tiled storage.
-//! It answers two questions for a logical `(batch, rows, cols)` operand: the
-//! physical buffer to allocate, and the launch view that presents the logical
-//! shape. Every variant reduces to one mechanism — a [`TiledViewLayout`] over a
-//! strided buffer with a [`TileSpec`]: strided variants permute which axis is
-//! contiguous (`levels: 0`); tiled variants block the matrix axes (`levels:
-//! 1`/`2`). A kernel reads the operand logically through the view, so the layout
-//! changes only the memory access pattern, never the result.
 
 use cubecl::{
     Runtime,
@@ -18,28 +8,47 @@ use cubecl::{
 };
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InnerLayout {
     /// `cols` contiguous (standard C order) — `MatrixLayout::RowMajor`.
     RowMajor,
     /// `rows` contiguous within a batch (matrix transposed) — `MatrixLayout::ColMajor`.
     ColMajor,
-    // A batch-major / batch-vectorized variant belongs here too, but it needs
-    // more than a storage label: the vector width and that *all* operands agree
-    // on it (otherwise lanes mix batches). Deferred until there's a kernel that
-    // vectorizes along batch — the variants below are deliberately open to it.
-    /// Matrix axes blocked into contiguous `tile × tile` sub-tiles (tile = edge,
-    /// like `TileInput::tile`), so a leaf is one contiguous block.
-    Tiled { tile: usize },
-    /// Two nested levels of blocking, with the same convention as
-    /// `cubek-tile/tests/tile/recursive.rs`: identical to
-    /// `TileInput::split(&[level1; 2]).split(&[level2; 2])`. `level1`/`level2`
-    /// are the per-level *split counts* (coarse→fine); the innermost tile is the
-    /// leftover `extent / (level1 · level2)`.
-    RecursivelyTiled { level1: usize, level2: usize },
+    /// Matrix axes blocked into nested, contiguous sub-tiles. Each entry is one
+    /// nesting level's `(row_edge, col_edge)`, outer→inner — so tiles may be
+    /// rectangular and arbitrarily deep:
+    /// - `[(4, 4)]` — plain `4 × 4` blocks (a leaf is one contiguous block).
+    /// - `[(8, 4)]` — rectangular `8 × 4` blocks.
+    /// - `[(4, 4), (2, 2)]` — `4 × 4` blocks each split into `2 × 2`.
+    ///
+    /// Each level's edge must divide the one enclosing it, and the outermost must
+    /// divide the axis extent. The grid (count of outermost blocks) is the
+    /// leftover quotient, so the same value applies to any matrix size.
+    Tiled { tiles: Vec<(usize, usize)> },
+}
+
+/// Per-axis mixed-radix factors `[grid, between-levels…, finest tile]` for an
+/// axis of length `extent` whose nesting edges (outer→inner) are `edges`. The
+/// product telescopes back to `extent`; the finest factor is the innermost edge.
+fn axis_factors(edges: impl IntoIterator<Item = usize>, extent: usize) -> Vec<usize> {
+    let mut factors = Vec::new();
+    let mut prev = extent;
+    for edge in edges {
+        factors.push(prev / edge);
+        prev = edge;
+    }
+    factors.push(prev);
+    factors
 }
 
 impl InnerLayout {
+    /// Convenience: a single level of square `edge × edge` blocks.
+    pub fn square_tiled(edge: usize) -> Self {
+        InnerLayout::Tiled {
+            tiles: vec![(edge, edge)],
+        }
+    }
+
     /// Detect the (strided) inner layout of a plain tensor from its strides:
     /// whichever of the trailing two matrix axes is contiguous. Tiled layouts
     /// aren't expressible as plain strides, so a standard binding only ever
@@ -57,27 +66,23 @@ impl InnerLayout {
     /// operand. Strided variants store the logical shape (the *strides* carry the
     /// layout); tiled variants expand the matrix axes into `[grid…, tile…]`.
     pub fn physical_dims(&self, batch: usize, rows: usize, cols: usize) -> Vec<usize> {
-        match *self {
+        match self {
             InnerLayout::RowMajor | InnerLayout::ColMajor => {
                 vec![batch, rows, cols]
             }
-            InnerLayout::Tiled { tile } => {
-                vec![batch, rows / tile, cols / tile, tile, tile]
-            }
-            // Block-major, coarse→fine: [batch, grid, grid, level1, level1,
-            // leftover, leftover] — the two split counts then the leftover tile,
-            // matching `recursive.rs`'s `.split(&[level1;2]).split(&[level2;2])`.
-            InnerLayout::RecursivelyTiled { level1, level2 } => {
-                let block = level1 * level2;
-                vec![
-                    batch,
-                    level1,
-                    level1,
-                    level2,
-                    level2,
-                    rows / block,
-                    cols / block,
-                ]
+            // Level-major, coarse→fine: [batch, grid_r, grid_c, …, finest_r,
+            // finest_c] — each level contributes both axes' factors, as
+            // `TiledLayout` expects (`[pre, grid…, level1…, …]`).
+            InnerLayout::Tiled { tiles } => {
+                let row_factors = axis_factors(tiles.iter().map(|t| t.0), rows);
+                let col_factors = axis_factors(tiles.iter().map(|t| t.1), cols);
+                let mut dims = Vec::with_capacity(1 + row_factors.len() * 2);
+                dims.push(batch);
+                for (r, c) in row_factors.into_iter().zip(col_factors) {
+                    dims.push(r);
+                    dims.push(c);
+                }
+                dims
             }
         }
     }
@@ -88,12 +93,12 @@ impl InnerLayout {
     /// [`view`](Self::view) itself only preserves whatever strides a binding
     /// already carries.
     pub fn physical_strides(&self, batch: usize, rows: usize, cols: usize) -> Vec<usize> {
-        match *self {
+        match self {
             InnerLayout::RowMajor => vec![rows * cols, cols, 1],
             InnerLayout::ColMajor => vec![rows * cols, 1, rows],
             // Tiled buffers carry the layout in their *shape*; strides are plain
             // row-major over those physical dims.
-            InnerLayout::Tiled { .. } | InnerLayout::RecursivelyTiled { .. } => {
+            InnerLayout::Tiled { .. } => {
                 let dims = self.physical_dims(batch, rows, cols);
                 let mut strides = vec![1usize; dims.len()];
                 for i in (0..dims.len() - 1).rev() {
@@ -117,17 +122,13 @@ impl InnerLayout {
         rows: usize,
         cols: usize,
     ) -> TiledViewLaunch<R> {
-        let spec = match *self {
-            // Batch is a passthrough "pre" axis; only the two matrix axes tile.
-            InnerLayout::Tiled { .. } => TileSpec {
+        let spec = match self {
+            // Batch is a passthrough "pre" axis; only the two matrix axes tile,
+            // with one nesting level per `tiles` entry.
+            InnerLayout::Tiled { tiles } => TileSpec {
                 start_axis: 1,
                 num_tiled: 2,
-                levels: 1,
-            },
-            InnerLayout::RecursivelyTiled { .. } => TileSpec {
-                start_axis: 1,
-                num_tiled: 2,
-                levels: 2,
+                levels: tiles.len(),
             },
             // Strided: reshape to (batch, rows, cols), preserving the operand's
             // own strides (batch stride taken from the binding, not assumed).

@@ -102,12 +102,6 @@ impl Operand {
     }
 }
 
-// Building a launchable tile is duplicated inline at each launch below rather
-// than factored out: the `TileLaunch`'s phantom element/size generics are only
-// inferable at the launch call site, so it can't be a `-> TileLaunch<…>` fn, and
-// the fresh buffer needs the layout's `physical_strides` set on it first to
-// realize the chosen layout before viewing.
-
 /// A trivial partitioner (edge 1, all sequential) for the logical copies, which
 /// only walk views and never partition.
 fn copy_partitioner() -> Partitioner {
@@ -293,11 +287,18 @@ fn run(
 }
 
 use InnerLayout::{ColMajor, RowMajor};
-const TILED: InnerLayout = InnerLayout::Tiled { tile: 4 };
-const RECURSIVE: InnerLayout = InnerLayout::RecursivelyTiled {
-    level1: 2,
-    level2: 2,
-};
+
+/// A single level of square `4 × 4` blocks.
+fn tiled() -> InnerLayout {
+    InnerLayout::square_tiled(4)
+}
+
+/// Two nested levels: `4 × 4` blocks each split into `2 × 2`.
+fn recursive() -> InnerLayout {
+    InnerLayout::Tiled {
+        tiles: vec![(4, 4), (2, 2)],
+    }
+}
 
 #[test]
 fn all_row_major() {
@@ -311,20 +312,40 @@ fn row_col_natural() {
 
 #[test]
 fn all_tiled() {
-    run(TILED, TILED, TILED, 2, 8, 8, 8, 4);
+    run(tiled(), tiled(), tiled(), 2, 8, 8, 8, 4);
 }
 
 #[test]
 fn all_recursively_tiled() {
-    run(RECURSIVE, RECURSIVE, RECURSIVE, 2, 8, 8, 8, 4);
+    run(recursive(), recursive(), recursive(), 2, 8, 8, 8, 4);
+}
+
+#[test]
+fn rectangular_tiled() {
+    run(
+        InnerLayout::Tiled {
+            tiles: vec![(8, 4)],
+        },
+        InnerLayout::Tiled {
+            tiles: vec![(4, 8)],
+        },
+        InnerLayout::Tiled {
+            tiles: vec![(8, 8)],
+        },
+        2,
+        8,
+        8,
+        8,
+        4,
+    );
 }
 
 #[test]
 fn mixed_layouts() {
-    run(TILED, ColMajor, RowMajor, 2, 8, 8, 8, 4);
+    run(tiled(), ColMajor, RowMajor, 2, 8, 8, 8, 4);
 }
 
 #[test]
 fn tiled_inputs_recursive_output() {
-    run(TILED, TILED, RECURSIVE, 2, 8, 8, 8, 4);
+    run(tiled(), tiled(), recursive(), 2, 8, 8, 8, 4);
 }

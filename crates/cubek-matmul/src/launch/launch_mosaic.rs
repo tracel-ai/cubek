@@ -30,20 +30,6 @@ const M: Axis = Axis(1);
 const N: Axis = Axis(2);
 const K: Axis = Axis(3);
 
-fn invalid(msg: String) -> MatmulSetupError {
-    MatmulSetupError::InvalidConfig(Box::new(msg))
-}
-
-/// One tile per cube along `axis`: it rides cube dimension `dim`, each cube
-/// owning a single sub-tile.
-fn one_tile_per_cube(dim: CubeDimension) -> Distribution {
-    Distribution::Spatial {
-        unit: ComputePrimitive::Cube(dim),
-        spread: Spread::Contiguous,
-        coverage: Coverage::TilesEach(1),
-    }
-}
-
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
@@ -56,15 +42,21 @@ pub fn launch_ref<R: Runtime>(
     if matches!(lhs, InputBinding::Quantized { .. })
         || matches!(rhs, InputBinding::Quantized { .. })
     {
-        return Err(invalid("Mosaic does not support quantized inputs".into()));
+        return Err({
+            let msg = "Mosaic does not support quantized inputs".to_string();
+            MatmulSetupError::InvalidConfig(Box::new(msg))
+        });
     }
 
     // One element type drives the whole kernel, so the operands must agree.
     if dtypes.lhs_global != dtypes.rhs_global || dtypes.lhs_global != dtypes.acc_global {
-        return Err(invalid(format!(
-            "Mosaic requires a single dtype, got lhs:{:?} rhs:{:?} acc:{:?}",
-            dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global
-        )));
+        return Err({
+            let msg = format!(
+                "Mosaic requires a single dtype, got lhs:{:?} rhs:{:?} acc:{:?}",
+                dtypes.lhs_global, dtypes.rhs_global, dtypes.acc_global
+            );
+            MatmulSetupError::InvalidConfig(Box::new(msg))
+        });
     }
 
     let lhs_shape = lhs.shape().clone();
@@ -95,9 +87,10 @@ pub fn launch_ref<R: Runtime>(
 
     let tile = strategy.tile_size;
     if !m.is_multiple_of(tile) || !n.is_multiple_of(tile) || !k.is_multiple_of(tile) {
-        return Err(invalid(format!(
-            "Mosaic requires tile_size={tile} to divide M={m}, N={n}, K={k}"
-        )));
+        return Err({
+            let msg = format!("Mosaic requires tile_size={tile} to divide M={m}, N={n}, K={k}");
+            MatmulSetupError::InvalidConfig(Box::new(msg))
+        });
     }
 
     // The inner layout of each operand, read off its strides.
@@ -117,9 +110,30 @@ pub fn launch_ref<R: Runtime>(
     let partitioner = Partitioner::row_major(
         ByAxis::new(&[(B, 1), (M, tile), (N, tile), (K, tile)]),
         ByAxis::new(&[
-            (B, one_tile_per_cube(CubeDimension::Z)),
-            (M, one_tile_per_cube(CubeDimension::X)),
-            (N, one_tile_per_cube(CubeDimension::Y)),
+            (B, {
+                let dim = CubeDimension::Z;
+                Distribution::Spatial {
+                    unit: ComputePrimitive::Cube(dim),
+                    spread: Spread::Contiguous,
+                    coverage: Coverage::TilesEach(1),
+                }
+            }),
+            (M, {
+                let dim = CubeDimension::X;
+                Distribution::Spatial {
+                    unit: ComputePrimitive::Cube(dim),
+                    spread: Spread::Contiguous,
+                    coverage: Coverage::TilesEach(1),
+                }
+            }),
+            (N, {
+                let dim = CubeDimension::Y;
+                Distribution::Spatial {
+                    unit: ComputePrimitive::Cube(dim),
+                    spread: Spread::Contiguous,
+                    coverage: Coverage::TilesEach(1),
+                }
+            }),
             (K, Distribution::Sequential),
         ]),
     );
