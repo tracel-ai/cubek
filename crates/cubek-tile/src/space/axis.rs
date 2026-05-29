@@ -57,4 +57,9 @@ impl<T: Copy> ByAxis<T> {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    /// Whether no axes are carried.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
