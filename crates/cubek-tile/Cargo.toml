@@ -1,15 +1,12 @@
 [package]
-authors = [
-    "nathanielsimard <nathaniel.simard.42@gmail.com>",
-    "louisfd <louisfd94@gmail.com>",
-]
-description = "CubeK: Test Utils"
+authors = ["louisfd <louisfd94@gmail.com>"]
+description = "CubeK: Tile"
 edition.workspace = true
 license.workspace = true
-name = "cubek-test-utils"
+name = "cubek-tile"
 readme.workspace = true
 rust-version.workspace = true
-repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-test-utils"
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-tile"
 version.workspace = true
 
 [features]
@@ -21,10 +18,6 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
-cubek-random = { path = "../cubek-random", version = "=0.3.0-pre.1", default-features = false }
-cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.1" }
-cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.1", default-features = false }
-
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
 cubecl-common = { workspace = true }
@@ -32,5 +25,6 @@ half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.1", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

@@ -4,6 +4,7 @@ mod progress;
 mod registry;
 mod test_mode;
 mod test_tensor;
+mod tile_input;
 
 pub use config::{CubekConfig, PrintSection, PrintView, TestPolicy, TestSection, config};
 pub use correctness::{
@@ -16,3 +17,4 @@ pub use registry::{
 };
 pub use test_mode::*;
 pub use test_tensor::*;
+pub use tile_input::*;

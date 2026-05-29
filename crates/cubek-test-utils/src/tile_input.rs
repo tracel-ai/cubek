@@ -10,9 +10,9 @@ use cubecl::std::tensor::{
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
 use cubecl::{TestRuntime, client::ComputeClient, zspace::Shape};
-use cubek_test_utils::{TestInput, TestInputBuilder};
+use cubek_tile::Space;
 
-use super::tile_dsl::Space;
+use crate::{TestInput, TestInputBuilder};
 
 /// A tile-shaped test input: the device buffer plus the logical [`Space`] it's
 /// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view

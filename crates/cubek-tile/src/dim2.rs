@@ -1,10 +1,23 @@
-//! 2-D [`Layout`]s presenting a tensor's storage to the leaf: one windows a tile
-//! out of a tensor by its semantic origin, the other strides a flat smem tile.
+//! The **2-D leaf world**. The engine ([`space`](super::space),
+//! [`partitioner`](super::partitioner), [`Tile<CoordsDyn>`](super::Tile)) is
+//! arity-agnostic; everything keyed on `Coords2d` collapses to two dimensions and
+//! lives here, behind the [`partition`](super::Tile::partition) seam. The names
+//! `row`/`col` and the fixed pair `(0, 1)` are deliberately confined to this file.
+//!
+//! It holds the two leaf [`Layout`]s (one windows a tile out of a tensor by its
+//! semantic origin, the other strides a flat smem tile), the element copy, and the
+//! `Coords2d` half of [`Tile`](super::Tile).
 
 use cubecl::{
     prelude::*,
-    std::tensor::layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
+    std::tensor::{
+        ViewMut,
+        layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
+    },
 };
+
+// Glob brings sibling items *and* the cube-macro-generated `*Expand` companions.
+use super::*;
 
 /// Re-presents one tile as a 2-D `[Tile0, Tile1]` view by offsetting local tile
 /// coords to the tile's **semantic origin** `(row0, col0)`. It works in the
@@ -103,5 +116,45 @@ pub fn smem_tile_layout(#[comptime] rows: usize, #[comptime] cols: usize) -> Sme
             u32::from_int(comptime!(cols as i64)),
         ),
         strides: (u32::from_int(comptime!(cols as i64)), u32::from_int(1)),
+    }
+}
+
+// Leaf / shared-memory tiles (`Coords2d`): the element copies.
+#[cube]
+impl<'a, E: Numeric, S: Size> Tile<'a, E, S, Coords2d> {
+    /// Copy `src` into this tile — a gmem→smem load or an smem→gmem store; both
+    /// are element copies once the view abstracts the backing memory.
+    pub fn copy_from(&mut self, src: &Tile<'_, E, S, Coords2d>) {
+        copy_2d::<E, S>(&mut self.view, &src.view);
+    }
+}
+
+/// Wrap a shared-memory view as a [`Smem`](TileKind::Smem) tile.
+#[cube]
+pub fn stage_smem<'a, E: Numeric, S: Size>(
+    view: ViewMut<'a, Vector<E, S>, Coords2d>,
+    #[comptime] space: Space,
+    partitioner: Partitioner,
+) -> Tile<'a, E, S, Coords2d> {
+    Tile::<'a, E, S, Coords2d> {
+        view,
+        partitioner,
+        space,
+        kind: comptime!(TileKind::Smem),
+    }
+}
+
+/// Element-wise copy of `src` into `dst` (same 2-D shape). Pure tile machinery —
+/// the gmem↔smem staging used by any tiled op.
+#[cube]
+pub fn copy_2d<E: Numeric, S: Size>(
+    dst: &mut ViewMut<'_, Vector<E, S>, Coords2d>,
+    src: &ViewMut<'_, Vector<E, S>, Coords2d>,
+) {
+    let (h, w) = src.shape();
+    for i in 0..h {
+        for j in 0..w {
+            dst.write((i, j), src.read((i, j)));
+        }
     }
 }

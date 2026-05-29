@@ -7,6 +7,11 @@
 //! launch input or the accumulator), `Coords2d` a leaf or shared-memory tile. The
 //! view is a [`ViewMut`] — the accumulator writes through it, and read operands
 //! are simply never written. A comptime [`TileKind`] tags the memory space.
+//!
+//! This file is the **arity-agnostic** half: the [`Tile`] struct, [`TileKind`],
+//! and the `CoordsDyn` whole-tensor impl. [`partition`](Tile::partition) is the
+//! seam — it collapses an N-d tile into a `Coords2d` leaf; everything 2-D it
+//! produces (the layouts, the copies) lives in [`dim2`](super::dim2).
 
 use cubecl::{
     prelude::*,
@@ -36,12 +41,12 @@ pub enum TileKind {
 /// receive tiles directly. Generic over the view's coordinate type `C`.
 #[derive(CubeType, CubeLaunch)]
 pub struct Tile<'a, E: Numeric, S: Size, C: Coordinates + 'a> {
-    pub(crate) view: ViewMut<'a, Vector<E, S>, C>,
-    pub(crate) partitioner: Partitioner,
+    pub view: ViewMut<'a, Vector<E, S>, C>,
+    pub partitioner: Partitioner,
     #[cube(comptime)]
-    pub(crate) space: Space,
+    pub space: Space,
     #[cube(comptime)]
-    pub(crate) kind: TileKind,
+    pub kind: TileKind,
 }
 
 // Whole-tensor tiles (`CoordsDyn`): partition into leaves, accumulate (the walk),
@@ -70,46 +75,11 @@ impl<'a, E: Numeric, S: Size> Tile<'a, E, S, CoordsDyn> {
         }
     }
 
-    /// Accumulate `lhs · rhs` into this whole-tensor accumulator (the gmem walk).
-    pub fn mma(&self, lhs: &Tile<'_, E, S, CoordsDyn>, rhs: &Tile<'_, E, S, CoordsDyn>) {
-        mma_gmem::<E, S>(self, lhs, rhs);
-    }
-
     /// Runtime number of tiles along `axis`: the semantic extent over that axis
     /// divided by the sub-tile size.
     pub fn tiles(&self, #[comptime] axis: Axis) -> usize {
         let shape = self.view.shape();
         let extent = *shape.index(comptime!(self.space.position(axis))) as usize;
         extent / self.partitioner.sub_tile_edge(axis)
-    }
-}
-
-// Leaf / shared-memory tiles (`Coords2d`): the scalar accumulate and the copies.
-#[cube]
-impl<'a, E: Numeric, S: Size> Tile<'a, E, S, Coords2d> {
-    /// Scalar tile multiply-accumulate into this leaf accumulator.
-    pub fn mma(&mut self, lhs: &Tile<'_, E, S, Coords2d>, rhs: &Tile<'_, E, S, Coords2d>) {
-        mma_smem::<E, S>(&mut self.view, &lhs.view, &rhs.view);
-    }
-
-    /// Copy `src` into this tile — a gmem→smem load or an smem→gmem store; both
-    /// are element copies once the view abstracts the backing memory.
-    pub fn copy_from(&mut self, src: &Tile<'_, E, S, Coords2d>) {
-        copy_2d::<E, S>(&mut self.view, &src.view);
-    }
-}
-
-/// Wrap a shared-memory view as a [`Smem`](TileKind::Smem) tile.
-#[cube]
-pub fn stage_smem<'a, E: Numeric, S: Size>(
-    view: ViewMut<'a, Vector<E, S>, Coords2d>,
-    #[comptime] space: Space,
-    partitioner: Partitioner,
-) -> Tile<'a, E, S, Coords2d> {
-    Tile::<'a, E, S, Coords2d> {
-        view,
-        partitioner,
-        space,
-        kind: comptime!(TileKind::Smem),
     }
 }

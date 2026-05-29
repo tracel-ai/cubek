@@ -6,10 +6,8 @@
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
-
-use super::tile_dsl::{Axis, ByAxis, Distribution, Partitioner, Space, Tile, TileKind, TileLaunch};
-use super::tile_input::TileInput;
+use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
+use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Tile, TileKind, TileLaunch};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -18,7 +16,7 @@ const N: Axis = Axis(1);
 /// level2=2`), filled with a physical-order arange. Reading it logically must
 /// yield the mixed-radix physical index of each `(i, j)`.
 #[test]
-fn ___recursive_two_level_tiled_view() {
+fn recursive_two_level_tiled_view() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n) = (8usize, 8usize);
 

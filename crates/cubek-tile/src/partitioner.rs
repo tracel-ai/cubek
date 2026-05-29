@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::std::tile_dsl::{Grid, Point};
+use crate::{Grid, Point};
 
 use super::{Axis, ByAxis, Space};
 
