@@ -258,6 +258,13 @@ fn select_size(
         }
     } as usize;
 
+    // The number of rows handled per plane cannot exceed the number of available
+    // planes: otherwise `plane_count / rows` underflows to 0, producing a degenerate
+    // tiling scheme with `stage_size.m == 0` that divides by zero in
+    // `TilingBlueprint::cube_launch_info`. Clamp so there is always at least one stage
+    // along `m` (e.g. a large `problem_m` requesting 2 rows when only 1 plane fits).
+    let rows = rows.min(plane_count).max(1);
+
     (rows, plane_count / rows, plane_count)
 }
 
@@ -371,4 +378,40 @@ fn selection_tiny<R: Runtime>(
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test: when fewer planes are available than the requested
+    /// rows-per-plane (e.g. a large `problem_m` asks for 2 rows but only 1 plane
+    /// fits), `select_size` must not return `stage_size_m == 0`. The zero used to
+    /// propagate into a degenerate `TilingScheme` (`stage_size.m == 0`) and panic
+    /// with "attempt to divide by zero" in `TilingBlueprint::cube_launch_info`.
+    /// Reproduces the rf-detr crash on the `m=1024, n=4, k=256` matmul.
+    #[test]
+    fn select_size_never_yields_zero_stage_size_m() {
+        let plane_count = 1;
+        let instruction_m = 8;
+        let problem_m = 1024;
+
+        for strategy in [
+            MultiRowStrategy::Always(2),
+            MultiRowStrategy::Adaptive {
+                minimum_stage_count: 8,
+            },
+        ] {
+            let (rows_per_plane, stage_size_m, _partition_shape_n) =
+                select_size(strategy, plane_count, instruction_m, problem_m);
+
+            assert!(
+                stage_size_m >= 1,
+                "stage_size_m must be >= 1 (got {stage_size_m}) for {strategy:?} with plane_count={plane_count}"
+            );
+            assert!(rows_per_plane >= 1);
+            // With a single plane we can only fit a single row per plane.
+            assert!(rows_per_plane <= plane_count);
+        }
+    }
 }
