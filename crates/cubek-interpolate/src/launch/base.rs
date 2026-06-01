@@ -62,13 +62,10 @@ pub fn interpolate_launch<R: Runtime>(
         )?,
     };
 
-    let channel_groups = problem.channels / vector_size;
-    let num_tiles_width = problem.output_width.div_ceil(settings.tile_size.width());
-    let num_tiles_height = problem.output_height.div_ceil(settings.tile_size.height());
     let cube_shape = get_cube_shape(
-        channel_groups,
+        settings.channel_groups,
         settings.tile_size.area(),
-        num_tiles_width * num_tiles_height,
+        settings.num_tiles_width * settings.num_tiles_height,
     );
 
     unsafe {

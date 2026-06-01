@@ -9,7 +9,6 @@ use cubek_interpolate::{
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
     launch::InterpolateStrategy,
-    routines::{BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy},
 };
 use cubek_test_utils::TestInput;
 
@@ -29,6 +28,7 @@ pub fn run_interpolate_global_test(
     input_min: f32,
     input_max: f32,
     problem: InterpolateForwardProblem,
+    strategy: InterpolateStrategy,
     tolerance: f32,
 ) {
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
@@ -45,9 +45,7 @@ pub fn run_interpolate_global_test(
         input.clone().binding(),
         output.clone().binding(),
         problem.options,
-        InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
-        ),
+        strategy,
         input.dtype,
     );
 

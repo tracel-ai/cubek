@@ -1,5 +1,12 @@
 use cubecl::{TestRuntime, prelude::*};
-use cubek_interpolate::definition::{InterpolateMode, InterpolateOptions, NearestMode};
+use cubek_interpolate::{
+    definition::{InterpolateMode, InterpolateOptions, NearestMode},
+    launch::InterpolateStrategy,
+    routines::{
+        BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
+        SharedMemoryStrategy,
+    },
+};
 
 use super::{make_problem, run_interpolate_global_test};
 
@@ -13,7 +20,17 @@ fn test_interpolate_nearest_identity() {
         [4, 4],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );
-    run_interpolate_global_test(client, 5678, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -24,7 +41,17 @@ fn test_interpolate_nearest_exact_identity() {
         [4, 4],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
     );
-    run_interpolate_global_test(client, 5678, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -35,7 +62,17 @@ fn test_interpolate_nearest_upsample() {
         [10, 10],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );
-    run_interpolate_global_test(client, 1234, -10.0, 10.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        1234,
+        -10.0,
+        10.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -46,7 +83,17 @@ fn test_interpolate_nearest_exact_upsample() {
         [10, 10],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
     );
-    run_interpolate_global_test(client, 1234, -10.0, 10.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        1234,
+        -10.0,
+        10.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -57,7 +104,17 @@ fn test_interpolate_nearest_downsample() {
         [2, 2],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );
-    run_interpolate_global_test(client, 91011, -100.0, 100.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        91011,
+        -100.0,
+        100.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -68,7 +125,17 @@ fn test_interpolate_nearest_exact_downsample() {
         [2, 2],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
     );
-    run_interpolate_global_test(client, 91011, -100.0, 100.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        91011,
+        -100.0,
+        100.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -79,7 +146,17 @@ fn test_interpolate_nearest_resize() {
         [8, 16],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );
-    run_interpolate_global_test(client, 25, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        25,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -90,7 +167,17 @@ fn test_interpolate_nearest_exact_resize() {
         [8, 16],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
     );
-    run_interpolate_global_test(client, 25, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        25,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -102,7 +189,17 @@ fn test_interpolate_nearest_without_align_corners() {
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor))
             .with_align_corners(false),
     );
-    run_interpolate_global_test(client, 122, -10.0, 10.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        122,
+        -10.0,
+        10.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -114,7 +211,17 @@ fn test_interpolate_nearest_exact_without_align_corners() {
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact))
             .with_align_corners(false),
     );
-    run_interpolate_global_test(client, 122, -10.0, 10.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        122,
+        -10.0,
+        10.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -125,7 +232,17 @@ fn test_interpolate_nearest_precision() {
         [510, 1],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );
-    run_interpolate_global_test(client, 122, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }
 
 #[test]
@@ -136,5 +253,15 @@ fn test_interpolate_nearest_exact_precision() {
         [510, 1],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
     );
-    run_interpolate_global_test(client, 122, -1.0, 1.0, problem, NEAREST_TOLERANCE);
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+        ),
+        NEAREST_TOLERANCE,
+    );
 }

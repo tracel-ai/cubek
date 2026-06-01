@@ -4,7 +4,7 @@ use crate::{
         writers::Writer,
     },
     definition::{
-        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_weights,
+        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_value,
         get_halo, tile_absolute_coords,
     },
     routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
@@ -43,11 +43,6 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
 
     let (frac_row, frac_col) = (input_row - input_row_floor, input_col - input_col_floor);
 
-    let (weights_row, weights_col) = (
-        compute_weights(frac_row, blueprint.options),
-        compute_weights(frac_col, blueprint.options),
-    );
-
     let vector_size = N::value();
 
     let reader = get_reader::<P, N>(
@@ -62,14 +57,14 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         blueprint,
     );
 
-    let final_value = compute_value_reader::<P, N>(
+    let final_value = compute_value::<P, N>(
         input,
         input_height,
         input_width,
         isize::cast_from(input_row_floor),
         isize::cast_from(input_col_floor),
-        weights_row,
-        weights_col,
+        frac_row,
+        frac_col,
         reader,
         blueprint,
     );
@@ -214,74 +209,10 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
 }
 
 #[cube]
-fn compute_value_reader<P: InterpolatePrecision, N: Size>(
-    input: &Tensor<Vector<P::EI, N>>,
-    input_height: usize,
-    input_width: usize,
-    base_row: isize,
-    base_col: isize,
-    weights_row: Array<Vector<P::EA, N>>,
-    weights_col: Array<Vector<P::EA, N>>,
-
-    reader: ReaderType<P::EA, N>,
-    #[comptime] blueprint: InterpolateBlueprint,
-) -> Vector<P::EI, N> {
-    let halo = comptime!(get_halo(blueprint.options.mode));
-    let radius_offset = (halo - 1) / 2;
-
-    let mut final_value = Vector::zeroed();
-    let mut total_weight = Vector::zeroed();
-
-    #[unroll]
-    for i in 0..halo {
-        let mut row_value = Vector::zeroed();
-        let mut row_weight_sum = Vector::zeroed();
-
-        let y = base_row + i as isize - radius_offset as isize;
-
-        #[unroll]
-        for j in 0..halo {
-            let x = base_col + j as isize - radius_offset as isize;
-
-            let is_in_bounds = is_in_bounds(x, input_width, blueprint.options)
-                && is_in_bounds(y, input_height, blueprint.options);
-
-            let clamped_row = y.max(0).min(input_height as isize - 1) as usize;
-            let clamped_col = x.max(0).min(input_width as isize - 1) as usize;
-            let weight_col = weights_col[j];
-
-            row_value += select(
-                is_in_bounds,
-                reader.read_weighted::<P::EI>(input, clamped_row, clamped_col, weight_col),
-                Vector::zeroed(),
-            );
-            row_weight_sum += select(is_in_bounds, weight_col, Vector::zeroed());
-        }
-
-        let weight_row = weights_row[i];
-        final_value += row_value * weight_row;
-        total_weight += row_weight_sum * weight_row;
-    }
-
-    let epsilon = Vector::cast_from(P::EA::new(1e-7));
-
-    Vector::cast_from(final_value / total_weight.max(epsilon))
-}
-
-#[cube]
 fn get_value_floor<EA: Float>(value: EA, #[comptime] options: InterpolateOptions) -> EA {
     let float_precision = EA::EPSILON;
     match options.mode {
         InterpolateMode::Nearest(_) => (value + float_precision).floor(),
         _ => value.floor(),
-    }
-}
-
-// Only used for bounds checking in Lanczos3 mode.
-#[cube]
-fn is_in_bounds(value: isize, size: usize, #[comptime] options: InterpolateOptions) -> bool {
-    match options.mode {
-        InterpolateMode::Lanczos3 => value >= 0 && value < size as isize,
-        _ => true,
     }
 }

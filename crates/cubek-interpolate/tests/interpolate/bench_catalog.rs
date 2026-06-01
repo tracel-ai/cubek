@@ -40,6 +40,30 @@ fn run(strategy_id: &str, problem_id: &str) {
 const STRATEGY: &str = "global_memory";
 
 #[test]
+fn nearest_upsample_default() {
+    run(
+        STRATEGY,
+        "NEAREST_UPSAMPLE_1_BATCH_3_CHANNELS_2048X2048_TO_4096X4096",
+    );
+}
+
+#[test]
+fn nearest_resize_default() {
+    run(
+        STRATEGY,
+        "NEAREST_UPSAMPLE_4_BATCH_16_CHANNELS_512X512_TO_1024X1024",
+    );
+}
+
+#[test]
+fn nearest_downsample_channels() {
+    run(
+        STRATEGY,
+        "NEAREST_DOWNSAMPLE_1_BATCH_3_CHANNELS_2048X2048_TO_1024X1024",
+    );
+}
+
+#[test]
 fn nearest_downsample_default() {
     run(
         STRATEGY,

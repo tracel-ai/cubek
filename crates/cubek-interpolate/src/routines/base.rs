@@ -10,6 +10,8 @@ pub struct InterpolateLaunchSettings {
     pub cube_count: CubeCount,
     pub cube_dim: CubeDim,
     pub tile_size: TileSize,
+    pub num_tiles_width: usize,
+    pub num_tiles_height: usize,
     pub smem_width: usize,
     pub smem_height: usize,
     pub channel_groups: usize,
@@ -45,12 +47,16 @@ pub(crate) fn prepare_launch_settings<R: Runtime>(
     let channel_groups = problem.channels / vector_size;
 
     let mut working_units =
-        problem.output_width * problem.output_height * problem.batch * channel_groups;
+        problem.batch * problem.output_width * problem.output_height * channel_groups;
 
     let (cube_dim, tile_size, smem_width, smem_height) = loop {
         let cube_dim = CubeDim::new(client, working_units);
 
-        let tile_size = TileSize::new(cube_dim.x as usize, cube_dim.y as usize, options);
+        let tile_size = TileSize::new(
+            cube_dim.x as usize / (problem.batch * channel_groups),
+            cube_dim.y as usize,
+            options,
+        );
 
         let (smem_width, smem_height) = match max_shared_memory_bytes {
             Some(max_shared_memory_bytes) => {
@@ -85,21 +91,29 @@ pub(crate) fn prepare_launch_settings<R: Runtime>(
         break (cube_dim, tile_size, smem_width, smem_height);
     };
 
-    let (num_tiles_width, num_tiles_height) = (
-        problem.output_width.div_ceil(tile_size.width()),
-        problem.output_height.div_ceil(tile_size.height()),
-    );
+    let (num_tiles_width, num_tiles_height) = if tile_size.is_row_vector() {
+        const MAX_DISPATCH: usize = 65535;
+        let total_tiles =
+            (problem.output_width * problem.output_height).div_ceil(tile_size.width());
+        (
+            total_tiles.min(MAX_DISPATCH),
+            total_tiles.div_ceil(MAX_DISPATCH),
+        )
+    } else {
+        (
+            problem.output_width.div_ceil(tile_size.width()),
+            problem.output_height.div_ceil(tile_size.height()),
+        )
+    };
 
-    let cube_count = CubeCount::Static(
-        (num_tiles_width * channel_groups) as u32,
-        num_tiles_height as u32,
-        problem.batch as u32,
-    );
+    let cube_count = CubeCount::Static(num_tiles_width as u32, num_tiles_height as u32, 1);
 
     Ok(InterpolateLaunchSettings {
         cube_count,
         cube_dim,
         tile_size,
+        num_tiles_width,
+        num_tiles_height,
         smem_width,
         smem_height,
         channel_groups,
@@ -116,16 +130,16 @@ fn compute_smem_size(
 ) -> (usize, usize) {
     let halo = get_halo(options.mode);
 
-    let scale_x = input_width as f64 / output_width as f64;
-    let scale_y = input_height as f64 / output_height as f64;
+    let scale_height = input_height as f64 / output_height as f64;
+    let scale_width = input_width as f64 / output_width as f64;
 
     // Calculate the distance between the first and last pixel.
-    let span_x = ((output_tile_size.width() as f64 - 1.0) * scale_x).max(0.0);
-    let span_y = ((output_tile_size.height() as f64 - 1.0) * scale_y).max(0.0);
+    let span_height = ((output_tile_size.height() as f64 - 1.0) * scale_height).max(0.0);
+    let span_width = ((output_tile_size.width() as f64 - 1.0) * scale_width).max(0.0);
 
     // Halo is added half on each side.
-    let smem_w = span_x.ceil() as usize + halo;
-    let smem_h = span_y.ceil() as usize + halo;
+    let smem_height = span_height.ceil() as usize + halo;
+    let smem_width = span_width.ceil() as usize + halo;
 
-    (smem_w.max(1), smem_h.max(1))
+    (smem_width.max(1), smem_height.max(1))
 }
