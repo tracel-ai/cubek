@@ -27,10 +27,7 @@ pub fn interpolate_launch<R: Runtime>(
         input.shape.len() - 1,
     );
     let bytes_per_element = acc_dtype.size() * vector_size as usize;
-    println!(
-        "Vector size: {}, bytes per element: {}",
-        vector_size, bytes_per_element
-    );
+
     let problem = InterpolateForwardProblem::from_input_output_shapes(
         &input.shape,
         &[output.shape[1], output.shape[2]],
@@ -66,11 +63,9 @@ pub fn interpolate_launch<R: Runtime>(
     };
 
     let cube_shape = get_cube_shape(
-        settings.channels,
+        settings.num_vectors,
         settings.num_tiles_width * settings.num_tiles_height,
     );
-
-    println!("Launch settings: {:?}", settings);
 
     unsafe {
         interpolate_kernel::launch_unchecked(
@@ -104,11 +99,11 @@ fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
 }
 
 fn get_cube_shape<R: Runtime>(
-    channels: usize,
+    num_vectors: usize,
     cubes_per_batch: usize,
 ) -> SequenceArg<R, FastDivmod<usize>> {
     let mut cube_shape = SequenceArg::new();
-    cube_shape.push(channels);
+    cube_shape.push(num_vectors);
     cube_shape.push(cubes_per_batch);
     cube_shape
 }

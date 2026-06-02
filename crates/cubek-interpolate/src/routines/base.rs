@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, InterpolateOptions, TileSize, get_halo, is_flattened},
+    definition::{InterpolateForwardProblem, InterpolateOptions, TileSize, is_flattened},
     routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
@@ -12,9 +12,7 @@ pub struct InterpolateLaunchSettings {
     pub tile_size: TileSize,
     pub num_tiles_width: usize,
     pub num_tiles_height: usize,
-    pub smem_width: usize,
-    pub smem_height: usize,
-    pub channels: usize,
+    pub num_vectors: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,71 +34,29 @@ pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError>;
 }
 
-pub(crate) fn prepare_launch_settings<R: Runtime>(
+pub fn compute_layout<R: Runtime>(
     client: &ComputeClient<R>,
+    working_units: usize,
+    num_vectors: usize,
+    options: InterpolateOptions,
+) -> (CubeDim, TileSize) {
+    let cube_dim = CubeDim::new(client, working_units);
+    let tile_size = TileSize::new(
+        cube_dim.y as usize,
+        cube_dim.x as usize / num_vectors, // Adjust tile width based on the number of vector
+        options,
+    );
+    (cube_dim, tile_size)
+}
+
+pub fn build_settings(
     problem: &InterpolateForwardProblem,
     options: InterpolateOptions,
-    bytes_per_element: usize,
-    vector_size: usize,
-    max_shared_memory_bytes: Option<usize>,
-) -> Result<InterpolateLaunchSettings, InterpolateError> {
-    let channels = problem.channels / vector_size;
-
-    let mut working_units = problem.output_width * problem.output_height * channels;
-
-    let (cube_dim, tile_size, smem_width, smem_height) = loop {
-        let cube_dim = CubeDim::new(client, working_units);
-
-        let tile_size = TileSize::new(cube_dim.y as usize, cube_dim.x as usize / channels, options);
-
-        let (smem_width, smem_height) = match max_shared_memory_bytes {
-            Some(max_shared_memory_bytes) => {
-                let (smem_width, smem_height) = compute_smem_size(
-                    problem.input_width,
-                    problem.input_height,
-                    problem.output_width,
-                    problem.output_height,
-                    options,
-                    tile_size,
-                );
-
-                let requested_smem_bytes = smem_width * smem_height * channels * bytes_per_element;
-
-                if requested_smem_bytes <= max_shared_memory_bytes {
-                    break (cube_dim, tile_size, smem_width, smem_height);
-                }
-
-                if working_units <= 1 {
-                    return Err(InterpolateError::SharedMemoryLimitExceeded {
-                        requested: requested_smem_bytes,
-                        available: max_shared_memory_bytes,
-                    });
-                }
-
-                working_units = (working_units / 2).max(1);
-                continue;
-            }
-            None => (0, 0),
-        };
-
-        break (cube_dim, tile_size, smem_width, smem_height);
-    };
-
-    let (num_tiles_width, num_tiles_height) = if is_flattened(options) {
-        // Calculate the number of tiles needed to cover the output, and dispatch in a 1D grid.
-        const MAX_DISPATCH: usize = 65535;
-        let total_tiles =
-            (problem.output_width * problem.output_height).div_ceil(tile_size.width());
-        (
-            total_tiles.min(MAX_DISPATCH),
-            total_tiles.div_ceil(MAX_DISPATCH),
-        )
-    } else {
-        (
-            problem.output_width.div_ceil(tile_size.width()),
-            problem.output_height.div_ceil(tile_size.height()),
-        )
-    };
+    cube_dim: CubeDim,
+    tile_size: TileSize,
+    num_vectors: usize,
+) -> InterpolateLaunchSettings {
+    let (num_tiles_width, num_tiles_height) = compute_number_of_tiles(problem, tile_size, options);
 
     let cube_count = CubeCount::Static(
         num_tiles_width as u32,
@@ -108,38 +64,33 @@ pub(crate) fn prepare_launch_settings<R: Runtime>(
         problem.batch as u32,
     );
 
-    Ok(InterpolateLaunchSettings {
+    InterpolateLaunchSettings {
         cube_count,
         cube_dim,
         tile_size,
         num_tiles_width,
         num_tiles_height,
-        smem_width,
-        smem_height,
-        channels,
-    })
+        num_vectors,
+    }
 }
 
-fn compute_smem_size(
-    input_width: usize,
-    input_height: usize,
-    output_width: usize,
-    output_height: usize,
+pub fn compute_number_of_tiles(
+    problem: &InterpolateForwardProblem,
+    tile_size: TileSize,
     options: InterpolateOptions,
-    output_tile_size: TileSize,
 ) -> (usize, usize) {
-    let halo = get_halo(options.mode);
-
-    let scale_height = input_height as f64 / output_height as f64;
-    let scale_width = input_width as f64 / output_width as f64;
-
-    // Calculate the distance between the first and last pixel.
-    let span_height = ((output_tile_size.height() as f64 - 1.0) * scale_height).max(0.0);
-    let span_width = ((output_tile_size.width() as f64 - 1.0) * scale_width).max(0.0);
-
-    // Halo is added half on each side.
-    let smem_height = span_height.ceil() as usize + halo + 1;
-    let smem_width = span_width.ceil() as usize + halo + 1;
-
-    (smem_width.max(1), smem_height.max(1))
+    if is_flattened(options) {
+        // Calculate the number of tiles needed to cover the output, and dispatch in a 1D grid.
+        const MAX_DISPATCH: usize = 65535;
+        let num_tiles = (problem.output_width * problem.output_height).div_ceil(tile_size.width());
+        (
+            num_tiles.min(MAX_DISPATCH),
+            num_tiles.div_ceil(MAX_DISPATCH),
+        )
+    } else {
+        (
+            problem.output_width.div_ceil(tile_size.width()),
+            problem.output_height.div_ceil(tile_size.height()),
+        )
+    }
 }

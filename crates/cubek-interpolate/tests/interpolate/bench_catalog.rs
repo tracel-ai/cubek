@@ -37,13 +37,13 @@ fn run(strategy_id: &str, problem_id: &str) {
         .enforce();
 }
 
-const STRATEGY: &str = "shared_memory";
+const STRATEGY: &str = "global_memory";
 
 #[test]
 fn nearest_upsample_default() {
     run(
         STRATEGY,
-        "BICUBIC_DOWNSAMPLE_8_BATCH_2_CHANNELS_2048X1024_TO_512X512",
+        "NEAREST_UPSAMPLE_1_BATCH_3_CHANNELS_2048X2048_TO_4096X4096",
     );
 }
 

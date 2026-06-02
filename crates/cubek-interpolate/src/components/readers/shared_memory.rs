@@ -8,8 +8,8 @@ pub struct SharedMemoryReader<EA: Float, N: Size> {
     min_row: isize,
     min_col: isize,
     smem_width: usize,
-    channels: usize,
-    channel: usize,
+    num_vectors: usize,
+    vector_index: usize,
 }
 
 #[cube]
@@ -18,7 +18,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
     pub fn new<EI: Float>(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
-        channel: usize,
+        vector_index: usize,
         input_height: usize,
         input_width: usize,
         min_row: isize,
@@ -26,16 +26,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         #[comptime] vector_size: usize,
         #[comptime] blueprint: SharedMemoryBlueprint,
     ) -> SharedMemoryReader<EA, N> {
-        let smem_size = blueprint.smem_width * blueprint.smem_height * blueprint.channels;
-        let x = N::value();
-        comptime!(println!(
-            "Allocating shared memory of size {} elements ({} bytes), vector size {}, channels {}, N value {}",
-            smem_size,
-            smem_size * core::mem::size_of::<Vector<EA, N>>(),
-            vector_size,
-            blueprint.channels,
-            x
-        ));
+        let smem_size = blueprint.smem_width * blueprint.smem_height * blueprint.num_vectors;
         let mut smem = Shared::new_slice(smem_size);
 
         let unit_pos = UNIT_POS as usize;
@@ -46,8 +37,8 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         for step in 0..num_iterations {
             let i = unit_pos + step * cube_dim;
 
-            let local_channel = i % blueprint.channels;
-            let local_pos = i / blueprint.channels;
+            let local_vector_index = i % blueprint.num_vectors;
+            let local_pos = i / blueprint.num_vectors;
             let local_col = local_pos % blueprint.smem_width;
             let local_row = local_pos / blueprint.smem_width;
 
@@ -57,7 +48,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
             let input_idx = (batch * input.stride(0)
                 + global_row.max(0).min((input_height - 1) as isize) as usize * input.stride(1)
                 + global_col.max(0).min((input_width - 1) as isize) as usize * input.stride(2)
-                + local_channel * input.stride(3) * vector_size)
+                + local_vector_index * input.stride(3) * vector_size)
                 / vector_size;
 
             smem[i] = Vector::cast_from(input[input_idx]);
@@ -70,8 +61,8 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
             min_row,
             min_col,
             smem_width: blueprint.smem_width,
-            channels: blueprint.channels,
-            channel,
+            num_vectors: blueprint.num_vectors,
+            vector_index,
         }
     }
 
@@ -84,7 +75,8 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         let local_row = (row as isize - self.min_row).max(0) as usize;
         let local_col = (col as isize - self.min_col).max(0) as usize;
 
-        let smem_idx = (local_row * self.smem_width + local_col) * self.channels + self.channel;
+        let smem_idx =
+            (local_row * self.smem_width + local_col) * self.num_vectors + self.vector_index;
 
         self.smem[smem_idx] * weight
     }
