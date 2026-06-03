@@ -12,7 +12,7 @@ impl TileSize {
         let halo = get_halo(options.mode);
         let area = width * height;
 
-        if !is_flattened(options) && area % halo == 0 {
+        if !is_flattened(options) && area.is_multiple_of(halo) {
             Self {
                 height: halo,
                 width: area / halo,

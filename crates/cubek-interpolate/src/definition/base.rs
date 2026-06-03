@@ -82,6 +82,7 @@ impl InterpolateOptions {
 }
 
 #[cube]
+#[allow(clippy::match_like_matches_macro)]
 pub fn is_flattened(#[comptime] options: InterpolateOptions) -> bool {
     match options.mode {
         InterpolateMode::Nearest(_) => true,
