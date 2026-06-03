@@ -79,7 +79,10 @@ fn prepare_shared_launch_settings<R: Runtime>(
             });
         }
 
-        working_units = (working_units / 2).max(1);
+        let total_dispatched_units = (cube_dim.x * cube_dim.y * cube_dim.z) as usize;
+
+        // Reduce the total units by half and try again.
+        working_units = (total_dispatched_units / 2).max(1);
     }
 }
 

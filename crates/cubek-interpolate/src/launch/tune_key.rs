@@ -37,6 +37,7 @@ impl InterpolateAutotuneKey {
     pub fn generate(
         elem_input: ElemType,
         elem_output: ElemType,
+        elem_acc: ElemType,
         input_shape: &[usize],
         output_shape: &[usize],
     ) -> Self {
@@ -48,6 +49,7 @@ impl InterpolateAutotuneKey {
         InterpolateAutotuneKey::new(
             elem_input,
             elem_output,
+            elem_acc,
             channels,
             output_height,
             output_width,
