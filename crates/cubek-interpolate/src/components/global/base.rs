@@ -149,12 +149,12 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
     output_height: usize,
     output_width: usize,
     #[comptime] blueprint: InterpolateBlueprint,
-) -> ReaderType<P::EA, N> {
+) -> ReaderType<P::EI, N> {
     let vector_size = N::value();
 
     match blueprint.global {
         GlobalInterpolateBlueprint::GlobalMemoryBlueprint(_global_memory_blueprint) => {
-            ReaderType::<P::EA, N>::new_Global(GlobalMemoryReader::new(
+            ReaderType::<P::EI, N>::new_Global(GlobalMemoryReader::new(
                 input,
                 batch,
                 vector_index,

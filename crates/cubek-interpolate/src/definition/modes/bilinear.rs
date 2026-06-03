@@ -26,7 +26,7 @@ impl Interpolate for Bilinear {
         base_col: isize,
         frac_row: P::EA,
         frac_col: P::EA,
-        reader: ReaderType<P::EA, N>,
+        reader: ReaderType<P::EI, N>,
     ) -> Vector<P::EI, N> {
         compute_value_default::<Self, P, N>(
             input,

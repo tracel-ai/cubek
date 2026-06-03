@@ -3,8 +3,8 @@ use cubecl::prelude::*;
 
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct SharedMemoryReader<EA: Float, N: Size> {
-    smem: Shared<[Vector<EA, N>]>,
+pub struct SharedMemoryReader<EI: Float, N: Size> {
+    smem: Shared<[Vector<EI, N>]>,
     min_row: isize,
     min_col: isize,
     smem_width: usize,
@@ -13,9 +13,9 @@ pub struct SharedMemoryReader<EA: Float, N: Size> {
 }
 
 #[cube]
-impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
+impl<EI: Float, N: Size> SharedMemoryReader<EI, N> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new<EI: Float>(
+    pub fn new(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
         vector_index: usize,
@@ -25,7 +25,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         min_col: isize,
         #[comptime] vector_size: usize,
         #[comptime] blueprint: SharedMemoryBlueprint,
-    ) -> SharedMemoryReader<EA, N> {
+    ) -> SharedMemoryReader<EI, N> {
         let smem_size = blueprint.smem_width * blueprint.smem_height * blueprint.num_vectors;
         let mut smem = Shared::new_slice(smem_size);
 
@@ -51,12 +51,12 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
                 + local_vector_index * input.stride(3) * vector_size)
                 / vector_size;
 
-            smem[i] = Vector::cast_from(input[input_idx]);
+            smem[i] = input[input_idx];
         }
 
         sync_cube();
 
-        SharedMemoryReader::<EA, N> {
+        SharedMemoryReader::<EI, N> {
             smem,
             min_row,
             min_col,
@@ -66,7 +66,7 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         }
     }
 
-    pub fn read_weighted<EI: Float>(
+    pub fn read_weighted<EA: Float>(
         &self,
         row: usize,
         col: usize,
@@ -78,6 +78,6 @@ impl<EA: Float, N: Size> SharedMemoryReader<EA, N> {
         let smem_idx =
             (local_row * self.smem_width + local_col) * self.num_vectors + self.vector_index;
 
-        self.smem[smem_idx] * weight
+        Vector::cast_from(self.smem[smem_idx]) * weight
     }
 }

@@ -22,7 +22,7 @@ pub trait Interpolate {
         base_col: isize,
         frac_row: P::EA,
         frac_col: P::EA,
-        reader: ReaderType<P::EA, N>,
+        reader: ReaderType<P::EI, N>,
     ) -> Vector<P::EI, N>;
 }
 
@@ -109,7 +109,7 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
     base_col: isize,
     frac_row: P::EA,
     frac_col: P::EA,
-    reader: ReaderType<P::EA, N>,
+    reader: ReaderType<P::EI, N>,
     #[comptime] blueprint: InterpolateBlueprint,
 ) -> Vector<P::EI, N> {
     match blueprint.options.mode {
@@ -165,7 +165,7 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
     base_col: isize,
     frac_row: P::EA,
     frac_col: P::EA,
-    reader: ReaderType<P::EA, N>,
+    reader: ReaderType<P::EI, N>,
 ) -> Vector<P::EI, N> {
     let halo = I::HALO;
     let radius_offset = ((halo - 1) / 2) as isize;
@@ -200,7 +200,7 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
 
             let weight_col = col_weights[j];
             let read_val =
-                reader.read_weighted::<P::EI>(input, clamped_row, clamped_col, weight_col);
+                reader.read_weighted::<P::EA>(input, clamped_row, clamped_col, weight_col);
 
             if I::REQUIRES_BOUND_CHECK {
                 let is_in_bounds = col >= 0
