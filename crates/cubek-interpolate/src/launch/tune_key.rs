@@ -8,6 +8,13 @@ pub struct InterpolateAutotuneKey {
     elem_output: ElemType,
     elem_acc: ElemType,
 
+    /// Whether the number of channels is a power of 4, which allows for more efficient vectorized processing.
+    ///
+    /// # Notes
+    ///
+    /// This is a boolean flag that can be true or false, so 2 values are possible.
+    pub channels_power_of_4: bool,
+
     /// Number of channels
     ///
     /// # Notes
@@ -46,10 +53,13 @@ impl InterpolateAutotuneKey {
         let output_height = output_size[0];
         let output_width = output_size[1];
 
+        let channels_power_of_4 = channels % 4 == 0;
+
         InterpolateAutotuneKey::new(
             elem_input,
             elem_output,
             elem_acc,
+            channels_power_of_4,
             channels,
             output_height,
             output_width,

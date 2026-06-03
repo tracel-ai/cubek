@@ -8,6 +8,18 @@ pub struct TileSize {
 }
 
 impl TileSize {
+    /// Creates a tile shape with the given area, choosing dimensions whose
+    /// width-to-height ratio is as close as possible to the target aspect ratio.
+    ///
+    /// The returned tile always satisfies:
+    ///
+    /// ```text
+    /// width * height == area
+    /// ```
+    ///
+    /// When multiple shapes are equally good matches, wider layouts are preferred
+    /// over taller ones. If the target aspect ratio is invalid, the area is zero,
+    /// or the operation uses a flattened layout, a 1D tile `(1, area)` is returned.
     pub fn new(area: usize, tile_target_aspect_ratio: f32, options: InterpolateOptions) -> Self {
         if tile_target_aspect_ratio <= 0.0 || area == 0 || is_flattened(options) {
             return Self {
