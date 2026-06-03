@@ -15,9 +15,7 @@ use cubecl::{prelude::*, std::FastDivmod};
 pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     input: &Tensor<Vector<P::EI, N>>,
     output: &mut Tensor<Vector<P::EI, N>>,
-    // Number of vectors per unit, splits `UNIT_POS` into `(unit_pos, vector_index)`.
     num_vectors: FastDivmod<usize>,
-    // Number of cubes per batch, splits `CUBE_POS` into `(batch, cube_pos)`.
     cubes_per_batch: FastDivmod<usize>,
     #[comptime] blueprint: InterpolateBlueprint,
 ) {
