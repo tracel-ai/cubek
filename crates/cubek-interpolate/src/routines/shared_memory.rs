@@ -78,6 +78,7 @@ fn prepare_shared_launch_settings<R: Runtime>(
 
         let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
 
+        // Check if the requested shared memory size fits within the hardware limits.
         if requested_smem_bytes <= max_shared_memory_bytes {
             let settings = build_settings(
                 client,
@@ -88,17 +89,17 @@ fn prepare_shared_launch_settings<R: Runtime>(
                 num_vectors,
             );
             return Ok((settings, smem_width, smem_height));
-        }
+        } else {
+            if working_units <= 1 {
+                return Err(InterpolateError::SharedMemoryLimitExceeded {
+                    requested: requested_smem_bytes,
+                    available: max_shared_memory_bytes,
+                });
+            }
 
-        if working_units <= 1 {
-            return Err(InterpolateError::SharedMemoryLimitExceeded {
-                requested: requested_smem_bytes,
-                available: max_shared_memory_bytes,
-            });
+            // Reduce the total units by half and try again.
+            working_units = (total_dispatched_units / 2).max(1);
         }
-
-        // Reduce the total units by half and try again.
-        working_units = (total_dispatched_units / 2).max(1);
     }
 }
 
