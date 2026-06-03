@@ -2,14 +2,12 @@ pub mod components;
 pub mod definition;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
-mod kernel;
 pub mod launch;
 pub mod routines;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    kernel::backward::interpolate_nearest_backward_launch,
-    launch::{InterpolateStrategy, interpolate_launch},
+    launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -27,6 +25,7 @@ pub fn interpolate<R: Runtime>(
     strategy: InterpolateStrategy,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    validate_strategy(&strategy, options.mode)?;
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
@@ -66,6 +65,23 @@ pub fn interpolate_backward<R: Runtime>(
             "{:?} interpolation backward is not supported by JIT backend",
             options.mode
         ))),
+    }
+}
+
+// Validate shared memory strategy is supported for the given interpolation mode.
+fn validate_strategy(
+    strategy: &InterpolateStrategy,
+    mode: InterpolateMode,
+) -> Result<(), InterpolateError> {
+    match strategy {
+        InterpolateStrategy::GlobalMemoryStrategy(_) => Ok(()),
+        InterpolateStrategy::SharedMemoryStrategy(_) => match mode {
+            InterpolateMode::Nearest(_) => Err(InterpolateError::UnsupportedMode(format!(
+                "{:?} interpolation is not supported by Shared Memory strategy",
+                mode
+            ))),
+            _ => Ok(()),
+        },
     }
 }
 

@@ -14,12 +14,12 @@ impl GlobalMemoryReader {
     pub fn new<EI: Float, N: Size>(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
-        channel_group: usize,
+        vector_index: usize,
         input_height: usize,
         input_width: usize,
         #[comptime] vector_size: usize,
     ) -> Self {
-        let base_offset = batch * input.stride(0) + channel_group * input.stride(3) * vector_size;
+        let base_offset = batch * input.stride(0) + vector_index * input.stride(3) * vector_size;
 
         GlobalMemoryReader {
             base_offset,

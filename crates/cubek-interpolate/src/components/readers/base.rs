@@ -3,14 +3,14 @@ use cubecl::prelude::*;
 
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum ReaderType<EA: Float, N: Size> {
+pub enum ReaderType<EI: Float, N: Size> {
     Global(GlobalMemoryReader),
-    Shared(SharedMemoryReader<EA, N>),
+    Shared(SharedMemoryReader<EI, N>),
 }
 
 #[cube]
-impl<EA: Float, N: Size> ReaderType<EA, N> {
-    pub fn read_weighted<EI: Float>(
+impl<EI: Float, N: Size> ReaderType<EI, N> {
+    pub fn read_weighted<EA: Float>(
         &self,
         input: &Tensor<Vector<EI, N>>,
         row: usize,
@@ -19,7 +19,7 @@ impl<EA: Float, N: Size> ReaderType<EA, N> {
     ) -> Vector<EA, N> {
         match self {
             ReaderType::Global(reader) => reader.read_weighted(input, row, col, weight),
-            ReaderType::Shared(reader) => reader.read_weighted::<EI>(row, col, weight),
+            ReaderType::Shared(reader) => reader.read_weighted::<EA>(row, col, weight),
         }
     }
 }

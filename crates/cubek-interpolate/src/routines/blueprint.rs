@@ -20,5 +20,5 @@ pub struct GlobalMemoryBlueprint {}
 pub struct SharedMemoryBlueprint {
     pub smem_width: usize,
     pub smem_height: usize,
-    pub channel_groups: usize,
+    pub num_vectors: usize,
 }

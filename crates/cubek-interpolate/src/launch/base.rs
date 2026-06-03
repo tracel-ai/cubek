@@ -1,15 +1,24 @@
 use crate::{
     InterpolateError,
     {
-        components::global::execute_interpolate,
-        definition::{InterpolateForwardProblem, InterpolateOptions, accumulator_dtype},
+        components::global::{execute_interpolate, execute_interpolate_nearest_backward},
+        definition::{
+            InterpolateForwardProblem, InterpolateOptions, NearestMode, accumulator_dtype,
+        },
         launch::InterpolateStrategy,
         routines::{
             ForwardRoutine, GlobalMemoryRoutine, InterpolateBlueprint, SharedMemoryRoutine,
         },
     },
 };
-use cubecl::{prelude::*, std::FastDivmod, tensor_vector_size_parallel};
+use cubecl::{
+    calculate_cube_count_elemwise,
+    ir::{ElemType, StorageType, UIntKind},
+    prelude::*,
+    std::FastDivmod,
+    std::tensor::layout::linear::{LinearLayoutLaunch, LinearViewLayoutLaunch},
+    tensor_vector_size_parallel,
+};
 
 pub fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
@@ -62,11 +71,8 @@ pub fn interpolate_launch<R: Runtime>(
         )?,
     };
 
-    let cube_shape = get_cube_shape(
-        settings.channel_groups,
-        settings.tile_size.area(),
-        settings.num_tiles_width * settings.num_tiles_height,
-    );
+    let num_vectors = settings.num_vectors;
+    let cubes_per_batch = settings.num_tiles_width * settings.num_tiles_height;
 
     unsafe {
         interpolate_kernel::launch_unchecked(
@@ -77,7 +83,8 @@ pub fn interpolate_launch<R: Runtime>(
             vector_size,
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
-            cube_shape,
+            num_vectors,
+            cubes_per_batch,
             blueprint,
             dtype,
             acc_dtype,
@@ -91,22 +98,75 @@ pub fn interpolate_launch<R: Runtime>(
 fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
     input: &Tensor<Vector<EI, N>>,
     output: &mut Tensor<Vector<EI, N>>,
-    cube_shape: Sequence<FastDivmod<usize>>,
+    num_vectors: FastDivmod<usize>,
+    cubes_per_batch: FastDivmod<usize>,
     #[comptime] blueprint: InterpolateBlueprint,
     #[define(EI)] _dtype: StorageType,
     #[define(EA)] _acc_dtype: StorageType,
 ) {
-    execute_interpolate::<(EI, EA), N>(input, output, cube_shape, blueprint);
+    execute_interpolate::<(EI, EA), N>(input, output, num_vectors, cubes_per_batch, blueprint);
 }
 
-fn get_cube_shape<R: Runtime>(
-    channel_groups: usize,
-    threads_per_cube: usize,
-    cubes_per_batch: usize,
-) -> SequenceArg<R, FastDivmod<usize>> {
-    let mut cube_shape = SequenceArg::new();
-    cube_shape.push(channel_groups);
-    cube_shape.push(threads_per_cube);
-    cube_shape.push(cubes_per_batch);
-    cube_shape
+pub fn interpolate_nearest_backward_launch<R: Runtime>(
+    client: &ComputeClient<R>,
+    out_grad: TensorBinding<R>,
+    output: TensorBinding<R>,
+    nearest_mode: NearestMode,
+    dtype: StorageType,
+) -> Result<(), InterpolateError> {
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtype.size()),
+        &out_grad.shape,
+        &out_grad.strides,
+        out_grad.shape.len() - 1,
+    );
+    let shape_out = shape_divmod(&output);
+    let out_layout = linear_layout(&output, vector_size);
+
+    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
+
+    let address_type = out_grad
+        .required_address_type(dtype.size())
+        .max(output.required_address_type(dtype.size()));
+
+    unsafe {
+        execute_interpolate_nearest_backward::launch_unchecked(
+            client,
+            cube_count,
+            cube_dim,
+            address_type,
+            vector_size,
+            out_grad.into_tensor_arg(),
+            output.clone().into_tensor_arg(),
+            shape_out,
+            out_layout,
+            nearest_mode,
+            dtype,
+        )
+    };
+
+    Ok(())
+}
+
+fn shape_divmod<R: Runtime>(binding: &TensorBinding<R>) -> SequenceArg<R, FastDivmod<usize>> {
+    let mut out_seq = SequenceArg::new();
+    for dim in binding.shape.iter() {
+        out_seq.push(*dim);
+    }
+    out_seq
+}
+
+fn linear_layout<R: Runtime>(
+    binding: &TensorBinding<R>,
+    vector_size: usize,
+) -> LinearLayoutLaunch<R> {
+    LinearLayoutLaunch::from_shape_strides(
+        binding.shape.clone(),
+        binding.strides.clone(),
+        // Don't care about type size, only vector size.
+        Type::new(StorageType::Scalar(ElemType::UInt(UIntKind::U32))).with_vector_size(vector_size),
+        LinearViewLayoutLaunch::new(),
+    )
 }

@@ -15,16 +15,23 @@ use cubecl::{prelude::*, std::FastDivmod};
 pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     input: &Tensor<Vector<P::EI, N>>,
     output: &mut Tensor<Vector<P::EI, N>>,
-    cube_shape: Sequence<FastDivmod<usize>>,
+    num_vectors: FastDivmod<usize>,
+    cubes_per_batch: FastDivmod<usize>,
     #[comptime] blueprint: InterpolateBlueprint,
 ) {
-    let (batch, cube_pos, unit_pos, channel_group) = decompose_index(ABSOLUTE_POS, cube_shape);
+    let (unit_pos, vector_index) = num_vectors.div_mod(UNIT_POS as usize);
+    let (batch, cube_pos) = cubes_per_batch.div_mod(CUBE_POS);
 
     let (output_height, output_width) = (output.shape(1), output.shape(2));
     let (input_height, input_width) = (input.shape(1), input.shape(2));
 
-    let (output_row, output_col) =
-        tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint.tile_size);
+    let (output_row, output_col) = tile_absolute_coords(
+        output_width,
+        cube_pos,
+        unit_pos,
+        blueprint.tile_size,
+        blueprint.options,
+    );
 
     let (input_row, input_col) = compute_input_coords::<P::EA>(
         output_row,
@@ -49,7 +56,7 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         input,
         cube_pos,
         batch,
-        channel_group,
+        vector_index,
         input_height,
         input_width,
         output_height,
@@ -73,24 +80,13 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         Writer::write(
             output,
             batch,
-            channel_group,
+            vector_index,
             output_row,
             output_col,
             vector_size,
             final_value,
         );
     }
-}
-
-#[cube]
-fn decompose_index(
-    index: usize,
-    cube_shape: Sequence<FastDivmod<usize>>,
-) -> (usize, usize, usize, usize) {
-    let (rem, channel_group) = cube_shape[0].div_mod(index);
-    let (rem, unit_pos) = cube_shape[1].div_mod(rem);
-    let (batch, cube_pos) = cube_shape[2].div_mod(rem);
-    (batch, cube_pos, unit_pos, channel_group)
 }
 
 // Computes the input coordinates corresponding to an output coordinates.
@@ -148,21 +144,21 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
     input: &Tensor<Vector<P::EI, N>>,
     cube_pos: usize,
     batch: usize,
-    channel_group: usize,
+    vector_index: usize,
     input_height: usize,
     input_width: usize,
     output_height: usize,
     output_width: usize,
     #[comptime] blueprint: InterpolateBlueprint,
-) -> ReaderType<P::EA, N> {
+) -> ReaderType<P::EI, N> {
     let vector_size = N::value();
 
     match blueprint.global {
         GlobalInterpolateBlueprint::GlobalMemoryBlueprint(_global_memory_blueprint) => {
-            ReaderType::<P::EA, N>::new_Global(GlobalMemoryReader::new(
+            ReaderType::<P::EI, N>::new_Global(GlobalMemoryReader::new(
                 input,
                 batch,
-                channel_group,
+                vector_index,
                 input_height,
                 input_width,
                 vector_size,
@@ -172,8 +168,13 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
             let halo = comptime!(get_halo(blueprint.options.mode));
             let radius_offset = (halo - 1) / 2;
 
-            let (tile_row, tile_col) =
-                tile_absolute_coords(output_width, cube_pos, 0, blueprint.tile_size);
+            let (tile_row, tile_col) = tile_absolute_coords(
+                output_width,
+                cube_pos,
+                0,
+                blueprint.tile_size,
+                blueprint.options,
+            );
 
             let (tile_mapped_row, tile_mapped_col) = compute_input_coords::<P::EA>(
                 tile_row,
@@ -196,7 +197,7 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
             ReaderType::new_Shared(SharedMemoryReader::new(
                 input,
                 batch,
-                channel_group,
+                vector_index,
                 input_height,
                 input_width,
                 min_row,

@@ -1,34 +1,36 @@
-use crate::definition::{InterpolateOptions, get_halo};
+use crate::definition::{InterpolateOptions, get_halo, is_flattened};
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub struct TileSize {
-    w: usize,
-    h: usize,
+    height: usize,
+    width: usize,
 }
 
 impl TileSize {
-    pub fn new(w: usize, h: usize, options: InterpolateOptions) -> Self {
-        if get_halo(options.mode) == 1 {
-            return Self { w: w * h, h: 1 };
-        }
-        Self { w, h }
-    }
+    pub fn new(height: usize, width: usize, options: InterpolateOptions) -> Self {
+        let halo = get_halo(options.mode);
+        let area = width * height;
 
-    pub fn width(&self) -> usize {
-        self.w
+        if !is_flattened(options) && area.is_multiple_of(halo) {
+            Self {
+                height: halo,
+                width: area / halo,
+            }
+        } else {
+            Self {
+                height: 1,
+                width: area,
+            }
+        }
     }
 
     pub fn height(&self) -> usize {
-        self.h
+        self.height
     }
 
-    pub fn area(&self) -> usize {
-        self.w * self.h
-    }
-
-    pub fn is_row_vector(&self) -> bool {
-        self.h == 1
+    pub fn width(&self) -> usize {
+        self.width
     }
 }
 
@@ -37,34 +39,28 @@ pub fn tile_absolute_coords(
     output_width: usize,
     cube_pos: usize,
     unit_pos: usize,
-    #[comptime] output_tile_size: TileSize,
+    #[comptime] tile_size: TileSize,
+    #[comptime] options: InterpolateOptions,
 ) -> (usize, usize) {
-    if output_tile_size.is_row_vector() {
-        let flat = cube_pos * output_tile_size.width() + unit_pos;
+    if is_flattened(options) {
+        let flat = cube_pos * tile_size.width() + unit_pos;
         (flat / output_width, flat % output_width)
     } else {
-        let num_col = output_width.div_ceil(output_tile_size.width());
+        let num_col = output_width.div_ceil(tile_size.width());
 
-        let (local_row, local_col) = tile_local_coords(unit_pos, output_tile_size);
+        let (local_row, local_col) = tile_local_coords(unit_pos, tile_size);
         let (cube_row, cube_col) = tile_cube_coords(cube_pos, num_col);
 
         (
-            cube_row * output_tile_size.height() + local_row,
-            cube_col * output_tile_size.width() + local_col,
+            cube_row * tile_size.height() + local_row,
+            cube_col * tile_size.width() + local_col,
         )
     }
 }
 
 #[cube]
-fn tile_local_coords(unit_pos: usize, #[comptime] output_tile_size: TileSize) -> (usize, usize) {
-    if output_tile_size.is_row_vector() {
-        (0, unit_pos)
-    } else {
-        (
-            unit_pos / output_tile_size.width(),
-            unit_pos % output_tile_size.width(),
-        )
-    }
+fn tile_local_coords(unit_pos: usize, #[comptime] tile_size: TileSize) -> (usize, usize) {
+    (unit_pos / tile_size.width(), unit_pos % tile_size.width())
 }
 
 #[cube]
