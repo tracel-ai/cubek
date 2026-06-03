@@ -29,3 +29,9 @@ pub enum InterpolateError {
         output: Vec<usize>,
     },
 }
+
+impl From<InterpolateError> for String {
+    fn from(error: InterpolateError) -> Self {
+        error.to_string()
+    }
+}
