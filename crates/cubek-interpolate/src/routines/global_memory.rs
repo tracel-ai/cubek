@@ -61,5 +61,12 @@ fn prepare_global_launch_settings<R: Runtime>(
         problem.options,
     );
 
-    build_settings(problem, problem.options, cube_dim, tile_size, num_vectors)
+    build_settings(
+        client,
+        problem,
+        problem.options,
+        cube_dim,
+        tile_size,
+        num_vectors,
+    )
 }

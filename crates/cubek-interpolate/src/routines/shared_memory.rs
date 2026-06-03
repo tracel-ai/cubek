@@ -79,8 +79,14 @@ fn prepare_shared_launch_settings<R: Runtime>(
         let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
 
         if requested_smem_bytes <= max_shared_memory_bytes {
-            let settings =
-                build_settings(problem, problem.options, cube_dim, tile_size, num_vectors);
+            let settings = build_settings(
+                client,
+                problem,
+                problem.options,
+                cube_dim,
+                tile_size,
+                num_vectors,
+            );
             return Ok((settings, smem_width, smem_height));
         }
 

@@ -52,7 +52,8 @@ pub fn compute_layout<R: Runtime>(
     (cube_dim, tile_size, total_dispatched_units)
 }
 
-pub fn build_settings(
+pub fn build_settings<R: Runtime>(
+    client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
     options: InterpolateOptions,
     cube_dim: CubeDim,
@@ -61,11 +62,7 @@ pub fn build_settings(
 ) -> InterpolateLaunchSettings {
     let (num_tiles_width, num_tiles_height) = compute_number_of_tiles(problem, tile_size, options);
 
-    let cube_count = CubeCount::Static(
-        num_tiles_width as u32,
-        num_tiles_height as u32,
-        problem.batch as u32,
-    );
+    let cube_count = compute_cube_count(client, problem, num_tiles_width, num_tiles_height);
 
     InterpolateLaunchSettings {
         cube_count,
@@ -77,23 +74,46 @@ pub fn build_settings(
     }
 }
 
-pub fn compute_number_of_tiles(
+fn compute_number_of_tiles(
     problem: &InterpolateForwardProblem,
     tile_size: TileSize,
     options: InterpolateOptions,
 ) -> (usize, usize) {
     if is_flattened(options) {
-        // Calculate the number of tiles needed to cover the output, and dispatch in a 1D grid.
-        const MAX_DISPATCH: usize = 65535;
         let num_tiles = (problem.output_width * problem.output_height).div_ceil(tile_size.width());
-        (
-            num_tiles.min(MAX_DISPATCH),
-            num_tiles.div_ceil(MAX_DISPATCH),
-        )
+        // All tiles are arranged in a single row
+        (num_tiles, 1)
     } else {
         (
             problem.output_width.div_ceil(tile_size.width()),
             problem.output_height.div_ceil(tile_size.height()),
         )
     }
+}
+
+fn compute_cube_count<R: Runtime>(
+    client: &ComputeClient<R>,
+    problem: &InterpolateForwardProblem,
+    num_tiles_width: usize,
+    num_tiles_height: usize,
+) -> CubeCount {
+    let (max_cube_count_x, max_cube_count_y, max_cube_count_z) =
+        client.properties().hardware.max_cube_count;
+
+    let total_cube_count = (num_tiles_width * num_tiles_height * problem.batch) as u32;
+
+    let cube_count_x = total_cube_count.min(max_cube_count_x);
+
+    let required_cube_count_y = total_cube_count.div_ceil(cube_count_x);
+    let cube_count_y = required_cube_count_y.min(max_cube_count_y);
+
+    let cube_count_z = required_cube_count_y.div_ceil(cube_count_y);
+
+    assert!(
+        cube_count_z <= max_cube_count_z,
+        "Total work volume ({}) exceeds maximum 3D dispatch limits of the GPU.",
+        total_cube_count
+    );
+
+    CubeCount::Static(cube_count_x, cube_count_y, cube_count_z)
 }
