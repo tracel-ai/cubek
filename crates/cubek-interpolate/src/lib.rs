@@ -2,14 +2,12 @@ pub mod components;
 pub mod definition;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
-mod kernel;
 pub mod launch;
 pub mod routines;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    kernel::backward::interpolate_nearest_backward_launch,
-    launch::{InterpolateStrategy, interpolate_launch},
+    launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
