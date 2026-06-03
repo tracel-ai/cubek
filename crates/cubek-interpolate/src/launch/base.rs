@@ -59,15 +59,15 @@ pub fn interpolate_launch<R: Runtime>(
             client,
             &problem,
             strategy,
-            bytes_per_element,
             vector_size,
+            bytes_per_element,
         )?,
         InterpolateStrategy::SharedMemoryStrategy(strategy) => SharedMemoryRoutine::prepare(
             client,
             &problem,
             strategy,
-            bytes_per_element,
             vector_size,
+            bytes_per_element,
         )?,
     };
 

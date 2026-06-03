@@ -13,7 +13,7 @@ use super::{make_problem, run_interpolate_global_test};
 const LANCZOS3_TOLERANCE: f32 = 0.00001;
 const LANCZOS3_HIGH_RESOLUTION_TOLERANCE: f32 = 0.001;
 
-const SHARED_MEMORY_HEIGHT: usize = 6;
+const TILE_TARGET_ASPECT_RATIO: f32 = 1.0;
 
 #[test]
 fn test_interpolate_lanczos3_identity() {
@@ -30,7 +30,9 @@ fn test_interpolate_lanczos3_identity() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         LANCZOS3_TOLERANCE,
     );
@@ -52,7 +54,7 @@ fn test_interpolate_lanczos3_shared_memory_identity() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         LANCZOS3_TOLERANCE,
@@ -74,7 +76,9 @@ fn test_interpolate_lanczos3_upsample() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         LANCZOS3_TOLERANCE,
     );
@@ -96,7 +100,7 @@ fn test_interpolate_lanczos3_shared_memory_upsample() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         LANCZOS3_TOLERANCE,
@@ -118,7 +122,9 @@ fn test_interpolate_lanczos3_downsample() {
         100.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         LANCZOS3_TOLERANCE,
     );
@@ -140,7 +146,7 @@ fn test_interpolate_lanczos3_shared_memory_downsample() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         LANCZOS3_TOLERANCE,
@@ -162,7 +168,9 @@ fn test_interpolate_lanczos3_resize() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         LANCZOS3_TOLERANCE,
     );
@@ -184,7 +192,7 @@ fn test_interpolate_lanczos3_shared_memory_resize() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         LANCZOS3_TOLERANCE,
@@ -206,7 +214,9 @@ fn test_interpolate_lanczos3_without_align_corners() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         LANCZOS3_TOLERANCE,
     );
@@ -228,7 +238,7 @@ fn test_interpolate_lanczos3_shared_memory_without_align_corners() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         LANCZOS3_TOLERANCE,
@@ -250,7 +260,9 @@ fn test_interpolate_lanczos3_high_resolution() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         LANCZOS3_HIGH_RESOLUTION_TOLERANCE,
     );
@@ -272,7 +284,7 @@ fn test_interpolate_lanczos3_shared_memory_high_resolution() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         LANCZOS3_HIGH_RESOLUTION_TOLERANCE,

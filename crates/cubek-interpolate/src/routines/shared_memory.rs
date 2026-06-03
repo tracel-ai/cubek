@@ -11,25 +11,26 @@ use cubecl::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SharedMemoryRoutine;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SharedMemoryStrategy {
-    pub shared_memory_height: usize,
+    pub tile_target_aspect_ratio: f32,
 }
 
 impl ForwardRoutine for SharedMemoryRoutine {
     type Strategy = SharedMemoryStrategy;
-    type Blueprint = SharedMemoryBlueprint;
+    type Blueprint = InterpolateBlueprint;
 
     fn prepare<R: Runtime>(
         client: &ComputeClient<R>,
         problem: &InterpolateForwardProblem,
-        _strategy: BlueprintStrategy<Self>,
-        bytes_per_element: usize,
+        strategy: BlueprintStrategy<Self>,
         vector_size: usize,
+        bytes_per_element: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
         let (settings, smem_width, smem_height) = prepare_shared_launch_settings(
             client,
             problem,
+            strategy,
             bytes_per_element,
             vector_size,
             client.properties().hardware.max_shared_memory_size,
@@ -52,6 +53,7 @@ impl ForwardRoutine for SharedMemoryRoutine {
 fn prepare_shared_launch_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
+    strategy: BlueprintStrategy<SharedMemoryRoutine>,
     bytes_per_element: usize,
     vector_size: usize,
     max_shared_memory_bytes: usize,
@@ -59,9 +61,19 @@ fn prepare_shared_launch_settings<R: Runtime>(
     let num_vectors = problem.channels / vector_size;
     let mut working_units = problem.output_width * problem.output_height * num_vectors;
 
+    let tile_target_aspect_ratio = match strategy {
+        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size.aspect_ratio(),
+        BlueprintStrategy::Inferred(strategy) => strategy.tile_target_aspect_ratio,
+    };
+
     loop {
-        let (cube_dim, tile_size) =
-            compute_layout(client, working_units, num_vectors, problem.options);
+        let (cube_dim, tile_size, total_dispatched_units) = compute_layout(
+            client,
+            working_units,
+            num_vectors,
+            tile_target_aspect_ratio,
+            problem.options,
+        );
         let (smem_width, smem_height) = compute_smem_size(problem, problem.options, tile_size);
 
         let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
@@ -78,8 +90,6 @@ fn prepare_shared_launch_settings<R: Runtime>(
                 available: max_shared_memory_bytes,
             });
         }
-
-        let total_dispatched_units = (cube_dim.x * cube_dim.y * cube_dim.z) as usize;
 
         // Reduce the total units by half and try again.
         working_units = (total_dispatched_units / 2).max(1);

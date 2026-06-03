@@ -1,4 +1,4 @@
-use crate::definition::{InterpolateOptions, get_halo, is_flattened};
+use crate::definition::{InterpolateOptions, is_flattened};
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
@@ -8,20 +8,39 @@ pub struct TileSize {
 }
 
 impl TileSize {
-    pub fn new(height: usize, width: usize, options: InterpolateOptions) -> Self {
-        let halo = get_halo(options.mode);
-        let area = width * height;
-
-        if !is_flattened(options) && area.is_multiple_of(halo) {
-            Self {
-                height: halo,
-                width: area / halo,
-            }
-        } else {
-            Self {
+    pub fn new(area: usize, tile_target_aspect_ratio: f32, options: InterpolateOptions) -> Self {
+        if tile_target_aspect_ratio <= 0.0 || area == 0 || is_flattened(options) {
+            return Self {
                 height: 1,
                 width: area,
+            };
+        }
+
+        let score = |h: usize| {
+            let w = area / h;
+            let ratio = w as f32 / h as f32;
+
+            let error = ratio.max(tile_target_aspect_ratio) / ratio.min(tile_target_aspect_ratio);
+
+            // Prefer wider layouts when the error is identical.
+            if ratio < tile_target_aspect_ratio {
+                error * 1.01
+            } else {
+                error
             }
+        };
+
+        let limit = (area as f64).sqrt() as usize;
+
+        let best_height = (1..=limit)
+            .filter(|&h| area % h == 0)
+            .flat_map(|h| [h, area / h])
+            .min_by(|&a, &b| score(a).partial_cmp(&score(b)).unwrap())
+            .unwrap_or(1);
+
+        Self {
+            height: best_height,
+            width: area / best_height,
         }
     }
 
@@ -31,6 +50,10 @@ impl TileSize {
 
     pub fn width(&self) -> usize {
         self.width
+    }
+
+    pub fn aspect_ratio(&self) -> f32 {
+        self.width as f32 / self.height as f32
     }
 }
 
