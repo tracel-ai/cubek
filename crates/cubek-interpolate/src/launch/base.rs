@@ -71,10 +71,8 @@ pub fn interpolate_launch<R: Runtime>(
         )?,
     };
 
-    let cube_shape = get_cube_shape(
-        settings.num_vectors,
-        settings.num_tiles_width * settings.num_tiles_height,
-    );
+    let num_vectors = settings.num_vectors;
+    let cubes_per_batch = settings.num_tiles_width * settings.num_tiles_height;
 
     unsafe {
         interpolate_kernel::launch_unchecked(
@@ -85,7 +83,8 @@ pub fn interpolate_launch<R: Runtime>(
             vector_size,
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
-            cube_shape,
+            num_vectors,
+            cubes_per_batch,
             blueprint,
             dtype,
             acc_dtype,
@@ -99,22 +98,13 @@ pub fn interpolate_launch<R: Runtime>(
 fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
     input: &Tensor<Vector<EI, N>>,
     output: &mut Tensor<Vector<EI, N>>,
-    cube_shape: Sequence<FastDivmod<usize>>,
+    num_vectors: FastDivmod<usize>,
+    cubes_per_batch: FastDivmod<usize>,
     #[comptime] blueprint: InterpolateBlueprint,
     #[define(EI)] _dtype: StorageType,
     #[define(EA)] _acc_dtype: StorageType,
 ) {
-    execute_interpolate::<(EI, EA), N>(input, output, cube_shape, blueprint);
-}
-
-fn get_cube_shape<R: Runtime>(
-    num_vectors: usize,
-    cubes_per_batch: usize,
-) -> SequenceArg<R, FastDivmod<usize>> {
-    let mut cube_shape = SequenceArg::new();
-    cube_shape.push(num_vectors);
-    cube_shape.push(cubes_per_batch);
-    cube_shape
+    execute_interpolate::<(EI, EA), N>(input, output, num_vectors, cubes_per_batch, blueprint);
 }
 
 pub fn interpolate_nearest_backward_launch<R: Runtime>(
