@@ -12,7 +12,7 @@ use super::{make_problem, run_interpolate_global_test};
 
 const NEAREST_TOLERANCE: f32 = 0.;
 
-const SHARED_MEMORY_HEIGHT: usize = 1;
+const TILE_TARGET_ASPECT_RATIO: f32 = 1.0;
 
 #[test]
 fn test_interpolate_nearest_identity() {
@@ -29,7 +29,9 @@ fn test_interpolate_nearest_identity() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -50,7 +52,9 @@ fn test_interpolate_nearest_exact_identity() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -72,7 +76,7 @@ fn test_interpolate_nearest_shared_memory_unsupported() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                shared_memory_height: SHARED_MEMORY_HEIGHT,
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -94,7 +98,9 @@ fn test_interpolate_nearest_upsample() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -115,7 +121,9 @@ fn test_interpolate_nearest_exact_upsample() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -136,7 +144,9 @@ fn test_interpolate_nearest_downsample() {
         100.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -157,7 +167,9 @@ fn test_interpolate_nearest_exact_downsample() {
         100.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -178,7 +190,9 @@ fn test_interpolate_nearest_resize() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -199,7 +213,9 @@ fn test_interpolate_nearest_exact_resize() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -221,7 +237,9 @@ fn test_interpolate_nearest_without_align_corners() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -243,7 +261,9 @@ fn test_interpolate_nearest_exact_without_align_corners() {
         10.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -264,7 +284,9 @@ fn test_interpolate_nearest_precision() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );
@@ -285,7 +307,9 @@ fn test_interpolate_nearest_exact_precision() {
         1.0,
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {}),
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
         ),
         NEAREST_TOLERANCE,
     );

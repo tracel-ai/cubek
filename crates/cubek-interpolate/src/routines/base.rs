@@ -29,8 +29,8 @@ pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
         client: &ComputeClient<R>,
         problem: &InterpolateForwardProblem,
         strategy: BlueprintStrategy<Self>,
-        bytes_per_element: usize,
         vector_size: usize,
+        bytes_per_element: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError>;
 }
 
@@ -38,15 +38,18 @@ pub fn compute_layout<R: Runtime>(
     client: &ComputeClient<R>,
     working_units: usize,
     num_vectors: usize,
+    tile_target_aspect_ratio: f32,
     options: InterpolateOptions,
-) -> (CubeDim, TileSize) {
+) -> (CubeDim, TileSize, usize) {
     let cube_dim = CubeDim::new(client, working_units);
-    let tile_size = TileSize::new(
-        cube_dim.y as usize,
-        cube_dim.x as usize / num_vectors, // Adjust tile width based on the number of vector
-        options,
-    );
-    (cube_dim, tile_size)
+
+    let total_dispatched_units = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
+
+    let tile_area = total_dispatched_units / num_vectors;
+
+    let tile_size = TileSize::new(tile_area, tile_target_aspect_ratio, options);
+
+    (cube_dim, tile_size, total_dispatched_units)
 }
 
 pub fn build_settings<R: Runtime>(

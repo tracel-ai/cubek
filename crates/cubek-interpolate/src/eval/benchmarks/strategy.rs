@@ -11,7 +11,9 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateStrategy>> {
             "global_memory",
             "Global Memory",
             InterpolateStrategy::GlobalMemoryStrategy(BlueprintStrategy::Inferred(
-                GlobalMemoryStrategy {},
+                GlobalMemoryStrategy {
+                    tile_target_aspect_ratio: 1.0,
+                },
             )),
         ),
         CatalogEntry::new(
@@ -19,7 +21,7 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateStrategy>> {
             "Shared Memory",
             InterpolateStrategy::SharedMemoryStrategy(BlueprintStrategy::Inferred(
                 SharedMemoryStrategy {
-                    shared_memory_height: 1,
+                    tile_target_aspect_ratio: 1.0,
                 },
             )),
         ),
