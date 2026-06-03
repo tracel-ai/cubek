@@ -39,12 +39,12 @@ impl InterpolateAutotuneKey {
         elem_output: ElemType,
         elem_acc: ElemType,
         input_shape: &[usize],
-        output_shape: &[usize],
+        output_size: &[usize; 2],
     ) -> Self {
         let channels = input_shape[3];
 
-        let output_height = output_shape[1];
-        let output_width = output_shape[2];
+        let output_height = output_size[0];
+        let output_width = output_size[1];
 
         InterpolateAutotuneKey::new(
             elem_input,
