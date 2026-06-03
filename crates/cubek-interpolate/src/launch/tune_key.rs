@@ -51,7 +51,7 @@ impl InterpolateAutotuneKey {
         let output_height = output_size[0];
         let output_width = output_size[1];
 
-        let channels_power_of_4 = channels % 4 == 0;
+        let channels_power_of_4 = channels.is_multiple_of(4);
 
         InterpolateAutotuneKey::new(
             elem_input,
