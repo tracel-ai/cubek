@@ -33,7 +33,7 @@ impl TileSize {
         let limit = (area as f64).sqrt() as usize;
 
         let best_height = (1..=limit)
-            .filter(|&h| area % h == 0)
+            .filter(|&h| area.is_multiple_of(h))
             .flat_map(|h| [h, area / h])
             .min_by(|&a, &b| score(a).partial_cmp(&score(b)).unwrap())
             .unwrap_or(1);
