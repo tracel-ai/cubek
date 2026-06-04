@@ -66,18 +66,13 @@ impl<EI: Float, N: Size> SharedMemoryReader<EI, N> {
         }
     }
 
-    pub fn read_weighted<EA: Float>(
-        &self,
-        row: usize,
-        col: usize,
-        weight: Vector<EA, N>,
-    ) -> Vector<EA, N> {
+    pub fn read<EA: Float>(&self, row: usize, col: usize) -> Vector<EA, N> {
         let local_row = (row as isize - self.min_row).max(0) as usize;
         let local_col = (col as isize - self.min_col).max(0) as usize;
 
         let smem_idx =
             (local_row * self.smem_width + local_col) * self.num_vectors + self.vector_index;
 
-        Vector::cast_from(self.smem[smem_idx]) * weight
+        Vector::cast_from(self.smem[smem_idx])
     }
 }

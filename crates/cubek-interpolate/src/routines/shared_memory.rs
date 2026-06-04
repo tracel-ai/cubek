@@ -67,7 +67,7 @@ fn prepare_shared_launch_settings<R: Runtime>(
     };
 
     loop {
-        let (cube_dim, tile_size, total_dispatched_units) = compute_layout(
+        let (cube_dim, tile_size, units_per_cube) = compute_layout(
             client,
             working_units,
             num_vectors,
@@ -98,7 +98,7 @@ fn prepare_shared_launch_settings<R: Runtime>(
             }
 
             // Reduce the total units by half and try again.
-            working_units = (total_dispatched_units / 2).max(1);
+            working_units = (units_per_cube / 2).max(1);
         }
     }
 }

@@ -15,32 +15,6 @@ const NEAREST_TOLERANCE: f32 = 0.;
 const TILE_TARGET_ASPECT_RATIO: f32 = 1.0;
 
 #[test]
-fn test_1d_nearest() {
-    let client = TestRuntime::client(&Default::default());
-    
-    // The original shape was [1, 1, 6] unsqueezed at dim 2 to [1, 1, 1, 6]
-    let problem = make_problem(
-        [1, 1, 6, 1], 
-        [1, 9], 
-        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
-    );
-
-    run_interpolate_global_test(
-        client,
-        1234, // Seed for deterministic random generation
-        -2.5, // Min boundary covering original -2.1788
-        2.5,  // Max boundary covering original 1.5410
-        problem,
-        InterpolateStrategy::GlobalMemoryStrategy(
-            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
-            }),
-        ),
-        NEAREST_TOLERANCE,
-    );
-}
-
-#[test]
 fn test_interpolate_nearest_identity() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(

@@ -43,13 +43,13 @@ pub fn compute_layout<R: Runtime>(
 ) -> (CubeDim, TileSize, usize) {
     let cube_dim = CubeDim::new(client, working_units);
 
-    let total_dispatched_units = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
+    let units_per_cube = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
 
-    let tile_area = total_dispatched_units / num_vectors;
+    let tile_area = (units_per_cube / num_vectors).max(1);
 
     let tile_size = TileSize::new(tile_area, tile_target_aspect_ratio, options);
 
-    (cube_dim, tile_size, total_dispatched_units)
+    (cube_dim, tile_size, units_per_cube)
 }
 
 pub fn build_settings<R: Runtime>(

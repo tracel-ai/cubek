@@ -200,8 +200,7 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
             let clamped_col = col.max(0).min(input_width as isize - 1) as usize;
 
             let weight_col = col_weights[j];
-            let read_val =
-                reader.read_weighted::<P::EA>(input, clamped_row, clamped_col, weight_col);
+            let read_val = reader.read::<P::EA>(input, clamped_row, clamped_col) * weight_col;
 
             if I::REQUIRES_BOUND_CHECK {
                 let is_in_bounds = col >= 0

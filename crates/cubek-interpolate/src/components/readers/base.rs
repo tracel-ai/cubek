@@ -10,16 +10,15 @@ pub enum ReaderType<EI: Float, N: Size> {
 
 #[cube]
 impl<EI: Float, N: Size> ReaderType<EI, N> {
-    pub fn read_weighted<EA: Float>(
+    pub fn read<EA: Float>(
         &self,
         input: &Tensor<Vector<EI, N>>,
         row: usize,
         col: usize,
-        weight: Vector<EA, N>,
     ) -> Vector<EA, N> {
         match self {
-            ReaderType::Global(reader) => reader.read_weighted(input, row, col, weight),
-            ReaderType::Shared(reader) => reader.read_weighted::<EA>(row, col, weight),
+            ReaderType::Global(reader) => reader.read(input, row, col),
+            ReaderType::Shared(reader) => reader.read::<EA>(row, col),
         }
     }
 }

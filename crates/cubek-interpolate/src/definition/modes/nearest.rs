@@ -30,11 +30,6 @@ impl Interpolate for Nearest {
         let clamped_row = base_row.max(0).min(input_height as isize - 1) as usize;
         let clamped_col = base_col.max(0).min(input_width as isize - 1) as usize;
 
-        Vector::cast_from(reader.read_weighted::<P::EA>(
-            input,
-            clamped_row,
-            clamped_col,
-            Vector::cast_from(P::EA::new(1.0)),
-        ))
+        Vector::cast_from(reader.read::<P::EA>(input, clamped_row, clamped_col))
     }
 }

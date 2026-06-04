@@ -29,18 +29,17 @@ impl GlobalMemoryReader {
         }
     }
 
-    pub fn read_weighted<EI: Float, EA: Float, N: Size>(
+    pub fn read<EI: Float, EA: Float, N: Size>(
         &self,
         input: &Tensor<Vector<EI, N>>,
         row: usize,
         col: usize,
-        weight: Vector<EA, N>,
     ) -> Vector<EA, N> {
         let input_idx = (self.base_offset
             + row.min(self.input_height - 1) * input.stride(1)
             + col.min(self.input_width - 1) * input.stride(2))
             / self.vector_size;
 
-        Vector::cast_from(input[input_idx]) * weight
+        Vector::cast_from(input[input_idx])
     }
 }
