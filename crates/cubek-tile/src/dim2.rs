@@ -1,32 +1,23 @@
-//! The 2-D leaf world. Everything keyed on `Coords2d` lives here, behind the
-//! [`matrix`](super::Tile::matrix) seam — `row`/`col` and the matrix axis pair
-//! are confined to this file. Holds the [`Tile2d`] alias, the
-//! [`matrix`](super::Tile::matrix)/[`matrices`](super::Tile::matrices) bridge
-//! that slices an N-D leaf into 2-D matrices, the [`MatrixWindow`] leaf layout,
-//! the smem staging buffer ([`SmemLayout`]/[`stage_smem`]), and the 2-D element
-//! mechanisms ([`copy_2d`], [`mma_2d`]) the [`Tile`](super::Tile) pillars
-//! delegate to.
+//! The 2-D tile world. Everything keyed on `Coords2d` lives here, behind the
+//! [`matrix`](super::Tile::matrix) seam — `row`/`col` and the matrix axis pair are
+//! confined to this file: the [`matrix`](super::Tile::matrix) bridge that slices an
+//! N-D sub-tile into 2-D matrix views, the [`MatrixWindow`] layout, the
+//! [`copy_2d`] element copy, and the register `mma`.
 
 use cubecl::{
     prelude::*,
     std::tensor::{
-        ViewMut,
-        layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
+        View, ViewMut,
+        layout::{Coords2d, CoordsDyn, Layout, LayoutExpand},
     },
 };
 
 // Glob brings sibling items *and* the cube-macro-generated `*Expand` companions.
 use super::*;
 
-/// A tile collapsed to a fixed 2-D leaf: what [`partition`](super::Tile::partition)
-/// yields and what the 2-D ops ([`copy_from`](Tile::copy_from) and the smem
-/// staging) speak. The collapse is one-way — a `Tile2d` has no `partition`, so
-/// climbing back to a higher-rank space would take an explicit extend/broadcast.
-pub type Tile2d<'a, E, S> = TileOf<'a, E, S, Coords2d>;
-
-/// Slices an N-D [`partition`](super::Tile::partition) leaf to one 2-D matrix:
+/// Slices an N-D [`at`](super::Tile::at) sub-tile to one 2-D matrix:
 /// pins the leading (batch) axes to `pins`, exposing the trailing two (matrix)
-/// axes. The block origin is already baked into the leaf, so this is a pure
+/// axes. The block origin is already baked into the sub-tile, so this is a pure
 /// pin-and-expose with no further offset.
 #[derive(CubeType, Clone)]
 pub struct MatrixWindow {
@@ -37,7 +28,7 @@ pub struct MatrixWindow {
 #[cube]
 impl MatrixWindow {
     /// Expose the trailing `rows × cols` matrix under the pinned leading `pins`
-    /// (empty for a plain 2-D leaf).
+    /// (empty for a plain 2-D tile).
     pub fn new(pins: CoordsDyn, #[comptime] rows: usize, #[comptime] cols: usize) -> Self {
         MatrixWindow {
             pins,
@@ -79,11 +70,11 @@ impl Layout for MatrixWindow {
 }
 
 #[cube]
-impl<'a, E: Numeric, S: Size> TileOf<'a, E, S, CoordsDyn> {
-    /// Number of 2-D matrices in this leaf: the product of its leading (batch)
-    /// extents (1 for a plain 2-D leaf).
-    pub fn matrices(&self) -> usize {
-        let shape = self.view.shape();
+impl<E: Numeric> Tile<E> {
+    /// Number of 2-D matrices in this sub-tile: the product of its leading (batch)
+    /// extents (1 for a plain 2-D tile).
+    pub fn matrix_count(&self) -> usize {
+        let shape = self.view().shape();
         let mut count = u32::from_int(1);
         #[unroll]
         for p in 0..comptime!(self.space.rank() - 2) {
@@ -92,17 +83,17 @@ impl<'a, E: Numeric, S: Size> TileOf<'a, E, S, CoordsDyn> {
         count as usize
     }
 
-    /// The `i`-th 2-D matrix: the trailing two axes exposed as a [`Tile2d`], with
-    /// the leading (batch) axes pinned to `i` unraveled over their extents.
-    pub fn matrix(&self, i: usize) -> Tile2d<'a, E, S> {
+    /// The [`MatrixWindow`] that slices the `i`-th 2-D matrix out of this sub-tile:
+    /// the trailing two axes, with the leading (batch) axes pinned to `i` unraveled
+    /// over their extents. Shared by [`matrix`](Tile::matrix) (read) and
+    /// [`matrix_mut`](Tile::matrix_mut) (write).
+    fn matrix_window(&self, i: usize) -> MatrixWindow {
         let rank = comptime!(self.space.rank());
-        let shape = self.view.shape();
-        let rows = self
-            .partitioner
-            .sub_tile_edge(comptime!(self.space.axis_at(rank - 2)));
-        let cols = self
-            .partitioner
-            .sub_tile_edge(comptime!(self.space.axis_at(rank - 1)));
+        let shape = self.view().shape();
+        // A sub-tile's matrix shape is its own extents — the partitioner levels are
+        // already consumed by the time we slice 2-D matrices.
+        let rows = comptime!(self.space.extent(self.space.axis_at(rank - 2)));
+        let cols = comptime!(self.space.extent(self.space.axis_at(rank - 1)));
 
         // Unravel `i` (row-major) over the leading extents into pinned coords.
         let mut pins = CoordsDyn::new();
@@ -115,145 +106,150 @@ impl<'a, E: Numeric, S: Size> TileOf<'a, E, S, CoordsDyn> {
             }
             pins.push((i as u32 / weight) % shape[p]);
         }
+        MatrixWindow::new(pins, rows, cols)
+    }
 
-        let layout = MatrixWindow::new(pins, rows, cols);
-        TileOf::<'a, E, S, Coords2d> {
-            view: self.view.clone().view_mut(layout),
-            partitioner: self.partitioner.clone(),
-            space: comptime!(self.space.clone()),
-            kind: comptime!(TileKind::GmemLeaf),
+    /// The `i`-th 2-D matrix as a read [`View`] (the `lhs`/`rhs` operands).
+    pub fn matrix(&self, i: usize) -> View<'_, Vector<E, Const<1>>, Coords2d> {
+        let layout = self.matrix_window(i);
+        self.view().view(layout)
+    }
+
+    /// The `i`-th 2-D matrix as a write [`ViewMut`] (the accumulator / a `stage`
+    /// destination).
+    pub fn matrix_mut(&mut self, i: usize) -> ViewMut<'_, Vector<E, Const<1>>, Coords2d> {
+        let layout = self.matrix_window(i);
+        self.view_mut().view_mut(layout)
+    }
+
+    /// Accumulate `lhs · rhs` into this tile — the one matmul entry point, at every
+    /// level. Dispatched on whether this tile is a [`leaf`](Space::is_leaf): a tile
+    /// that still has partitioner levels runs a *lowering* (partition the shared
+    /// space, locate each operand at every region, recurse), choosing its move from the
+    /// head level's [`Schedule`]; a leaf runs the *contraction*
+    /// ([`contract`](Tile::contract)). The lowering's inner `acc.mma(…)` is the
+    /// recursion — each `at` consumes one level, so it descends until the
+    /// sub-tile is a leaf. A whole-tensor accumulator carries the full stack, so it
+    /// always lowers first; a multi-level stack lowers once per level.
+    pub fn mma(&mut self, lhs: &Tile<E>, rhs: &Tile<E>) {
+        if comptime!(self.space.is_leaf()) {
+            self.contract(lhs, rhs);
+        } else {
+            mma_lower::<E>(lhs, rhs, self);
+        }
+    }
+
+    /// Locate this tile and both operands at `region`, then [`mma`](Tile::mma) the
+    /// sub-tiles — the [`Direct`](Schedule::Direct) lowering's per-region step as one
+    /// call. Dispatch (leaf-contract vs. recurse) is `mma`'s, on the *divided* space.
+    pub fn mma_at(&mut self, lhs: &Tile<E>, rhs: &Tile<E>, region: &Region) {
+        self.at(region).mma(&lhs.at(region), &rhs.at(region));
+    }
+
+    /// The leaf: contract `lhs · rhs` into this sub-tile. Reads its own block shape
+    /// off the spaces (the accumulator's trailing two axes are the `mr × nr`
+    /// matrix; `lhs`'s trailing axis is the contracted `kc`), loops the sub-tile's
+    /// 2-D matrices (the batch the partitioner kept in-tile), and runs the register
+    /// microkernel on each. The contraction is scalar: operands have no vectorization
+    /// type, so `lhs`, `rhs`, and `out` make no assumption about each other's lines.
+    pub fn contract(&mut self, lhs: &Tile<E>, rhs: &Tile<E>) {
+        // The leaf reads its block shape off the (fully descended) extents: the
+        // accumulator's trailing two axes are the `mr × nr` matrix, and `lhs`'s
+        // trailing axis is the contracted `kc`.
+        let arank = comptime!(self.space.rank());
+        let mr = comptime!(self.space.extent(self.space.axis_at(arank - 2)));
+        let nr = comptime!(self.space.extent(self.space.axis_at(arank - 1)));
+        let kc = comptime!(lhs.space.extent(lhs.space.axis_at(lhs.space.rank() - 1)));
+
+        let matrices = self.matrix_count();
+        for j in 0..matrices {
+            let l = lhs.matrix(j);
+            let r = rhs.matrix(j);
+            let mut a = self.matrix_mut(j);
+            mma_register::<E>(&l, &r, &mut a, mr, nr, kc);
         }
     }
 }
 
-/// Row-major layout over a flat smem buffer holding a whole N-D leaf
-/// (`[d0, …, rows, cols]`), so a staged leaf is addressed exactly like the
-/// global leaf it mirrors — and [`matrix`](super::Tile::matrix) slices it the
-/// same way.
-#[derive(CubeType, Clone)]
-pub struct SmemLayout {
-    shape: CoordsDyn,
-    strides: CoordsDyn,
-}
-
+/// One sub-tile's `mr × nr` output block, contracted over `kc`. Every loop
+/// unrolls, so the block (`c`), the A column, and the B row all stay in registers:
+/// load the block once, run `kc` rank-1 updates ([`outer_product`]), store it back
+/// once. No accumulator touches memory in between.
 #[cube]
-impl Layout for SmemLayout {
-    type Coordinates = CoordsDyn;
-    type SourceCoordinates = Coords1d;
-
-    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let mut idx = u32::from_int(0);
-        #[unroll]
-        for i in 0..self.strides.len() {
-            idx += pos[i] * self.strides[i];
-        }
-        idx as usize
-    }
-
-    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
-        let in_bounds = self.is_in_bounds(pos.clone());
-        (self.to_source_pos(pos), in_bounds)
-    }
-
-    fn shape(&self) -> Self::Coordinates {
-        self.shape.clone()
-    }
-
-    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut valid = true;
-        #[unroll]
-        for i in 0..self.shape.len() {
-            valid = valid && pos[i] < self.shape[i];
-        }
-        valid
-    }
-}
-
-/// The row-major layout for a leaf of `space` at `partitioner`'s sub-tile edges —
-/// the smem twin of a [`partition`](super::Tile::partition) leaf.
-#[cube]
-pub fn smem_layout(#[comptime] space: Space, partitioner: &Partitioner) -> SmemLayout {
-    let rank = comptime!(space.rank());
-
-    let mut shape = CoordsDyn::new();
+fn mma_register<E: Numeric>(
+    lhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    rhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    acc: &mut ViewMut<'_, Vector<E, Const<1>>, Coords2d>,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+) {
+    let mut c = Array::<Vector<E, Const<1>>>::new(mr * nr);
     #[unroll]
-    for p in 0..rank {
-        let edge = partitioner.sub_tile_edge(comptime!(space.axis_at(p)));
-        shape.push(u32::from_int(comptime!(edge as i64)));
-    }
-
-    // Row-major strides: stride[p] = product of the trailing extents.
-    let mut strides = CoordsDyn::new();
-    #[unroll]
-    for p in 0..rank {
-        let mut weight = u32::from_int(1);
+    for i in 0..mr {
         #[unroll]
-        for q in comptime!(p + 1)..rank {
-            weight *= shape[q];
+        for j in 0..nr {
+            c[i * nr + j] = acc.read((i as u32, j as u32).runtime());
         }
-        strides.push(weight);
     }
 
-    SmemLayout { shape, strides }
-}
+    #[unroll]
+    for p in 0..kc {
+        outer_product::<E>(lhs, rhs, &mut c, p, mr, nr);
+    }
 
-#[cube]
-impl<'a, E: Numeric, S: Size> TileOf<'a, E, S, Coords2d> {
-    /// Accumulate `lhs · rhs` into this matrix — the 2-D leaf of the tile-DSL
-    /// [`mma`](Tile::mma) primitive.
-    pub fn mma_from(&mut self, lhs: &Tile2d<'_, E, S>, rhs: &Tile2d<'_, E, S>) {
-        mma_2d::<E, S>(&mut self.view, &lhs.view, &rhs.view);
+    #[unroll]
+    for i in 0..mr {
+        #[unroll]
+        for j in 0..nr {
+            acc.write((i as u32, j as u32).runtime(), c[i * nr + j]);
+        }
     }
 }
 
-/// Wrap a shared-memory view as a whole-leaf [`Smem`](TileKind::Smem) tile — the
-/// staging destination for [`copy_from`](super::Tile::copy_from).
+/// One rank-1 update at depth `p`: load the A column and the B row, accumulate
+/// their outer product into the register block `c`. Scalar throughout — operands
+/// carry no vectorization type, so the rank-1 update makes no assumption about any
+/// operand's line size.
 #[cube]
-pub fn stage_smem<'a, E: Numeric, S: Size>(
-    view: ViewMut<'a, Vector<E, S>, CoordsDyn>,
-    #[comptime] space: Space,
-    partitioner: Partitioner,
-) -> Tile<'a, E, S> {
-    TileOf::<'a, E, S, CoordsDyn> {
-        view,
-        partitioner,
-        space,
-        kind: comptime!(TileKind::Smem),
+fn outer_product<E: Numeric>(
+    lhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    rhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    c: &mut Array<Vector<E, Const<1>>>,
+    #[comptime] p: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+) {
+    let mut a = Array::<Vector<E, Const<1>>>::new(mr);
+    let mut b = Array::<Vector<E, Const<1>>>::new(nr);
+
+    #[unroll]
+    for i in 0..mr {
+        a[i] = lhs.read((i as u32, p as u32).runtime());
+    }
+    #[unroll]
+    for j in 0..nr {
+        b[j] = rhs.read((p as u32, j as u32).runtime());
+    }
+    #[unroll]
+    for i in 0..mr {
+        #[unroll]
+        for j in 0..nr {
+            c[i * nr + j] += a[i] * b[j];
+        }
     }
 }
 
 /// Element-wise copy of `src` into `dst` (same 2-D shape).
 #[cube]
-pub fn copy_2d<E: Numeric, S: Size>(
-    dst: &mut ViewMut<'_, Vector<E, S>, Coords2d>,
-    src: &ViewMut<'_, Vector<E, S>, Coords2d>,
+pub fn copy_2d<E: Numeric>(
+    dst: &mut ViewMut<'_, Vector<E, Const<1>>, Coords2d>,
+    src: &View<'_, Vector<E, Const<1>>, Coords2d>,
 ) {
     let (h, w) = src.shape();
     for i in 0..h {
         for j in 0..w {
             dst.write((i, j), src.read((i, j)));
-        }
-    }
-}
-
-/// Scalar 2-D contraction `acc(i, j) += Σ_c lhs(i, c) · rhs(c, j)`; shapes read
-/// from the views.
-#[cube]
-pub fn mma_2d<E: Numeric, S: Size>(
-    acc: &mut ViewMut<'_, Vector<E, S>, Coords2d>,
-    lhs: &ViewMut<'_, Vector<E, S>, Coords2d>,
-    rhs: &ViewMut<'_, Vector<E, S>, Coords2d>,
-) {
-    let (m, k) = lhs.shape();
-    let (_, n) = rhs.shape();
-
-    for i in 0..m {
-        for j in 0..n {
-            let mut value = acc.read((i, j));
-            for c in 0..k {
-                value += lhs.read((i, c)) * rhs.read((c, j));
-            }
-            acc.write((i, j), value);
         }
     }
 }

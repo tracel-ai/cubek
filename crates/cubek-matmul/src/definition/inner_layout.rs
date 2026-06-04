@@ -6,6 +6,7 @@ use cubecl::{
     prelude::{TensorArg, TensorBinding},
     std::tensor::layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
+use cubek_tile::Storage;
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,6 +149,32 @@ impl InnerLayout {
 
         let arg: TensorArg<R> = binding.into_tensor_arg();
         TiledViewLaunch::new_tensor::<TiledViewLayout>(arg, spec)
+    }
+
+    /// The raw [`TensorArg`] (operand strides preserved) plus the tensor's physical
+    /// [`Storage`] that `Tile::from_tensor` needs in-kernel. Tiled keeps its physical
+    /// `[batch, grid…, tile…]` buffer (batch passthrough, `start_axis = 1`); strided
+    /// reshapes to `(batch, rows, cols)` (`start_axis = 0, levels = 0`).
+    pub fn tensor_arg<R: Runtime>(
+        &self,
+        mut binding: TensorBinding<R>,
+        batch: usize,
+        rows: usize,
+        cols: usize,
+    ) -> (TensorArg<R>, Storage) {
+        match self {
+            InnerLayout::Tiled { tiles } => {
+                (binding.into_tensor_arg(), Storage::passthrough(1, tiles.len()))
+            }
+            _ => {
+                let strides = binding.strides.to_vec();
+                let n = strides.len();
+                let batch_stride = if n >= 3 { strides[n - 3] } else { rows * cols };
+                binding.shape = [batch, rows, cols][..].into();
+                binding.strides = [batch_stride, strides[n - 2], strides[n - 1]][..].into();
+                (binding.into_tensor_arg(), Storage::passthrough(0, 0))
+            }
+        }
     }
 }
 

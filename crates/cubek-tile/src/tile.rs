@@ -1,238 +1,408 @@
-//! The [`Tile`]: a view tagged with its [`Space`] and [`Partitioner`]. The
-//! launchable unit — kernels take tiles directly.
+//! The [`Tile`]: one operand's data — a [`Payload`] enum (`Gmem`/`Smem`/`Cmma`),
+//! the comptime [`Space`] it projects, and a runtime window. The payload holds a
+//! lifetime-free buffer; [`view`](Tile::view) rebuilds a [`ViewMut`] over it on
+//! demand. A `Tile` is not launchable; a kernel takes a raw [`Tensor`] and wraps it
+//! with [`from_tensor`](Tile::from_tensor).
 //!
-//! The arity-agnostic half: `CoordsDyn` whole tensors and the
-//! [`partition`](Tile::partition) seam that collapses them into `Coords2d`
-//! leaves. A tile's last two axes are its matrix (leaf) axes; any *leading*
-//! axes are batch axes that `partition` pins to the walk point — so a 2-D
-//! operation and its batched form share one code path. The 2-D leaf machinery
-//! (including [`Tile2d`](super::Tile2d)) lives in [`dim2`](super::dim2).
-
+//! Vectorization is *transparent*: a `Tile` is size-free (`Tile<E>`), its buffer a
+//! plain scalar slice (`Vector<E, Const<1>>`). An operand's line size is a
+//! memory-layout property the launch boundary resolves — not a type parameter the
+//! DSL threads — so `lhs`, `rhs`, and `out` make no assumption about each other's
+//! vectorization. The contraction reads scalars (see [`contract`](Tile::contract)),
+//! mirroring the production tile matmul.
 use cubecl::{
+    cmma::Matrix,
     prelude::*,
     std::tensor::{
-        ViewMut,
-        layout::{Coordinates, CoordsDyn, Layout, LayoutExpand},
+        AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
+        layout::{Coords1d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
     },
 };
 
-// Glob brings sibling items *and* the cube-macro-generated `*Expand` companions.
 use super::*;
 
-/// What memory a tile lives in.
+/// The physical storage of a launched tensor — how its `[pre…, grid…, tile…]`
+/// buffer maps to the logical [`Space`]. `start_axis` leading axes are passthrough
+/// (e.g. a batch the tiling skips); the rest are tiled with `levels` nesting. This
+/// is a property of the *tensor* (its higher rank encodes the tiling), distinct from
+/// the space's partitioner — and derived from the rank at the host, never written by
+/// hand.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TileKind {
-    /// A whole global tensor — a launch input or the accumulator.
-    GmemWhole,
-    /// One tile of a global tensor — a `partition` leaf.
-    GmemLeaf,
-    /// A shared-memory tile — staging buffer or leaf accumulator.
-    Smem,
+pub struct Storage {
+    pub start_axis: usize,
+    pub levels: usize,
 }
 
-/// A view + its [`Space`] + [`Partitioner`], generic over the view's coordinate
-/// type `C`. You rarely name this directly: [`Tile`] is the whole-tensor /
-/// arbitrary-rank form (`C = CoordsDyn`) — the launchable unit and the only kind
-/// that carries [`partition`](Tile::partition)/[`tiles`](Tile::tiles)/[`mma`](Tile::mma) —
-/// and [`Tile2d`](super::Tile2d) is the 2-D leaf (`C = Coords2d`).
+impl Storage {
+    /// Every axis tiled, no passthrough — `levels` read off the tensor's rank
+    /// (`physical_rank / logical_rank - 1`).
+    pub fn of(physical_rank: usize, logical_rank: usize) -> Self {
+        Storage { start_axis: 0, levels: physical_rank / logical_rank - 1 }
+    }
+
+    /// `start_axis` leading axes passthrough, the rest tiled to `levels` depth.
+    pub fn passthrough(start_axis: usize, levels: usize) -> Self {
+        Storage { start_axis, levels }
+    }
+}
+
+/// The launchable form of a [`Tile`]: a reference to the global [`Tensor`] plus the
+/// comptime [`Space`] and [`Storage`] it's read with. One self-contained struct per
+/// operand at the launch boundary — `let tile = arg.tile()` on the first line of the
+/// kernel. (A `Tensor` is `?Sized` so it can't be held by value, but a `&Tensor`
+/// can, which is why this is the launchable subset and [`Tile`] is not.)
 #[derive(CubeType, CubeLaunch)]
-pub struct TileOf<'a, E: Numeric, S: Size, C: Coordinates + 'a> {
-    pub view: ViewMut<'a, Vector<E, S>, C>,
-    pub partitioner: Partitioner,
+pub struct TileArg<'a, E: Numeric> {
+    pub tensor: &'a Tensor<Vector<E, Const<1>>>,
     #[cube(comptime)]
     pub space: Space,
     #[cube(comptime)]
-    pub kind: TileKind,
+    pub storage: Storage,
 }
 
-/// A whole-tensor / arbitrary-rank tile — the default, launchable form.
-/// `Tile<'_, E, S>` is all you write; `C` is `CoordsDyn`.
-pub type Tile<'a, E, S> = TileOf<'a, E, S, CoordsDyn>;
+#[cube]
+impl<'a, E: Numeric> TileArg<'a, E> {
+    /// Wrap this launch arg into a `Gmem` [`Tile`] — the conversion the kernel does
+    /// up front. See [`Tile::from_tensor`].
+    pub fn tile(&self) -> Tile<E> {
+        Tile::from_tensor(self.tensor, comptime!(self.space.clone()), comptime!(self.storage))
+    }
+}
 
-/// Launch argument for a [`Tile`] (or any [`TileOf`]) — a passthrough to the
-/// `CubeLaunch`-generated companion, so `TileLaunch::new(view, …)` reads
-/// naturally.
-pub type TileLaunch<'a, E, S, C, R> = TileOfLaunch<'a, E, S, C, R>;
+/// One operand's data. The window (`origin`/`extent`) lives on the struct so
+/// [`at`](Tile::at) edits it uniformly across payload kinds; the 2-D matrix a tile
+/// collapses into is a bare `Coords2d` view ([`matrix`](Tile::matrix)).
+#[derive(CubeType)]
+pub struct Tile<E: Numeric> {
+    pub payload: Payload<E>,
+    /// Window origin in logical coordinates (accumulates across [`at`](Tile::at)s).
+    pub origin: CoordsDyn,
+    /// Window extent in logical coordinates (the current sub-tile's edges).
+    pub extent: CoordsDyn,
+    /// The space this tile projects — owns the partitioner.
+    #[cube(comptime)]
+    pub space: Space,
+}
+
+/// A tile's backing store. Every variant is lifetime-free (a `Box<[E]>` or a
+/// [`cmma::Matrix`]); `Tensor`/`Shared` are `?Sized` and a `ViewMut` carries a
+/// borrow, so neither can be stored — [`view`](Tile::view) rebuilds one on demand.
+#[derive(CubeType)]
+pub enum Payload<E: Numeric> {
+    /// A global-tensor operand or the accumulator.
+    Gmem(MemData<E>),
+    /// A shared-memory staging buffer or smem accumulator.
+    Smem(MemData<E>),
+    /// A tensor-core fragment — register/MMA-resident, no memory address.
+    Cmma(Matrix<E>),
+}
+
+/// The lifetime-erased buffer plus the physical shape/strides and tiling spec to
+/// rebuild its [`GmemLayout`]. Fixed at construction, never recomputed from the
+/// (dividing) `Space`, so a staged smem sub-tile keeps addressing the whole buffer
+/// it was allocated for after [`at`](Tile::at) windows it down.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct MemData<E: Numeric> {
+    buffer: Box<[Vector<E, Const<1>>]>,
+    physical_shape: CoordsDyn,
+    physical_strides: CoordsDyn,
+    /// Leading `start_axis` axes are passthrough (e.g. a batch the tiling skips).
+    #[cube(comptime)]
+    start_axis: usize,
+    /// Tiled axes, each split into `levels + 1` `[grid…, tile…]` parts.
+    #[cube(comptime)]
+    num_tiled: usize,
+    /// Nested tile levels (`0` = smem / untiled).
+    #[cube(comptime)]
+    levels: usize,
+}
 
 #[cube]
-impl<'a, E: Numeric, S: Size> TileOf<'a, E, S, CoordsDyn> {
-    /// The sub-tile at grid `point`: every axis windowed to its sub-tile edge,
-    /// at the origin `grid_index × edge`. The result is a same-rank [`Tile`]
-    /// leaf — `partition` is *not* opinionated about which axes are matrix vs
-    /// batch. Collapsing to a 2-D matrix is a separate step ([`matrix`]); a leaf
-    /// with a wide leading (batch) axis can instead be vectorized along it. Each
-    /// tile reads the point along its *own* axes, so operands and accumulator
-    /// match even in different spaces.
-    pub fn partition(&self, point: &Point) -> Tile<'a, E, S> {
-        // The leaf's kind follows the source's: carving a sub-tile of shared
-        // memory stays [`Smem`](TileKind::Smem); carving a global tensor (whole
-        // or an already-partitioned leaf, for multi-level tiling) yields a
-        // [`GmemLeaf`](TileKind::GmemLeaf).
-        let kind = match comptime!(self.kind) {
-            TileKind::Smem => comptime!(TileKind::Smem),
-            _ => comptime!(TileKind::GmemLeaf),
-        };
+impl<E: Numeric> Tile<E> {
+    /// Wrap a launched [`Tensor`] into a whole `Gmem` tile: the operand's semantic
+    /// [`Space`] and the tensor's physical [`Storage`] (two separate things). The
+    /// kernel takes the tensor by `&` (it is `?Sized`) and we erase the borrow into a
+    /// `Box`. The tensor is scalar (`Const<1>`): vectorization is resolved at the
+    /// launch boundary, the DSL stays size-free.
+    pub fn from_tensor(
+        tensor: &Tensor<Vector<E, Const<1>>>,
+        #[comptime] space: Space,
+        #[comptime] storage: Storage,
+    ) -> Tile<E> {
+        let start_axis = comptime!(storage.start_axis);
+        let num_tiled = comptime!(space.rank() - storage.start_axis);
+        let levels = comptime!(storage.levels);
+        let mut physical_shape = CoordsDyn::new();
+        let mut physical_strides = CoordsDyn::new();
+        #[unroll]
+        for i in 0..comptime!(start_axis + (levels + 1) * num_tiled) {
+            physical_shape.push(tensor.shape(i) as u32);
+            physical_strides.push(tensor.stride(i) as u32);
+        }
+        let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
+        let (origin, extent) = full_window(comptime!(space.clone()));
+        Tile::<E> {
+            payload: Payload::new_Gmem(MemData::<E> {
+                buffer,
+                physical_shape,
+                physical_strides,
+                start_axis,
+                num_tiled,
+                levels,
+            }),
+            origin,
+            extent,
+            space: comptime!(space),
+        }
+    }
 
+    /// Wrap a shared-memory buffer as a whole `Smem` tile — the [`stage`](Tile::stage)
+    /// destination. Row-major over `space`; the borrow is erased into a `Box`.
+    pub fn smem(smem: &Shared<[Vector<E, Const<1>>]>, #[comptime] space: Space) -> Tile<E> {
+        let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
+        let (physical_shape, physical_strides) = row_major(comptime!(space.clone()));
+        let (origin, extent) = full_window(comptime!(space.clone()));
+        Tile::<E> {
+            payload: Payload::new_Smem(MemData::<E> {
+                buffer,
+                physical_shape,
+                physical_strides,
+                start_axis: comptime!(0usize),
+                num_tiled: comptime!(space.rank()),
+                levels: comptime!(0usize),
+            }),
+            origin,
+            extent,
+            space: comptime!(space),
+        }
+    }
+
+    /// A read [`View`] over this tile's data — the buffer re-viewed through its base
+    /// layout, then the [`Window`]. Panics on a [`Cmma`](Payload::Cmma) tile.
+    pub fn view(&self) -> View<'_, Vector<E, Const<1>>, CoordsDyn> {
+        let window = Window::new(self.origin.clone(), self.extent.clone());
+        match &self.payload {
+            Payload::Gmem(g) => g.buffer.view(g.base()).view(window),
+            Payload::Smem(g) => g.buffer.view(g.base()).view(window),
+            Payload::Cmma(_) => panic!("Tile::view: a cmma fragment has no memory view"),
+        }
+    }
+
+    /// A write [`ViewMut`] over this tile's data — the mutable twin of
+    /// [`view`](Tile::view), for the accumulator (and a `stage` destination).
+    pub fn view_mut(&mut self) -> ViewMut<'_, Vector<E, Const<1>>, CoordsDyn> {
+        let window = Window::new(self.origin.clone(), self.extent.clone());
+        match &mut self.payload {
+            Payload::Gmem(g) => {
+                let base = g.base();
+                g.buffer.view_mut(base).view_mut(window)
+            }
+            Payload::Smem(g) => {
+                let base = g.base();
+                g.buffer.view_mut(base).view_mut(window)
+            }
+            Payload::Cmma(_) => panic!("Tile::view_mut: a cmma fragment has no memory view"),
+        }
+    }
+
+    /// Window this tile down to `region` — the same axes at the sub-tile edges,
+    /// shifted to the region's origin. No copy and no axis bookkeeping: the tile
+    /// projects `region` onto its own axes, so `lhs ∈ {M,K}` and `out ∈ {M,N}` agree
+    /// without the caller matching them. Keeps the payload kind at a smaller extent.
+    pub fn at(&self, region: &Region) -> Tile<E> {
+        let space = region.space();
         let mut origin = CoordsDyn::new();
         let mut extent = CoordsDyn::new();
         #[unroll]
         for p in 0..comptime!(self.space.rank()) {
             let axis = comptime!(self.space.axis_at(p));
-            let edge = self.partitioner.sub_tile_edge(axis);
-            origin.push((point.get(axis) * edge) as u32);
+            let edge = comptime!(self.space.partitioner().sub_tile_edge(axis));
+            let index = project_flat(
+                comptime!(self.space.levels(axis)),
+                comptime!(space.levels(axis)),
+                region.coord(axis),
+            );
+            // Accumulate onto the current window: child reads base[origin + index*edge + pos].
+            origin.push(self.origin[p] + (index * edge) as u32);
             extent.push(comptime!(edge as i64) as u32);
         }
-        let layout = BlockWindow::new(origin, extent);
-        TileOf::<'a, E, S, CoordsDyn> {
-            view: self.view.clone().view_mut(layout),
-            partitioner: self.partitioner.clone(),
-            space: comptime!(self.space.clone()),
-            kind: comptime!(kind),
+        // The sub-tile keeps the source's payload kind at a smaller extent (re-box
+        // the same buffer — a `Box` handle copy onto the same memory).
+        let payload = match &self.payload {
+            Payload::Gmem(g) => Payload::new_Gmem(g.rebox()),
+            Payload::Smem(g) => Payload::new_Smem(g.rebox()),
+            Payload::Cmma(_) => panic!("Tile::at: a cmma fragment cannot be located by view"),
+        };
+        Tile::<E> {
+            payload,
+            origin,
+            extent,
+            space: comptime!(self.space.divide()),
         }
     }
 
-    /// Number of tiles along `axis`: extent / sub-tile size.
-    pub fn tiles(&self, #[comptime] axis: Axis) -> usize {
-        let shape = self.view.shape();
-        let extent = *shape.index(comptime!(self.space.position(axis))) as usize;
-        extent / self.partitioner.sub_tile_edge(axis)
-    }
-
-    /// Accumulate `lhs · rhs` into `self` — the tile-DSL `mma` primitive, driven
-    /// by the accumulator and dispatched on its [`TileKind`].
-    ///
-    /// The operation ranges over the union of its operands' spaces and contracts
-    /// the axes the output drops. For a batched matmul that's `{B,M,K} ∪ {B,K,N}
-    /// ∪ {B,M,N} = {B,M,N,K}`, contracting `{K}`; the batch axis `B` is carried
-    /// by the output, so it is not contracted.
-    ///
-    /// - [`GmemWhole`](TileKind::GmemWhole): walk `self`'s partitioner; each step
-    ///   partitions all three operands to their leaves and *recurses* into the
-    ///   leaf mma.
-    /// - leaf ([`GmemLeaf`](TileKind::GmemLeaf)/[`Smem`](TileKind::Smem)): the
-    ///   base case — contract each 2-D [`matrix`](Tile::matrix) of the leaf in
-    ///   place (more than one when a leading batch axis is sub-tiled wider than
-    ///   1). The product accumulates into the output, so the order over the
-    ///   contracted axis is irrelevant.
-    pub fn mma(&mut self, lhs: &Tile<'_, E, S>, rhs: &Tile<'_, E, S>) {
-        match comptime!(self.kind) {
-            TileKind::GmemWhole => {
-                // The accumulator is written through its (interior-mutable)
-                // views, so a shared reborrow is all the walk needs.
-                let out = &*self;
-
-                let space = comptime!(Space::union(&[&out.space, &lhs.space, &rhs.space]));
-                let contracted = comptime!(space.contracting(&out.space));
-                comptime!(assert!(
-                    !contracted.is_empty(),
-                    "mma: the output must drop at least one (contracted) axis"
-                ));
-
-                let grid = mma_grid::<E, S>(out, lhs, rhs, comptime!(space.clone()));
-                let walk = out.partitioner.walk(grid);
-                let total = walk.total();
-                for i in 0..total {
-                    let point = walk.point(i);
-
-                    let a_leaf = lhs.partition(&point);
-                    let b_leaf = rhs.partition(&point);
-                    let mut acc_leaf = out.partition(&point);
-
-                    acc_leaf.mma(&a_leaf, &b_leaf);
-                }
-            }
-            _ => {
-                let out = &*self;
-                let matrices = out.matrices();
-                for j in 0..matrices {
-                    let a = lhs.matrix(j);
-                    let b = rhs.matrix(j);
-                    let mut acc = out.matrix(j);
-                    acc.mma_from(&a, &b);
-                }
-            }
-        }
-    }
-
-    /// Copy `src` into `self` — the tile-DSL `copy_from` primitive (a
-    /// gmem↔smem element copy, e.g. staging an operand leaf into shared memory),
-    /// dispatched on the destination's [`TileKind`].
-    ///
-    /// A [`GmemWhole`](TileKind::GmemWhole) tensor is not a copy target —
-    /// partition it to a leaf first. A leaf
-    /// ([`GmemLeaf`](TileKind::GmemLeaf)/[`Smem`](TileKind::Smem)) copies each of
-    /// its 2-D [`matrix`](Tile::matrix)s from `src` (more than one when a leading
-    /// batch axis is sub-tiled wider than 1).
-    pub fn copy_from(&mut self, src: &Tile<'_, E, S>) {
-        match comptime!(self.kind) {
-            TileKind::GmemWhole => {
-                panic!("copy_from: destination must be a leaf or smem tile, not a whole tensor")
-            }
-            _ => {
-                let dst = &*self;
-                let matrices = dst.matrices();
-                for j in 0..matrices {
-                    let mut d = dst.matrix(j);
-                    copy_2d::<E, S>(&mut d.view, &src.matrix(j).view);
-                }
-            }
+    /// Stage `src` into `self` — an element copy across a level (e.g. gmem → smem).
+    /// Unlike [`at`](Tile::at) (a within-level view) this moves data; sync after.
+    pub fn stage(&mut self, src: &Tile<E>) {
+        let matrices = self.matrix_count();
+        for j in 0..matrices {
+            let s = src.matrix(j);
+            let mut d = self.matrix_mut(j);
+            copy_2d::<E>(&mut d, &s);
         }
     }
 }
 
-/// The matmul tile [`Grid`] for `space`: each axis's tile count read from an
-/// operand that carries it. The partitioner takes the grid from here.
 #[cube]
-fn mma_grid<E: Numeric, S: Size>(
-    out: &Tile<'_, E, S>,
-    lhs: &Tile<'_, E, S>,
-    rhs: &Tile<'_, E, S>,
-    #[comptime] space: Space,
-) -> Grid {
-    let mut counts = Sequence::<usize>::new();
+impl<E: Numeric> MemData<E> {
+    /// The flat-source base layout (logical [`CoordsDyn`] → buffer offset) from the
+    /// stored *physical* shape/strides — the `[grid…, tile…]` split (gmem,
+    /// `levels > 0`) or a plain strided dot (smem, `levels = 0`).
+    fn base(&self) -> GmemLayout {
+        GmemLayout {
+            physical_shape: self.physical_shape.clone(),
+            physical_strides: self.physical_strides.clone(),
+            start_axis: comptime!(self.start_axis),
+            num_tiled: comptime!(self.num_tiled),
+            levels: comptime!(self.levels),
+        }
+    }
+
+    /// Re-box onto the same buffer (a `Box` handle copy, same memory) with the same
+    /// physical metadata — used by [`at`](Tile::at) to make a sub-tile.
+    fn rebox(&self) -> MemData<E> {
+        MemData::<E> {
+            buffer: unsafe { self.buffer.as_boxed_unchecked() },
+            physical_shape: self.physical_shape.clone(),
+            physical_strides: self.physical_strides.clone(),
+            start_axis: comptime!(self.start_axis),
+            num_tiled: comptime!(self.num_tiled),
+            levels: comptime!(self.levels),
+        }
+    }
+}
+
+/// The whole-tile window: `origin = 0`, `extent =` the space's per-axis extents.
+#[cube]
+fn full_window(#[comptime] space: Space) -> (CoordsDyn, CoordsDyn) {
+    let mut origin = CoordsDyn::new();
+    let mut extent = CoordsDyn::new();
     #[unroll]
     for p in 0..comptime!(space.rank()) {
-        counts.push(tiles_of::<E, S>(out, lhs, rhs, comptime!(space.axis_at(p))));
+        origin.push(u32::from_int(0));
+        extent.push(u32::from_int(comptime!(space.extent(space.axis_at(p)) as i64)));
     }
-    Grid::new(counts, space)
+    (origin, extent)
 }
 
-/// The runtime tile count along `axis`, read from whichever operand carries it.
-/// Every union axis is in at least one operand.
+/// Row-major physical shape/strides over `space`'s per-axis extents — the smem
+/// buffer's contiguous layout, stored in its [`MemData`] so it survives `at`'s
+/// space division (see [`Tile::smem`]).
 #[cube]
-fn tiles_of<E: Numeric, S: Size>(
-    out: &Tile<'_, E, S>,
-    lhs: &Tile<'_, E, S>,
-    rhs: &Tile<'_, E, S>,
-    #[comptime] axis: Axis,
-) -> usize {
-    if comptime!(out.space.contains(axis)) {
-        out.tiles(axis)
-    } else if comptime!(lhs.space.contains(axis)) {
-        lhs.tiles(axis)
-    } else {
-        rhs.tiles(axis)
+fn row_major(#[comptime] space: Space) -> (CoordsDyn, CoordsDyn) {
+    let rank = comptime!(space.rank());
+    let mut shape = CoordsDyn::new();
+    #[unroll]
+    for p in 0..rank {
+        shape.push(u32::from_int(comptime!(space.extent(space.axis_at(p)) as i64)));
+    }
+    let mut strides = CoordsDyn::new();
+    #[unroll]
+    for p in 0..rank {
+        let mut weight = u32::from_int(1);
+        #[unroll]
+        for q in comptime!(p + 1)..rank {
+            weight *= shape[q];
+        }
+        strides.push(weight);
+    }
+    (shape, strides)
+}
+
+/// In-kernel twin of cubecl's `TiledViewLayout` (which has no in-kernel
+/// constructor): logical [`CoordsDyn`] → flat buffer offset, by splitting each
+/// logical axis into its `[grid…, tile…]` parts ([`TiledLayout`]) then dotting the
+/// physical strides. Built from a [`MemData`]'s stored shape/strides in
+/// [`view`](Tile::view).
+#[derive(CubeType, Clone)]
+pub struct GmemLayout {
+    physical_shape: CoordsDyn,
+    physical_strides: CoordsDyn,
+    #[cube(comptime)]
+    start_axis: usize,
+    #[cube(comptime)]
+    num_tiled: usize,
+    #[cube(comptime)]
+    levels: usize,
+}
+
+#[cube]
+impl Layout for GmemLayout {
+    type Coordinates = CoordsDyn;
+    type SourceCoordinates = Coords1d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let split = TiledLayout::new(
+            self.physical_shape.clone(),
+            comptime!(self.start_axis),
+            self.num_tiled,
+            self.levels,
+        );
+        let physical = split.to_source_pos(pos);
+        let mut offset = u32::from_int(0);
+        #[unroll]
+        for i in 0..self.physical_strides.len() {
+            offset += physical[i] * self.physical_strides[i];
+        }
+        offset as usize
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        let in_bounds = self.is_in_bounds(pos.clone());
+        (self.to_source_pos(pos), in_bounds)
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        let split = TiledLayout::new(
+            self.physical_shape.clone(),
+            comptime!(self.start_axis),
+            self.num_tiled,
+            self.levels,
+        );
+        split.shape()
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let bounds = self.shape();
+        let mut valid = true;
+        #[unroll]
+        for i in 0..bounds.len() {
+            valid = valid && pos[i] < bounds[i];
+        }
+        valid
     }
 }
 
-/// Windows every axis to `[origin, origin + extent)` — the same-rank block
-/// [`partition`](Tile::partition) carves out. (The 2-D matrix slice of such a
-/// block is [`MatrixWindow`](super::MatrixWindow).)
+/// The layout [`Tile::at`] applies: shift every axis to `origin` and crop it
+/// to `extent`, so the sub-tile's coordinate `pos` reads source `origin + pos`.
+/// Same rank as the source (it relocates and crops, it doesn't drop axes); the
+/// rank-reducing 2-D slice is [`MatrixWindow`](super::MatrixWindow).
 #[derive(CubeType, Clone)]
-pub struct BlockWindow {
+pub struct Window {
     origin: CoordsDyn,
     extent: CoordsDyn,
 }
 
 #[cube]
-impl BlockWindow {
+impl Window {
     pub fn new(origin: CoordsDyn, extent: CoordsDyn) -> Self {
-        BlockWindow { origin, extent }
+        Window { origin, extent }
     }
 }
 
 #[cube]
-impl Layout for BlockWindow {
+impl Layout for Window {
     type Coordinates = CoordsDyn;
     type SourceCoordinates = CoordsDyn;
 

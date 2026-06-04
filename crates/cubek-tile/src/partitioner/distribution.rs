@@ -7,7 +7,7 @@
 pub enum Distribution {
     Sequential,
     Spatial {
-        unit: ComputePrimitive,
+        scope: ComputeScope,
         spread: Spread,
         coverage: Coverage,
     },
@@ -35,7 +35,7 @@ pub enum Spread {
 
 /// A dimension of a hardware grid (for `Cube`, the launch grid): `X`, `Y`, `Z`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum CubeDimension {
+pub enum CubeAxis {
     X,
     Y,
     Z,
@@ -44,8 +44,8 @@ pub enum CubeDimension {
 /// A hardware primitive an axis can be distributed across, and which of its grid
 /// dimensions to ride.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ComputePrimitive {
-    Cube(CubeDimension),
+pub enum ComputeScope {
+    Cube(CubeAxis),
     Plane,
     Unit,
 }
@@ -92,9 +92,9 @@ impl Distribution {
         }
     }
 
-    pub(crate) fn unit(self) -> ComputePrimitive {
+    pub(crate) fn unit(self) -> ComputeScope {
         match self {
-            Distribution::Spatial { unit, .. } => unit,
+            Distribution::Spatial { scope: unit, .. } => unit,
             Distribution::Sequential => panic!("unit: not a Spatial axis"),
         }
     }

@@ -2,7 +2,6 @@
 
 pub mod gemm;
 pub mod gemv_unit_perpendicular;
-pub mod mosaic;
 pub mod naive;
 
 mod base;

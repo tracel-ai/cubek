@@ -1,9 +1,3 @@
-//! Correctness tests for the Mosaic family — the tile-DSL CPU matmul whose
-//! kernel is `c.mma(a, b)`. Single-dtype, no staging: each leaf is read straight
-//! from global memory and contracted. These exercise a few square/rectangular
-//! shapes, tile sizes, and batch counts against the shared CPU reference. Lhs is
-//! Row-major and Rhs Col-major so `K` is contiguous on both operands.
-
 mod layouts;
 
 use crate::matmul::test_matmul_strategy;

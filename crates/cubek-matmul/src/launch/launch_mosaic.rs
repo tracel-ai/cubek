@@ -9,15 +9,14 @@
 //! `tile_size`-square sub-tiles (one output tile per cube, M→X / N→Y) and rides
 //! the batch on cube Z.
 
-use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::*};
 use cubek_std::InputBinding;
 use cubek_tile::{
-    Axis, ByAxis, ComputePrimitive, Coverage, CubeDimension, Distribution, Partitioner, Space,
-    Spread, TileKind, TileLaunch, cube_count_for,
+    Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
+    TileArg, TileArgLaunch, cube_count_for,
 };
 
 use crate::{
-    components::batch::mosaic::mosaic_kernel,
     definition::{InnerLayout, MatmulElems, MatmulProblem, MatmulSetupError},
     routines::mosaic::MosaicStrategy,
 };
@@ -98,12 +97,12 @@ pub fn launch_ref<R: Runtime>(
     let rhs_layout = InnerLayout::from_shape_and_strides(&rhs_shape, &rhs_strides);
     let out_layout = InnerLayout::from_shape_and_strides(&out_shape, &out_strides);
 
-    let a_view = lhs_layout.view(lhs.into_data(), b, m, k);
-    let b_view = rhs_layout.view(rhs.into_data(), b, k, n);
-    let c_view = out_layout.view(out, b, m, n);
+    let (a_arg, a_storage) = lhs_layout.tensor_arg(lhs.into_data(), b, m, k);
+    let (b_arg, b_storage) = rhs_layout.tensor_arg(rhs.into_data(), b, k, n);
+    let (c_arg, c_storage) = out_layout.tensor_arg(out, b, m, n);
 
     // The full {B, M, N, K} space; each operand carries the batch plus its two
-    // matrix axes (batch first, so `partition`'s trailing-two leaf is the matrix
+    // matrix axes (batch first, so `partition`'s trailing two axes are the matrix
     // tile and the batch is pinned).
     let space = Space::new(&[(B, b), (M, m), (N, n), (K, k)]);
 
@@ -111,25 +110,22 @@ pub fn launch_ref<R: Runtime>(
         ByAxis::new(&[(B, 1), (M, tile), (N, tile), (K, tile)]),
         ByAxis::new(&[
             (B, {
-                let dim = CubeDimension::Z;
                 Distribution::Spatial {
-                    unit: ComputePrimitive::Cube(dim),
+                    scope: ComputeScope::Cube(CubeAxis::Z),
                     spread: Spread::Contiguous,
                     coverage: Coverage::TilesEach(1),
                 }
             }),
             (M, {
-                let dim = CubeDimension::X;
                 Distribution::Spatial {
-                    unit: ComputePrimitive::Cube(dim),
+                    scope: ComputeScope::Cube(CubeAxis::X),
                     spread: Spread::Contiguous,
                     coverage: Coverage::TilesEach(1),
                 }
             }),
             (N, {
-                let dim = CubeDimension::Y;
                 Distribution::Spatial {
-                    unit: ComputePrimitive::Cube(dim),
+                    scope: ComputeScope::Cube(CubeAxis::Y),
                     spread: Spread::Contiguous,
                     coverage: Coverage::TilesEach(1),
                 }
@@ -138,37 +134,34 @@ pub fn launch_ref<R: Runtime>(
         ]),
     );
 
+    let space = space.with_partitioner(partitioner.clone());
     let cube_count = cube_count_for(&partitioner, &space);
     let cube_dim = CubeDim::new_single();
 
     let dtype = dtypes.acc_global;
-    let vector_size = 1;
 
     mosaic_kernel::launch::<R>(
         client,
         cube_count,
         cube_dim,
-        TileLaunch::new(
-            a_view,
-            partitioner.launch(),
-            space.select(&[B, M, K]),
-            TileKind::GmemWhole,
-        ),
-        TileLaunch::new(
-            b_view,
-            partitioner.launch(),
-            space.select(&[B, K, N]),
-            TileKind::GmemWhole,
-        ),
-        TileLaunch::new(
-            c_view,
-            partitioner.launch(),
-            space.select(&[B, M, N]),
-            TileKind::GmemWhole,
-        ),
+        TileArgLaunch::new(a_arg, space.project(&[B, M, K]), a_storage),
+        TileArgLaunch::new(b_arg, space.project(&[B, K, N]), b_storage),
+        TileArgLaunch::new(c_arg, space.project(&[B, M, N]), c_storage),
         dtype,
-        vector_size,
     );
 
     Ok(())
+}
+
+#[cube(launch)]
+pub fn mosaic_kernel<E: Numeric>(
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
+    #[define(E)] _dtype: StorageType,
+) {
+    let a = a.tile();
+    let b = b.tile();
+    let mut c = c.tile();
+    c.mma(&a, &b);
 }

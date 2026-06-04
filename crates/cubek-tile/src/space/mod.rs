@@ -1,9 +1,9 @@
 mod axis;
 mod base;
-mod grid;
-mod point;
+mod extent;
+mod region;
 
 pub use axis::*;
 pub use base::*;
-pub use grid::*;
-pub use point::*;
+pub use extent::*;
+pub use region::*;

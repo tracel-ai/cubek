@@ -12,7 +12,7 @@ pub const MAX_AXES: usize = 6;
 pub struct Axis(pub u8);
 
 /// A comptime map from [`Axis`] to a value, in declared order (the canonical axis
-/// order, and the order a `Point`'s coordinates come in).
+/// order, and the order a [`Region`](super::Region)'s coordinates come in).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ByAxis<T: Copy> {
     entries: SmallVec<[(Axis, T); MAX_AXES]>,
