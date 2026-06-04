@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 pub struct InterpolateAutotuneKey {
     elem_input: ElemType,
     elem_output: ElemType,
-    elem_acc: ElemType,
 
     /// Whether the number of channels is a power of 4, which allows for more efficient vectorized processing.
     ///
@@ -44,7 +43,6 @@ impl InterpolateAutotuneKey {
     pub fn generate(
         elem_input: ElemType,
         elem_output: ElemType,
-        elem_acc: ElemType,
         input_shape: &[usize],
         output_size: &[usize; 2],
     ) -> Self {
@@ -53,12 +51,11 @@ impl InterpolateAutotuneKey {
         let output_height = output_size[0];
         let output_width = output_size[1];
 
-        let channels_power_of_4 = channels % 4 == 0;
+        let channels_power_of_4 = channels.is_multiple_of(4);
 
         InterpolateAutotuneKey::new(
             elem_input,
             elem_output,
-            elem_acc,
             channels_power_of_4,
             channels,
             output_height,
