@@ -56,7 +56,6 @@ fn prepare_global_launch_settings<R: Runtime>(
     let (cube_dim, tile_size, _) = compute_layout(
         client,
         working_units,
-        num_vectors,
         tile_target_aspect_ratio,
         problem.options,
     );

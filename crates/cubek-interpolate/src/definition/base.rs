@@ -22,7 +22,8 @@ pub trait Interpolate {
         base_col: isize,
         frac_row: P::EA,
         frac_col: P::EA,
-        reader: ReaderType<P::EI, N>,
+        vector_index: usize,
+        reader: &ReaderType<P::EI, N>,
     ) -> Vector<P::EI, N>;
 }
 
@@ -110,7 +111,8 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
     base_col: isize,
     frac_row: P::EA,
     frac_col: P::EA,
-    reader: ReaderType<P::EI, N>,
+    vector_index: usize,
+    reader: &ReaderType<P::EI, N>,
     #[comptime] blueprint: InterpolateBlueprint,
 ) -> Vector<P::EI, N> {
     match blueprint.options.mode {
@@ -122,6 +124,7 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
+            vector_index,
             reader,
         ),
         InterpolateMode::Bilinear => Bilinear::compute_value::<P, N>(
@@ -132,6 +135,7 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
+            vector_index,
             reader,
         ),
         InterpolateMode::Bicubic => Bicubic::compute_value::<P, N>(
@@ -142,6 +146,7 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
+            vector_index,
             reader,
         ),
         InterpolateMode::Lanczos3 => Lanczos3::compute_value::<P, N>(
@@ -152,6 +157,7 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
+            vector_index,
             reader,
         ),
     }
@@ -166,7 +172,8 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
     base_col: isize,
     frac_row: P::EA,
     frac_col: P::EA,
-    reader: ReaderType<P::EI, N>,
+    vector_index: usize,
+    reader: &ReaderType<P::EI, N>,
 ) -> Vector<P::EI, N> {
     let halo = I::HALO;
     let radius_offset = ((halo - 1) / 2) as isize;
@@ -200,7 +207,10 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
             let clamped_col = col.max(0).min(input_width as isize - 1) as usize;
 
             let weight_col = col_weights[j];
-            let read_val = reader.read::<P::EA>(input, clamped_row, clamped_col) * weight_col;
+            let read_value =
+                Vector::cast_from(reader.read(input, clamped_row, clamped_col, vector_index));
+
+            let value = read_value * weight_col;
 
             if I::REQUIRES_BOUND_CHECK {
                 let is_in_bounds = col >= 0
@@ -208,10 +218,10 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
                     && row >= 0
                     && row < input_height as isize;
 
-                row_value += select(is_in_bounds, read_val, Vector::zeroed());
+                row_value += select(is_in_bounds, value, Vector::zeroed());
                 row_weight_sum += select(is_in_bounds, weight_col, Vector::zeroed());
             } else {
-                row_value += read_val;
+                row_value += value;
             }
         }
 

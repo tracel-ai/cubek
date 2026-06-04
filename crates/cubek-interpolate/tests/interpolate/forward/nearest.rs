@@ -314,3 +314,26 @@ fn test_interpolate_nearest_exact_precision() {
         NEAREST_TOLERANCE,
     );
 }
+
+#[test]
+fn test_interpolate_nearest_high_channel_count() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 1, 4096],
+        [1, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}

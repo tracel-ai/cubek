@@ -70,7 +70,6 @@ fn prepare_shared_launch_settings<R: Runtime>(
         let (cube_dim, tile_size, units_per_cube) = compute_layout(
             client,
             working_units,
-            num_vectors,
             tile_target_aspect_ratio,
             problem.options,
         );
@@ -106,14 +105,14 @@ fn prepare_shared_launch_settings<R: Runtime>(
 fn compute_smem_size(
     problem: &InterpolateForwardProblem,
     options: InterpolateOptions,
-    output_tile_size: TileSize,
+    tile_size: TileSize,
 ) -> (usize, usize) {
     let scale_height = problem.input_height as f64 / problem.output_height as f64;
     let scale_width = problem.input_width as f64 / problem.output_width as f64;
 
     // Calculate the distance between the first and last pixel.
-    let span_height = ((output_tile_size.height() as f64 - 1.0) * scale_height).max(0.0);
-    let span_width = ((output_tile_size.width() as f64 - 1.0) * scale_width).max(0.0);
+    let span_height = ((tile_size.height() as f64 - 1.0) * scale_height).max(0.0);
+    let span_width = ((tile_size.width() as f64 - 1.0) * scale_width).max(0.0);
 
     // Halo is added half on each side.
     let halo = get_halo(options.mode);

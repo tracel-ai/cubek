@@ -37,7 +37,6 @@ pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
 pub fn compute_layout<R: Runtime>(
     client: &ComputeClient<R>,
     working_units: usize,
-    num_vectors: usize,
     tile_target_aspect_ratio: f32,
     options: InterpolateOptions,
 ) -> (CubeDim, TileSize, usize) {
@@ -45,7 +44,8 @@ pub fn compute_layout<R: Runtime>(
 
     let units_per_cube = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
 
-    let tile_area = (units_per_cube / num_vectors).max(1);
+    // HARDCODED for testing
+    let tile_area = 256;
 
     let tile_size = TileSize::new(tile_area, tile_target_aspect_ratio, options);
 
