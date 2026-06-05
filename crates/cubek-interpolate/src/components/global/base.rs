@@ -4,7 +4,7 @@ use crate::{
         writers::Writer,
     },
     definition::{
-        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_value,
+        InterpolateMode, InterpolateOptions, InterpolatePrecision, Transform, compute_value,
         get_halo, tile_absolute_coords,
     },
     routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
@@ -30,7 +30,6 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
         batch,
         input_height,
         input_width,
-        output_height,
         output_width,
         blueprint,
     );
@@ -51,15 +50,8 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
             tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint);
 
         if output_col < output_width && output_row < output_height {
-            let (input_row, input_col) = compute_input_coords::<P::EA>(
-                output_row,
-                output_col,
-                input_height,
-                input_width,
-                output_height,
-                output_width,
-                blueprint.options,
-            );
+            let (input_row, input_col) =
+                compute_input_coords::<P::EA>(output_row, output_col, blueprint);
 
             let (input_row_floor, input_col_floor) = (
                 get_value_floor::<P::EA>(input_row, blueprint.options),
@@ -101,49 +93,22 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
 fn compute_input_coords<EA: Float>(
     output_row: usize,
     output_col: usize,
-    input_height: usize,
-    input_width: usize,
-    output_height: usize,
-    output_width: usize,
-    #[comptime] options: InterpolateOptions,
+    #[comptime] blueprint: InterpolateBlueprint,
 ) -> (EA, EA) {
     (
-        get_input_coord::<EA>(output_row, input_height, output_height, options),
-        get_input_coord::<EA>(output_col, input_width, output_width, options),
+        get_input_coord::<EA>(output_row, blueprint.transform_height),
+        get_input_coord::<EA>(output_col, blueprint.transform_width),
     )
 }
 
 #[cube]
-fn get_input_coord<EA: Float>(
-    x: usize,
-    input_size: usize,
-    output_size: usize,
-    #[comptime] options: InterpolateOptions,
-) -> EA {
-    match options.mode {
-        InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
-            NearestMode::Exact => {
-                (EA::cast_from(x) + EA::new(0.5)) * EA::cast_from(input_size)
-                    / EA::cast_from(output_size)
-            }
-            NearestMode::Floor => {
-                (EA::cast_from(x) * EA::cast_from(input_size)) / EA::cast_from(output_size)
-            }
-        },
-        _ => {
-            if options.align_corners {
-                let is_valid_output = (output_size > 1) as usize;
-                let safe_denominator = (output_size - 1).max(1);
+fn get_input_coord<EA: Float>(coord: usize, #[comptime] transform: Transform) -> EA {
+    let scale =
+        EA::cast_from(transform.scale_numerator) / EA::cast_from(transform.scale_denominator);
+    let offset =
+        EA::cast_from(transform.offset_numerator) / EA::cast_from(transform.offset_denominator);
 
-                EA::cast_from(x * (input_size - 1) * is_valid_output)
-                    / EA::cast_from(safe_denominator)
-            } else {
-                (EA::cast_from(x) + EA::new(0.5)) * EA::cast_from(input_size)
-                    / EA::cast_from(output_size)
-                    - EA::new(0.5)
-            }
-        }
-    }
+    EA::cast_from(coord) * scale + offset
 }
 
 #[cube]
@@ -153,7 +118,6 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
     batch: usize,
     input_height: usize,
     input_width: usize,
-    output_height: usize,
     output_width: usize,
     #[comptime] blueprint: InterpolateBlueprint,
 ) -> ReaderType<P::EI, N> {
@@ -175,15 +139,8 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
 
             let (tile_row, tile_col) = tile_absolute_coords(output_width, cube_pos, 0, blueprint);
 
-            let (tile_mapped_row, tile_mapped_col) = compute_input_coords::<P::EA>(
-                tile_row,
-                tile_col,
-                input_height,
-                input_width,
-                output_height,
-                output_width,
-                blueprint.options,
-            );
+            let (tile_mapped_row, tile_mapped_col) =
+                compute_input_coords::<P::EA>(tile_row, tile_col, blueprint);
 
             let (tile_base_row, tile_base_col) = (
                 get_value_floor::<P::EA>(tile_mapped_row, blueprint.options),

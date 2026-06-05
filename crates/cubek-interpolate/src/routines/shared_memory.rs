@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, InterpolateOptions, TileSize, get_halo},
+    definition::{get_transform, InterpolateForwardProblem, InterpolateOptions, TileSize, Transform, get_halo},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, InterpolateBlueprint,
         InterpolateLaunchSettings, SharedMemoryBlueprint, build_settings,
@@ -32,13 +32,17 @@ impl ForwardRoutine for SharedMemoryRoutine {
             BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
         };
 
-        let is_flattened = is_flattened(tile_size, problem);
+        let transform_width =
+            get_transform(problem.input_width, problem.output_width, problem.options);
+        let transform_height =
+            get_transform(problem.input_height, problem.output_height, problem.options);
 
         let (settings, smem_width, smem_height) = prepare_shared_launch_settings(
             client,
             problem,
             tile_size,
-            is_flattened,
+            transform_width,
+            transform_height,
             bytes_per_element,
             vector_size,
             client.properties().hardware.max_shared_memory_size,
@@ -46,8 +50,9 @@ impl ForwardRoutine for SharedMemoryRoutine {
 
         let blueprint = InterpolateBlueprint {
             tile_size,
-            is_flattened,
             options: problem.options,
+            transform_width,
+            transform_height,
             global: GlobalInterpolateBlueprint::SharedMemoryBlueprint(SharedMemoryBlueprint {
                 smem_width,
                 smem_height,
@@ -63,7 +68,8 @@ fn prepare_shared_launch_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
     tile_size: TileSize,
-    is_flattened: bool,
+    transform_width: Transform,
+    transform_height: Transform,
     bytes_per_element: usize,
     vector_size: usize,
     max_shared_memory_bytes: usize,
@@ -73,21 +79,19 @@ fn prepare_shared_launch_settings<R: Runtime>(
 
     let cube_dim = CubeDim::new(client, working_units);
 
-    let (smem_width, smem_height) =
-        compute_smem_size(problem, problem.options, tile_size, is_flattened);
+    let (smem_width, smem_height) = compute_smem_size(
+        problem,
+        problem.options,
+        tile_size,
+        transform_width,
+        transform_height,
+    );
 
     let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
 
     // Check if the requested shared memory size fits within the hardware limits.
     if requested_smem_bytes <= max_shared_memory_bytes {
-        let settings = build_settings(
-            client,
-            problem,
-            cube_dim,
-            tile_size,
-            is_flattened,
-            num_vectors,
-        );
+        let settings = build_settings(client, problem, cube_dim, tile_size, false, num_vectors);
         Ok((settings, smem_width, smem_height))
     } else {
         Err(InterpolateError::SharedMemoryLimitExceeded {
@@ -101,35 +105,30 @@ fn compute_smem_size(
     problem: &InterpolateForwardProblem,
     options: InterpolateOptions,
     tile_size: TileSize,
-    is_flattened: bool,
+    transform_width: Transform,
+    transform_height: Transform,
 ) -> (usize, usize) {
-    // Calculate scaling factors between input and output dimensions.
-    let scale_width = problem.input_width as f64 / problem.output_width as f64;
-    let scale_height = problem.input_height as f64 / problem.output_height as f64;
-
     // Compute the effective tile footprint in output space.
-    let (effective_width, effective_height) = if is_flattened {
-        (problem.output_width, problem.output_height)
-    } else {
-        (
-            tile_size.width().min(problem.output_width),
-            tile_size.height().min(problem.output_height),
-        )
-    };
+    let (effective_width, effective_height) = (
+        tile_size.width().min(problem.output_width),
+        tile_size.height().min(problem.output_height),
+    );
 
-    // Calculate the maximum distance this tile covers in the input image.
-    let span_width = ((effective_width as f64 - 1.0) * scale_width).max(0.0);
-    let span_height = ((effective_height as f64 - 1.0) * scale_height).max(0.0);
+    // Calculate the scale factor for the distance this tile covers in the input image.
+    let scale_x = get_span_scale(transform_width);
+    let scale_y = get_span_scale(transform_height);
+
+    let span_width = (effective_width.saturating_sub(1) as f64) * scale_x;
+    let span_height = (effective_height.saturating_sub(1) as f64) * scale_y;
 
     // Add halo required by the specific interpolation mode.
     let halo = get_halo(options.mode);
-    let smem_width = span_width.ceil() as usize + halo + 1;
-    let smem_height = span_height.ceil() as usize + halo + 1;
+    let smem_width = span_width.ceil() as usize + halo;
+    let smem_height = span_height.ceil() as usize + halo;
 
     (smem_width.max(1), smem_height.max(1))
 }
 
-fn is_flattened(tile_size: TileSize, problem: &InterpolateForwardProblem) -> bool {
-    // Compute if the tile is flattened based on output dimensions.
-    tile_size.area() >= problem.output_width * problem.output_height
+fn get_span_scale(transform: Transform) -> f64 {
+    (transform.scale_numerator as f64) / (transform.scale_denominator as f64)
 }

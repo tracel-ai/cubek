@@ -38,7 +38,7 @@ pub fn tile_absolute_coords(
 ) -> (usize, usize) {
     let tile_size = blueprint.tile_size;
 
-    if blueprint.is_flattened {
+    if blueprint.is_flattened() {
         let flat = cube_pos * tile_size.area() + unit_pos;
         (flat / output_width, flat % output_width)
     } else {

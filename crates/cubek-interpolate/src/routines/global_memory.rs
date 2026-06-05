@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, InterpolateMode, TileSize},
+    definition::{get_transform, InterpolateForwardProblem, InterpolateMode, TileSize},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
         InterpolateBlueprint, InterpolateLaunchSettings, build_settings,
@@ -37,11 +37,19 @@ impl ForwardRoutine for GlobalMemoryRoutine {
         let settings =
             prepare_global_launch_settings(client, problem, tile_size, is_flattened, vector_size);
 
+        let transform_width =
+            get_transform(problem.input_width, problem.output_width, problem.options);
+        let transform_height =
+            get_transform(problem.input_height, problem.output_height, problem.options);
+
         let blueprint = InterpolateBlueprint {
             tile_size,
-            is_flattened,
             options: problem.options,
-            global: GlobalInterpolateBlueprint::GlobalMemoryBlueprint(GlobalMemoryBlueprint {}),
+            transform_width,
+            transform_height,
+            global: GlobalInterpolateBlueprint::GlobalMemoryBlueprint(GlobalMemoryBlueprint {
+                is_flattened,
+            }),
         };
 
         Ok((blueprint, settings))

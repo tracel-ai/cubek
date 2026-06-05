@@ -336,3 +336,49 @@ fn test_interpolate_bilinear_shared_memory_bhwc_512() {
         BILINEAR_HIGH_RESOLUTION_TOLERANCE,
     );
 }
+
+#[test]
+fn test_interpolate_bilinear_floor_global_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 45, 14, 1],
+        [4, 6],
+        InterpolateOptions::new(InterpolateMode::Bilinear),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        BILINEAR_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_bilinear_shared_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 46, 14, 1],
+        [4, 6],
+        InterpolateOptions::new(InterpolateMode::Bilinear),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        BILINEAR_TOLERANCE,
+    );
+}
