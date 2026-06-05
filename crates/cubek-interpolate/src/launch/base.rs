@@ -71,9 +71,6 @@ pub fn interpolate_launch<R: Runtime>(
         )?,
     };
 
-    let num_vectors = settings.num_vectors;
-    let cubes_per_batch = settings.num_tiles_width * settings.num_tiles_height;
-
     unsafe {
         interpolate_kernel::launch_unchecked(
             client,
@@ -83,8 +80,8 @@ pub fn interpolate_launch<R: Runtime>(
             vector_size,
             input.into_tensor_arg(),
             output.clone().into_tensor_arg(),
-            num_vectors,
-            cubes_per_batch,
+            settings.num_vectors,
+            settings.cubes_per_batch,
             blueprint,
             dtype,
             acc_dtype,

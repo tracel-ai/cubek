@@ -10,8 +10,7 @@ pub struct InterpolateLaunchSettings {
     pub cube_count: CubeCount,
     pub cube_dim: CubeDim,
     pub tile_size: TileSize,
-    pub num_tiles_width: usize,
-    pub num_tiles_height: usize,
+    pub cubes_per_batch: usize,
     pub num_vectors: usize,
 }
 
@@ -60,47 +59,45 @@ pub fn build_settings<R: Runtime>(
     tile_size: TileSize,
     num_vectors: usize,
 ) -> InterpolateLaunchSettings {
-    let (num_tiles_width, num_tiles_height) = compute_number_of_tiles(problem, tile_size, options);
+    let cubes_per_batch = compute_cubes_per_batch(problem, tile_size, options);
 
-    let cube_count = compute_cube_count(client, problem, num_tiles_width, num_tiles_height);
+    let cube_count = compute_cube_count(client, problem, cubes_per_batch);
 
     InterpolateLaunchSettings {
         cube_count,
         cube_dim,
         tile_size,
-        num_tiles_width,
-        num_tiles_height,
+        cubes_per_batch,
         num_vectors,
     }
 }
 
-fn compute_number_of_tiles(
+fn compute_cubes_per_batch(
     problem: &InterpolateForwardProblem,
     tile_size: TileSize,
     options: InterpolateOptions,
-) -> (usize, usize) {
+) -> usize {
     if is_flattened(options) {
-        let num_tiles = (problem.output_width * problem.output_height).div_ceil(tile_size.width());
-        // All tiles are arranged in a single row
-        (num_tiles, 1)
+        let total_pixels = problem.output_width * problem.output_height;
+
+        total_pixels.div_ceil(tile_size.width())
     } else {
-        (
-            problem.output_width.div_ceil(tile_size.width()),
-            problem.output_height.div_ceil(tile_size.height()),
-        )
+        let num_tiles_width = problem.output_width.div_ceil(tile_size.width());
+        let num_tiles_height = problem.output_height.div_ceil(tile_size.height());
+
+        num_tiles_width * num_tiles_height
     }
 }
 
 fn compute_cube_count<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    num_tiles_width: usize,
-    num_tiles_height: usize,
+    cubes_per_batch: usize,
 ) -> CubeCount {
     let (max_cube_count_x, max_cube_count_y, max_cube_count_z) =
         client.properties().hardware.max_cube_count;
 
-    let total_cube_count = (num_tiles_width * num_tiles_height * problem.batch) as u32;
+    let total_cube_count = (cubes_per_batch * problem.batch) as u32;
 
     let cube_count_x = total_cube_count.min(max_cube_count_x);
 

@@ -107,17 +107,28 @@ fn compute_smem_size(
     options: InterpolateOptions,
     tile_size: TileSize,
 ) -> (usize, usize) {
-    let scale_height = problem.input_height as f64 / problem.output_height as f64;
+    // Calculate scaling factors between input and output dimensions.
     let scale_width = problem.input_width as f64 / problem.output_width as f64;
+    let scale_height = problem.input_height as f64 / problem.output_height as f64;
 
-    // Calculate the distance between the first and last pixel.
-    let span_height = ((tile_size.height() as f64 - 1.0) * scale_height).max(0.0);
-    let span_width = ((tile_size.width() as f64 - 1.0) * scale_width).max(0.0);
+    // Determine how many output rows a flattened 1D tile spans.
+    let total_pixels = tile_size.width() * tile_size.height();
+    let wrapped_height = (total_pixels as f64 / problem.output_width as f64).ceil() as usize;
 
-    // Halo is added half on each side.
+    // Clamp the effective tile dimensions to the actual output boundaries.
+    let effective_width = tile_size.width().min(problem.output_width);
+    let effective_height = wrapped_height
+        .max(tile_size.height())
+        .min(problem.output_height);
+
+    // Calculate the maximum distance this tile covers in the input image.
+    let span_width = ((effective_width as f64 - 1.0) * scale_width).max(0.0);
+    let span_height = ((effective_height as f64 - 1.0) * scale_height).max(0.0);
+
+    // Add halo required by the specific interpolation mode.
     let halo = get_halo(options.mode);
-    let smem_height = span_height.ceil() as usize + halo + 1;
     let smem_width = span_width.ceil() as usize + halo + 1;
+    let smem_height = span_height.ceil() as usize + halo + 1;
 
     (smem_width.max(1), smem_height.max(1))
 }
