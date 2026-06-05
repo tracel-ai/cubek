@@ -84,6 +84,52 @@ fn test_interpolate_nearest_shared_memory_identity() {
 }
 
 #[test]
+fn test_interpolate_nearest_floor_global_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 6, 1],
+        [1, 9],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_floor_shared_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 6, 1],
+        [1, 9],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
 fn test_interpolate_nearest_upsample() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(

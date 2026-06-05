@@ -73,7 +73,8 @@ fn prepare_shared_launch_settings<R: Runtime>(
 
     let cube_dim = CubeDim::new(client, working_units);
 
-    let (smem_width, smem_height) = compute_smem_size(problem, problem.options, tile_size);
+    let (smem_width, smem_height) =
+        compute_smem_size(problem, problem.options, tile_size, is_flattened);
 
     let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
 
@@ -100,20 +101,21 @@ fn compute_smem_size(
     problem: &InterpolateForwardProblem,
     options: InterpolateOptions,
     tile_size: TileSize,
+    is_flattened: bool,
 ) -> (usize, usize) {
     // Calculate scaling factors between input and output dimensions.
     let scale_width = problem.input_width as f64 / problem.output_width as f64;
     let scale_height = problem.input_height as f64 / problem.output_height as f64;
 
-    // Determine how many output rows a flattened 1D tile spans.
-    let total_pixels = tile_size.width() * tile_size.height();
-    let wrapped_height = (total_pixels as f64 / problem.output_width as f64).ceil() as usize;
-
-    // Clamp the effective tile dimensions to the actual output boundaries.
-    let effective_width = tile_size.width().min(problem.output_width);
-    let effective_height = wrapped_height
-        .max(tile_size.height())
-        .min(problem.output_height);
+    // Compute the effective tile footprint in output space.
+    let (effective_width, effective_height) = if is_flattened {
+        (problem.output_width, problem.output_height)
+    } else {
+        (
+            tile_size.width().min(problem.output_width),
+            tile_size.height().min(problem.output_height),
+        )
+    };
 
     // Calculate the maximum distance this tile covers in the input image.
     let span_width = ((effective_width as f64 - 1.0) * scale_width).max(0.0);
