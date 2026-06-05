@@ -1,12 +1,12 @@
 use crate::{
-    InterpolateError,
     definition::{
-        InterpolateForwardProblem, InterpolateOptions, TileSize, Transform, get_halo, get_transform,
+        get_halo, get_transform, InterpolateForwardProblem, InterpolateOptions, TileSize, Transform,
     },
     routines::{
-        BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, InterpolateBlueprint,
-        InterpolateLaunchSettings, SharedMemoryBlueprint, build_settings,
+        build_settings, BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint,
+        InterpolateBlueprint, InterpolateLaunchSettings, SharedMemoryBlueprint,
     },
+    InterpolateError,
 };
 use cubecl::prelude::*;
 
@@ -66,6 +66,7 @@ impl ForwardRoutine for SharedMemoryRoutine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_shared_launch_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
