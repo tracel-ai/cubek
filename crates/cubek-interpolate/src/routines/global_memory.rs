@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{get_transform, InterpolateForwardProblem, InterpolateMode, TileSize},
+    definition::{InterpolateForwardProblem, InterpolateMode, TileSize, get_transform},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
         InterpolateBlueprint, InterpolateLaunchSettings, build_settings,
