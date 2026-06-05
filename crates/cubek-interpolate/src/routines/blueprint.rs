@@ -3,6 +3,7 @@ use crate::definition::{InterpolateOptions, TileSize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterpolateBlueprint {
     pub tile_size: TileSize,
+    pub is_flattened: bool,
     pub options: InterpolateOptions,
     pub global: GlobalInterpolateBlueprint,
 }

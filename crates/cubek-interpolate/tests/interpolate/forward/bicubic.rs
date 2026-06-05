@@ -290,3 +290,49 @@ fn test_interpolate_bicubic_shared_memory_high_resolution() {
         BICUBIC_HIGH_RESOLUTION_TOLERANCE,
     );
 }
+
+#[test]
+fn test_interpolate_bicubic_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Bicubic),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        BICUBIC_HIGH_RESOLUTION_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_bicubic_shared_memory_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Bicubic),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        BICUBIC_HIGH_RESOLUTION_TOLERANCE,
+    );
+}

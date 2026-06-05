@@ -1,4 +1,4 @@
-use crate::definition::{InterpolateOptions, is_flattened};
+use crate::routines::InterpolateBlueprint;
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
@@ -34,10 +34,11 @@ pub fn tile_absolute_coords(
     output_width: usize,
     cube_pos: usize,
     unit_pos: usize,
-    #[comptime] tile_size: TileSize,
-    #[comptime] options: InterpolateOptions,
+    #[comptime] blueprint: InterpolateBlueprint,
 ) -> (usize, usize) {
-    if is_flattened(options) {
+    let tile_size = blueprint.tile_size;
+
+    if blueprint.is_flattened {
         let flat = cube_pos * tile_size.area() + unit_pos;
         (flat / output_width, flat % output_width)
     } else {

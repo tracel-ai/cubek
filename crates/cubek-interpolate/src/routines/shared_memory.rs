@@ -27,17 +27,26 @@ impl ForwardRoutine for SharedMemoryRoutine {
         vector_size: usize,
         bytes_per_element: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
+        let tile_size = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
+            BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
+        };
+
+        let is_flattened = is_flattened(tile_size, problem);
+
         let (settings, smem_width, smem_height) = prepare_shared_launch_settings(
             client,
             problem,
-            strategy,
+            tile_size,
+            is_flattened,
             bytes_per_element,
             vector_size,
             client.properties().hardware.max_shared_memory_size,
         )?;
 
         let blueprint = InterpolateBlueprint {
-            tile_size: settings.tile_size,
+            tile_size,
+            is_flattened,
             options: problem.options,
             global: GlobalInterpolateBlueprint::SharedMemoryBlueprint(SharedMemoryBlueprint {
                 smem_width,
@@ -53,18 +62,14 @@ impl ForwardRoutine for SharedMemoryRoutine {
 fn prepare_shared_launch_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    strategy: BlueprintStrategy<SharedMemoryRoutine>,
+    tile_size: TileSize,
+    is_flattened: bool,
     bytes_per_element: usize,
     vector_size: usize,
     max_shared_memory_bytes: usize,
 ) -> Result<(InterpolateLaunchSettings, usize, usize), InterpolateError> {
     let num_vectors = problem.channels / vector_size;
     let mut working_units = problem.output_width * problem.output_height * num_vectors;
-
-    let tile_size = match strategy {
-        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
-        BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
-    };
 
     loop {
         let cube_dim = CubeDim::new(client, working_units);
@@ -80,9 +85,9 @@ fn prepare_shared_launch_settings<R: Runtime>(
             let settings = build_settings(
                 client,
                 problem,
-                problem.options,
                 cube_dim,
                 tile_size,
+                is_flattened,
                 num_vectors,
             );
             return Ok((settings, smem_width, smem_height));
@@ -129,4 +134,9 @@ fn compute_smem_size(
     let smem_height = span_height.ceil() as usize + halo + 1;
 
     (smem_width.max(1), smem_height.max(1))
+}
+
+fn is_flattened(tile_size: TileSize, problem: &InterpolateForwardProblem) -> bool {
+    // Compute if the tile is flattened based on output dimensions.
+    tile_size.area() >= problem.output_width * problem.output_height
 }

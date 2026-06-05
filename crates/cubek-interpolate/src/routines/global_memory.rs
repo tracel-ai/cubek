@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, TileSize},
+    definition::{InterpolateForwardProblem, InterpolateMode, TileSize},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
         InterpolateBlueprint, InterpolateLaunchSettings, build_settings,
@@ -27,10 +27,19 @@ impl ForwardRoutine for GlobalMemoryRoutine {
         vector_size: usize,
         _bytes_per_element: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
-        let settings = prepare_global_launch_settings(client, problem, strategy, vector_size);
+        let tile_size = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
+            BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
+        };
+
+        let is_flattened = is_flattened(problem);
+
+        let settings =
+            prepare_global_launch_settings(client, problem, tile_size, is_flattened, vector_size);
 
         let blueprint = InterpolateBlueprint {
-            tile_size: settings.tile_size,
+            tile_size,
+            is_flattened,
             options: problem.options,
             global: GlobalInterpolateBlueprint::GlobalMemoryBlueprint(GlobalMemoryBlueprint {}),
         };
@@ -42,25 +51,28 @@ impl ForwardRoutine for GlobalMemoryRoutine {
 fn prepare_global_launch_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    strategy: BlueprintStrategy<GlobalMemoryRoutine>,
+    tile_size: TileSize,
+    is_flattened: bool,
     vector_size: usize,
 ) -> InterpolateLaunchSettings {
     let num_vectors = problem.channels / vector_size;
     let working_units = problem.output_width * problem.output_height * num_vectors;
-
-    let tile_size = match strategy {
-        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
-        BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
-    };
 
     let cube_dim = CubeDim::new(client, working_units);
 
     build_settings(
         client,
         problem,
-        problem.options,
         cube_dim,
         tile_size,
+        is_flattened,
         num_vectors,
     )
+}
+
+fn is_flattened(problem: &InterpolateForwardProblem) -> bool {
+    match problem.options.mode {
+        InterpolateMode::Nearest(_) => true,
+        _ => false,
+    }
 }

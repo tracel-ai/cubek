@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, InterpolateOptions, TileSize, is_flattened},
+    definition::{InterpolateForwardProblem, TileSize},
     routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
@@ -9,7 +9,6 @@ use cubecl::prelude::*;
 pub struct InterpolateLaunchSettings {
     pub cube_count: CubeCount,
     pub cube_dim: CubeDim,
-    pub tile_size: TileSize,
     pub cubes_per_batch: usize,
     pub num_vectors: usize,
 }
@@ -36,19 +35,18 @@ pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
 pub fn build_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    options: InterpolateOptions,
     cube_dim: CubeDim,
     tile_size: TileSize,
+    is_flattened: bool,
     num_vectors: usize,
 ) -> InterpolateLaunchSettings {
-    let cubes_per_batch = compute_cubes_per_batch(problem, tile_size, options);
+    let cubes_per_batch = compute_cubes_per_batch(problem, tile_size, is_flattened);
 
     let cube_count = compute_cube_count(client, problem, cubes_per_batch);
 
     InterpolateLaunchSettings {
         cube_count,
         cube_dim,
-        tile_size,
         cubes_per_batch,
         num_vectors,
     }
@@ -57,9 +55,9 @@ pub fn build_settings<R: Runtime>(
 fn compute_cubes_per_batch(
     problem: &InterpolateForwardProblem,
     tile_size: TileSize,
-    options: InterpolateOptions,
+    is_flattened: bool,
 ) -> usize {
-    if is_flattened(options) {
+    if is_flattened {
         let total_pixels = problem.output_width * problem.output_height;
 
         total_pixels.div_ceil(tile_size.area())
