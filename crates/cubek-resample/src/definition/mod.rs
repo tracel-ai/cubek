@@ -1,11 +1,9 @@
-mod bounds;
-mod footprint;
-mod placement;
-mod semiring;
-mod weights;
+mod combination;
+mod mapping;
+mod operation;
+mod reduction;
 
-pub use bounds::*;
-pub use footprint::*;
-pub use placement::*;
-pub use semiring::*;
-pub use weights::*;
+pub use combination::*;
+pub use mapping::*;
+pub use operation::*;
+pub use reduction::*;
