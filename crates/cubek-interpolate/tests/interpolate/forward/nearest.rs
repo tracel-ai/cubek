@@ -435,7 +435,7 @@ fn test_interpolate_nearest_shared_memory_precision() {
 fn test_interpolate_nearest_high_channel_count() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(
-        [1, 1, 1, 2048],
+        [1, 1, 1, 4096],
         [1, 1],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );
@@ -458,7 +458,7 @@ fn test_interpolate_nearest_high_channel_count() {
 fn test_interpolate_nearest_exact_high_channel_count() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(
-        [1, 1, 1, 2048],
+        [1, 1, 1, 4096],
         [1, 1],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
     );
@@ -481,7 +481,7 @@ fn test_interpolate_nearest_exact_high_channel_count() {
 fn test_interpolate_nearest_shared_memory_high_channel_count() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(
-        [1, 1, 1, 2048],
+        [1, 1, 1, 4096],
         [1, 1],
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
     );

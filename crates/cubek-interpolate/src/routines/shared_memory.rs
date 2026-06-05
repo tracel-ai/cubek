@@ -69,39 +69,30 @@ fn prepare_shared_launch_settings<R: Runtime>(
     max_shared_memory_bytes: usize,
 ) -> Result<(InterpolateLaunchSettings, usize, usize), InterpolateError> {
     let num_vectors = problem.channels / vector_size;
-    let mut working_units = problem.output_width * problem.output_height * num_vectors;
+    let working_units = problem.output_width * problem.output_height * num_vectors;
 
-    loop {
-        let cube_dim = CubeDim::new(client, working_units);
+    let cube_dim = CubeDim::new(client, working_units);
 
-        let units_per_cube = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
+    let (smem_width, smem_height) = compute_smem_size(problem, problem.options, tile_size);
 
-        let (smem_width, smem_height) = compute_smem_size(problem, problem.options, tile_size);
+    let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
 
-        let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;
-
-        // Check if the requested shared memory size fits within the hardware limits.
-        if requested_smem_bytes <= max_shared_memory_bytes {
-            let settings = build_settings(
-                client,
-                problem,
-                cube_dim,
-                tile_size,
-                is_flattened,
-                num_vectors,
-            );
-            return Ok((settings, smem_width, smem_height));
-        } else {
-            if working_units <= 1 {
-                return Err(InterpolateError::SharedMemoryLimitExceeded {
-                    requested: requested_smem_bytes,
-                    available: max_shared_memory_bytes,
-                });
-            }
-
-            // Reduce the total units by half and try again.
-            working_units = (units_per_cube / 2).max(1);
-        }
+    // Check if the requested shared memory size fits within the hardware limits.
+    if requested_smem_bytes <= max_shared_memory_bytes {
+        let settings = build_settings(
+            client,
+            problem,
+            cube_dim,
+            tile_size,
+            is_flattened,
+            num_vectors,
+        );
+        Ok((settings, smem_width, smem_height))
+    } else {
+        Err(InterpolateError::SharedMemoryLimitExceeded {
+            requested: requested_smem_bytes,
+            available: max_shared_memory_bytes,
+        })
     }
 }
 
