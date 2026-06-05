@@ -1,22 +1,17 @@
-//! Recursive (multi-level) tiling: a 2-level tiled `arange` read back through the
-//! `tiled_view` must equal the element's flat physical index at each logical
-//! coordinate. Exercises `TileInput`'s chained `.split` and cubecl's multi-level
-//! `TiledViewLayout`.
+//! Recursive (multi-level) tiling
 #![allow(non_snake_case)]
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
-use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
 
 use super::references;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 
-/// An 8×8 tile, two nested levels of 2×2 sub-tiles (so per axis `grid=2, level1=2,
-/// level2=2`), filled with a physical-order arange. Reading it logically must
-/// yield the mixed-radix physical index of each `(i, j)`.
+/// An 8×8 tile, two nested levels of 2×2 sub-tiles
 #[test]
 fn recursive_two_level_tiled_view() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -32,27 +27,14 @@ fn recursive_two_level_tiled_view() {
         .untiled()
         .zeros();
 
-    // The copy kernel only reads/writes through the views; the partitioner is
-    // required to launch a `Tile` but unused here.
-    let partitioner = Partitioner::row_major(
-        ByAxis::new(&[(M, m), (N, n)]),
-        ByAxis::new(&[(M, Distribution::Sequential), (N, Distribution::Sequential)]),
-    );
-
+    // The copy kernel only reads/writes through the views — no partitioning, so the
+    // spaces carry no partitioner.
     copy_logical::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::new(
-            input.tensor_arg(1),
-            input.space().with_partitioner(partitioner.clone()),
-            input.storage(),
-        ),
-        TileArgLaunch::new(
-            output.tensor_arg(1),
-            output.space().with_partitioner(partitioner.clone()),
-            output.storage(),
-        ),
+        TileArgLaunch::new(input.tensor_arg(1), input.space(), input.storage()),
+        TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
         f32::as_type_native_unchecked().storage_type(),
     );
 

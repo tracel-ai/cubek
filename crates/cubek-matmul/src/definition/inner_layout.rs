@@ -163,9 +163,10 @@ impl InnerLayout {
         cols: usize,
     ) -> (TensorArg<R>, Storage) {
         match self {
-            InnerLayout::Tiled { tiles } => {
-                (binding.into_tensor_arg(), Storage::passthrough(1, tiles.len()))
-            }
+            InnerLayout::Tiled { tiles } => (
+                binding.into_tensor_arg(),
+                Storage::passthrough(1, tiles.len()),
+            ),
             _ => {
                 let strides = binding.strides.to_vec();
                 let n = strides.len();

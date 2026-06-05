@@ -13,7 +13,7 @@ use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::*};
 use cubek_std::InputBinding;
 use cubek_tile::{
     Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
-    TileArg, TileArgLaunch, cube_count_for,
+    TileArg, TileArgLaunch,
 };
 
 use crate::{
@@ -132,10 +132,11 @@ pub fn launch_ref<R: Runtime>(
             }),
             (K, Distribution::Sequential),
         ]),
-    );
+    )
+    .staged();
 
     let space = space.with_partitioner(partitioner.clone());
-    let cube_count = cube_count_for(&partitioner, &space);
+    let cube_count = partitioner.cube_count(&space);
     let cube_dim = CubeDim::new_single();
 
     let dtype = dtypes.acc_global;

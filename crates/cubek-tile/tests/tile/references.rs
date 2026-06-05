@@ -4,8 +4,6 @@
 //! index) in that same order, to compare against the kernel output.
 #![allow(dead_code)]
 
-/// Logical `(row, col)` → flat index in an `edge`-tiled matrix with `cols` columns,
-/// stored `[grid_row, grid_col, tile_row, tile_col]` row-major.
 pub fn tiled_index(row: usize, col: usize, cols: usize, edge: usize) -> usize {
     let grid_c = cols / edge;
     let (gr, tr) = (row / edge, row % edge);
@@ -13,8 +11,6 @@ pub fn tiled_index(row: usize, col: usize, cols: usize, edge: usize) -> usize {
     ((gr * grid_c + gc) * edge + tr) * edge + tc
 }
 
-/// Expected `m×n` matmul of two single-level `edge`-tiled arange operands (`lhs` is
-/// `m×k`, `rhs` is `k×n`), written in the output's tiled physical order.
 pub fn tiled_matmul(m: usize, n: usize, k: usize, edge: usize) -> Vec<f32> {
     let (grid_m, grid_n) = (m / edge, n / edge);
     let mut out = vec![0.0f32; m * n];
@@ -24,7 +20,9 @@ pub fn tiled_matmul(m: usize, n: usize, k: usize, edge: usize) -> Vec<f32> {
                 for tn in 0..edge {
                     let (i, j) = (gm * edge + tm, gn * edge + tn);
                     let value = (0..k)
-                        .map(|kk| tiled_index(i, kk, k, edge) as f32 * tiled_index(kk, j, n, edge) as f32)
+                        .map(|kk| {
+                            tiled_index(i, kk, k, edge) as f32 * tiled_index(kk, j, n, edge) as f32
+                        })
                         .sum::<f32>();
                     out[((gm * grid_n + gn) * edge + tm) * edge + tn] = value;
                 }
@@ -34,8 +32,6 @@ pub fn tiled_matmul(m: usize, n: usize, k: usize, edge: usize) -> Vec<f32> {
     out
 }
 
-/// Logical `(batch, row, col)` → flat index in a batched single-level-tiled buffer
-/// `[grid_batch, grid_row, grid_col, batch_tile, tile_row, tile_col]` row-major.
 pub fn batched_index(
     batch: usize,
     row: usize,
@@ -51,8 +47,6 @@ pub fn batched_index(
     ((((gb * grid_row + gr) * grid_col + gc) * batch_edge + tb) * edge + tr) * edge + tc
 }
 
-/// Expected batched `b×m×n` matmul of single-level-tiled arange operands (the matrix
-/// axes `edge`-tiled, the batch in blocks of `batch_edge`).
 pub fn batched_tiled_matmul(
     b: usize,
     m: usize,
@@ -85,9 +79,6 @@ pub fn batched_tiled_matmul(
     out
 }
 
-/// Expected broadcast matmul: `lhs` has `b0` batches, `rhs` has `b1`, the output has
-/// `b0*b1` (output batch `u` reads lhs `u/b1` and rhs `u%b1`). Each operand is a
-/// `t×t` arange with no matrix tiling.
 pub fn broadcast_matmul(b0: usize, b1: usize, t: usize) -> Vec<f32> {
     let lhs = |g0: usize, i: usize, kk: usize| (g0 * t * t + i * t + kk) as f32;
     let rhs = |g1: usize, kk: usize, j: usize| (g1 * t * t + kk * t + j) as f32;
@@ -96,7 +87,9 @@ pub fn broadcast_matmul(b0: usize, b1: usize, t: usize) -> Vec<f32> {
         let (g0, g1) = (u / b1, u % b1);
         for i in 0..t {
             for j in 0..t {
-                let value = (0..t).map(|kk| lhs(g0, i, kk) * rhs(g1, kk, j)).sum::<f32>();
+                let value = (0..t)
+                    .map(|kk| lhs(g0, i, kk) * rhs(g1, kk, j))
+                    .sum::<f32>();
                 out[u * t * t + i * t + j] = value;
             }
         }
@@ -104,15 +97,12 @@ pub fn broadcast_matmul(b0: usize, b1: usize, t: usize) -> Vec<f32> {
     out
 }
 
-/// Logical `(i, j)` → flat physical index in a multi-level square-tiled buffer of
-/// side `extent`, sub-tile `edges` coarse→fine (the recursive test is two nested
-/// 2×2 levels, `edges = &[2, 2]`). Layout `[grid_i, grid_j, l1_i, l1_j, …]`.
 pub fn nested_index(i: usize, j: usize, extent: usize, edges: &[usize]) -> usize {
-    // Decompose a coordinate into its `[grid, level1, …, leaf]` digits.
+    // Decompose a coordinate into its `[grid, level1, …, final]` digits.
     fn digits(c: usize, edges: &[usize]) -> Vec<usize> {
-        let leaf: usize = edges.iter().product();
-        let mut out = vec![c / leaf];
-        let mut div = leaf;
+        let final_span: usize = edges.iter().product();
+        let mut out = vec![c / final_span];
+        let mut div = final_span;
         for &e in edges {
             div /= e;
             out.push((c / div) % e);

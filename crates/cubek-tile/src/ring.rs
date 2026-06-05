@@ -1,34 +1,26 @@
-//! The [`Ring`]: a small ring of staged buffers — the loader a pipelined lowering
-//! ping-pongs through. The buffers are just [`Tile`]s, so the ring is generic over
-//! what backs them (shared memory, or register fragments elsewhere); the caller
-//! builds them. [`stage`](Ring::stage) copies an operand sub-tile into a slot,
-//! [`get`](Ring::get) reads it back. Double buffering is two buffers with the
-//! driver rotating `slot = i % 2`.
+//! A small ring of staged buffers a pipelined lowering ping-pongs through.
 
 use cubecl::prelude::*;
 
 use super::*;
 
-/// A ring of staged buffer [`Tile`]s — one per slot.
+/// A ring of staged buffer [`Tile`]s.
 #[derive(CubeType)]
-pub struct Ring<E: Numeric> {
-    buffers: Sequence<Tile<E>>,
+pub struct Ring<T: CubePrimitive> {
+    buffers: Sequence<Tile<T>>,
 }
 
 #[cube]
-impl<E: Numeric> Ring<E> {
-    /// Wrap a sequence of buffer tiles as a ring; its depth is their count.
-    pub fn new(buffers: Sequence<Tile<E>>) -> Ring<E> {
-        Ring::<E> { buffers }
+impl<T: CubePrimitive> Ring<T> {
+    pub fn new(buffers: Sequence<Tile<T>>) -> Ring<T> {
+        Ring::<T> { buffers }
     }
 
-    /// Stage `src` into buffer `slot`.
-    pub fn stage(&mut self, #[comptime] slot: usize, src: &Tile<E>) {
+    pub fn stage(&mut self, #[comptime] slot: usize, src: &Tile<T>) {
         self.buffers.index_mut(slot).stage(src);
     }
 
-    /// The buffer at `slot` — the staged operand the leaf reads.
-    pub fn get(&self, #[comptime] slot: usize) -> &Tile<E> {
+    pub fn get(&self, #[comptime] slot: usize) -> &Tile<T> {
         self.buffers.index(slot)
     }
 }

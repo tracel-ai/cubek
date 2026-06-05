@@ -5,13 +5,13 @@ use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive,
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
-use cubek_matmul::launch::launch_mosaic::mosaic_kernel;
 use cubek_matmul::definition::{InnerLayout, MatmulElems, MatmulProblem};
+use cubek_matmul::launch::launch_mosaic::mosaic_kernel;
 use cubek_std::MatrixLayout;
 use cubek_test_utils::TestInput;
 use cubek_tile::{
     Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
-    Storage, TileArg, TileArgLaunch, cube_count_for,
+    Storage, TileArg, TileArgLaunch,
 };
 
 use crate::matmul::assert_result;
@@ -211,12 +211,14 @@ fn run(
             (N, spatial(CubeAxis::Y)),
             (K, Distribution::Sequential),
         ]),
-    );
-    let space = Space::new(&[(B, batch), (M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
+    )
+    .staged();
+    let space =
+        Space::new(&[(B, batch), (M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
     mosaic_kernel::launch::<TestRuntime>(
         &client,
-        cube_count_for(&partitioner, &space),
+        partitioner.cube_count(&space),
         CubeDim::new_single(),
         tile_arg(&lhs, space.project(&[B, M, K])),
         tile_arg(&rhs, space.project(&[B, K, N])),

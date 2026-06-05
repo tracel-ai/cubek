@@ -1,44 +1,167 @@
-//! Where "matmul" is *lowered*. There is no `Matmul` type — a matmul is what
-//! `c.mma(a, b)` does when `c` is a whole tensor: reconstruct the operation's
-//! [`Space`] from the operands, partition it, locate each operand
-//! [`at`](Tile::at) every region, and recurse (`acc.mma(…)` falls through to the leaf).
-//! The *move* — stage or not, pipeline or not — is read from the partitioner's
-//! [`Schedule`], so the kernel body stays `c.mma(a, b)` and the choice rides in
-//! the partitioner. The MNK labels are the client's; the DSL sees a contraction.
+//! The matmul reading of a [`Tile`](super::Tile): `c.mma(a, b)` treats the trailing two
+//! axes as the `row × col` matrix, leading axes as a batch, and contracts `K`. A final
+//! tile [`contract`](Tile::contract)s; otherwise [`mma`](Tile::mma) lowers (partition,
+//! locate each operand, recurse) per the head [`Schedule`].
 
-use cubecl::prelude::*;
+use cubecl::{
+    cmma,
+    prelude::*,
+    std::tensor::{View, ViewMut, layout::Coords2d},
+};
 
 use super::*;
 
-/// Pick the lowering move from the accumulator's [`Schedule`] and run it. Called
-/// by [`Tile::mma`] for a whole-tensor accumulator.
+// The contraction is the type-aware end of the DSL: the arithmetic must know its served
+// type. This is the scalar arm, served type `Vector<E, Const<1>>` (1 lane). A vectorized
+// contraction (`Tile<Vector<E, N>>`, N > 1) would be a sibling impl.
 #[cube]
-pub fn mma_lower<E: Numeric>(lhs: &Tile<E>, rhs: &Tile<E>, out: &mut Tile<E>) {
-    match comptime!(out.space.partitioner().schedule()) {
-        Schedule::Direct => mma_direct::<E>(lhs, rhs, out),
-        Schedule::Staged => mma_staged::<E>(lhs, rhs, out),
-        Schedule::DoubleBuffered => mma_double::<E>(lhs, rhs, out),
+impl<E: Numeric> Tile<Vector<E, Const<1>>> {
+    /// Accumulate `lhs · rhs`, the one matmul entry point. A tile with levels left lowers
+    /// per the head [`Schedule`]; a final tile [`contract`](Tile::contract)s.
+    pub fn mma(&mut self, lhs: &Tile<Vector<E, Const<1>>>, rhs: &Tile<Vector<E, Const<1>>>) {
+        if comptime!(self.space.is_final()) {
+            self.contract(lhs, rhs);
+        } else {
+            match comptime!(self.space.partitioner().schedule()) {
+                Schedule::Direct => mma_direct::<E>(lhs, rhs, self),
+                Schedule::Staged => mma_staged::<E>(lhs, rhs, self),
+                Schedule::DoubleBuffered => mma_double::<E>(lhs, rhs, self),
+            }
+        }
+    }
+
+    /// The [`Direct`](Schedule::Direct) lowering's per-region step.
+    pub fn mma_at(
+        &mut self,
+        lhs: &Tile<Vector<E, Const<1>>>,
+        rhs: &Tile<Vector<E, Const<1>>>,
+        region: &Region,
+    ) {
+        self.at(region).mma(&lhs.at(region), &rhs.at(region));
+    }
+
+    /// The final contraction: `lhs · rhs` into this sub-tile. `mr × nr` are the
+    /// accumulator's trailing two axes, `kc` is `lhs`'s trailing axis.
+    pub fn contract(&mut self, lhs: &Tile<Vector<E, Const<1>>>, rhs: &Tile<Vector<E, Const<1>>>) {
+        let arank = comptime!(self.space.rank());
+        let mr = comptime!(self.space.extent(self.space.axis_at(arank - 2)));
+        let nr = comptime!(self.space.extent(self.space.axis_at(arank - 1)));
+        let kc = comptime!(lhs.space.extent(lhs.space.axis_at(lhs.space.rank() - 1)));
+
+        let matrices = self.matrix_count();
+        for j in 0..matrices {
+            let l = lhs.matrix(j);
+            let r = rhs.matrix(j);
+            let mut a = self.matrix_mut(j);
+            mma_register::<E>(&l, &r, &mut a, mr, nr, kc);
+        }
+    }
+
+    /// The cmma sibling of [`contract`](Tile::contract): `cmma::execute` accumulates
+    /// `lhs · rhs` in place. [`mma`](Tile::mma) can't dispatch to it: the payload kind is
+    /// a runtime enum, so the branch would emit `cmma::execute` into non-cmma backends.
+    pub fn contract_cmma(
+        &mut self,
+        lhs: &Tile<Vector<E, Const<1>>>,
+        rhs: &Tile<Vector<E, Const<1>>>,
+    ) {
+        match (&lhs.payload, &rhs.payload, &mut self.payload) {
+            (Payload::Cmma(a), Payload::Cmma(b), Payload::Cmma(acc)) => {
+                cmma::execute(&a.matrix, &b.matrix, &acc.matrix, &acc.matrix)
+            }
+            _ => panic!("contract_cmma: lhs, rhs, and accumulator must all be cmma fragments"),
+        }
     }
 }
 
-/// `Direct`: no staging — each operand sub-tile feeds the leaf straight from its
-/// tiled layout. Partition the space, locate each tile, recurse.
+/// All loops unroll, so the block (`c`) stays in registers: load once, run `kc`
+/// rank-1 updates ([`outer_product`]), store back once.
 #[cube]
-fn mma_direct<E: Numeric>(lhs: &Tile<E>, rhs: &Tile<E>, out: &mut Tile<E>) {
-    let walk = Walk::over(comptime!(Space::merge(&[
-        &lhs.space, &rhs.space, &out.space
-    ])));
+fn mma_register<E: Numeric>(
+    lhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    rhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    acc: &mut ViewMut<'_, Vector<E, Const<1>>, Coords2d>,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+) {
+    let mut c = Array::<Vector<E, Const<1>>>::new(mr * nr);
+    #[unroll]
+    for i in 0..mr {
+        #[unroll]
+        for j in 0..nr {
+            c[i * nr + j] = acc.read((i as u32, j as u32).runtime());
+        }
+    }
+
+    #[unroll]
+    for p in 0..kc {
+        outer_product::<E>(lhs, rhs, &mut c, p, mr, nr);
+    }
+
+    #[unroll]
+    for i in 0..mr {
+        #[unroll]
+        for j in 0..nr {
+            acc.write((i as u32, j as u32).runtime(), c[i * nr + j]);
+        }
+    }
+}
+
+/// One rank-1 update at depth `p`: the outer product of A's column and B's row,
+/// accumulated into the register block `c`.
+#[cube]
+fn outer_product<E: Numeric>(
+    lhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    rhs: &View<'_, Vector<E, Const<1>>, Coords2d>,
+    c: &mut Array<Vector<E, Const<1>>>,
+    #[comptime] p: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+) {
+    let mut a = Array::<Vector<E, Const<1>>>::new(mr);
+    let mut b = Array::<Vector<E, Const<1>>>::new(nr);
+
+    #[unroll]
+    for i in 0..mr {
+        a[i] = lhs.read((i as u32, p as u32).runtime());
+    }
+    #[unroll]
+    for j in 0..nr {
+        b[j] = rhs.read((p as u32, j as u32).runtime());
+    }
+    #[unroll]
+    for i in 0..mr {
+        #[unroll]
+        for j in 0..nr {
+            c[i * nr + j] += a[i] * b[j];
+        }
+    }
+}
+
+/// `Direct`: no staging
+#[cube]
+pub(crate) fn mma_direct<E: Numeric>(
+    lhs: &Tile<Vector<E, Const<1>>>,
+    rhs: &Tile<Vector<E, Const<1>>>,
+    out: &mut Tile<Vector<E, Const<1>>>,
+) {
+    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
+    let walk = Walk::over(space);
     for i in 0..walk.total() {
-        out.mma_at(&lhs, &rhs, &walk.region(i));
+        out.mma_at(lhs, rhs, &walk.region(i));
     }
 }
 
 /// `Staged`: stage each operand sub-tile into shared memory, then recurse.
 #[cube]
-fn mma_staged<E: Numeric>(lhs: &Tile<E>, rhs: &Tile<E>, out: &mut Tile<E>) {
-    // Stage one sub-tile of the head level — its space is this level's divide (the
-    // located sub-tile's space), so the buffer mirrors what `at` produces and
-    // carries any remaining finer levels for the recursion below.
+pub(crate) fn mma_staged<E: Numeric>(
+    lhs: &Tile<Vector<E, Const<1>>>,
+    rhs: &Tile<Vector<E, Const<1>>>,
+    out: &mut Tile<Vector<E, Const<1>>>,
+) {
+    // The buffer's space is this level's divide, so it mirrors what `at` produces and
+    // carries any remaining finer levels.
     let a_sub = comptime!(lhs.space.divide());
     let b_sub = comptime!(rhs.space.divide());
     let a_smem = Shared::<[Vector<E, Const<1>>]>::new_slice(a_sub.tile_size());
@@ -58,15 +181,15 @@ fn mma_staged<E: Numeric>(lhs: &Tile<E>, rhs: &Tile<E>, out: &mut Tile<E>) {
 }
 
 /// `DoubleBuffered`: two staged buffers per operand, prefetching the next region
-/// into the idle slot while computing the current one. The loop stays runtime; the
-/// slot choice stays comptime by writing the two ping-pong phases explicitly.
-/// `sync_cube()` between phases keeps a slot from being reused while another unit
-/// still reads it (several planes = several cores). (Demo: an even region count.)
+/// into the idle slot while computing the current one. The slot choice is comptime
+/// because the two ping-pong phases are written out explicitly.
 #[cube]
-fn mma_double<E: Numeric>(lhs: &Tile<E>, rhs: &Tile<E>, out: &mut Tile<E>) {
-    // Two shared-memory buffers per operand, wrapped as a `Ring`. Allocated here
-    // (caller scope) because a view-backed buffer must outlive the ring. Each buffer
-    // mirrors a located sub-tile of the head level (this level's divide).
+pub(crate) fn mma_double<E: Numeric>(
+    lhs: &Tile<Vector<E, Const<1>>>,
+    rhs: &Tile<Vector<E, Const<1>>>,
+    out: &mut Tile<Vector<E, Const<1>>>,
+) {
+    // Allocated here in caller scope because a view-backed buffer must outlive the ring.
     let a_sub = comptime!(lhs.space.divide());
     let b_sub = comptime!(rhs.space.divide());
     let a0 = Shared::<[Vector<E, Const<1>>]>::new_slice(a_sub.tile_size());
