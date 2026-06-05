@@ -70,6 +70,7 @@ fn prepare_global_launch_settings<R: Runtime>(
     )
 }
 
+#[allow(clippy::match_like_matches_macro)]
 fn is_flattened(problem: &InterpolateForwardProblem) -> bool {
     match problem.options.mode {
         InterpolateMode::Nearest(_) => true,
