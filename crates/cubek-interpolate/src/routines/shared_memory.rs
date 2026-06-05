@@ -3,7 +3,7 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateOptions, TileSize, get_halo},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, InterpolateBlueprint,
-        InterpolateLaunchSettings, SharedMemoryBlueprint, build_settings, compute_layout,
+        InterpolateLaunchSettings, SharedMemoryBlueprint, build_settings,
     },
 };
 use cubecl::prelude::*;
@@ -13,7 +13,7 @@ pub struct SharedMemoryRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SharedMemoryStrategy {
-    pub tile_target_aspect_ratio: f32,
+    pub tile_size: TileSize,
 }
 
 impl ForwardRoutine for SharedMemoryRoutine {
@@ -61,18 +61,16 @@ fn prepare_shared_launch_settings<R: Runtime>(
     let num_vectors = problem.channels / vector_size;
     let mut working_units = problem.output_width * problem.output_height * num_vectors;
 
-    let tile_target_aspect_ratio = match strategy {
-        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size.aspect_ratio(),
-        BlueprintStrategy::Inferred(strategy) => strategy.tile_target_aspect_ratio,
+    let tile_size = match strategy {
+        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
+        BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
     };
 
     loop {
-        let (cube_dim, tile_size, units_per_cube) = compute_layout(
-            client,
-            working_units,
-            tile_target_aspect_ratio,
-            problem.options,
-        );
+        let cube_dim = CubeDim::new(client, working_units);
+
+        let units_per_cube = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
+
         let (smem_width, smem_height) = compute_smem_size(problem, problem.options, tile_size);
 
         let requested_smem_bytes = smem_width * smem_height * num_vectors * bytes_per_element;

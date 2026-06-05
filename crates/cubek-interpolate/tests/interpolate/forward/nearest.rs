@@ -1,6 +1,6 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
-    definition::{InterpolateMode, InterpolateOptions, NearestMode},
+    definition::{InterpolateMode, InterpolateOptions, NearestMode, TileSize},
     launch::InterpolateStrategy,
     routines::{
         BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
@@ -12,7 +12,7 @@ use super::{make_problem, run_interpolate_global_test};
 
 const NEAREST_TOLERANCE: f32 = 0.;
 
-const TILE_TARGET_ASPECT_RATIO: f32 = 1.0;
+const TILE_SIZE: TileSize = TileSize::new(16, 16);
 
 #[test]
 fn test_interpolate_nearest_identity() {
@@ -30,7 +30,7 @@ fn test_interpolate_nearest_identity() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -53,7 +53,7 @@ fn test_interpolate_nearest_exact_identity() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -76,7 +76,7 @@ fn test_interpolate_nearest_shared_memory_identity() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -99,7 +99,7 @@ fn test_interpolate_nearest_upsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -122,7 +122,7 @@ fn test_interpolate_nearest_exact_upsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -145,7 +145,7 @@ fn test_interpolate_nearest_shared_memory_upsample() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -168,7 +168,7 @@ fn test_interpolate_nearest_downsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -191,7 +191,7 @@ fn test_interpolate_nearest_exact_downsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -214,7 +214,7 @@ fn test_interpolate_nearest_shared_memory_downsample() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -237,7 +237,7 @@ fn test_interpolate_nearest_resize() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -260,7 +260,7 @@ fn test_interpolate_nearest_exact_resize() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -283,7 +283,7 @@ fn test_interpolate_nearest_shared_memory_resize() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -307,7 +307,7 @@ fn test_interpolate_nearest_without_align_corners() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -331,7 +331,7 @@ fn test_interpolate_nearest_exact_without_align_corners() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -355,7 +355,7 @@ fn test_interpolate_nearest_shared_memory_without_align_corners() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -378,7 +378,7 @@ fn test_interpolate_nearest_precision() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -401,7 +401,7 @@ fn test_interpolate_nearest_exact_precision() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -424,7 +424,7 @@ fn test_interpolate_nearest_shared_memory_precision() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -447,7 +447,7 @@ fn test_interpolate_nearest_high_channel_count() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -470,7 +470,7 @@ fn test_interpolate_nearest_exact_high_channel_count() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -493,7 +493,7 @@ fn test_interpolate_nearest_shared_memory_high_channel_count() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,

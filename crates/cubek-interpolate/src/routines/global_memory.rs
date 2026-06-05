@@ -1,9 +1,9 @@
 use crate::{
     InterpolateError,
-    definition::InterpolateForwardProblem,
+    definition::{InterpolateForwardProblem, TileSize},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
-        InterpolateBlueprint, InterpolateLaunchSettings, build_settings, compute_layout,
+        InterpolateBlueprint, InterpolateLaunchSettings, build_settings,
     },
 };
 use cubecl::prelude::*;
@@ -13,7 +13,7 @@ pub struct GlobalMemoryRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlobalMemoryStrategy {
-    pub tile_target_aspect_ratio: f32,
+    pub tile_size: TileSize,
 }
 
 impl ForwardRoutine for GlobalMemoryRoutine {
@@ -48,17 +48,12 @@ fn prepare_global_launch_settings<R: Runtime>(
     let num_vectors = problem.channels / vector_size;
     let working_units = problem.output_width * problem.output_height * num_vectors;
 
-    let tile_target_aspect_ratio = match strategy {
-        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size.aspect_ratio(),
-        BlueprintStrategy::Inferred(strategy) => strategy.tile_target_aspect_ratio,
+    let tile_size = match strategy {
+        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
+        BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
     };
 
-    let (cube_dim, tile_size, _) = compute_layout(
-        client,
-        working_units,
-        tile_target_aspect_ratio,
-        problem.options,
-    );
+    let cube_dim = CubeDim::new(client, working_units);
 
     build_settings(
         client,

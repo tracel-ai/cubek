@@ -33,24 +33,6 @@ pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError>;
 }
 
-pub fn compute_layout<R: Runtime>(
-    client: &ComputeClient<R>,
-    working_units: usize,
-    tile_target_aspect_ratio: f32,
-    options: InterpolateOptions,
-) -> (CubeDim, TileSize, usize) {
-    let cube_dim = CubeDim::new(client, working_units);
-
-    let units_per_cube = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
-
-    // HARDCODED for testing
-    let tile_area = 256;
-
-    let tile_size = TileSize::new(tile_area, tile_target_aspect_ratio, options);
-
-    (cube_dim, tile_size, units_per_cube)
-}
-
 pub fn build_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
@@ -80,7 +62,7 @@ fn compute_cubes_per_batch(
     if is_flattened(options) {
         let total_pixels = problem.output_width * problem.output_height;
 
-        total_pixels.div_ceil(tile_size.width())
+        total_pixels.div_ceil(tile_size.area())
     } else {
         let num_tiles_width = problem.output_width.div_ceil(tile_size.width());
         let num_tiles_height = problem.output_height.div_ceil(tile_size.height());
