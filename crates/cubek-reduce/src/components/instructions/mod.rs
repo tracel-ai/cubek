@@ -1,3 +1,5 @@
+mod all;
+mod any;
 mod argmax;
 mod argmin;
 mod argtopk;
@@ -12,6 +14,8 @@ mod sum;
 mod topk;
 mod utils;
 
+pub use all::*;
+pub use any::*;
 pub use argmax::*;
 pub use argmin::*;
 pub use argtopk::*;

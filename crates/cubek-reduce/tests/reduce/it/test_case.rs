@@ -10,14 +10,14 @@ use cubek_reduce::{
     reduce,
 };
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome,
-    assert_equals_approx, launch_and_capture_outcome,
+    Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
+    TestOutcome, assert_equals_approx, launch_and_capture_outcome,
 };
 
 use cubek_reduce::eval::cpu_reference::{
-    contiguous_strides, reference_argmax, reference_argmin, reference_argtopk, reference_max,
-    reference_max_abs, reference_mean, reference_min, reference_prod, reference_sum,
-    reference_topk,
+    contiguous_strides, reference_all, reference_any, reference_argmax, reference_argmin,
+    reference_argtopk, reference_max, reference_max_abs, reference_mean, reference_min,
+    reference_prod, reference_sum, reference_topk,
 };
 
 pub struct TestCase {
@@ -118,6 +118,39 @@ impl TestCase {
         );
     }
 
+    pub fn test_any(&self) {
+        // Bernoulli with p ≈ 1.5/axis_len makes ~22% of reduced slices all-zero
+        // (any = 0) and the rest contain a non-zero (any = 1), so both merge
+        // outcomes are exercised instead of the trivial all-ones case `uniform`
+        // would produce.
+        self.run_reduce_test_with(
+            |input, axis| reference_any(input, axis, None),
+            self.input_dtype,
+            ReduceOperationConfig::Any,
+            0.0,
+            Distribution::Bernoulli(self.flag_probability()),
+        );
+    }
+
+    pub fn test_all(&self) {
+        // Mirror of `test_any`: p ≈ 1 - 1.5/axis_len makes ~22% of slices
+        // all-ones (all = 1) and the rest contain a zero (all = 0).
+        self.run_reduce_test_with(
+            |input, axis| reference_all(input, axis, None),
+            self.input_dtype,
+            ReduceOperationConfig::All,
+            0.0,
+            Distribution::Bernoulli(1.0 - self.flag_probability()),
+        );
+    }
+
+    /// Per-element probability of `1` that yields a genuine mix of 0/1 reduction
+    /// outputs for the current reduce axis length.
+    fn flag_probability(&self) -> f32 {
+        let axis_len = self.shape[self.axis.unwrap()].max(1) as f32;
+        (1.5 / axis_len).clamp(0.0, 1.0)
+    }
+
     pub fn test_argmax(&self) {
         let u32_dtype = u32::as_type_native_unchecked().storage_type();
         self.run_reduce_test(
@@ -164,6 +197,23 @@ impl TestCase {
         config: ReduceOperationConfig,
         epsilon: f32,
     ) {
+        self.run_reduce_test_with(
+            reference,
+            output_dtype,
+            config,
+            epsilon,
+            Distribution::Uniform(-1., 1.),
+        );
+    }
+
+    fn run_reduce_test_with(
+        &self,
+        reference: impl FnOnce(&HostData, usize) -> HostData,
+        output_dtype: StorageType,
+        config: ReduceOperationConfig,
+        epsilon: f32,
+        distribution: Distribution,
+    ) {
         let client = TestRuntime::client(&Default::default());
         let axis = self.axis.unwrap();
 
@@ -172,7 +222,7 @@ impl TestCase {
             .layout(StridedLayout::Explicit(
                 self.stride.iter().copied().collect(),
             ))
-            .uniform(1234, -1., 1.)
+            .random(1234, distribution)
             .generate_with_f32_host_data();
 
         let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);
