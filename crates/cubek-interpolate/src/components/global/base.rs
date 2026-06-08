@@ -9,7 +9,10 @@ use crate::{
     },
     routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
 };
-use cubecl::{prelude::*, std::FastDivmod};
+use cubecl::{
+    prelude::*,
+    std::{FastDivmod, FastDivmodExpand},
+};
 
 #[cube]
 pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
@@ -36,15 +39,21 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
 
     let vector_size = N::value();
 
-    let mut thread_pos = UNIT_POS as usize;
     let tile_size_area = blueprint.tile_size.area();
 
-    loop {
-        let (unit_pos, vector_index) = num_vectors.div_mod(thread_pos);
+    let num_vectors_value = match num_vectors {
+        FastDivmod::Fast { divisor, .. } => divisor,
+        FastDivmod::Fallback { divisor } => divisor,
+    };
 
-        if unit_pos >= tile_size_area {
-            break;
-        }
+    let unit_pos = UNIT_POS as usize;
+    let cube_dim = CUBE_DIM as usize;
+    let num_iterations = (tile_size_area * num_vectors_value - unit_pos).div_ceil(cube_dim);
+
+    for i in 0..num_iterations {
+        let thread_pos = unit_pos + i * cube_dim;
+
+        let (unit_pos, vector_index) = num_vectors.div_mod(thread_pos);
 
         let (output_row, output_col) =
             tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint);
@@ -83,8 +92,6 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
                 final_value,
             );
         }
-
-        thread_pos += CUBE_DIM as usize;
     }
 }
 

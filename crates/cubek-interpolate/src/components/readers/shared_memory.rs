@@ -29,16 +29,15 @@ impl<EI: Float, N: Size> SharedMemoryReader<EI, N> {
 
         let reader = GlobalMemoryReader::new(input, batch, input_height, input_width, vector_size);
 
-        let mut unit_pos = UNIT_POS as usize;
+        let unit_pos = UNIT_POS as usize;
         let cube_dim = CUBE_DIM as usize;
+        let num_iterations = (smem_size - unit_pos).div_ceil(cube_dim);
 
-        loop {
-            if unit_pos >= smem_size {
-                break;
-            }
+        for i in 0..num_iterations {
+            let thread_pos = unit_pos + i * cube_dim;
 
-            let vector_index = unit_pos % blueprint.num_vectors;
-            let local_pos = unit_pos / blueprint.num_vectors;
+            let vector_index = thread_pos % blueprint.num_vectors;
+            let local_pos = thread_pos / blueprint.num_vectors;
             let local_col = local_pos % blueprint.smem_width;
             let local_row = local_pos / blueprint.smem_width;
 
@@ -47,9 +46,7 @@ impl<EI: Float, N: Size> SharedMemoryReader<EI, N> {
                 (min_col + local_col as isize).max(0) as usize,
             );
 
-            smem[unit_pos] = reader.read(input, global_row, global_col, vector_index);
-
-            unit_pos += cube_dim;
+            smem[thread_pos] = reader.read(input, global_row, global_col, vector_index);
         }
 
         sync_cube();
