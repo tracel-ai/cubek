@@ -4,12 +4,15 @@ use crate::{
         writers::Writer,
     },
     definition::{
-        InterpolateMode, InterpolateOptions, InterpolatePrecision, NearestMode, compute_value,
+        InterpolateMode, InterpolateOptions, InterpolatePrecision, Transform, compute_value,
         get_halo, tile_absolute_coords,
     },
     routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
 };
-use cubecl::{prelude::*, std::FastDivmod};
+use cubecl::{
+    prelude::*,
+    std::{FastDivmod, FastDivmodExpand},
+};
 
 #[cube]
 pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
@@ -19,73 +22,76 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
     cubes_per_batch: FastDivmod<usize>,
     #[comptime] blueprint: InterpolateBlueprint,
 ) {
-    let (unit_pos, vector_index) = num_vectors.div_mod(UNIT_POS as usize);
     let (batch, cube_pos) = cubes_per_batch.div_mod(CUBE_POS);
 
     let (output_height, output_width) = (output.shape(1), output.shape(2));
     let (input_height, input_width) = (input.shape(1), input.shape(2));
 
-    let (output_row, output_col) = tile_absolute_coords(
-        output_width,
-        cube_pos,
-        unit_pos,
-        blueprint.tile_size,
-        blueprint.options,
-    );
-
-    let (input_row, input_col) = compute_input_coords::<P::EA>(
-        output_row,
-        output_col,
-        input_height,
-        input_width,
-        output_height,
-        output_width,
-        blueprint.options,
-    );
-
-    let (input_row_floor, input_col_floor) = (
-        get_value_floor::<P::EA>(input_row, blueprint.options),
-        get_value_floor::<P::EA>(input_col, blueprint.options),
-    );
-
-    let (frac_row, frac_col) = (input_row - input_row_floor, input_col - input_col_floor);
-
-    let vector_size = N::value();
-
     let reader = get_reader::<P, N>(
         input,
         cube_pos,
         batch,
-        vector_index,
         input_height,
         input_width,
-        output_height,
         output_width,
         blueprint,
     );
 
-    let final_value = compute_value::<P, N>(
-        input,
-        input_height,
-        input_width,
-        isize::cast_from(input_row_floor),
-        isize::cast_from(input_col_floor),
-        frac_row,
-        frac_col,
-        reader,
-        blueprint,
-    );
+    let vector_size = N::value();
 
-    if output_col < output_width && output_row < output_height {
-        Writer::write(
-            output,
-            batch,
-            vector_index,
-            output_row,
-            output_col,
-            vector_size,
-            final_value,
-        );
+    let tile_size_area = blueprint.tile_size.area();
+
+    let num_vectors_value = match num_vectors {
+        FastDivmod::Fast { divisor, .. } => divisor,
+        FastDivmod::Fallback { divisor } => divisor,
+    };
+
+    let unit_pos = UNIT_POS as usize;
+    let cube_dim = CUBE_DIM as usize;
+    let num_iterations = (tile_size_area * num_vectors_value - unit_pos).div_ceil(cube_dim);
+
+    for i in 0..num_iterations {
+        let thread_pos = unit_pos + i * cube_dim;
+
+        let (unit_pos, vector_index) = num_vectors.div_mod(thread_pos);
+
+        let (output_row, output_col) =
+            tile_absolute_coords(output_width, cube_pos, unit_pos, blueprint);
+
+        if output_col < output_width && output_row < output_height {
+            let (input_row, input_col) =
+                compute_input_coords::<P::EA>(output_row, output_col, blueprint);
+
+            let (input_row_floor, input_col_floor) = (
+                get_value_floor::<P::EA>(input_row, blueprint.options),
+                get_value_floor::<P::EA>(input_col, blueprint.options),
+            );
+
+            let (frac_row, frac_col) = (input_row - input_row_floor, input_col - input_col_floor);
+
+            let final_value = compute_value::<P, N>(
+                input,
+                input_height,
+                input_width,
+                isize::cast_from(input_row_floor),
+                isize::cast_from(input_col_floor),
+                frac_row,
+                frac_col,
+                vector_index,
+                &reader,
+                blueprint,
+            );
+
+            Writer::write(
+                output,
+                batch,
+                vector_index,
+                output_row,
+                output_col,
+                vector_size,
+                final_value,
+            );
+        }
     }
 }
 
@@ -94,49 +100,22 @@ pub fn execute_interpolate<P: InterpolatePrecision, N: Size>(
 fn compute_input_coords<EA: Float>(
     output_row: usize,
     output_col: usize,
-    input_height: usize,
-    input_width: usize,
-    output_height: usize,
-    output_width: usize,
-    #[comptime] options: InterpolateOptions,
+    #[comptime] blueprint: InterpolateBlueprint,
 ) -> (EA, EA) {
     (
-        get_input_coord::<EA>(output_row, input_height, output_height, options),
-        get_input_coord::<EA>(output_col, input_width, output_width, options),
+        get_input_coord::<EA>(output_row, blueprint.transform_height),
+        get_input_coord::<EA>(output_col, blueprint.transform_width),
     )
 }
 
 #[cube]
-fn get_input_coord<EA: Float>(
-    x: usize,
-    input_size: usize,
-    output_size: usize,
-    #[comptime] options: InterpolateOptions,
-) -> EA {
-    match options.mode {
-        InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
-            NearestMode::Exact => {
-                (EA::cast_from(x) + EA::new(0.5)) * EA::cast_from(input_size)
-                    / EA::cast_from(output_size)
-            }
-            NearestMode::Floor => {
-                (EA::cast_from(x) * EA::cast_from(input_size)) / EA::cast_from(output_size)
-            }
-        },
-        _ => {
-            if options.align_corners {
-                let is_valid_output = (output_size > 1) as usize;
-                let safe_denominator = (output_size - 1).max(1);
+fn get_input_coord<EA: Float>(coord: usize, #[comptime] transform: Transform) -> EA {
+    let scale =
+        EA::cast_from(transform.scale_numerator) / EA::cast_from(transform.scale_denominator);
+    let offset =
+        EA::cast_from(transform.offset_numerator) / EA::cast_from(transform.offset_denominator);
 
-                EA::cast_from(x * (input_size - 1) * is_valid_output)
-                    / EA::cast_from(safe_denominator)
-            } else {
-                (EA::cast_from(x) + EA::new(0.5)) * EA::cast_from(input_size)
-                    / EA::cast_from(output_size)
-                    - EA::new(0.5)
-            }
-        }
-    }
+    EA::cast_from(coord) * scale + offset
 }
 
 #[cube]
@@ -144,10 +123,8 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
     input: &Tensor<Vector<P::EI, N>>,
     cube_pos: usize,
     batch: usize,
-    vector_index: usize,
     input_height: usize,
     input_width: usize,
-    output_height: usize,
     output_width: usize,
     #[comptime] blueprint: InterpolateBlueprint,
 ) -> ReaderType<P::EI, N> {
@@ -158,7 +135,6 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
             ReaderType::<P::EI, N>::new_Global(GlobalMemoryReader::new(
                 input,
                 batch,
-                vector_index,
                 input_height,
                 input_width,
                 vector_size,
@@ -168,23 +144,10 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
             let halo = comptime!(get_halo(blueprint.options.mode));
             let radius_offset = (halo - 1) / 2;
 
-            let (tile_row, tile_col) = tile_absolute_coords(
-                output_width,
-                cube_pos,
-                0,
-                blueprint.tile_size,
-                blueprint.options,
-            );
+            let (tile_row, tile_col) = tile_absolute_coords(output_width, cube_pos, 0, blueprint);
 
-            let (tile_mapped_row, tile_mapped_col) = compute_input_coords::<P::EA>(
-                tile_row,
-                tile_col,
-                input_height,
-                input_width,
-                output_height,
-                output_width,
-                blueprint.options,
-            );
+            let (tile_mapped_row, tile_mapped_col) =
+                compute_input_coords::<P::EA>(tile_row, tile_col, blueprint);
 
             let (tile_base_row, tile_base_col) = (
                 get_value_floor::<P::EA>(tile_mapped_row, blueprint.options),
@@ -197,7 +160,6 @@ fn get_reader<P: InterpolatePrecision, N: Size>(
             ReaderType::new_Shared(SharedMemoryReader::new(
                 input,
                 batch,
-                vector_index,
                 input_height,
                 input_width,
                 min_row,

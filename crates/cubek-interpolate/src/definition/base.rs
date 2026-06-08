@@ -1,6 +1,6 @@
 use crate::{
     components::readers::ReaderType,
-    definition::{Bicubic, Bilinear, InterpolatePrecision, Lanczos3, Nearest},
+    definition::{Bicubic, Bilinear, InterpolatePrecision, Lanczos3, Nearest, Transform},
     routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
@@ -13,17 +13,6 @@ pub trait Interpolate {
     const REQUIRES_BOUND_CHECK: bool;
 
     fn compute_weight<EA: Float>(x: EA) -> EA;
-
-    fn compute_value<P: InterpolatePrecision, N: Size>(
-        input: &Tensor<Vector<P::EI, N>>,
-        input_height: usize,
-        input_width: usize,
-        base_row: isize,
-        base_col: isize,
-        frac_row: P::EA,
-        frac_col: P::EA,
-        reader: ReaderType<P::EI, N>,
-    ) -> Vector<P::EI, N>;
 }
 
 /// Algorithm used for upsampling.
@@ -81,15 +70,6 @@ impl InterpolateOptions {
     }
 }
 
-#[cube]
-#[allow(clippy::match_like_matches_macro)]
-pub fn is_flattened(#[comptime] options: InterpolateOptions) -> bool {
-    match options.mode {
-        InterpolateMode::Nearest(_) => true,
-        _ => false,
-    }
-}
-
 // Helper functions to map InterpolateMode to the corresponding Interpolate implementation.
 pub fn get_halo(mode: InterpolateMode) -> usize {
     match mode {
@@ -97,6 +77,52 @@ pub fn get_halo(mode: InterpolateMode) -> usize {
         InterpolateMode::Bilinear => <Bilinear as Interpolate>::HALO,
         InterpolateMode::Bicubic => <Bicubic as Interpolate>::HALO,
         InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::HALO,
+    }
+}
+
+// Calculate the transform for the given input and output sizes and options.
+pub fn get_transform(
+    input_size: usize,
+    output_size: usize,
+    options: InterpolateOptions,
+) -> Transform {
+    match options.mode {
+        InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
+            NearestMode::Exact => Transform {
+                scale_numerator: input_size,
+                scale_denominator: output_size,
+                offset_numerator: input_size as isize,
+                offset_denominator: (2 * output_size) as isize,
+            },
+            NearestMode::Floor => Transform {
+                scale_numerator: input_size,
+                scale_denominator: output_size,
+                offset_numerator: 0,
+                offset_denominator: 1,
+            },
+        },
+        _ => {
+            if options.align_corners {
+                let is_valid_output = output_size > 1;
+                Transform {
+                    scale_numerator: if is_valid_output {
+                        input_size.saturating_sub(1)
+                    } else {
+                        0
+                    },
+                    scale_denominator: (output_size.saturating_sub(1)).max(1),
+                    offset_numerator: 0,
+                    offset_denominator: 1,
+                }
+            } else {
+                Transform {
+                    scale_numerator: input_size,
+                    scale_denominator: output_size,
+                    offset_numerator: input_size as isize - output_size as isize,
+                    offset_denominator: (2 * output_size) as isize,
+                }
+            }
+        }
     }
 }
 
@@ -110,11 +136,18 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
     base_col: isize,
     frac_row: P::EA,
     frac_col: P::EA,
-    reader: ReaderType<P::EI, N>,
+    vector_index: usize,
+    reader: &ReaderType<P::EI, N>,
     #[comptime] blueprint: InterpolateBlueprint,
 ) -> Vector<P::EI, N> {
     match blueprint.options.mode {
-        InterpolateMode::Nearest(_) => Nearest::compute_value::<P, N>(
+        InterpolateMode::Nearest(_) => {
+            let clamped_row = base_row.max(0).min(input_height as isize - 1) as usize;
+            let clamped_col = base_col.max(0).min(input_width as isize - 1) as usize;
+
+            Vector::cast_from(reader.read(input, clamped_row, clamped_col, vector_index))
+        }
+        InterpolateMode::Bilinear => compute_value_default::<Bilinear, P, N>(
             input,
             input_height,
             input_width,
@@ -122,9 +155,10 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
+            vector_index,
             reader,
         ),
-        InterpolateMode::Bilinear => Bilinear::compute_value::<P, N>(
+        InterpolateMode::Bicubic => compute_value_default::<Bicubic, P, N>(
             input,
             input_height,
             input_width,
@@ -132,9 +166,10 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
+            vector_index,
             reader,
         ),
-        InterpolateMode::Bicubic => Bicubic::compute_value::<P, N>(
+        InterpolateMode::Lanczos3 => compute_value_default::<Lanczos3, P, N>(
             input,
             input_height,
             input_width,
@@ -142,16 +177,7 @@ pub fn compute_value<P: InterpolatePrecision, N: Size>(
             base_col,
             frac_row,
             frac_col,
-            reader,
-        ),
-        InterpolateMode::Lanczos3 => Lanczos3::compute_value::<P, N>(
-            input,
-            input_height,
-            input_width,
-            base_row,
-            base_col,
-            frac_row,
-            frac_col,
+            vector_index,
             reader,
         ),
     }
@@ -166,7 +192,8 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
     base_col: isize,
     frac_row: P::EA,
     frac_col: P::EA,
-    reader: ReaderType<P::EI, N>,
+    vector_index: usize,
+    reader: &ReaderType<P::EI, N>,
 ) -> Vector<P::EI, N> {
     let halo = I::HALO;
     let radius_offset = ((halo - 1) / 2) as isize;
@@ -200,8 +227,10 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
             let clamped_col = col.max(0).min(input_width as isize - 1) as usize;
 
             let weight_col = col_weights[j];
-            let read_val =
-                reader.read_weighted::<P::EA>(input, clamped_row, clamped_col, weight_col);
+            let read_value =
+                Vector::cast_from(reader.read(input, clamped_row, clamped_col, vector_index));
+
+            let value = read_value * weight_col;
 
             if I::REQUIRES_BOUND_CHECK {
                 let is_in_bounds = col >= 0
@@ -209,10 +238,10 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
                     && row >= 0
                     && row < input_height as isize;
 
-                row_value += select(is_in_bounds, read_val, Vector::zeroed());
+                row_value += select(is_in_bounds, value, Vector::zeroed());
                 row_weight_sum += select(is_in_bounds, weight_col, Vector::zeroed());
             } else {
-                row_value += read_val;
+                row_value += value;
             }
         }
 

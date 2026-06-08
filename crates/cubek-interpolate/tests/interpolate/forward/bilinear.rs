@@ -1,6 +1,6 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
-    definition::{InterpolateMode, InterpolateOptions},
+    definition::{InterpolateMode, InterpolateOptions, TileSize},
     launch::InterpolateStrategy,
     routines::{
         BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
@@ -13,7 +13,7 @@ use super::{make_problem, run_interpolate_global_test};
 const BILINEAR_TOLERANCE: f32 = 0.00001;
 const BILINEAR_HIGH_RESOLUTION_TOLERANCE: f32 = 0.0001;
 
-const TILE_TARGET_ASPECT_RATIO: f32 = 1.0;
+const TILE_SIZE: TileSize = TileSize::new(16, 16);
 
 #[test]
 fn test_interpolate_bilinear_identity() {
@@ -31,7 +31,7 @@ fn test_interpolate_bilinear_identity() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -54,7 +54,7 @@ fn test_interpolate_bilinear_shared_memory_identity() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -77,7 +77,7 @@ fn test_interpolate_bilinear_upsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -100,7 +100,7 @@ fn test_interpolate_bilinear_shared_memory_upsample() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -123,7 +123,7 @@ fn test_interpolate_bilinear_downsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -146,7 +146,7 @@ fn test_interpolate_bilinear_shared_memory_downsample() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -169,7 +169,7 @@ fn test_interpolate_bilinear_resize() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -192,7 +192,7 @@ fn test_interpolate_bilinear_shared_memory_resize() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -215,7 +215,7 @@ fn test_interpolate_bilinear_without_align_corners() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -238,7 +238,7 @@ fn test_interpolate_bilinear_shared_memory_without_align_corners() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_TOLERANCE,
@@ -261,7 +261,7 @@ fn test_interpolate_bilinear_high_resolution() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_HIGH_RESOLUTION_TOLERANCE,
@@ -284,9 +284,101 @@ fn test_interpolate_bilinear_shared_memory_high_resolution() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         BILINEAR_HIGH_RESOLUTION_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_bilinear_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Bilinear),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        BILINEAR_HIGH_RESOLUTION_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_bilinear_shared_memory_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Bilinear),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        BILINEAR_HIGH_RESOLUTION_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_bilinear_floor_global_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 45, 14, 1],
+        [4, 6],
+        InterpolateOptions::new(InterpolateMode::Bilinear),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        BILINEAR_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_bilinear_shared_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 46, 14, 1],
+        [4, 6],
+        InterpolateOptions::new(InterpolateMode::Bilinear),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        BILINEAR_TOLERANCE,
     );
 }

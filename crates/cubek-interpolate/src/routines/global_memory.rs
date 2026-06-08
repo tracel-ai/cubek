@@ -1,9 +1,9 @@
 use crate::{
     InterpolateError,
-    definition::InterpolateForwardProblem,
+    definition::{InterpolateForwardProblem, InterpolateMode, TileSize, get_transform},
     routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
-        InterpolateBlueprint, InterpolateLaunchSettings, build_settings, compute_layout,
+        InterpolateBlueprint, InterpolateLaunchSettings, build_settings,
     },
 };
 use cubecl::prelude::*;
@@ -13,7 +13,7 @@ pub struct GlobalMemoryRoutine;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlobalMemoryStrategy {
-    pub tile_target_aspect_ratio: f32,
+    pub tile_size: TileSize,
 }
 
 impl ForwardRoutine for GlobalMemoryRoutine {
@@ -27,12 +27,29 @@ impl ForwardRoutine for GlobalMemoryRoutine {
         vector_size: usize,
         _bytes_per_element: usize,
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError> {
-        let settings = prepare_global_launch_settings(client, problem, strategy, vector_size);
+        let tile_size = match strategy {
+            BlueprintStrategy::Forced(blueprint) => blueprint.tile_size,
+            BlueprintStrategy::Inferred(strategy) => strategy.tile_size,
+        };
+
+        let is_flattened = is_flattened(problem);
+
+        let settings =
+            prepare_global_launch_settings(client, problem, tile_size, is_flattened, vector_size);
+
+        let transform_width =
+            get_transform(problem.input_width, problem.output_width, problem.options);
+        let transform_height =
+            get_transform(problem.input_height, problem.output_height, problem.options);
 
         let blueprint = InterpolateBlueprint {
-            tile_size: settings.tile_size,
+            tile_size,
             options: problem.options,
-            global: GlobalInterpolateBlueprint::GlobalMemoryBlueprint(GlobalMemoryBlueprint {}),
+            transform_width,
+            transform_height,
+            global: GlobalInterpolateBlueprint::GlobalMemoryBlueprint(GlobalMemoryBlueprint {
+                is_flattened,
+            }),
         };
 
         Ok((blueprint, settings))
@@ -42,31 +59,29 @@ impl ForwardRoutine for GlobalMemoryRoutine {
 fn prepare_global_launch_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    strategy: BlueprintStrategy<GlobalMemoryRoutine>,
+    tile_size: TileSize,
+    is_flattened: bool,
     vector_size: usize,
 ) -> InterpolateLaunchSettings {
     let num_vectors = problem.channels / vector_size;
     let working_units = problem.output_width * problem.output_height * num_vectors;
 
-    let tile_target_aspect_ratio = match strategy {
-        BlueprintStrategy::Forced(blueprint) => blueprint.tile_size.aspect_ratio(),
-        BlueprintStrategy::Inferred(strategy) => strategy.tile_target_aspect_ratio,
-    };
-
-    let (cube_dim, tile_size, _) = compute_layout(
-        client,
-        working_units,
-        num_vectors,
-        tile_target_aspect_ratio,
-        problem.options,
-    );
+    let cube_dim = CubeDim::new(client, working_units);
 
     build_settings(
         client,
         problem,
-        problem.options,
         cube_dim,
         tile_size,
+        is_flattened,
         num_vectors,
     )
+}
+
+#[allow(clippy::match_like_matches_macro)]
+fn is_flattened(problem: &InterpolateForwardProblem) -> bool {
+    match problem.options.mode {
+        InterpolateMode::Nearest(_) => true,
+        _ => false,
+    }
 }
