@@ -1,4 +1,7 @@
-use crate::components::{NdLayoutLaunch, TestOp, resample_kernel};
+use crate::{
+    components::{NdLayoutLaunch, resample_kernel},
+    definition::GlobalOperation,
+};
 use cubecl::prelude::*;
 
 pub fn resample_launch<R: Runtime>(
@@ -7,11 +10,9 @@ pub fn resample_launch<R: Runtime>(
     output: TensorBinding<R>,
     out_layout: NdLayoutLaunch<R>,
     in_layout: NdLayoutLaunch<R>,
-    scales: SequenceArg<R, f32>,
+    global_operation: GlobalOperation,
     dtype: StorageType,
 ) {
-    let op = TestOp;
-
     unsafe {
         resample_kernel::launch_unchecked(
             client,
@@ -21,8 +22,7 @@ pub fn resample_launch<R: Runtime>(
             output.into_tensor_arg(),
             out_layout,
             in_layout,
-            scales,
-            op,
+            global_operation,
             dtype,
         )
     };

@@ -1,6 +1,8 @@
 use crate::resample::run_test;
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
+use cubek_resample::definition::GlobalOperation;
+use cubek_resample::definition::Semiring;
 
 #[test]
 fn resample_1d_simple_test() {
@@ -10,7 +12,7 @@ fn resample_1d_simple_test() {
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
     let output_shape = vec![4];
     let expected_data = vec![1.0, 2.0, 3.0, 4.0];
-    let scales = vec![1.0f32];
+    let global_operation = GlobalOperation::Scalar(Semiring::Sum);
 
     run_test(
         &client,
@@ -18,7 +20,7 @@ fn resample_1d_simple_test() {
         input_data,
         output_shape,
         expected_data,
-        scales,
+        global_operation,
     );
 }
 
@@ -30,7 +32,7 @@ fn resample_1d_test() {
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
     let output_shape = vec![8];
     let expected_data = vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0];
-    let scales = vec![0.5f32];
+    let global_operation = GlobalOperation::Scalar(Semiring::Sum);
 
     run_test(
         &client,
@@ -38,7 +40,7 @@ fn resample_1d_test() {
         input_data,
         output_shape,
         expected_data,
-        scales,
+        global_operation,
     );
 }
 
@@ -52,7 +54,7 @@ fn resample_nhwc_2d_test() {
     let expected_data = vec![
         1.0, 1.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 3.0, 3.0, 4.0, 4.0,
     ];
-    let scales = vec![1.0f32, 0.5, 0.5, 1.0];
+    let global_operation = GlobalOperation::Scalar(Semiring::Sum);
 
     run_test(
         &client,
@@ -60,6 +62,6 @@ fn resample_nhwc_2d_test() {
         input_data,
         output_shape,
         expected_data,
-        scales,
+        global_operation,
     );
 }

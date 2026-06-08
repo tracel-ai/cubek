@@ -1,18 +1,19 @@
-use crate::components::*;
-use crate::definition::*;
+use crate::{
+    components::{
+        GlobalOperation as GlobalOperationTrait, GlobalReader, Layout, LayoutExpand, MemoryReader,
+        MemoryReaderExpand, NdLayout, ReduceAxisPattern, ScalarOperation,
+    },
+    definition::GlobalOperation,
+};
 use cubecl::prelude::*;
 
 #[cube(launch_unchecked)]
-pub fn resample_kernel<
-    C: Numeric,
-    Op: GlobalOp + Clone + std::hash::Hash + PartialEq + Eq + std::fmt::Debug + Send + Sync + 'static,
->(
+pub fn resample_kernel<C: Numeric>(
     input: &Tensor<C>,
     output: &mut Tensor<C>,
     out_layout: NdLayout,
     in_layout: NdLayout,
-    scales: &Sequence<f32>,
-    #[comptime] _op: Op,
+    #[comptime] global_operation: GlobalOperation,
     #[define(C)] _dtype: StorageType,
 ) {
     let linear_idx = ABSOLUTE_POS as usize;
@@ -22,34 +23,44 @@ pub fn resample_kernel<
 
     let out_coord = out_layout.from_linear(linear_idx);
 
-    let null_coord = Sequence::<u32>::new();
-    let dummy_scales = Sequence::<f32>::new();
-    let dest_coord = Op::F::map(out_coord.clone(), null_coord.clone(), dummy_scales);
+    let access_pattern = ReduceAxisPattern {
+        reduce_size: 1 as u32,
+    };
 
-    let in_coord = Op::H::map(out_coord, null_coord, scales.clone());
+    let reader = GlobalReader::<ReduceAxisPattern>::init(out_coord, access_pattern);
 
-    let in_idx = in_layout.to_source_pos(in_coord);
-    let out_idx = out_layout.to_source_pos(dest_coord);
+    let mut accumulator = identity::<C>(global_operation);
 
-    if in_idx < input.len() {
-        let x = input[in_idx];
+    let num_taps = reader.num_taps();
+    for tap_idx in 0..num_taps {
+        let tap = reader.read_at(input, &in_layout, tap_idx);
 
-        let w = C::from_int(1);
+        let combined = ScalarOperation::<C>::combine(tap.value, tap.weight);
 
-        let combined = Op::Combine::combine::<C>(x, w);
+        accumulator = reduce::<C>(accumulator, combined, global_operation);
+    }
 
-        output[out_idx] = combined;
+    let final_val = ScalarOperation::<C>::finalize(accumulator);
+
+    output[linear_idx] = final_val;
+}
+
+#[cube]
+fn identity<C: Numeric>(#[comptime] global_operation: GlobalOperation) -> C {
+    match global_operation {
+        GlobalOperation::Scalar(semiring) => ScalarOperation::<C>::identity(semiring),
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TestOp;
-
 #[cube]
-impl GlobalOp for TestOp {
-    type F = IdentityMapper;
-    type H = NearestMapper;
-    type K = IdentityMapper;
-    type Combine = IdentityCombine;
-    type Reduce = LinearReduction;
+fn reduce<C: Numeric>(
+    accumulator: C,
+    combined: C,
+    #[comptime] global_operation: GlobalOperation,
+) -> C {
+    match global_operation {
+        GlobalOperation::Scalar(semiring) => {
+            ScalarOperation::<C>::reduce(accumulator, combined, semiring)
+        }
+    }
 }

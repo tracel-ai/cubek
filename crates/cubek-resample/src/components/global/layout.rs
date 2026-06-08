@@ -1,37 +1,38 @@
 use cubecl::prelude::*;
 use cubecl::std::FastDivmod;
+use cubecl::std::tensor::layout::CoordsDyn;
 
-#[derive(CubeType, CubeLaunch, Clone)]
-#[expand(derive(Clone))]
+#[cube]
+pub trait Layout {
+    fn from_linear(&self, linear_idx: usize) -> CoordsDyn;
+
+    fn to_source_pos(&self, coords: &CoordsDyn) -> usize;
+}
+
+#[derive(CubeType, CubeLaunch)]
 pub struct NdLayout {
-    /// FastDivmod for each dimension used to decompose a linear index into N-D coordinates.
-    /// Order: Inner-most dimension first (e.g., for NHWC, C then W then H then N).
     pub divmods: Sequence<FastDivmod<usize>>,
-
-    /// Strides for each dimension to compute the linear source index from N-D coordinates.
-    /// Order: Inner-most dimension first (matching divmods).
     pub strides: Sequence<usize>,
 }
 
 #[cube]
-impl NdLayout {
-    /// Decomposes a linear index into N-Dimensional coordinates.
-    /// The returned sequence has the inner-most dimension first.
-    pub fn from_linear(&self, mut linear_idx: usize) -> Sequence<u32> {
-        let mut coords = Sequence::<u32>::new();
+impl Layout for NdLayout {
+    fn from_linear(&self, linear_idx: usize) -> CoordsDyn {
+        let mut coords = CoordsDyn::new();
         let rank = self.divmods.len();
+
+        let mut idx = linear_idx;
 
         #[unroll]
         for i in 0..rank {
-            let (rem, c) = self.divmods[i].div_mod(linear_idx);
+            let (rem, c) = self.divmods.index(i).div_mod(idx);
             coords.push(c as u32);
-            linear_idx = rem;
+            idx = rem;
         }
         coords
     }
 
-    /// Computes the linear source index from N-Dimensional coordinates.
-    pub fn to_source_pos(&self, coords: Sequence<u32>) -> usize {
+    fn to_source_pos(&self, coords: &CoordsDyn) -> usize {
         let mut idx = 0;
         let rank = self.strides.len();
 

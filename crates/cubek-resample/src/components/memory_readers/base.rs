@@ -1,56 +1,55 @@
-use crate::components::{AccessPattern, NdLayout};
-use cubecl::{prelude::*, std::tensor::layout::Coordinates};
-
+use crate::components::{AccessPattern, NdLayout, TapResult};
+use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 #[cube]
-pub trait MemoryReader<C: Numeric, P: AccessPattern>: CubeType {
-    type Coords: Coordinates;
+pub trait MemoryReader<P: AccessPattern>: CubeType {
+    fn init(out_coord: CoordsDyn, args: P) -> Self;
 
-    fn init(out_coord: Self::Coords, args: &P) -> Self;
-    fn read_next(reader: &mut Self, input: &Tensor<C>, in_layout: &NdLayout) -> Option<(C, C)>;
+    fn read_at<C: Numeric>(
+        &self,
+        input: &Tensor<C>,
+        in_layout: &NdLayout,
+        tap_idx: u32,
+    ) -> TapResult<C>;
+
+    fn num_taps(&self) -> u32;
 }
 
 #[derive(CubeType)]
-pub struct GlobalReader<C: Numeric, P: AccessPattern> {
-    pub tap_idx: u32,
-    pub num_taps: u32,
-    pub out_coord: P::Coord,
-    pub args: P,
-
-    #[cube(comptime)]
-    pub _type_marker: core::marker::PhantomData<C>,
+pub struct GlobalReader<P: AccessPattern> {
+    tap_idx: u32,
+    total_taps: u32,
+    out_coord: CoordsDyn,
+    access_pattern: P,
 }
 
 #[cube]
-impl<C: Numeric, P: AccessPattern> MemoryReader<C, P> for GlobalReader<C, P> {
-    type Coords = P::Coord;
-
-    fn init(out_coord: Self::Coords, args: &P) -> Self {
-        Self {
+impl<P: AccessPattern + Clone> MemoryReader<P> for GlobalReader<P> {
+    fn init(out_coord: CoordsDyn, access_pattern: P) -> Self {
+        let total_taps = P::footprint_size(&access_pattern);
+        GlobalReader::<P> {
             tap_idx: 0,
-            num_taps: P::footprint_size(args, ()),
+            total_taps,
             out_coord,
-            args: *args,
-            _type_marker: core::marker::PhantomData,
+            access_pattern,
         }
     }
 
-    fn read_next(reader: &mut Self, input: &Tensor<C>, in_layout: &NdLayout) -> Option<(C, C)> {
-        if reader.tap_idx >= reader.num_taps {
-            None
-        } else {
-            let in_coord = P::map_coord(reader.out_coord.clone(), reader.tap_idx, &reader.args, ());
-            let in_idx = in_layout.to_source_pos(in_coord);
+    fn read_at<C: Numeric>(
+        &self,
+        input: &Tensor<C>,
+        in_layout: &NdLayout,
+        tap_idx: u32,
+    ) -> TapResult<C> {
+        P::read_values(
+            input,
+            in_layout,
+            &self.out_coord,
+            tap_idx,
+            &self.access_pattern,
+        )
+    }
 
-            let x = if in_idx < input.len() {
-                input[in_idx]
-            } else {
-                C::cast_from(0)
-            };
-
-            let w: C = P::eval_weight(reader.out_coord.clone(), reader.tap_idx, &reader.args, ());
-
-            reader.tap_idx += 1;
-            Some((x, w))
-        }
+    fn num_taps(&self) -> u32 {
+        self.total_taps
     }
 }
