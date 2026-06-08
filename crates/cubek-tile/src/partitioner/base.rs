@@ -43,10 +43,6 @@ impl Partitioner {
         self.level().sub_tile.get(axis)
     }
 
-    pub fn sub_tile_edge(&self, axis: Axis) -> usize {
-        self.level().sub_tile.get(axis)
-    }
-
     pub fn distribution(&self, axis: Axis) -> Distribution {
         self.level().dists.get(axis)
     }

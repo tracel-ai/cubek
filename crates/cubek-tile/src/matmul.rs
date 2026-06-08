@@ -43,10 +43,13 @@ impl<E: Numeric> Tile<Vector<E, Const<1>>> {
     /// The final contraction: `lhs · rhs` into this sub-tile. `mr × nr` are the
     /// accumulator's trailing two axes, `kc` is `lhs`'s trailing axis.
     pub fn contract(&mut self, lhs: &Tile<Vector<E, Const<1>>>, rhs: &Tile<Vector<E, Const<1>>>) {
-        let arank = comptime!(self.space.rank());
-        let mr = comptime!(self.space.extent(self.space.axis_at(arank - 2)));
-        let nr = comptime!(self.space.extent(self.space.axis_at(arank - 1)));
-        let kc = comptime!(lhs.space.extent(lhs.space.axis_at(lhs.space.rank() - 1)));
+        let (mr, nr, kc) = comptime! {
+            (
+                self.space.extent_at(self.space.rank() - 2),
+                self.space.extent_at(self.space.rank() - 1),
+                lhs.space.extent_at(lhs.space.rank() - 1)
+            )
+        };
 
         let matrices = self.matrix_count();
         for j in 0..matrices {

@@ -43,6 +43,10 @@ impl Space {
         self.extents.get(axis)
     }
 
+    pub fn extent_at(&self, i: usize) -> usize {
+        self.extent(self.axis_at(i))
+    }
+
     pub fn axis_at(&self, i: usize) -> Axis {
         self.extents.axis_at(i)
     }
@@ -65,6 +69,7 @@ impl Space {
     /// `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
     pub fn merge(parts: &[&Space]) -> Space {
         let mut entries: SmallVec<[(Axis, usize); MAX_AXES]> = SmallVec::new();
+
         for part in parts {
             for axis in part.axes() {
                 let extent = part.extent(axis);
@@ -82,6 +87,7 @@ impl Space {
             .find(|p| !p.is_final())
             .cloned()
             .unwrap_or(Partitioner::Final);
+
         Space {
             extents: ByAxis::new(&entries),
             partitioner,

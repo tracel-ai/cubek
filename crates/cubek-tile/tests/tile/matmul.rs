@@ -493,7 +493,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         return;
     }
 
-    let tile_edge = partitioner.sub_tile_edge(M);
+    let tile_edge = partitioner.edge(M);
     let dtype = f32::as_type_native_unchecked().storage_type();
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -644,7 +644,7 @@ fn matmul_double_buffered() {
 /// edge sizes the final tile (and the data tiling); the coarse `l0` drives launch geometry.
 fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let final_edge = l1.sub_tile_edge(M);
+    let final_edge = l1.edge(M);
     let dtype = f32::as_type_native_unchecked().storage_type();
     let space = Space::new(&[(M, m), (N, n), (K, k)])
         .with_partitioner(l0.clone())
@@ -688,7 +688,7 @@ fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Pa
 /// Drives the staged lowering `launch_staged_matmul` for `C = A @ B`.
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let tile_edge = partitioner.sub_tile_edge(M);
+    let tile_edge = partitioner.edge(M);
     let dtype = f32::as_type_native_unchecked().storage_type();
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 

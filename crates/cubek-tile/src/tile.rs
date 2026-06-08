@@ -327,9 +327,9 @@ impl<T: CubePrimitive> MemData<T> {
         GmemLayout {
             physical_shape: self.physical_shape.clone(),
             physical_strides: self.physical_strides.clone(),
-            start_axis: comptime!(self.start_axis),
-            num_tiled: comptime!(self.num_tiled),
-            levels: comptime!(self.levels),
+            start_axis: self.start_axis,
+            num_tiled: self.num_tiled,
+            levels: self.levels,
         }
     }
 
@@ -342,16 +342,17 @@ impl<T: CubePrimitive> MemData<T> {
     fn at(&self, region: &Region, #[comptime] space: Space) -> MemData<T> {
         let mut origin = CoordsDyn::new();
         let mut extent = CoordsDyn::new();
+
         #[unroll]
-        for p in 0..comptime!(space.rank()) {
-            let axis = comptime!(space.axis_at(p));
-            let edge = comptime!(space.partitioner().sub_tile_edge(axis));
-            // A broadcast axis isn't one of this tile's axes, so it's never read here.
+        for p in 0..space.rank() {
+            let axis = space.axis_at(p);
+            let edge = space.partitioner().edge(axis);
             let index = region.coord(axis);
-            // Child reads base[origin + index*edge + pos].
+
             origin.push(self.origin[p] + (index * edge) as u32);
-            extent.push(comptime!(edge as i64) as u32);
+            extent.push(edge as u32);
         }
+
         MemData::<T> {
             buffer: unsafe { self.buffer.as_boxed_unchecked() },
             physical_shape: self.physical_shape.clone(),
@@ -370,13 +371,13 @@ impl<T: CubePrimitive> MemData<T> {
 fn full_window(#[comptime] space: Space) -> (CoordsDyn, CoordsDyn) {
     let mut origin = CoordsDyn::new();
     let mut extent = CoordsDyn::new();
+
     #[unroll]
-    for p in 0..comptime!(space.rank()) {
-        origin.push(u32::from_int(0));
-        extent.push(u32::from_int(comptime!(
-            space.extent(space.axis_at(p)) as i64
-        )));
+    for p in 0..space.rank() {
+        origin.push(0);
+        extent.push(space.extent(space.axis_at(p)) as u32);
     }
+
     (origin, extent)
 }
 
@@ -384,24 +385,28 @@ fn full_window(#[comptime] space: Space) -> (CoordsDyn, CoordsDyn) {
 /// smem [`MemData`] so it survives `at`'s space division.
 #[cube]
 fn row_major(#[comptime] space: Space) -> (CoordsDyn, CoordsDyn) {
-    let rank = comptime!(space.rank());
+    let rank = space.rank();
     let mut shape = CoordsDyn::new();
+
     #[unroll]
     for p in 0..rank {
-        shape.push(u32::from_int(comptime!(
-            space.extent(space.axis_at(p)) as i64
-        )));
+        shape.push(space.extent(space.axis_at(p)) as u32);
     }
+
     let mut strides = CoordsDyn::new();
+
     #[unroll]
     for p in 0..rank {
-        let mut weight = u32::from_int(1);
+        let mut weight = 1;
+
         #[unroll]
-        for q in comptime!(p + 1)..rank {
+        for q in p + 1..rank {
             weight *= shape[q];
         }
+
         strides.push(weight);
     }
+
     (shape, strides)
 }
 
@@ -428,16 +433,20 @@ impl Layout for GmemLayout {
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let split = TiledLayout::new(
             self.physical_shape.clone(),
-            comptime!(self.start_axis),
+            self.start_axis,
             self.num_tiled,
             self.levels,
         );
+
         let physical = split.to_source_pos(pos);
-        let mut offset = u32::from_int(0);
+
+        let mut offset = 0;
+
         #[unroll]
         for i in 0..self.physical_strides.len() {
             offset += physical[i] * self.physical_strides[i];
         }
+
         offset as usize
     }
 
@@ -449,27 +458,30 @@ impl Layout for GmemLayout {
     fn shape(&self) -> Self::Coordinates {
         let split = TiledLayout::new(
             self.physical_shape.clone(),
-            comptime!(self.start_axis),
+            self.start_axis,
             self.num_tiled,
             self.levels,
         );
+
         split.shape()
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let bounds = self.shape();
         let mut valid = true;
+
         #[unroll]
         for i in 0..bounds.len() {
             valid = valid && pos[i] < bounds[i];
         }
+
         valid
     }
 }
 
 /// The layout [`Tile::at`] applies: shift every axis to `origin` and crop it to
 /// `extent`. Same rank as the source; the rank-reducing 2-D slice is
-/// [`MatrixWindow`](super::MatrixWindow).
+/// [`BatchMatrix`](super::BatchMatrix).
 #[derive(CubeType, Clone)]
 pub struct Window {
     origin: CoordsDyn,
@@ -490,10 +502,12 @@ impl Layout for Window {
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let mut out = CoordsDyn::new();
+
         #[unroll]
         for i in 0..self.origin.len() {
             out.push(self.origin[i] + pos[i]);
         }
+
         out
     }
 
@@ -508,10 +522,12 @@ impl Layout for Window {
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let mut valid = true;
+
         #[unroll]
         for i in 0..self.extent.len() {
             valid = valid && pos[i] < self.extent[i];
         }
+
         valid
     }
 }

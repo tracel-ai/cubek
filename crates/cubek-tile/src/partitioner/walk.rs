@@ -5,10 +5,10 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Region, Space};
+use crate::{Region, Space, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
-use super::{ComputeScope, Coverage, CubeAxis, Distribution, Spread};
+use super::{ComputeScope, CubeAxis, Distribution, Spread};
 
 /// The runtime odometer over a [`Space`]'s tiles.
 #[derive(CubeType)]
@@ -25,19 +25,19 @@ impl Walk {
     pub fn over(#[comptime] space: Space) -> Walk {
         let mut counts = Sequence::<usize>::new();
         #[unroll]
-        for p in 0..comptime!(space.rank()) {
-            counts.push(usize::from_int(comptime!(
-                space.count(space.axis_at(p)) as i64
-            )));
+        for p in 0..space.rank() {
+            counts.push(space.count(space.axis_at(p)))
         }
 
         let mut steps = 1usize;
+
         #[unroll]
         for p in 0..comptime!(space.rank()) {
-            let axis = comptime!(space.axis_at(p));
-            let dist = comptime!(space.partitioner().distribution(axis));
+            let axis = space.axis_at(p);
+            let dist = space.partitioner().distribution(axis);
             steps *= axis_count(*counts.index(p), dist);
         }
+
         Walk {
             counts,
             steps,
@@ -51,15 +51,17 @@ impl Walk {
 
     pub fn region(&self, i: usize) -> Region {
         let idx = walk_index(i, self.steps, comptime!(self.space.partitioner().order()));
-        Region::new(self.resolve(idx), comptime!(self.space.clone()))
+        Region::new(self.resolve(idx), self.space.clone())
     }
 
     /// Unravel a runtime step `idx` to its per-axis coordinates: an odometer over
     /// the per-axis tile counts, last axis fastest.
     fn resolve(&self, idx: usize) -> CoordsDyn {
+        let rank = comptime!(self.space.rank());
         let mut counts = Sequence::<usize>::new();
+
         #[unroll]
-        for p in 0..comptime!(self.space.rank()) {
+        for p in 0..rank {
             let axis = comptime!(self.space.axis_at(p));
             let dist = comptime!(self.space.partitioner().distribution(axis));
             counts.push(axis_count(*self.counts.index(p), dist));
@@ -67,7 +69,7 @@ impl Walk {
 
         let mut coords = CoordsDyn::new();
         #[unroll]
-        for p in 0..comptime!(self.space.rank()) {
+        for p in 0..rank {
             // weight = product of later axes' counts (last axis fastest).
             let mut weight = 1usize;
             #[unroll]
@@ -86,11 +88,11 @@ impl Walk {
 /// Whole `grid` when `Sequential`, else this instance's `Spatial` share.
 #[cube]
 fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
-    let mut count = grid;
     if comptime!(matches!(dist, Distribution::Spatial { .. })) {
-        count = tiles_per_instance(grid, comptime!(dist.coverage()));
+        tiles_per_instance(grid, dist.coverage())
+    } else {
+        grid
     }
-    count
 }
 
 /// Grid coordinate for a runtime local `step`: `step` for `Sequential`, else the
@@ -109,26 +111,6 @@ fn coord_of(step: usize, grid: usize, #[comptime] dist: Distribution) -> usize {
         }
     }
     coord
-}
-
-/// `TilesEach` pins it, `Instances` splits the `grid`.
-#[cube]
-fn tiles_per_instance(grid: usize, #[comptime] cov: Coverage) -> usize {
-    let mut out = usize::from_int(comptime!(cov.tiles_const().unwrap_or(0) as i64));
-    if comptime!(cov.instances_const().is_some()) {
-        out = grid / comptime!(cov.instances_const().unwrap());
-    }
-    out
-}
-
-/// `Instances` pins it, `TilesEach` derives it from the `grid`.
-#[cube]
-fn instance_count(grid: usize, #[comptime] cov: Coverage) -> usize {
-    let mut out = usize::from_int(comptime!(cov.instances_const().unwrap_or(0) as i64));
-    if comptime!(cov.tiles_const().is_some()) {
-        out = grid / comptime!(cov.tiles_const().unwrap());
-    }
-    out
 }
 
 #[cube]

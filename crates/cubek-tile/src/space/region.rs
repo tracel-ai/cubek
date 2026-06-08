@@ -16,10 +16,6 @@ impl Region {
         Region { coords, space }
     }
 
-    pub fn space(&self) -> comptime_type!(Space) {
-        comptime!(self.space.clone())
-    }
-
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         self.coords[comptime!(self.space.position(axis))] as usize
     }

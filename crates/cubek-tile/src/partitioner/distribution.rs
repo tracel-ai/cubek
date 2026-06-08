@@ -1,5 +1,7 @@
 //! The split vocabulary: how a single axis is distributed, sized, and dealt out.
 
+use cubecl::prelude::*;
+
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
 /// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -66,6 +68,24 @@ impl Coverage {
             Coverage::TilesEach(t) => Some(t),
             Coverage::Instances(_) => None,
         }
+    }
+}
+
+/// `TilesEach` pins it, `Instances` splits the `grid`.
+#[cube]
+pub(crate) fn tiles_per_instance(grid: usize, #[comptime] cov: Coverage) -> usize {
+    match cov {
+        Coverage::Instances(instances) => grid / instances,
+        Coverage::TilesEach(tiles) => tiles.runtime(),
+    }
+}
+
+/// `Instances` pins it, `TilesEach` derives it from the `grid`.
+#[cube]
+pub(crate) fn instance_count(grid: usize, #[comptime] cov: Coverage) -> usize {
+    match cov {
+        Coverage::Instances(instances) => instances.runtime(),
+        Coverage::TilesEach(tiles) => grid / tiles,
     }
 }
 

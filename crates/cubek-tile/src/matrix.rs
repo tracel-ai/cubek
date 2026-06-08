@@ -1,5 +1,5 @@
 //! The 2-D matrix view over a [`Tile`](super::Tile). A tile carries an N-D
-//! [`Space`](super::Space); [`MatrixWindow`] is a [`Layout`] re-viewing it as a plain
+//! [`Space`](super::Space); [`BatchMatrix`] is a [`Layout`] re-viewing it as a plain
 //! [`Coords2d`] matrix by pinning the leading batch axes and exposing the trailing two.
 
 use super::*;
@@ -14,26 +14,23 @@ use cubecl::{
 /// A [`Layout`] mapping a matrix coordinate `(row, col)` to the tile's source
 /// coordinate `[batches…, row, col]`: leading batch axes pinned, trailing two exposed.
 #[derive(CubeType, Clone)]
-pub struct MatrixWindow {
+pub struct BatchMatrix {
     batches: CoordsDyn,
     tile_shape: Coords2d,
 }
 
 #[cube]
-impl MatrixWindow {
+impl BatchMatrix {
     pub fn new(batches: CoordsDyn, #[comptime] rows: usize, #[comptime] cols: usize) -> Self {
-        MatrixWindow {
+        BatchMatrix {
             batches,
-            tile_shape: (
-                u32::from_int(comptime!(rows as i64)),
-                u32::from_int(comptime!(cols as i64)),
-            ),
+            tile_shape: (rows as u32, cols as u32).runtime(),
         }
     }
 }
 
 #[cube]
-impl Layout for MatrixWindow {
+impl Layout for BatchMatrix {
     type Coordinates = Coords2d;
     type SourceCoordinates = CoordsDyn;
 
@@ -66,42 +63,46 @@ impl<T: CubePrimitive> Tile<T> {
     /// The product of the leading (batch) extents.
     pub fn matrix_count(&self) -> usize {
         let shape = self.view().shape();
-        let mut count = u32::from_int(1);
+        let mut count = 1;
+
         #[unroll]
         for p in 0..comptime!(self.space.rank() - 2) {
             count *= shape[p];
         }
+
         count as usize
     }
 
     /// The leading axes are pinned to `i` unraveled over their extents.
-    fn matrix_window(&self, i: usize) -> MatrixWindow {
+    fn batch_matrix(&self, i: usize) -> BatchMatrix {
         let rank = comptime!(self.space.rank());
         let shape = self.view().shape();
-        let rows = comptime!(self.space.extent(self.space.axis_at(rank - 2)));
-        let cols = comptime!(self.space.extent(self.space.axis_at(rank - 1)));
+        let rows = comptime!(self.space.extent_at(rank - 2));
+        let cols = comptime!(self.space.extent_at(rank - 1));
 
-        // Unravel `i` (row-major) over the leading extents into pinned batch coords.
         let mut batches = CoordsDyn::new();
+
         #[unroll]
-        for p in 0..comptime!(rank - 2) {
-            let mut weight = u32::from_int(1);
+        for p in 0..rank - 2 {
+            let mut weight = 1;
+
             #[unroll]
-            for q in comptime!(p + 1)..comptime!(rank - 2) {
+            for q in comptime!(p + 1)..rank - 2 {
                 weight *= shape[q];
             }
             batches.push((i as u32 / weight) % shape[p]);
         }
-        MatrixWindow::new(batches, rows, cols)
+
+        BatchMatrix::new(batches, rows, cols)
     }
 
     pub fn matrix(&self, i: usize) -> View<'_, T, Coords2d> {
-        let layout = self.matrix_window(i);
+        let layout = self.batch_matrix(i);
         self.view().view(layout)
     }
 
     pub fn matrix_mut(&mut self, i: usize) -> ViewMut<'_, T, Coords2d> {
-        let layout = self.matrix_window(i);
+        let layout = self.batch_matrix(i);
         self.view_mut().view_mut(layout)
     }
 }
