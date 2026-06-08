@@ -1,33 +1,19 @@
 use crate::{
-    components::{NdLayoutLaunch, resample_kernel},
-    definition::{AccessPatternKind, GlobalOperationKind, MemoryReaderKind},
+    components::NdLayoutLaunch,
+    definition::{GlobalOperationKind, MemoryReaderKind},
 };
 use cubecl::prelude::*;
 
-pub fn resample_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    out_layout: NdLayoutLaunch<R>,
-    in_layout: NdLayoutLaunch<R>,
-    access_pattern_kind: AccessPatternKind,
-    memory_reader_kind: MemoryReaderKind,
-    global_operation: GlobalOperationKind,
-    dtype: StorageType,
-) {
-    unsafe {
-        resample_kernel::launch_unchecked(
-            client,
-            CubeCount::Static(1, 1, 1),
-            CubeDim::new_2d(32, 8),
-            input.into_tensor_arg(),
-            output.into_tensor_arg(),
-            out_layout,
-            in_layout,
-            access_pattern_kind,
-            memory_reader_kind,
-            global_operation,
-            dtype,
-        )
-    };
+pub trait ResampleArgs<R: Runtime> {
+    fn launch(
+        self,
+        client: &ComputeClient<R>,
+        input: TensorBinding<R>,
+        output: TensorBinding<R>,
+        out_layout: NdLayoutLaunch<R>,
+        in_layout: NdLayoutLaunch<R>,
+        memory_reader_kind: MemoryReaderKind,
+        operation_kind: GlobalOperationKind,
+        dtype: StorageType,
+    );
 }

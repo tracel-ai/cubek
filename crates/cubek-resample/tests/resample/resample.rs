@@ -1,8 +1,9 @@
 use crate::resample::run_test;
 use cubecl::TestRuntime;
 use cubecl::prelude::*;
-use cubek_resample::definition::{
-    AccessPatternKind, GlobalOperationKind, MemoryReaderKind, ReduceAxisPatternArgs, Semiring,
+use cubek_resample::{
+    definition::{GlobalOperationKind, MemoryReaderKind, Semiring},
+    implementations::{InterpolateArgs, ReduceArgs},
 };
 
 #[test]
@@ -11,10 +12,12 @@ fn resample_1d_simple_test() {
 
     let input_shape = vec![4];
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
-    let output_shape = vec![4];
-    let expected_data = vec![1.0, 2.0, 3.0, 4.0];
-    let access_pattern_kind =
-        AccessPatternKind::ReduceAxisPattern(ReduceAxisPatternArgs { reduce_size: 1 });
+    let output_shape = vec![1];
+    let expected_data = vec![10.0];
+    let args = ReduceArgs {
+        reduce_size: 4,
+        reduce_axis: 0,
+    };
     let memory_reader_kind = MemoryReaderKind::Global;
     let global_operation = GlobalOperationKind::Scalar(Semiring::Sum);
 
@@ -24,7 +27,7 @@ fn resample_1d_simple_test() {
         input_data,
         output_shape,
         expected_data,
-        access_pattern_kind,
+        args,
         memory_reader_kind,
         global_operation,
     );
@@ -38,8 +41,7 @@ fn resample_1d_test() {
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
     let output_shape = vec![8];
     let expected_data = vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0];
-    let access_pattern_kind =
-        AccessPatternKind::ReduceAxisPattern(ReduceAxisPatternArgs { reduce_size: 1 });
+    let args = InterpolateArgs;
     let memory_reader_kind = MemoryReaderKind::Global;
     let global_operation = GlobalOperationKind::Scalar(Semiring::Sum);
 
@@ -49,7 +51,7 @@ fn resample_1d_test() {
         input_data,
         output_shape,
         expected_data,
-        access_pattern_kind,
+        args,
         memory_reader_kind,
         global_operation,
     );
@@ -63,10 +65,9 @@ fn resample_nhwc_2d_test() {
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
     let output_shape = vec![1, 4, 4, 1];
     let expected_data = vec![
-        1.0, 1.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 3.0, 3.0, 4.0, 4.0,
+        1.0, 1.0, 3.0, 3.0, 1.0, 1.0, 3.0, 3.0, 2.0, 2.0, 4.0, 4.0, 2.0, 2.0, 4.0, 4.0,
     ];
-    let access_pattern_kind =
-        AccessPatternKind::ReduceAxisPattern(ReduceAxisPatternArgs { reduce_size: 1 });
+    let args = InterpolateArgs;
     let memory_reader_kind = MemoryReaderKind::Global;
     let global_operation = GlobalOperationKind::Scalar(Semiring::Sum);
 
@@ -76,7 +77,7 @@ fn resample_nhwc_2d_test() {
         input_data,
         output_shape,
         expected_data,
-        access_pattern_kind,
+        args,
         memory_reader_kind,
         global_operation,
     );

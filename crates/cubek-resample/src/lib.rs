@@ -1,11 +1,12 @@
 pub mod components;
 pub mod definition;
+pub mod implementations;
 pub mod launch;
 
 use crate::{
     components::NdLayoutLaunch,
-    definition::{AccessPatternKind, GlobalOperationKind, MemoryReaderKind},
-    launch::resample_launch,
+    definition::{GlobalOperationKind, MemoryReaderKind},
+    launch::ResampleArgs,
 };
 use cubecl::prelude::*;
 
@@ -13,7 +14,7 @@ pub fn resample<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
-    access_pattern_kind: AccessPatternKind,
+    args: impl ResampleArgs<R>,
     memory_reader_kind: MemoryReaderKind,
     operation_kind: GlobalOperationKind,
     dtype: StorageType,
@@ -34,13 +35,12 @@ pub fn resample<R: Runtime>(
     }
     let out_layout = NdLayoutLaunch::new(out_divmods, out_strides);
 
-    resample_launch(
+    args.launch(
         client,
         input,
         output.clone(),
         out_layout,
         in_layout,
-        access_pattern_kind,
         memory_reader_kind,
         operation_kind,
         dtype,
