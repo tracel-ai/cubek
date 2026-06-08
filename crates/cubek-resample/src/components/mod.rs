@@ -1,5 +1,7 @@
-mod kernel;
-mod layout;
+mod access_patterns;
+mod global;
+mod memory_readers;
 
-pub use kernel::*;
-pub use layout::*;
+pub use access_patterns::*;
+pub use global::*;
+pub use memory_readers::*;
