@@ -1,11 +1,11 @@
 use crate::{
     components::{
-        GlobalOperation as GlobalOperationTrait, GlobalReader, Layout, LayoutExpand, MemoryReader,
-        MemoryReaderExpand, NdLayout, ReduceAxisPattern, ScalarOperation,
+        AccessPattern, GlobalOperation, GlobalReader, Layout, LayoutExpand, MemoryReader,
+        MemoryReaderExpand, NdLayout, ReduceAxisPattern, ScalarOperation, TapResult,
     },
-    definition::GlobalOperation,
+    definition::{AccessPatternKind, GlobalOperationKind, MemoryReaderKind},
 };
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 #[cube(launch_unchecked)]
 pub fn resample_kernel<C: Numeric>(
@@ -13,42 +13,99 @@ pub fn resample_kernel<C: Numeric>(
     output: &mut Tensor<C>,
     out_layout: NdLayout,
     in_layout: NdLayout,
-    #[comptime] global_operation: GlobalOperation,
+    #[comptime] access_pattern_kind: AccessPatternKind,
+    #[comptime] memory_reader_kind: MemoryReaderKind,
+    #[comptime] operation_kind: GlobalOperationKind,
     #[define(C)] _dtype: StorageType,
 ) {
-    let linear_idx = ABSOLUTE_POS as usize;
-    if linear_idx >= output.len() {
+    let index = ABSOLUTE_POS as usize;
+
+    if index >= output.len() {
         terminate!();
     }
 
-    let out_coord = out_layout.from_linear(linear_idx);
+    let out_coord = out_layout.from_linear(index);
 
-    let access_pattern = ReduceAxisPattern {
-        reduce_size: 1 as u32,
-    };
+    match access_pattern_kind {
+        AccessPatternKind::ReduceAxisPattern(args) => {
+            let access_pattern = ReduceAxisPattern {
+                reduce_size: args.reduce_size,
+            };
 
-    let reader = GlobalReader::<ReduceAxisPattern>::init(out_coord, access_pattern);
-
-    let mut accumulator = identity::<C>(global_operation);
-
-    let num_taps = reader.num_taps();
-    for tap_idx in 0..num_taps {
-        let tap = reader.read_at(input, &in_layout, tap_idx);
-
-        let combined = ScalarOperation::<C>::combine(tap.value, tap.weight);
-
-        accumulator = reduce::<C>(accumulator, combined, global_operation);
+            dispatch_reader::<C, ReduceAxisPattern>(
+                input,
+                output,
+                in_layout,
+                index,
+                out_coord,
+                access_pattern,
+                memory_reader_kind,
+                operation_kind,
+            );
+        }
     }
-
-    let final_val = ScalarOperation::<C>::finalize(accumulator);
-
-    output[linear_idx] = final_val;
 }
 
 #[cube]
-fn identity<C: Numeric>(#[comptime] global_operation: GlobalOperation) -> C {
-    match global_operation {
-        GlobalOperation::Scalar(semiring) => ScalarOperation::<C>::identity(semiring),
+fn dispatch_reader<C: Numeric, P: AccessPattern>(
+    input: &Tensor<C>,
+    output: &mut Tensor<C>,
+    in_layout: NdLayout,
+    index: usize,
+    out_coord: CoordsDyn,
+    access_pattern: P,
+    #[comptime] memory_reader_kind: MemoryReaderKind,
+    #[comptime] operation_kind: GlobalOperationKind,
+) {
+    match memory_reader_kind {
+        MemoryReaderKind::Global => {
+            let reader = GlobalReader::<P>::init(out_coord, access_pattern);
+
+            resample_inner::<C, P, GlobalReader<P>>(
+                input,
+                output,
+                in_layout,
+                index,
+                reader,
+                operation_kind,
+            );
+        }
+    }
+}
+
+#[cube]
+fn resample_inner<C: Numeric, P: AccessPattern, R: MemoryReader<P>>(
+    input: &Tensor<C>,
+    output: &mut Tensor<C>,
+    in_layout: NdLayout,
+    index: usize,
+    reader: R,
+    #[comptime] operation_kind: GlobalOperationKind,
+) {
+    let mut accumulator = identity::<C>(operation_kind);
+    let total_taps = reader.num_taps();
+    for tap_idx in 0..total_taps {
+        let tap = reader.read_at(input, &in_layout, tap_idx);
+
+        let combined = combine::<C>(tap, operation_kind);
+
+        accumulator = reduce::<C>(accumulator, combined, operation_kind);
+    }
+    let final_value = finalize::<C>(accumulator, operation_kind);
+    output[index] = final_value;
+}
+
+#[cube]
+fn identity<C: Numeric>(#[comptime] operation_kind: GlobalOperationKind) -> C {
+    match operation_kind {
+        GlobalOperationKind::Scalar(semiring) => ScalarOperation::<C>::identity(semiring),
+    }
+}
+
+#[cube]
+fn combine<C: Numeric>(tap: TapResult<C>, #[comptime] operation_kind: GlobalOperationKind) -> C {
+    match operation_kind {
+        GlobalOperationKind::Scalar(_) => ScalarOperation::<C>::combine(tap.value, tap.weight),
     }
 }
 
@@ -56,11 +113,18 @@ fn identity<C: Numeric>(#[comptime] global_operation: GlobalOperation) -> C {
 fn reduce<C: Numeric>(
     accumulator: C,
     combined: C,
-    #[comptime] global_operation: GlobalOperation,
+    #[comptime] operation_kind: GlobalOperationKind,
 ) -> C {
-    match global_operation {
-        GlobalOperation::Scalar(semiring) => {
+    match operation_kind {
+        GlobalOperationKind::Scalar(semiring) => {
             ScalarOperation::<C>::reduce(accumulator, combined, semiring)
         }
+    }
+}
+
+#[cube]
+fn finalize<C: Numeric>(accumulator: C, #[comptime] operation_kind: GlobalOperationKind) -> C {
+    match operation_kind {
+        GlobalOperationKind::Scalar(_) => ScalarOperation::<C>::finalize(accumulator),
     }
 }

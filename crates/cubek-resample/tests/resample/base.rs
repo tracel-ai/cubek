@@ -1,6 +1,9 @@
 use cubecl::prelude::*;
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
-use cubek_resample::{definition::GlobalOperation, resample};
+use cubek_resample::{
+    definition::{AccessPatternKind, GlobalOperationKind, MemoryReaderKind},
+    resample,
+};
 use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
 
 pub fn build_output_tensor(
@@ -37,7 +40,9 @@ pub fn run_test(
     input_data: Vec<f32>,
     output_shape: Vec<usize>,
     expected_data: Vec<f32>,
-    global_operation: GlobalOperation,
+    access_pattern_kind: AccessPatternKind,
+    memory_reader_kind: MemoryReaderKind,
+    global_operation: GlobalOperationKind,
 ) {
     let input_handle = TestInput::builder(client.clone(), input_shape)
         .dtype(f32::as_type_native_unchecked().storage_type())
@@ -56,6 +61,8 @@ pub fn run_test(
         &client,
         input,
         output,
+        access_pattern_kind,
+        memory_reader_kind,
         global_operation,
         f32::as_type_native_unchecked().storage_type(),
     );

@@ -1,6 +1,6 @@
 use crate::{
     components::{NdLayoutLaunch, resample_kernel},
-    definition::GlobalOperation,
+    definition::{AccessPatternKind, GlobalOperationKind, MemoryReaderKind},
 };
 use cubecl::prelude::*;
 
@@ -10,7 +10,9 @@ pub fn resample_launch<R: Runtime>(
     output: TensorBinding<R>,
     out_layout: NdLayoutLaunch<R>,
     in_layout: NdLayoutLaunch<R>,
-    global_operation: GlobalOperation,
+    access_pattern_kind: AccessPatternKind,
+    memory_reader_kind: MemoryReaderKind,
+    global_operation: GlobalOperationKind,
     dtype: StorageType,
 ) {
     unsafe {
@@ -22,6 +24,8 @@ pub fn resample_launch<R: Runtime>(
             output.into_tensor_arg(),
             out_layout,
             in_layout,
+            access_pattern_kind,
+            memory_reader_kind,
             global_operation,
             dtype,
         )

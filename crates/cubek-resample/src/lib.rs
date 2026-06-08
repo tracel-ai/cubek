@@ -2,14 +2,20 @@ pub mod components;
 pub mod definition;
 pub mod launch;
 
-use crate::{components::NdLayoutLaunch, definition::GlobalOperation, launch::resample_launch};
+use crate::{
+    components::NdLayoutLaunch,
+    definition::{AccessPatternKind, GlobalOperationKind, MemoryReaderKind},
+    launch::resample_launch,
+};
 use cubecl::prelude::*;
 
 pub fn resample<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
-    global_operation: GlobalOperation,
+    access_pattern_kind: AccessPatternKind,
+    memory_reader_kind: MemoryReaderKind,
+    operation_kind: GlobalOperationKind,
     dtype: StorageType,
 ) {
     let mut in_divmods = SequenceArg::new();
@@ -34,7 +40,9 @@ pub fn resample<R: Runtime>(
         output.clone(),
         out_layout,
         in_layout,
-        global_operation,
+        access_pattern_kind,
+        memory_reader_kind,
+        operation_kind,
         dtype,
     );
 }
