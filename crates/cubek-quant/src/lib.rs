@@ -32,3 +32,7 @@ pub(crate) mod utils {
         }
     }
 }
+
+pub fn quant_size_bytes(scheme: &scheme::QuantScheme) -> usize {
+    scheme.size_bits_stored() / 8
+}

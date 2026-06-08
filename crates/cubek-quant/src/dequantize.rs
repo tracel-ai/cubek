@@ -1,14 +1,12 @@
 #![allow(missing_docs)] // pub cube modules
 
-use cubecl::{
-    calculate_cube_count_elemwise,
-    ir::{ElemType, FloatKind, IntKind},
-};
+use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
+    quant_size_bytes,
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
 };
 use cubecl::std::tensor::{
@@ -261,13 +259,14 @@ fn dequantize_packed<R: Runtime>(
     scheme: QuantScheme,
     scale: TensorBinding<R>,
     output: TensorBinding<R>,
-    input_dtype: StorageType,
+    output_dtype: StorageType,
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let num_elems_input: usize = input.shape.iter().product();
+    let input_size = quant_size_bytes(&scheme);
 
     let mut vector_size_in = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(input_dtype.size()),
+        client.io_optimized_vector_sizes(input_size),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -284,9 +283,9 @@ fn dequantize_packed<R: Runtime>(
     let cube_dim = CubeDim::new(client, num_elems);
     let cube_count = calculate_cube_count_elemwise(client, num_elems, cube_dim);
     let address_type = input
-        .required_address_type(size_of::<u32>())
+        .required_address_type(input_size)
         .max(scale.required_address_type(scale_dtype.size()))
-        .max(output.required_address_type(input_dtype.size()));
+        .max(output.required_address_type(output_dtype.size()));
 
     match scheme {
         QuantScheme {
@@ -306,7 +305,7 @@ fn dequantize_packed<R: Runtime>(
                 scales_view(input, scale, 1, &scheme),
                 linear_view(output),
                 scheme,
-                [input_dtype, scale_dtype],
+                [output_dtype, scale_dtype],
             )
         },
         QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
@@ -321,10 +320,11 @@ fn dequantize_native<R: Runtime>(
     scheme: QuantScheme,
     scale: TensorBinding<R>,
     output: TensorBinding<R>,
-    input_dtype: StorageType,
+    output_dtype: StorageType,
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
+    let input_dtype = ElemType::from_quant_value(scheme.value);
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
@@ -339,22 +339,13 @@ fn dequantize_native<R: Runtime>(
         QuantScheme {
             level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
-            value,
             store: QuantStore::Native,
             ..
         } => {
-            let quant_dtype: ElemType = match value {
-                QuantValue::Q8F | QuantValue::Q8S => ElemType::Int(IntKind::I8),
-                QuantValue::E4M3 => ElemType::Float(FloatKind::E4M3),
-                QuantValue::E5M2 => ElemType::Float(FloatKind::E5M2),
-                QuantValue::E2M1 => ElemType::Float(FloatKind::E2M1),
-                other => panic!("Unsupported quantization value {other:?}"),
-            };
-
             let address_type = input
-                .required_address_type(quant_dtype.size())
+                .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))
-                .max(output.required_address_type(input_dtype.size()));
+                .max(output.required_address_type(output_dtype.size()));
 
             unsafe {
                 dequantize_symmetric_native_kernel::launch_unchecked(
@@ -367,7 +358,7 @@ fn dequantize_native<R: Runtime>(
                     linear_view(input.clone()),
                     scales_view(input, scale, 1, &scheme),
                     linear_view(output),
-                    [input_dtype, scale_dtype, quant_dtype.into()],
+                    [output_dtype, scale_dtype, input_dtype.into()],
                 )
             }
         }

@@ -12,6 +12,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
+    quant_size_bytes,
     utils::check_block_size_compat,
 };
 use crate::{
@@ -263,12 +264,12 @@ fn quantize_native<R: Runtime>(
         } => {
             // We could use vector_size = block_size if it's in the supported vector sizes.. but let's keep it simple
             check_block_size_compat(scheme, vector_size as usize);
-            let quant_type = ElemType::from_quant_value(scheme.value);
+            let quant_dtype = ElemType::from_quant_value(scheme.value);
 
             let address_type = input
                 .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))
-                .max(output.required_address_type(quant_type.size()));
+                .max(output.required_address_type(quant_dtype.size()));
 
             let scales_layout = scales_layout(&output, &scale, 1, scheme);
 
@@ -287,7 +288,7 @@ fn quantize_native<R: Runtime>(
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
                     scales_layout,
-                    [input_dtype.into(), scale_dtype.into(), quant_type.into()],
+                    [input_dtype.into(), scale_dtype.into(), quant_dtype.into()],
                 )
             }
         }
@@ -305,8 +306,8 @@ fn quantize_packed<R: Runtime>(
     scale: TensorBinding<R>,
     out_scale: TensorBinding<R>,
     output: TensorBinding<R>,
-    dtype_input: ElemType,
-    dtype_param: ElemType,
+    input_dtype: ElemType,
+    scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
 
@@ -329,7 +330,7 @@ fn quantize_packed<R: Runtime>(
     let num_quants = scheme.num_quants();
     let input = if !can_vectorize && num_elems >= 2048 {
         can_vectorize = true;
-        into_contiguous(client, input, dtype_input.into()).binding()
+        into_contiguous(client, input, input_dtype.into()).binding()
     } else {
         input
     };
@@ -342,10 +343,12 @@ fn quantize_packed<R: Runtime>(
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
 
+    let output_size = quant_size_bytes(scheme);
+
     let address_type = input
-        .required_address_type(dtype_input.size())
-        .max(scale.required_address_type(dtype_input.size()))
-        .max(output.required_address_type(size_of::<u32>()));
+        .required_address_type(input_dtype.size())
+        .max(scale.required_address_type(scale_dtype.size()))
+        .max(output.required_address_type(output_size));
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
 
@@ -361,13 +364,13 @@ fn quantize_packed<R: Runtime>(
             linear_view(input),
             // scale is computed based on input float dtype, but stored based on qparams precision
             scales_view(output.clone(), scale, 1, scheme),
-            InputScalar::new(range_min, dtype_input),
-            InputScalar::new(range_max, dtype_input),
+            InputScalar::new(range_min, input_dtype),
+            InputScalar::new(range_max, input_dtype),
             linear_view(output.clone()),
             scales_view(output, out_scale, 1, scheme),
             scales_layout,
             *scheme,
-            [dtype_input.into(), dtype_param.into()],
+            [input_dtype.into(), scale_dtype.into()],
         )
     };
 
