@@ -14,6 +14,7 @@ mod advanced;
 mod alt_shapes;
 mod gemm;
 mod layouts;
+mod mosaic;
 mod quantization;
 mod tiling_scheme;
 

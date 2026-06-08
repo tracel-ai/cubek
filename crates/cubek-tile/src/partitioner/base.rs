@@ -1,63 +1,137 @@
-//! The [`Partitioner`]: a descent strategy for one level of the space.
+//! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
+//! one decomposition level plus the partitioner for the subspaces it produces.
 
-use cubecl::prelude::*;
+use crate::{Axis, ByAxis};
 
-use crate::{Axis, ByAxis, Grid};
+use super::{Distribution, WalkOrder};
 
-use super::{Distribution, Walk, WalkOrder};
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Schedule {
+    Direct,
+    Staged,
+    /// Staged with two buffers, prefetching the next sub-tile while computing.
+    DoubleBuffered,
+}
 
-/// A descent strategy for one level of the space: the split (per-axis sub-tile
-/// size + [`Distribution`]) and the [`WalkOrder`]. Comptime fields answered as
-/// methods.
-#[derive(CubeType, CubeLaunch, Clone, PartialEq, Eq, Hash, Debug)]
-#[expand(derive(Clone))]
-pub struct Partitioner {
-    #[cube(comptime)]
+/// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
+/// hands [`next`](Partitioner::next) down.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Partitioner {
+    Final,
+    Level(Box<Level>),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Level {
     sub_tile: ByAxis<usize>,
-    #[cube(comptime)]
     dists: ByAxis<Distribution>,
-    #[cube(comptime)]
     order: WalkOrder,
+    schedule: Schedule,
+    next: Partitioner,
 }
 
 impl Partitioner {
-    /// A partitioner with the given per-axis split and walk [`order`](WalkOrder).
-    /// Concrete orders are constructed via the conveniences in
-    /// [`walk_order`](super::walk_order) (`row_major`, `reversed`).
-    pub fn new(sub_tile: ByAxis<usize>, dists: ByAxis<Distribution>, order: WalkOrder) -> Self {
-        Partitioner {
+    pub fn is_final(&self) -> bool {
+        matches!(self, Partitioner::Final)
+    }
+
+    pub fn next(&self) -> &Partitioner {
+        &self.level().next
+    }
+
+    pub fn edge(&self, axis: Axis) -> usize {
+        self.level().sub_tile.get(axis)
+    }
+
+    pub fn distribution(&self, axis: Axis) -> Distribution {
+        self.level().dists.get(axis)
+    }
+
+    pub fn order(&self) -> WalkOrder {
+        self.level().order
+    }
+
+    pub fn schedule(&self) -> Schedule {
+        self.level().schedule
+    }
+
+    pub(crate) fn append(self, tail: Partitioner) -> Partitioner {
+        match self {
+            Partitioner::Final => tail,
+            Partitioner::Level(level) => {
+                let Level {
+                    sub_tile,
+                    dists,
+                    order,
+                    schedule,
+                    next,
+                } = *level;
+                Partitioner::Level(Box::new(Level {
+                    sub_tile,
+                    dists,
+                    order,
+                    schedule,
+                    next: next.append(tail),
+                }))
+            }
+        }
+    }
+
+    /// Panics on [`Final`](Partitioner::Final), which carries no level.
+    fn level(&self) -> &Level {
+        match self {
+            Partitioner::Level(level) => level,
+            Partitioner::Final => {
+                panic!(
+                    "Partitioner: the final partitioner carries no level (check `is_final` first)"
+                )
+            }
+        }
+    }
+}
+
+/// A [`Partitioner`] with its split and walk order set but no [`Schedule`] yet.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct PartitionerBuilder {
+    sub_tile: ByAxis<usize>,
+    dists: ByAxis<Distribution>,
+    order: WalkOrder,
+}
+
+impl PartitionerBuilder {
+    pub(super) fn new(
+        sub_tile: ByAxis<usize>,
+        dists: ByAxis<Distribution>,
+        order: WalkOrder,
+    ) -> Self {
+        PartitionerBuilder {
             sub_tile,
             dists,
             order,
         }
     }
 
-    /// The launch arg for carrying this partitioner on a tile.
-    pub fn launch<R: Runtime>(&self) -> PartitionerLaunch<R> {
-        PartitionerLaunch::new(self.sub_tile.clone(), self.dists.clone(), self.order)
-    }
-}
-
-#[cube]
-impl Partitioner {
-    /// Sub-tile edge along an axis — comptime, since it sizes shared memory.
-    pub fn sub_tile_edge(&self, #[comptime] axis: Axis) -> comptime_type!(usize) {
-        comptime!(self.sub_tile.get(axis))
-    }
-
-    /// How an axis is distributed.
-    pub fn distribution(&self, #[comptime] axis: Axis) -> comptime_type!(Distribution) {
-        comptime!(self.dists.get(axis))
+    /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
+    /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
+    fn finish(self, schedule: Schedule) -> Partitioner {
+        Partitioner::Level(Box::new(Level {
+            sub_tile: self.sub_tile,
+            dists: self.dists,
+            order: self.order,
+            schedule,
+            next: Partitioner::Final,
+        }))
     }
 
-    /// The order this partitioner visits its steps in.
-    pub fn order(&self) -> comptime_type!(WalkOrder) {
-        comptime!(self.order)
+    pub fn staged(self) -> Partitioner {
+        self.finish(Schedule::Staged)
     }
 
-    /// The [`Walk`] over `grid`. The caller supplies the grid; the partitioner
-    /// owns only the order it's walked in.
-    pub fn walk(&self, grid: Grid) -> Walk {
-        Walk::new(grid, self.clone())
+    pub fn direct(self) -> Partitioner {
+        self.finish(Schedule::Direct)
+    }
+
+    pub fn double_buffered(self) -> Partitioner {
+        self.finish(Schedule::DoubleBuffered)
     }
 }
