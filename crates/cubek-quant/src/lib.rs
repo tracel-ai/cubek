@@ -31,8 +31,14 @@ pub(crate) mod utils {
             );
         }
     }
-}
 
-pub fn quant_size_bytes(scheme: &scheme::QuantScheme) -> usize {
-    scheme.size_bits_stored() / 8
+    pub(crate) fn quant_size_bytes(scheme: &QuantScheme) -> usize {
+        debug_assert!(
+            scheme.size_bits_stored() % 8 == 0,
+            "size_bits_stored must be divisible by 8, got {} -> {}",
+            scheme.size_bits_stored(),
+            scheme.size_bits_stored() / 8
+        );
+        scheme.size_bits_stored() / 8
+    }
 }

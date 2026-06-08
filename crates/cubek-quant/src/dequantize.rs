@@ -4,9 +4,9 @@ use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
+use crate::utils::quant_size_bytes;
 use crate::{
     layout::{ScalesView, scales_view},
-    quant_size_bytes,
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
 };
 use cubecl::std::tensor::{
@@ -171,10 +171,10 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeric, NQ: Size>(
-    input: LinearView<'_, Vector<Q, NQ>>,
+fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
+    input: LinearView<'_, Vector<Q, N>>,
     scale: ScalesView<'_, FS>,
-    mut output: LinearViewMut<'_, Vector<F, NF>>,
+    mut output: LinearViewMut<'_, Vector<F, N>>,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {
@@ -187,7 +187,7 @@ fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeri
 
     output.write(
         ABSOLUTE_POS,
-        dequantize_symmetric::<F, FS, NF>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
+        dequantize_symmetric::<F, FS, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
     );
 }
 
@@ -195,13 +195,13 @@ fn dequantize_symmetric_native_kernel<F: Float, NF: Size, FS: Numeric, Q: Numeri
 /// Convert the tensor back to a higher precision data type.
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
-    values: TensorBinding<R>,
+    input: TensorBinding<R>,
     output: TensorBinding<R>,
-    params: TensorBinding<R>,
+    scale: TensorBinding<R>,
     scheme: &QuantScheme,
-    input_dtype: StorageType,
+    output_dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let dtype_scale: StorageType = ElemType::from_quant_param(scheme.param).into();
+    let scale_dtype: StorageType = ElemType::from_quant_param(scheme.param).into();
 
     match scheme {
         QuantScheme {
@@ -209,12 +209,12 @@ pub fn launch_ref<R: Runtime>(
             ..
         } => dequantize_packed(
             client,
-            values,
+            input,
             *scheme,
-            params,
+            scale,
             output,
-            input_dtype,
-            dtype_scale,
+            output_dtype,
+            scale_dtype,
         ),
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
@@ -235,12 +235,12 @@ pub fn launch_ref<R: Runtime>(
 
             dequantize_native(
                 client,
-                values,
+                input,
                 *scheme,
-                params,
+                scale,
                 output,
-                input_dtype,
-                dtype_scale,
+                output_dtype,
+                scale_dtype,
             )
         }
         QuantScheme {
@@ -325,12 +325,15 @@ fn dequantize_native<R: Runtime>(
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
     let input_dtype = ElemType::from_quant_value(scheme.value);
+
+    let candidates = client.io_optimized_vector_sizes(input_dtype.size().max(output_dtype.size()));
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(input_dtype.size()),
+        candidates,
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
+
     let working_units = num_elems / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
@@ -353,7 +356,6 @@ fn dequantize_native<R: Runtime>(
                     cube_count,
                     cube_dim,
                     address_type,
-                    vector_size,
                     vector_size,
                     linear_view(input.clone()),
                     scales_view(input, scale, 1, &scheme),

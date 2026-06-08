@@ -12,8 +12,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    quant_size_bytes,
-    utils::check_block_size_compat,
+    utils::{check_block_size_compat, quant_size_bytes},
 };
 use crate::{
     layout::{ScalesView, scales_layout},
@@ -192,14 +191,21 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
-    let param_elem = ElemType::from_quant_param(scheme.param);
+    let scale_dtype = ElemType::from_quant_param(scheme.param);
 
     match scheme {
         QuantScheme {
             store: QuantStore::PackedU32(_),
             ..
         } => quantize_packed(
-            client, input, scheme, scale, out_scale, output, input_elem, param_elem,
+            client,
+            input,
+            scheme,
+            scale,
+            out_scale,
+            output,
+            input_elem,
+            scale_dtype,
         ),
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
@@ -219,7 +225,14 @@ pub fn launch_ref<R: Runtime>(
             }
 
             quantize_native(
-                client, input, scheme, scale, out_scale, output, input_elem, param_elem,
+                client,
+                input,
+                scheme,
+                scale,
+                out_scale,
+                output,
+                input_elem,
+                scale_dtype,
             )
         }
         QuantScheme {
@@ -244,12 +257,15 @@ fn quantize_native<R: Runtime>(
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
+    let output_dtype = ElemType::from_quant_value(scheme.value);
+
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
     );
+
     let working_units = num_elems / vector_size as usize;
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
@@ -264,12 +280,11 @@ fn quantize_native<R: Runtime>(
         } => {
             // We could use vector_size = block_size if it's in the supported vector sizes.. but let's keep it simple
             check_block_size_compat(scheme, vector_size as usize);
-            let quant_dtype = ElemType::from_quant_value(scheme.value);
 
             let address_type = input
                 .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))
-                .max(output.required_address_type(quant_dtype.size()));
+                .max(output.required_address_type(output_dtype.size()));
 
             let scales_layout = scales_layout(&output, &scale, 1, scheme);
 
@@ -288,7 +303,7 @@ fn quantize_native<R: Runtime>(
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
                     scales_layout,
-                    [input_dtype.into(), scale_dtype.into(), quant_dtype.into()],
+                    [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
                 )
             }
         }
