@@ -1,6 +1,6 @@
 use super::{
-    ArgMax, ArgMin, ArgTopK, Max, MaxAbs, Mean, Min, Prod, ReduceFamily, ReduceInstruction,
-    ReduceRequirements, SharedAccumulator, Sum,
+    All, Any, ArgMax, ArgMin, ArgTopK, Max, MaxAbs, Mean, Min, Prod, ReduceFamily,
+    ReduceInstruction, ReduceRequirements, SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
     Accumulator, AccumulatorFormat, Item, SharedAccumulatorKind, TopK,
@@ -30,6 +30,8 @@ pub enum ReduceOperation {
     Min(Min),
     ArgTopK(ArgTopK),
     TopK(TopK),
+    Any(Any),
+    All(All),
 }
 
 #[derive_cube_comptime]
@@ -45,6 +47,8 @@ pub enum ReduceOperationConfig {
     Min,
     ArgTopK(usize),
     TopK(usize),
+    Any,
+    All,
 }
 
 impl ReduceOperationConfig {
@@ -55,10 +59,13 @@ impl ReduceOperationConfig {
             | ReduceOperationConfig::Prod
             | ReduceOperationConfig::Mean => {}
             // No benefit to mixed precision accumulation.
+            // `Any` / `All` keep the accumulator narrow (it only ever holds 0/1 flags).
             ReduceOperationConfig::MaxAbs
             | ReduceOperationConfig::Max
             | ReduceOperationConfig::TopK(_)
-            | ReduceOperationConfig::Min => {
+            | ReduceOperationConfig::Min
+            | ReduceOperationConfig::Any
+            | ReduceOperationConfig::All => {
                 return ReduceDtypes {
                     input: input.into(),
                     output: input.into(),
@@ -223,6 +230,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::requirements(topk),
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::requirements(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::requirements(min),
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::requirements(any),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::requirements(all),
         }
     }
 
@@ -246,6 +255,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::accumulator_format(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::accumulator_format(min),
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::accumulator_format(topk),
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::accumulator_format(any),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::accumulator_format(all),
         }
     }
 
@@ -261,6 +272,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperationConfig::Max => ReduceOperation::new_Max(Max {}),
             ReduceOperationConfig::Min => ReduceOperation::new_Min(Min {}),
             ReduceOperationConfig::TopK(k) => ReduceOperation::new_TopK(TopK { k }),
+            ReduceOperationConfig::Any => ReduceOperation::new_Any(Any {}),
+            ReduceOperationConfig::All => ReduceOperation::new_All(All {}),
         }
     }
 
@@ -276,6 +289,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::null_input(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::null_input(min),
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_input(topk),
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::null_input(any),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::null_input(all),
         }
     }
 
@@ -299,6 +314,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::null_accumulator(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::null_accumulator(min),
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_accumulator(topk),
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::null_accumulator(any),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::null_accumulator(all),
         }
     }
 
@@ -339,6 +356,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::reduce(topk, accumulator, item, reduce_step)
             }
+            ReduceOperation::Any(any) => {
+                <Any as ReduceInstruction<P>>::reduce(any, accumulator, item, reduce_step)
+            }
+            ReduceOperation::All(all) => {
+                <All as ReduceInstruction<P>>::reduce(all, accumulator, item, reduce_step)
+            }
         }
     }
 
@@ -374,6 +397,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::plane_reduce_inplace(topk, accumulator)
             }
+            ReduceOperation::Any(any) => {
+                <Any as ReduceInstruction<P>>::plane_reduce_inplace(any, accumulator)
+            }
+            ReduceOperation::All(all) => {
+                <All as ReduceInstruction<P>>::plane_reduce_inplace(all, accumulator)
+            }
         }
     }
 
@@ -408,6 +437,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::fuse_accumulators(topk, accumulator, other)
+            }
+            ReduceOperation::Any(any) => {
+                <Any as ReduceInstruction<P>>::fuse_accumulators(any, accumulator, other)
+            }
+            ReduceOperation::All(all) => {
+                <All as ReduceInstruction<P>>::fuse_accumulators(all, accumulator, other)
             }
         }
     }
@@ -482,6 +517,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     shape_axis_reduce,
                 )
             }
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_parallel::<Out>(
+                any,
+                accumulator,
+                shape_axis_reduce,
+            ),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_parallel::<Out>(
+                all,
+                accumulator,
+                shape_axis_reduce,
+            ),
         }
     }
 
@@ -548,6 +593,39 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     accumulator,
                     shape_axis_reduce,
                 )
+            }
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_perpendicular::<
+                Out,
+            >(any, accumulator, shape_axis_reduce),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_perpendicular::<
+                Out,
+            >(all, accumulator, shape_axis_reduce),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The key benefit of `Any` / `All` over the sum-based emulation is that the
+    /// dynamic dispatch path keeps `accumulation = input`: the accumulator only
+    /// ever holds 0/1 flags, so there is no need to widen (and no overflow) the
+    /// way `Sum` / `Mean` do. Check the narrow accumulator for a narrow float
+    /// (f16, the type that motivated this work) and an integer input.
+    #[test]
+    fn any_all_precision_keeps_input_dtype() {
+        let inputs = [ElemType::Float(FloatKind::F16), ElemType::Int(IntKind::I32)];
+        for config in [ReduceOperationConfig::Any, ReduceOperationConfig::All] {
+            for input in inputs {
+                let dtypes = config.precision(input, None);
+                let expected: StorageType = input.into();
+                assert_eq!(dtypes.input, expected, "input for {input:?}");
+                assert_eq!(dtypes.output, expected, "output for {input:?}");
+                assert_eq!(
+                    dtypes.accumulation, expected,
+                    "accumulation must stay narrow for {input:?}"
+                );
             }
         }
     }

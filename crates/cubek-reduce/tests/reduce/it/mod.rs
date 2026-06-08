@@ -1,5 +1,7 @@
 pub mod test_case;
 
+mod logical;
+
 macro_rules! testgen_reduce {
     (
         dtype: $dtype:ty,
