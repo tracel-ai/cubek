@@ -12,7 +12,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    utils::{check_block_size_compat, quant_size_bytes},
+    utils::{check_block_size_compat, packed_storage_elem},
 };
 use crate::{
     layout::{ScalesView, scales_layout},
@@ -130,16 +130,16 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
+fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
     range_min: InputScalar,
     range_max: InputScalar,
-    mut output: LinearViewMut<'_, u32>,
+    mut output: LinearViewMut<'_, QS>,
     out_scale: ScalesViewMut<'_, FS>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
-    #[define(F, FS)] _dtypes: [StorageType; 2],
+    #[define(F, FS, QS)] _dtypes: [StorageType; 3],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -152,7 +152,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
     if input.vector_size().comptime() == num_quants {
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, N, FS, u32>(
+            quantize_packed_value::<F, N, FS, QS>(
                 input.read(ABSOLUTE_POS),
                 scale,
                 range_min.get::<F>(),
@@ -170,7 +170,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric>(
         }
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, NQ, FS, u32>(
+            quantize_packed_value::<F, NQ, FS, QS>(
                 values,
                 scale,
                 range_min.get::<F>(),
@@ -259,8 +259,9 @@ fn quantize_native<R: Runtime>(
     let num_elems: usize = input.shape.iter().product();
     let output_dtype = ElemType::from_quant_value(scheme.value);
 
+    let candidates = client.io_optimized_vector_sizes(input_dtype.size().max(output_dtype.size()));
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(input_dtype.size()),
+        candidates,
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -357,13 +358,12 @@ fn quantize_packed<R: Runtime>(
     let cube_dim = CubeDim::new(client, working_units);
     let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
     let (range_min, range_max) = scheme.value.range();
-
-    let output_size = quant_size_bytes(scheme);
+    let output_dtype = packed_storage_elem(scheme);
 
     let address_type = input
         .required_address_type(input_dtype.size())
         .max(scale.required_address_type(scale_dtype.size()))
-        .max(output.required_address_type(output_size));
+        .max(output.required_address_type(output_dtype.size()));
 
     check_block_size_compat(scheme, num_quants); // 32 / 8 = 4
 
@@ -385,7 +385,7 @@ fn quantize_packed<R: Runtime>(
             scales_view(output, out_scale, 1, scheme),
             scales_layout,
             *scheme,
-            [input_dtype.into(), scale_dtype.into()],
+            [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
         )
     };
 

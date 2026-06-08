@@ -4,10 +4,10 @@ use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
-use crate::utils::quant_size_bytes;
 use crate::{
     layout::{ScalesView, scales_view},
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
+    utils::packed_storage_elem,
 };
 use cubecl::std::tensor::{
     View,
@@ -139,12 +139,12 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>(
-    input: LinearView<'_, Vector<u32, NQ>>,
+fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, NQ: Size>(
+    input: LinearView<'_, Vector<QS, NQ>>,
     scales: ScalesView<'_, FS>,
     mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[comptime] scheme: QuantScheme,
-    #[define(F, FS)] _dtypes: [StorageType; 2],
+    #[define(F, FS, QS)] _dtypes: [StorageType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -160,9 +160,8 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, NQ: Size>
     let values = input.read(ABSOLUTE_POS);
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
-    let out = dequantize_symmetric_packed_value::<F, NF, FS, u32, NQ>(
-        values, &scales, packed_pos, scheme,
-    );
+    let out =
+        dequantize_symmetric_packed_value::<F, NF, FS, QS, NQ>(values, &scales, packed_pos, scheme);
 
     #[unroll]
     for i in 0..vector_size_in {
@@ -263,10 +262,10 @@ fn dequantize_packed<R: Runtime>(
     scale_dtype: StorageType,
 ) -> Result<(), LaunchError> {
     let num_elems_input: usize = input.shape.iter().product();
-    let input_size = quant_size_bytes(&scheme);
+    let input_dtype = packed_storage_elem(&scheme);
 
     let mut vector_size_in = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(input_size),
+        client.io_optimized_vector_sizes(input_dtype.size()),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -283,7 +282,7 @@ fn dequantize_packed<R: Runtime>(
     let cube_dim = CubeDim::new(client, num_elems);
     let cube_count = calculate_cube_count_elemwise(client, num_elems, cube_dim);
     let address_type = input
-        .required_address_type(input_size)
+        .required_address_type(input_dtype.size())
         .max(scale.required_address_type(scale_dtype.size()))
         .max(output.required_address_type(output_dtype.size()));
 
@@ -305,7 +304,7 @@ fn dequantize_packed<R: Runtime>(
                 scales_view(input, scale, 1, &scheme),
                 linear_view(output),
                 scheme,
-                [output_dtype, scale_dtype],
+                [output_dtype, scale_dtype, input_dtype.into()],
             )
         },
         QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
