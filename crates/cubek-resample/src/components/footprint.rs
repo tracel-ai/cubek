@@ -1,7 +1,4 @@
-use crate::{
-    components::kernel::kernel_num_taps,
-    definition::{Placement, Resample},
-};
+use crate::definition::{Placement, Resample};
 
 use cubecl::prelude::*;
 
@@ -10,16 +7,16 @@ use cubecl::prelude::*;
 pub struct Footprint<C: Float> {
     /// The first tap index.
     pub start_tap: isize,
-    /// The radius of the kernel.
-    pub radius: usize,
-    /// The number of taps.
-    pub num_taps: usize,
     /// The fractional part of the center.
     pub frac: C,
 }
 
 #[cube]
-pub fn get_footprint<C: Float>(#[comptime] config: Resample, pos: usize) -> Footprint<C> {
+pub fn get_footprint<C: Float>(
+    #[comptime] config: &Resample,
+    radius: usize,
+    pos: usize,
+) -> Footprint<C> {
     let (tap_scale, tap_offset) = match config.placement {
         Placement::Continuous { scale, offset } => (scale, offset),
         Placement::Windowed { step, pad } => (1.0 / (step as f32), -(pad as f32)),
@@ -29,15 +26,7 @@ pub fn get_footprint<C: Float>(#[comptime] config: Resample, pos: usize) -> Foot
     let center_floored = center.floor();
     let frac = center - center_floored;
 
-    let num_taps = kernel_num_taps(config.kernel);
-    let radius = (num_taps + 1) / 2;
-
     let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
 
-    Footprint::<C> {
-        start_tap,
-        radius,
-        num_taps,
-        frac,
-    }
+    Footprint::<C> { start_tap, frac }
 }

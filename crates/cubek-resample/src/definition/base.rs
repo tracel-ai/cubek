@@ -1,9 +1,12 @@
+use cubecl::prelude::Sequence;
+
 /// Resampling operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Resample {
     pub kernel: Kernel,
     pub placement: Placement,
     pub semiring: Semiring,
+    pub reduce_axes: Sequence<usize>,
 }
 
 /// The semiring, it determines how the values are combined.

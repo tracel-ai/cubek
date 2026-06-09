@@ -11,8 +11,7 @@ pub fn resample<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     config: Resample,
-    spatial_axis: usize,
     dtype: StorageType,
 ) {
-    launch::resample_launch(client, input, output, config, spatial_axis, dtype);
+    launch::resample_launch(client, input, output, config, dtype);
 }

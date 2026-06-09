@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 
 /// Semiring identity element.
 #[cube]
-pub fn semiring_identity<C: Float>(#[comptime] s: Semiring) -> C {
+pub fn semiring_identity<C: Float>(#[comptime] s: &Semiring) -> C {
     match s {
         Semiring::Linear => C::new(0.0),
         Semiring::Tropical => C::min_value(),
@@ -13,7 +13,7 @@ pub fn semiring_identity<C: Float>(#[comptime] s: Semiring) -> C {
 
 /// Combine a value with its tap weight, per the semiring.
 #[cube]
-pub fn semiring_combine<C: Float>(#[comptime] s: Semiring, value: C, weight: C) -> C {
+pub fn semiring_combine<C: Float>(#[comptime] s: &Semiring, value: C, weight: C) -> C {
     match s {
         Semiring::Linear => value * weight,
         Semiring::Tropical => value + weight,
@@ -23,7 +23,7 @@ pub fn semiring_combine<C: Float>(#[comptime] s: Semiring, value: C, weight: C) 
 
 /// Reduce: fold a new combined value into the accumulator.
 #[cube]
-pub fn semiring_reduce<C: Float>(#[comptime] s: Semiring, acc: C, combined: C) -> C {
+pub fn semiring_reduce<C: Float>(#[comptime] s: &Semiring, acc: C, combined: C) -> C {
     match s {
         Semiring::Linear => acc + combined,
         Semiring::Tropical => C::max(acc, combined),

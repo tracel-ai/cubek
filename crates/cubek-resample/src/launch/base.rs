@@ -19,7 +19,6 @@ pub fn resample_launch<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     config: Resample,
-    spatial_axis: usize,
     dtype: StorageType,
 ) {
     let cube_count = CubeCount::Static(1, 1, 1);
@@ -41,7 +40,6 @@ pub fn resample_launch<R: Runtime>(
             out_shape,
             working_units,
             config,
-            spatial_axis,
             dtype,
         );
     }

@@ -1,6 +1,6 @@
 use crate::components::{
-    footprint::{Footprint, get_footprint},
-    kernel::kernel_weight,
+    footprint::get_footprint,
+    kernel::{kernel_num_taps, kernel_weight},
     semiring::{semiring_combine, semiring_identity, semiring_reduce},
 };
 use crate::definition::Resample;
@@ -20,7 +20,6 @@ pub fn resample_kernel<C: Float>(
     output_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
     #[comptime] config: Resample,
-    #[comptime] spatial_axis: usize,
     #[define(C)] _dtype: StorageType,
 ) {
     let index = ABSOLUTE_POS as usize;
@@ -31,7 +30,7 @@ pub fn resample_kernel<C: Float>(
 
     let out_coord = get_coord(index, &output_shape);
 
-    resample_coord::<C>(input, output, &out_coord, config, spatial_axis);
+    resample_coord::<C>(input, output, &out_coord, config);
 }
 
 /// Convert a linear index to a coordinate.
@@ -57,15 +56,10 @@ pub fn resample_coord<C: Float>(
     output: &mut ViewMut<'_, C, CoordsDyn>,
     out_coord: &CoordsDyn,
     #[comptime] config: Resample,
-    #[comptime] spatial_axis: usize,
 ) {
-    let out_pos = out_coord[spatial_axis] as usize;
+    let mut acc = semiring_identity::<C>(&config.semiring);
 
-    let footprint = get_footprint::<C>(config, out_pos);
-
-    let mut acc = semiring_identity::<C>(config.semiring);
-
-    accumulate_taps::<C>(input, out_coord, footprint, &mut acc, config, spatial_axis);
+    accumulate_taps::<C>(input, out_coord, &mut acc, config);
 
     output.write(out_coord.clone(), acc);
 }
@@ -75,26 +69,44 @@ pub fn resample_coord<C: Float>(
 fn accumulate_taps<C: Float>(
     input: &View<'_, C, CoordsDyn>,
     out_coord: &CoordsDyn,
-    footprint: Footprint<C>,
     acc: &mut C,
     #[comptime] config: Resample,
-    #[comptime] spatial_axis: usize,
 ) {
-    for i in 0..footprint.num_taps {
-        let tap_pos = footprint.start_tap + i as isize;
+    let num_taps = kernel_num_taps(&config.kernel);
+    let radius = (num_taps + 1) / 2;
+    let num_axes = config.reduce_axes.len();
 
-        let x = C::cast_from(i as isize - footprint.radius as isize) - footprint.frac;
-        let weight = kernel_weight::<C>(config.kernel, x);
-
+    #[unroll]
+    for i in 0..num_taps {
+        let flat_idx = RuntimeCell::<usize>::new(i);
+        let mut weight_nd = C::cast_from(1.0);
         let mut in_coord = out_coord.clone();
-        in_coord[spatial_axis] = tap_pos as u32;
+
+        #[unroll]
+        for dim in 0..num_axes {
+            let axis = config.reduce_axes.index(dim);
+
+            let out_pos = out_coord[*axis] as usize;
+
+            let footprint = get_footprint::<C>(&config, radius, out_pos);
+
+            let tap_1d_idx = flat_idx.read() % (num_taps);
+            flat_idx.store(flat_idx.read() / (num_taps));
+
+            let tap_pos = footprint.start_tap + tap_1d_idx as isize;
+            let x = C::cast_from(tap_1d_idx as isize - radius as isize) - footprint.frac;
+            let weight_1d = kernel_weight::<C>(&config.kernel, x);
+            weight_nd *= weight_1d;
+
+            in_coord[*axis] = tap_pos as u32;
+        }
 
         if input.is_in_bounds(in_coord.clone()) {
             let value = input.read(in_coord);
 
-            let combined = semiring_combine::<C>(config.semiring, value, weight);
+            let combined = semiring_combine::<C>(&config.semiring, value, weight_nd);
 
-            *acc = semiring_reduce::<C>(config.semiring, *acc, combined);
+            *acc = semiring_reduce::<C>(&config.semiring, *acc, combined);
         }
     }
 }

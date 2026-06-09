@@ -38,7 +38,6 @@ pub fn run_test(
     output_shape: Vec<usize>,
     expected_data: Vec<f32>,
     config: Resample,
-    spatial_axis: usize,
 ) {
     let input_handle = TestInput::builder(client.clone(), input_shape)
         .dtype(f32::as_type_native_unchecked().storage_type())
@@ -58,7 +57,6 @@ pub fn run_test(
         input,
         output,
         config,
-        spatial_axis,
         f32::as_type_native_unchecked().storage_type(),
     );
 
