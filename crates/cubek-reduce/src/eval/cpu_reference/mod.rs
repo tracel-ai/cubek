@@ -4,6 +4,8 @@
 //! bits from `(seed, shape, axis, config)` so the two `HostData`s they return
 //! are directly comparable for the same `axis`/`config`.
 
+mod all;
+mod any;
 mod argmax;
 mod argmin;
 mod argtopk;
@@ -15,6 +17,8 @@ mod prod;
 mod sum;
 mod topk;
 
+pub use all::reference_all;
+pub use any::reference_any;
 pub use argmax::reference_argmax;
 pub use argmin::reference_argmin;
 pub use argtopk::reference_argtopk;
@@ -140,6 +144,8 @@ fn reference_for_config(
         ReduceOperationConfig::ArgMin => reference_argmin(input, axis, progress),
         ReduceOperationConfig::ArgTopK(k) => reference_argtopk(input, axis, k, progress),
         ReduceOperationConfig::TopK(k) => reference_topk(input, axis, k, progress),
+        ReduceOperationConfig::Any => reference_any(input, axis, progress),
+        ReduceOperationConfig::All => reference_all(input, axis, progress),
     }
 }
 

@@ -83,6 +83,16 @@ pub fn test_max_abs() {
     test_case().test_max_abs();
 }
 
+#[test]
+pub fn test_any() {
+    test_case().test_any();
+}
+
+#[test]
+pub fn test_all() {
+    test_case().test_all();
+}
+
 fn test_case() -> TestCase {
     TestCase::new::<TestDType>(test_shape(), test_strides(), test_axis(), test_strategy())
 }

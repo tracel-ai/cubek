@@ -1,6 +1,6 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
-    definition::{InterpolateMode, InterpolateOptions, NearestMode},
+    definition::{InterpolateMode, InterpolateOptions, NearestMode, TileSize},
     launch::InterpolateStrategy,
     routines::{
         BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
@@ -12,7 +12,7 @@ use super::{make_problem, run_interpolate_global_test};
 
 const NEAREST_TOLERANCE: f32 = 0.;
 
-const TILE_TARGET_ASPECT_RATIO: f32 = 1.0;
+const TILE_SIZE: TileSize = TileSize::new(16, 16);
 
 #[test]
 fn test_interpolate_nearest_identity() {
@@ -30,7 +30,7 @@ fn test_interpolate_nearest_identity() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -53,7 +53,7 @@ fn test_interpolate_nearest_exact_identity() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -61,7 +61,7 @@ fn test_interpolate_nearest_exact_identity() {
 }
 
 #[test]
-fn test_interpolate_nearest_shared_memory_unsupported() {
+fn test_interpolate_nearest_shared_memory_identity() {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(
         [2, 4, 4, 16],
@@ -76,7 +76,53 @@ fn test_interpolate_nearest_shared_memory_unsupported() {
         problem,
         InterpolateStrategy::SharedMemoryStrategy(
             BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_floor_global_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 6, 1],
+        [1, 9],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_floor_shared_flattened_tall_tile() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 6, 1],
+        [1, 9],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        5678,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TileSize::new(256, 1),
             }),
         ),
         NEAREST_TOLERANCE,
@@ -99,7 +145,7 @@ fn test_interpolate_nearest_upsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -122,7 +168,30 @@ fn test_interpolate_nearest_exact_upsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_shared_memory_upsample() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [2, 4, 4, 2],
+        [10, 10],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        1234,
+        -10.0,
+        10.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -145,7 +214,7 @@ fn test_interpolate_nearest_downsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -168,7 +237,30 @@ fn test_interpolate_nearest_exact_downsample() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_shared_memory_downsample() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [2, 4, 4, 2],
+        [2, 2],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        91011,
+        -100.0,
+        100.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -191,7 +283,7 @@ fn test_interpolate_nearest_resize() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -214,7 +306,30 @@ fn test_interpolate_nearest_exact_resize() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_shared_memory_resize() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [2, 4, 4, 2],
+        [8, 16],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        25,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -238,7 +353,7 @@ fn test_interpolate_nearest_without_align_corners() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -262,7 +377,31 @@ fn test_interpolate_nearest_exact_without_align_corners() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_shared_memory_without_align_corners() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [2, 4, 4, 2],
+        [16, 16],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor))
+            .with_align_corners(false),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -10.0,
+        10.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -285,7 +424,7 @@ fn test_interpolate_nearest_precision() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,
@@ -308,7 +447,191 @@ fn test_interpolate_nearest_exact_precision() {
         problem,
         InterpolateStrategy::GlobalMemoryStrategy(
             BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
-                tile_target_aspect_ratio: TILE_TARGET_ASPECT_RATIO,
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_shared_memory_precision() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 255, 1, 1],
+        [510, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_high_channel_count() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 1, 4096],
+        [1, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_exact_high_channel_count() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 1, 4096],
+        [1, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_shared_memory_high_channel_count() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 1, 1, 4096],
+        [1, 1],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_floor_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_floor_shared_memory_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Floor)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_exact_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::GlobalMemoryStrategy(
+            BlueprintStrategy::<GlobalMemoryRoutine>::Inferred(GlobalMemoryStrategy {
+                tile_size: TILE_SIZE,
+            }),
+        ),
+        NEAREST_TOLERANCE,
+    );
+}
+
+#[test]
+fn test_interpolate_nearest_exact_shared_memory_bhwc_512() {
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(
+        [1, 512, 512, 1],
+        [1024, 1024],
+        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact)),
+    );
+    run_interpolate_global_test(
+        client,
+        122,
+        -1.0,
+        1.0,
+        problem,
+        InterpolateStrategy::SharedMemoryStrategy(
+            BlueprintStrategy::<SharedMemoryRoutine>::Inferred(SharedMemoryStrategy {
+                tile_size: TILE_SIZE,
             }),
         ),
         NEAREST_TOLERANCE,

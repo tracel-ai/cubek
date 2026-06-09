@@ -15,7 +15,8 @@ pub use cubecl_common::quant::scheme;
 
 #[cfg(feature = "kernels")]
 pub(crate) mod utils {
-    use crate::scheme::{QuantLevel, QuantScheme};
+    use crate::scheme::{QuantLevel, QuantScheme, QuantStore};
+    use cubecl::ir::{ElemType, UIntKind};
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
@@ -29,6 +30,13 @@ pub(crate) mod utils {
                 block_size.is_multiple_of(div),
                 "Block size must be divisible by {div}, got block_size={block_size}"
             );
+        }
+    }
+
+    pub(crate) fn packed_storage_elem(scheme: &QuantScheme) -> ElemType {
+        match scheme.store {
+            QuantStore::PackedU32(_) => ElemType::UInt(UIntKind::U32),
+            store => panic!("Unsupported packed storage {store:?}"),
         }
     }
 }

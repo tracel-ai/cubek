@@ -29,6 +29,7 @@ cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.1", default-featu
     "kernels",
 ], optional = true }
 cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.1", default-features = false }
+cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.1", default-features = false }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 
 bytemuck = { workspace = true }

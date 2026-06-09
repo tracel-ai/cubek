@@ -9,8 +9,8 @@ use cubecl::std::tensor::{
     TensorHandle,
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
-use cubecl::{TestRuntime, client::ComputeClient, zspace::Shape};
-use cubek_tile::Space;
+use cubecl::{TestRuntime, client::ComputeClient, prelude::TensorArg, zspace::Shape};
+use cubek_tile::{Space, Storage};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -50,6 +50,79 @@ impl TileInput {
                 levels: self.levels,
             },
         )
+    }
+
+    /// Launch arg for this tile's view vectorized with line size `vector_size`
+    /// along the innermost (contiguous) axis. Same buffer; only the metadata is
+    /// reinterpreted in line units (innermost shape ÷ `S`, every other stride
+    /// ÷ `S`), so a kernel reading `Vector<E, S>` lands on contiguous lines.
+    /// `vector_size == 1` is exactly [`view`](Self::view).
+    pub fn view_vectorized(&self, vector_size: usize) -> TiledViewLaunch<TestRuntime> {
+        let shape = self.handle.shape();
+        let strides = self.handle.strides();
+        let inner = shape.len() - 1;
+        let new_shape: Vec<usize> = shape
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| if i == inner { s / vector_size } else { s })
+            .collect();
+        let new_strides: Vec<usize> = strides
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| if i == inner { s } else { s / vector_size })
+            .collect();
+        let lined = TensorHandle::<TestRuntime>::new(
+            self.handle.handle.clone(),
+            new_shape,
+            new_strides,
+            self.handle.dtype,
+        );
+        TiledViewLaunch::new_tensor::<TiledViewLayout>(
+            lined.binding().into_tensor_arg(),
+            TileSpec {
+                start_axis: 0,
+                num_tiled: self.space.rank(),
+                levels: self.levels,
+            },
+        )
+    }
+
+    /// Launch arg for this tile's raw global buffer — a plain [`TensorArg`] over the
+    /// `[grid…, tile…]` buffer, optionally re-lined by `vector_size` along the inner
+    /// axis (so a kernel reading `Vector<E, S>` lands on contiguous lines).
+    /// `Tile::from_tensor` rebuilds the logical (tiled) view in-kernel, so no
+    /// `TiledViewLayout` is baked here. `vector_size == 1` is the plain buffer.
+    pub fn tensor_arg(&self, vector_size: usize) -> TensorArg<TestRuntime> {
+        if vector_size <= 1 {
+            return self.handle.clone().binding().into_tensor_arg();
+        }
+        let shape = self.handle.shape();
+        let strides = self.handle.strides();
+        let inner = shape.len() - 1;
+        let new_shape: Vec<usize> = shape
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| if i == inner { s / vector_size } else { s })
+            .collect();
+        let new_strides: Vec<usize> = strides
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| if i == inner { s } else { s / vector_size })
+            .collect();
+        TensorHandle::<TestRuntime>::new(
+            self.handle.handle.clone(),
+            new_shape,
+            new_strides,
+            self.handle.dtype,
+        )
+        .binding()
+        .into_tensor_arg()
+    }
+
+    /// The tensor's physical [`Storage`] — derived from the buffer's rank vs the
+    /// logical space's rank, so the launch never hand-writes tile levels.
+    pub fn storage(&self) -> Storage {
+        Storage::of(self.handle.shape().len(), self.space.rank())
     }
 
     /// The semantic space the tile lives in.

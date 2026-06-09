@@ -1,99 +1,194 @@
-//! The coordinate space a tile lives in. An operation's space is the union of
-//! its operands' spaces; the axes the output drops are the ones it contracts.
+//! The coordinate space a tile lives in. An operation's space is the merge of
+//! its operands' spaces; the axes the output drops are contracted.
 
 use cubecl::zspace::SmallVec;
 
+use crate::Partitioner;
+
 use super::{Axis, ByAxis, MAX_AXES};
 
-/// A coordinate space: every axis with its extent, ordered (the leaf and a
-/// `Point` read them positionally). A tile lives in its own space (matmul's
-/// `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over their
-/// [`union`](Space::union).
+/// Every axis with its extent, in canonical order. A tile lives in its own space
+/// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
+/// their [`merge`](Space::merge).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Space {
     extents: ByAxis<usize>,
+    partitioner: Partitioner,
 }
 
 impl Space {
-    /// Build from an ordered `(axis, extent)` list — the canonical axis order.
     pub fn new(extents: &[(Axis, usize)]) -> Self {
         Space {
             extents: ByAxis::new(extents),
+            partitioner: Partitioner::Final,
         }
     }
 
-    /// Extent (size) of the space along an axis.
+    /// Chain coarse-to-fine for multi-level tiling; each call appends to the end of
+    /// the chain (see [`Partitioner::append`]).
+    pub fn with_partitioner(mut self, partitioner: Partitioner) -> Self {
+        self.partitioner = self.partitioner.append(partitioner);
+        self
+    }
+
+    pub fn partitioner(&self) -> &Partitioner {
+        &self.partitioner
+    }
+
+    pub fn is_final(&self) -> bool {
+        self.partitioner.is_final()
+    }
+
     pub fn extent(&self, axis: Axis) -> usize {
         self.extents.get(axis)
     }
 
-    /// The axis at position `i` in canonical order.
+    pub fn extent_at(&self, i: usize) -> usize {
+        self.extent(self.axis_at(i))
+    }
+
     pub fn axis_at(&self, i: usize) -> Axis {
         self.extents.axis_at(i)
     }
 
-    /// The canonical-order position of `axis`.
     pub fn position(&self, axis: Axis) -> usize {
         self.extents.position(axis)
     }
 
-    /// The space's dimension (number of axes).
     pub fn rank(&self) -> usize {
         self.extents.len()
     }
 
-    /// Whether `axis` is one of this space's axes.
     pub fn contains(&self, axis: Axis) -> bool {
         self.extents.contains(axis)
     }
 
-    /// The smallest space containing every `part`: each axis carried by any part,
-    /// in first-appearance order. A shared axis must agree on extent across parts
-    /// (panics otherwise). E.g. `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
-    pub fn union(parts: &[&Space]) -> Space {
+    /// The smallest space containing every `part`, axes in first-appearance order. A
+    /// shared axis is broadcast-merged via [`merge_level`] (`n ∪ n = n`, `1 ∪ n = n`, else
+    /// conflict); an omitted axis broadcasts along all of it. E.g.
+    /// `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
+    pub fn merge(parts: &[&Space]) -> Space {
         let mut entries: SmallVec<[(Axis, usize); MAX_AXES]> = SmallVec::new();
+
         for part in parts {
-            let mut i = 0;
-            while i < part.rank() {
-                let axis = part.axis_at(i);
+            for axis in part.axes() {
                 let extent = part.extent(axis);
-                match entries.iter().find(|(a, _)| *a == axis) {
-                    Some((_, seen)) => assert!(
-                        *seen == extent,
-                        "Space::union: axis appears with conflicting extents"
-                    ),
+                match entries.iter_mut().find(|(a, _)| *a == axis) {
+                    Some(slot) => slot.1 = merge_level(slot.1, extent),
                     None => entries.push((axis, extent)),
                 }
-                i += 1;
             }
         }
+        // Operands of one operation share its partitioner, so the merge carries
+        // the first part that has one.
+        let partitioner = parts
+            .iter()
+            .map(|p| &p.partitioner)
+            .find(|p| !p.is_final())
+            .cloned()
+            .unwrap_or(Partitioner::Final);
+
         Space {
             extents: ByAxis::new(&entries),
+            partitioner,
         }
     }
 
-    /// The subspace over `axes` (in the given order), extents copied from self.
-    pub fn select(&self, axes: &[Axis]) -> Space {
-        Space::new(
-            &axes
-                .iter()
-                .map(|&a| (a, self.extent(a)))
-                .collect::<Vec<_>>(),
-        )
+    pub fn project(&self, axes: &[Axis]) -> Space {
+        let entries = axes
+            .iter()
+            .map(|&a| (a, self.extent(a)))
+            .collect::<Vec<_>>();
+        Space {
+            extents: ByAxis::new(&entries),
+            partitioner: self.partitioner.clone(),
+        }
     }
 
-    /// The axes in this space but not in `output` — those an operation contracts.
-    /// Matmul over `{M,N,K}` with output `{M,N}` contracts `{K}`.
+    /// Tiles along `axis`: `extent / sub-tile edge`.
+    pub fn count(&self, axis: Axis) -> usize {
+        self.extent(axis) / self.partitioner().edge(axis)
+    }
+
+    /// The axes in this space but not in `output`, i.e. those contracted.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
-        let mut contracted = SmallVec::new();
-        let mut i = 0;
-        while i < self.rank() {
-            let axis = self.axis_at(i);
-            if !output.contains(axis) {
-                contracted.push(axis);
-            }
-            i += 1;
+        self.axes().filter(|&axis| !output.contains(axis)).collect()
+    }
+
+    pub fn axes(&self) -> Axes<'_> {
+        Axes { space: self, i: 0 }
+    }
+
+    /// The child space one level down: every axis shrunk to its partitioner's sub-tile
+    /// edge, that level consumed. Position-free shape; the positions are the [`Walk`].
+    pub fn divide(&self) -> Space {
+        let entries = self
+            .axes()
+            .map(|axis| (axis, self.partitioner.edge(axis)))
+            .collect::<Vec<_>>();
+        Space {
+            extents: ByAxis::new(&entries),
+            partitioner: self.partitioner.next().clone(),
         }
-        contracted
+    }
+
+    /// Divide until no partitioner level is left. Its extents are the finest tile
+    /// shape, used to size the staging buffers and to read the final tile's `mr`/`nr`/`kc`.
+    pub fn final_space(&self) -> Space {
+        let mut space = self.clone();
+        while !space.is_final() {
+            space = space.divide();
+        }
+        space
+    }
+
+    pub fn tile_size(&self) -> usize {
+        self.axes().map(|axis| self.extent(axis)).product()
+    }
+}
+
+/// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal
+/// sizes agree, a `1` yields to the other, anything else conflicts.
+fn merge_level(a: usize, b: usize) -> usize {
+    match (a, b) {
+        (1, b) => b,
+        (a, 1) => a,
+        (a, b) if a == b => a,
+        _ => panic!("Space::merge: axis appears with conflicting extents"),
+    }
+}
+
+pub struct Axes<'a> {
+    space: &'a Space,
+    i: usize,
+}
+
+impl Iterator for Axes<'_> {
+    type Item = Axis;
+
+    fn next(&mut self) -> Option<Axis> {
+        if self.i < self.space.rank() {
+            let axis = self.space.axis_at(self.i);
+            self.i += 1;
+            Some(axis)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.space.rank() - self.i;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for Axes<'_> {}
+
+impl<'a> IntoIterator for &'a Space {
+    type Item = Axis;
+    type IntoIter = Axes<'a>;
+
+    fn into_iter(self) -> Axes<'a> {
+        self.axes()
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, InterpolateOptions, TileSize, is_flattened},
+    definition::{InterpolateForwardProblem, TileSize},
     routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
@@ -9,9 +9,7 @@ use cubecl::prelude::*;
 pub struct InterpolateLaunchSettings {
     pub cube_count: CubeCount,
     pub cube_dim: CubeDim,
-    pub tile_size: TileSize,
-    pub num_tiles_width: usize,
-    pub num_tiles_height: usize,
+    pub cubes_per_batch: usize,
     pub num_vectors: usize,
 }
 
@@ -34,73 +32,52 @@ pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
     ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError>;
 }
 
-pub fn compute_layout<R: Runtime>(
-    client: &ComputeClient<R>,
-    working_units: usize,
-    num_vectors: usize,
-    tile_target_aspect_ratio: f32,
-    options: InterpolateOptions,
-) -> (CubeDim, TileSize, usize) {
-    let cube_dim = CubeDim::new(client, working_units);
-
-    let total_dispatched_units = cube_dim.x as usize * cube_dim.y as usize * cube_dim.z as usize;
-
-    let tile_area = total_dispatched_units / num_vectors;
-
-    let tile_size = TileSize::new(tile_area, tile_target_aspect_ratio, options);
-
-    (cube_dim, tile_size, total_dispatched_units)
-}
-
 pub fn build_settings<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    options: InterpolateOptions,
     cube_dim: CubeDim,
     tile_size: TileSize,
+    is_flattened: bool,
     num_vectors: usize,
 ) -> InterpolateLaunchSettings {
-    let (num_tiles_width, num_tiles_height) = compute_number_of_tiles(problem, tile_size, options);
+    let cubes_per_batch = compute_cubes_per_batch(problem, tile_size, is_flattened);
 
-    let cube_count = compute_cube_count(client, problem, num_tiles_width, num_tiles_height);
+    let cube_count = compute_cube_count(client, problem, cubes_per_batch);
 
     InterpolateLaunchSettings {
         cube_count,
         cube_dim,
-        tile_size,
-        num_tiles_width,
-        num_tiles_height,
+        cubes_per_batch,
         num_vectors,
     }
 }
 
-fn compute_number_of_tiles(
+fn compute_cubes_per_batch(
     problem: &InterpolateForwardProblem,
     tile_size: TileSize,
-    options: InterpolateOptions,
-) -> (usize, usize) {
-    if is_flattened(options) {
-        let num_tiles = (problem.output_width * problem.output_height).div_ceil(tile_size.width());
-        // All tiles are arranged in a single row
-        (num_tiles, 1)
+    is_flattened: bool,
+) -> usize {
+    if is_flattened {
+        let total_pixels = problem.output_width * problem.output_height;
+
+        total_pixels.div_ceil(tile_size.area())
     } else {
-        (
-            problem.output_width.div_ceil(tile_size.width()),
-            problem.output_height.div_ceil(tile_size.height()),
-        )
+        let num_tiles_width = problem.output_width.div_ceil(tile_size.width());
+        let num_tiles_height = problem.output_height.div_ceil(tile_size.height());
+
+        num_tiles_width * num_tiles_height
     }
 }
 
 fn compute_cube_count<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &InterpolateForwardProblem,
-    num_tiles_width: usize,
-    num_tiles_height: usize,
+    cubes_per_batch: usize,
 ) -> CubeCount {
     let (max_cube_count_x, max_cube_count_y, max_cube_count_z) =
         client.properties().hardware.max_cube_count;
 
-    let total_cube_count = (num_tiles_width * num_tiles_height * problem.batch) as u32;
+    let total_cube_count = (cubes_per_batch * problem.batch) as u32;
 
     let cube_count_x = total_cube_count.min(max_cube_count_x);
 
