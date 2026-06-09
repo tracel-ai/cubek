@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 
 /// The number of taps in the kernel.
 #[cube]
-pub fn kernel_num_taps(#[comptime] kernel: &Kernel) -> comptime_type!(usize) {
+pub fn kernel_num_taps(#[comptime] kernel: &Kernel) -> usize {
     match kernel {
         Kernel::One => 1,
         Kernel::Uniform { .. } => 1,
@@ -15,45 +15,45 @@ pub fn kernel_num_taps(#[comptime] kernel: &Kernel) -> comptime_type!(usize) {
 
 /// Evaluate the kernel weight where x is the distance from center.
 #[cube]
-pub fn kernel_weight<C: Float>(#[comptime] kernel: &Kernel, x: C) -> C {
+pub fn kernel_weight<F: Float>(#[comptime] kernel: &Kernel, x: F) -> F {
     match kernel {
-        Kernel::One => C::new(1.0),
-        Kernel::Uniform { scale } => C::new(1.0 / *scale as f32),
+        Kernel::One => F::new(1.0),
+        Kernel::Uniform { scale } => F::new(1.0 / *scale as f32),
         Kernel::Triangle => {
-            let abs_x = C::abs(x);
-            let one = C::new(1.0);
-            let zero = C::new(0.0);
+            let abs_x = F::abs(x);
+            let one = F::new(1.0);
+            let zero = F::new(0.0);
             if abs_x < one { one - abs_x } else { zero }
         }
         Kernel::Cubic { a } => {
-            let a = C::new(*a);
-            let abs_x = C::abs(x);
-            let one = C::new(1.0);
-            let two = C::new(2.0);
+            let a = F::new(*a);
+            let abs_x = F::abs(x);
+            let one = F::new(1.0);
+            let two = F::new(2.0);
             let x2 = abs_x * abs_x;
             let x3 = x2 * abs_x;
             if abs_x < one {
-                (a + two) * x3 - (a + C::new(3.0)) * x2 + one
+                (a + two) * x3 - (a + F::new(3.0)) * x2 + one
             } else if abs_x < two {
-                a * x3 - C::new(5.0) * a * x2 + C::new(8.0) * a * abs_x - C::new(4.0) * a
+                a * x3 - F::new(5.0) * a * x2 + F::new(8.0) * a * abs_x - F::new(4.0) * a
             } else {
-                C::new(0.0)
+                F::new(0.0)
             }
         }
         Kernel::Lanczos { lobes } => {
-            let abs_x = C::abs(x);
-            let zero = C::new(0.0);
-            let eps = C::new(0.001);
-            let lobes_f = C::cast_from(*lobes);
+            let abs_x = F::abs(x);
+            let zero = F::new(0.0);
+            let eps = F::new(0.001);
+            let lobes_f = F::cast_from(*lobes);
             if abs_x < eps {
-                C::new(1.0)
+                F::new(1.0)
             } else if abs_x >= lobes_f {
                 zero
             } else {
-                let pi_val = C::new(3.14159265);
+                let pi_val = F::new(3.14159265);
                 let pi_x = pi_val * abs_x;
                 let pi_x_lobes = pi_x / lobes_f;
-                (C::sin(pi_x) / pi_x) * (C::sin(pi_x_lobes) / pi_x_lobes)
+                (F::sin(pi_x) / pi_x) * (F::sin(pi_x_lobes) / pi_x_lobes)
             }
         }
     }

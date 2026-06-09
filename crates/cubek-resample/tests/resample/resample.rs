@@ -111,12 +111,11 @@ fn resample_nhwc_3d_test() {
 
     let input_shape = vec![2, 2, 2];
     let input_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    let output_shape = vec![1, 1, 1];
-    let expected_output = vec![1.0];
+    let output_shape = vec![1, 2, 1];
+    let expected_output = vec![1.0, 3.0];
 
     let mut reduce_axes = Sequence::new();
     reduce_axes.push(0);
-    reduce_axes.push(1);
     reduce_axes.push(2);
 
     let config = Resample {

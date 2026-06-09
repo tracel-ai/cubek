@@ -1,32 +1,45 @@
-use crate::definition::{Placement, Resample};
+use crate::{
+    components::kernel::kernel_num_taps,
+    definition::{Placement, Resample},
+};
 
 use cubecl::prelude::*;
 
 /// Footprint of a resample kernel.
 #[derive(CubeType)]
-pub struct Footprint<C: Float> {
-    /// The first tap index.
-    pub start_tap: isize,
-    /// The fractional part of the center.
-    pub frac: C,
+pub struct Footprint<F: Float> {
+    /// Tap scale
+    pub tap_scale: F,
+    /// Tap offset
+    pub tap_offset: F,
 }
 
 #[cube]
-pub fn get_footprint<C: Float>(
-    #[comptime] config: &Resample,
-    radius: usize,
-    pos: usize,
-) -> Footprint<C> {
-    let (tap_scale, tap_offset) = match config.placement {
-        Placement::Continuous { scale, offset } => (scale, offset),
-        Placement::Windowed { step, pad } => (1.0 / (step as f32), -(pad as f32)),
-    };
+impl<F: Float> Footprint<F> {
+    pub fn new(#[comptime] config: &Resample) -> Footprint<F> {
+        let (tap_scale, tap_offset) = match config.placement {
+            Placement::Continuous { scale, offset } => (scale, offset),
+            Placement::Windowed { step, pad } => (1.0 / (step as f32), -(pad as f32)),
+        };
 
-    let center = C::cast_from(pos) * C::new(tap_scale) + C::new(tap_offset);
-    let center_floored = center.floor();
-    let frac = center - center_floored;
+        Footprint::<F> {
+            tap_scale: F::cast_from(tap_scale),
+            tap_offset: F::cast_from(tap_offset),
+        }
+    }
 
-    let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
+    pub fn num_taps(#[comptime] config: &Resample) -> usize {
+        kernel_num_taps(&config.kernel)
+    }
 
-    Footprint::<C> { start_tap, frac }
+    pub fn start_tap_and_frac(&self, radius: usize, pos: usize) -> (isize, F) {
+        let center = F::cast_from(pos) * self.tap_scale + self.tap_offset;
+        let center_floored = center.floor();
+
+        let frac = center - center_floored;
+
+        let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
+
+        (start_tap, frac)
+    }
 }
