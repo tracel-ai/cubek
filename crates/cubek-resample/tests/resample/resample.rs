@@ -1,25 +1,25 @@
 use crate::resample::run_test;
-use cubecl::TestRuntime;
-use cubecl::prelude::*;
-use cubek_resample::{
-    definition::{GlobalOperationKind, MemoryReaderKind, Semiring},
-    implementations::{InterpolateArgs, ReduceArgs},
-};
+use cubecl::{Runtime, TestRuntime};
+use cubek_resample::definition::{Kernel, Placement, Resample, Semiring};
 
+/// Nearest-neighbor 1x identity
 #[test]
-fn resample_1d_simple_test() {
+fn resample_1d_identity_test() {
     let client = TestRuntime::client(&Default::default());
 
     let input_shape = vec![4];
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
-    let output_shape = vec![1];
-    let expected_data = vec![10.0];
-    let args = ReduceArgs {
-        reduce_size: 4,
-        reduce_axis: 0,
+    let output_shape = vec![4];
+    let expected_data = vec![1.0, 2.0, 3.0, 4.0];
+
+    let config = Resample {
+        kernel: Kernel::One,
+        placement: Placement::Continuous {
+            scale: 1.0,
+            offset: 0.0,
+        },
+        semiring: Semiring::Linear,
     };
-    let memory_reader_kind = MemoryReaderKind::Global;
-    let global_operation = GlobalOperationKind::Scalar(Semiring::Sum);
 
     run_test(
         &client,
@@ -27,12 +27,12 @@ fn resample_1d_simple_test() {
         input_data,
         output_shape,
         expected_data,
-        args,
-        memory_reader_kind,
-        global_operation,
+        config,
+        0,
     );
 }
 
+/// Nearest-neighbor 2× upscale (Delta + Affine{scale=2} + Linear).
 #[test]
 fn resample_1d_test() {
     let client = TestRuntime::client(&Default::default());
@@ -41,9 +41,15 @@ fn resample_1d_test() {
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
     let output_shape = vec![8];
     let expected_data = vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0];
-    let args = InterpolateArgs;
-    let memory_reader_kind = MemoryReaderKind::Global;
-    let global_operation = GlobalOperationKind::Scalar(Semiring::Sum);
+
+    let config = Resample {
+        kernel: Kernel::One,
+        placement: Placement::Continuous {
+            scale: 0.5,
+            offset: 0.0,
+        },
+        semiring: Semiring::Linear,
+    };
 
     run_test(
         &client,
@@ -51,34 +57,40 @@ fn resample_1d_test() {
         input_data,
         output_shape,
         expected_data,
-        args,
-        memory_reader_kind,
-        global_operation,
+        config,
+        0,
     );
 }
 
+/// Nearest-neighbor 2× upscale on NHWC 2D (separable: H then W).
+/// For now we test the single-axis version on axis 1 (H dimension).
 #[test]
 fn resample_nhwc_2d_test() {
     let client = TestRuntime::client(&Default::default());
 
+    // Input: [1, 2, 2, 1] NHWC
     let input_shape = vec![1, 2, 2, 1];
     let input_data = vec![1.0, 2.0, 3.0, 4.0];
-    let output_shape = vec![1, 4, 4, 1];
-    let expected_data = vec![
-        1.0, 1.0, 3.0, 3.0, 1.0, 1.0, 3.0, 3.0, 2.0, 2.0, 4.0, 4.0, 2.0, 2.0, 4.0, 4.0,
-    ];
-    let args = InterpolateArgs;
-    let memory_reader_kind = MemoryReaderKind::Global;
-    let global_operation = GlobalOperationKind::Scalar(Semiring::Sum);
+    // Upscale H: [1, 2, 2, 1] → [1, 4, 2, 1]
+    let intermediate_shape = vec![1, 4, 2, 1];
+    let expected_intermediate = vec![1.0, 2.0, 1.0, 2.0, 3.0, 4.0, 3.0, 4.0];
+
+    let config = Resample {
+        kernel: Kernel::One,
+        placement: Placement::Continuous {
+            scale: 0.5,
+            offset: 0.0,
+        },
+        semiring: Semiring::Linear,
+    };
 
     run_test(
         &client,
         input_shape,
         input_data,
-        output_shape,
-        expected_data,
-        args,
-        memory_reader_kind,
-        global_operation,
+        intermediate_shape,
+        expected_intermediate,
+        config,
+        1, // spatial axis = H (axis 1 in NHWC)
     );
 }

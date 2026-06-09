@@ -1,9 +1,10 @@
-mod access_patterns;
-mod global;
-mod memory_readers;
-mod operations;
+mod footprint;
+mod kernel;
+mod layout;
+mod placement;
+mod resample;
+mod semiring;
 
-pub use access_patterns::*;
-pub use global::*;
-pub use memory_readers::*;
-pub use operations::*;
+pub use layout::*;
+pub use placement::*;
+pub use resample::*;

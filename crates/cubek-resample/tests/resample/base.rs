@@ -1,10 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
-use cubek_resample::{
-    definition::{GlobalOperationKind, MemoryReaderKind},
-    launch::ResampleArgs,
-    resample,
-};
+use cubek_resample::{definition::Resample, resample};
 use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
 
 pub fn build_output_tensor(
@@ -35,15 +31,14 @@ pub fn validate_test(
         .enforce();
 }
 
-pub fn run_test<A: ResampleArgs<TestRuntime>>(
+pub fn run_test(
     client: &ComputeClient<TestRuntime>,
     input_shape: Vec<usize>,
     input_data: Vec<f32>,
     output_shape: Vec<usize>,
     expected_data: Vec<f32>,
-    args: A,
-    memory_reader_kind: MemoryReaderKind,
-    global_operation: GlobalOperationKind,
+    config: Resample,
+    spatial_axis: usize,
 ) {
     let input_handle = TestInput::builder(client.clone(), input_shape)
         .dtype(f32::as_type_native_unchecked().storage_type())
@@ -62,9 +57,8 @@ pub fn run_test<A: ResampleArgs<TestRuntime>>(
         &client,
         input,
         output,
-        args,
-        memory_reader_kind,
-        global_operation,
+        config,
+        spatial_axis,
         f32::as_type_native_unchecked().storage_type(),
     );
 
