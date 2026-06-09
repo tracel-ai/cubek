@@ -3,10 +3,41 @@ use cubecl::prelude::Sequence;
 /// Resampling operation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Resample {
+    pub axes: Sequence<usize>,
     pub kernel: Kernel,
     pub placement: Placement,
     pub semiring: Semiring,
-    pub reduce_axes: Sequence<usize>,
+}
+
+impl Resample {
+    pub fn new() -> Self {
+        Self {
+            axes: Sequence::new(),
+            kernel: Kernel::One,
+            semiring: Semiring::Linear,
+            placement: Placement::Windowed { step: 1, pad: 0 },
+        }
+    }
+
+    pub fn with_axis(mut self, axis: usize) -> Self {
+        self.axes.push(axis);
+        self
+    }
+
+    pub fn with_kernel(mut self, kernel: Kernel) -> Self {
+        self.kernel = kernel;
+        self
+    }
+
+    pub fn with_placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    pub fn with_semiring(mut self, semiring: Semiring) -> Self {
+        self.semiring = semiring;
+        self
+    }
 }
 
 /// The semiring, it determines how the values are combined.

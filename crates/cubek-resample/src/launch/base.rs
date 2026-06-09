@@ -1,5 +1,6 @@
 use crate::{components::resample_kernel, definition::Resample};
 use cubecl::{
+    calculate_cube_count_elemwise,
     prelude::*,
     std::{
         FastDivmod,
@@ -21,10 +22,11 @@ pub fn resample_launch<R: Runtime>(
     config: Resample,
     dtype: StorageType,
 ) {
-    let cube_count = CubeCount::Static(1, 1, 1);
-    let cube_dim = CubeDim::new_2d(32, 8);
+    let working_units = output.shape.iter().product::<usize>();
 
-    let working_units = cube_dim.num_elems() as usize;
+    let cube_dim = CubeDim::new(&client, working_units);
+
+    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
 
     let vector_size = 1;
 

@@ -74,7 +74,7 @@ fn accumulate_taps<F: Float>(
 ) {
     let footprint = Footprint::<F>::new(&config);
 
-    let num_axes = comptime!(config.reduce_axes.len());
+    let num_axes = comptime!(config.axes.len());
     let num_taps = comptime!(Footprint::<F>::num_taps(&config));
     let total_taps = comptime!(num_taps.pow(num_axes as u32));
 
@@ -88,7 +88,7 @@ fn accumulate_taps<F: Float>(
 
         #[unroll]
         for dim in 0..num_axes {
-            let axis = comptime!(config.reduce_axes.index(dim));
+            let axis = comptime!(config.axes.index(dim));
 
             let out_pos = out_coord[*axis] as usize;
 

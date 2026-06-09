@@ -6,11 +6,15 @@ pub mod launch;
 pub mod routines;
 
 use crate::{
-    definition::{InterpolateError, InterpolateMode, InterpolateOptions},
+    definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
     launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
+use cubek_resample::{
+    definition::{Kernel, Placement, Resample, Semiring},
+    resample,
+};
 
 /// Interpolate operation
 ///
@@ -28,7 +32,51 @@ pub fn interpolate<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    interpolate_launch(client, input, output, options, strategy, dtype)
+    //interpolate_launch(client, input, output, options, strategy, dtype)
+
+    let config = Resample::new()
+        .with_kernel(Kernel::One)
+        .with_placement(Placement::Continuous {
+            scale: 1.0,
+            offset: 0.0,
+        })
+        .with_semiring(Semiring::Linear)
+        .with_axis(1)
+        .with_axis(2);
+
+    resample(client, input, output, config, dtype);
+
+    Ok(())
+}
+
+pub fn get_scale_and_offset(
+    input_size: usize,
+    output_size: usize,
+    options: InterpolateOptions,
+) -> (f32, f32) {
+    let standard_scale = input_size as f32 / output_size as f32;
+
+    match options.mode {
+        InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
+            NearestMode::Exact => (standard_scale, standard_scale / 2.0),
+            NearestMode::Floor => (standard_scale, 0.0),
+        },
+        _ => {
+            if options.align_corners {
+                let scale_num = if output_size > 1 {
+                    input_size.saturating_sub(1) as f32
+                } else {
+                    0.0
+                };
+                let scale_den = output_size.saturating_sub(1).max(1) as f32;
+
+                (scale_num / scale_den, 0.0)
+            } else {
+                let offset = (standard_scale - 1.0) / 2.0;
+                (standard_scale, offset)
+            }
+        }
+    }
 }
 
 /// Backward interpolate operation
