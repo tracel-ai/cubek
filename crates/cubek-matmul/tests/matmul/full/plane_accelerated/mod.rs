@@ -2,7 +2,7 @@ mod matmul_plane_accelerated {
     mod cmma {
         use cubecl::{TestRuntime, client::ComputeClient};
         use cubek_matmul::{
-            definition::{MatmulProblem, TilingBlueprint},
+            definition::{BatchMatmulBlueprint, MatmulProblem},
             launch::{Strategy, test_only::TestStrategy},
             routines::BlueprintStrategy,
         };
@@ -12,7 +12,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -23,7 +23,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_strided(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -34,7 +34,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_tilewise(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -45,7 +45,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_barrier_cooperative(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_test_strategy(
                 c,
@@ -56,7 +56,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_barrier_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_test_strategy(
                 c,
@@ -67,7 +67,7 @@ mod matmul_plane_accelerated {
         fn launch_double_buffering_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -78,7 +78,7 @@ mod matmul_plane_accelerated {
         fn launch_double_buffering_tilewise(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -89,7 +89,7 @@ mod matmul_plane_accelerated {
         fn launch_double_buffering_hybrid(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -100,7 +100,7 @@ mod matmul_plane_accelerated {
         fn launch_ordered_double_buffering(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -111,7 +111,7 @@ mod matmul_plane_accelerated {
         fn launch_specialized_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -122,7 +122,7 @@ mod matmul_plane_accelerated {
         fn launch_specialized_strided(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -137,7 +137,7 @@ mod matmul_plane_accelerated {
     mod mma {
         use cubecl::{TestRuntime, client::ComputeClient};
         use cubek_matmul::{
-            definition::{MatmulProblem, TilingBlueprint},
+            definition::{BatchMatmulBlueprint, MatmulProblem},
             launch::{Strategy, test_only::TestStrategy},
             routines::BlueprintStrategy,
         };
@@ -147,7 +147,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -158,7 +158,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_strided(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -169,7 +169,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_tilewise(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -180,7 +180,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_barrier_cooperative(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_test_strategy(
                 c,
@@ -191,7 +191,7 @@ mod matmul_plane_accelerated {
         fn launch_simple_barrier_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_test_strategy(
                 c,
@@ -202,7 +202,7 @@ mod matmul_plane_accelerated {
         fn launch_double_buffering_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -213,7 +213,7 @@ mod matmul_plane_accelerated {
         fn launch_double_buffering_tilewise(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -224,7 +224,7 @@ mod matmul_plane_accelerated {
         fn launch_double_buffering_hybrid(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -235,7 +235,7 @@ mod matmul_plane_accelerated {
         fn launch_ordered_double_buffering(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -246,7 +246,7 @@ mod matmul_plane_accelerated {
         fn launch_specialized_cyclic(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,
@@ -257,7 +257,7 @@ mod matmul_plane_accelerated {
         fn launch_specialized_strided(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
-            bp: TilingBlueprint,
+            bp: BatchMatmulBlueprint,
         ) {
             test_matmul_strategy(
                 c,

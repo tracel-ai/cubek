@@ -14,7 +14,7 @@ use crate::{
     launch::InputArg,
     launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
     routines::gemm::GemmRoutine,
-    routines::{BlueprintStrategy, Routine as _},
+    routines::{BatchMatmulRoutine as _, BlueprintStrategy},
 };
 
 fn vector_size_for<R: Runtime>(

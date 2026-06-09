@@ -28,7 +28,7 @@ pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TilingBlueprint {
+pub struct BatchMatmulBlueprint {
     // TODO remove
     pub plane_dim: u32,
     pub tile_matmul: TileMatmulKind,
@@ -46,7 +46,7 @@ pub struct TilingBlueprint {
     pub check_k_bounds: bool,
 }
 
-impl Blueprint for TilingBlueprint {
+impl Blueprint for BatchMatmulBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
             matrix_layout: self.lhs_layout,
@@ -112,13 +112,13 @@ pub fn adjust_dtypes<R: Runtime>(
     }
 }
 
-impl TilingBlueprint {
+impl BatchMatmulBlueprint {
     pub fn builder(
         tile_matmul: TileMatmulKind,
         tiling_scheme: TilingScheme,
         plane_dim: u32,
         problem: &MatmulProblem,
-    ) -> TilingBlueprintBuilder {
+    ) -> BatchMatmulBlueprintBuilder {
         let hypercube_blueprint = HypercubeBlueprint::builder().build();
 
         let check_m_bounds =
@@ -128,7 +128,7 @@ impl TilingBlueprint {
         let check_k_bounds =
             !(problem.k as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_k());
 
-        TilingBlueprintBuilder {
+        BatchMatmulBlueprintBuilder {
             plane_dim,
             tile_matmul,
             tiling_scheme,
@@ -185,7 +185,7 @@ impl TilingBlueprint {
     }
 }
 
-pub struct TilingBlueprintBuilder {
+pub struct BatchMatmulBlueprintBuilder {
     plane_dim: u32,
     tile_matmul: TileMatmulKind,
     tiling_scheme: TilingScheme,
@@ -205,7 +205,7 @@ pub struct TilingBlueprintBuilder {
     load_specialization_config: LoadFlows,
 }
 
-impl TilingBlueprintBuilder {
+impl BatchMatmulBlueprintBuilder {
     pub fn hypercube_blueprint(mut self, hypercube_blueprint: HypercubeBlueprint) -> Self {
         self.hypercube_blueprint = hypercube_blueprint;
         self
@@ -239,8 +239,8 @@ impl TilingBlueprintBuilder {
         self
     }
 
-    pub fn build(self) -> TilingBlueprint {
-        TilingBlueprint {
+    pub fn build(self) -> BatchMatmulBlueprint {
+        BatchMatmulBlueprint {
             plane_dim: self.plane_dim,
             tile_matmul: self.tile_matmul,
             tiling_scheme: self.tiling_scheme,

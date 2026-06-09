@@ -12,7 +12,7 @@ use cubek_matmul::{
     routines::simple::{SimpleAlgorithm, SimpleArgs},
 };
 use cubek_matmul::{
-    definition::{AvailableVectorSizes, TilingBlueprint},
+    definition::{AvailableVectorSizes, BatchMatmulBlueprint},
     launch::{TensorArgs, TensorMapArgs},
 };
 use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
@@ -59,7 +59,7 @@ impl<
     LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 > Routine for SimpleConv<LL, LR>
 {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SimpleArgs;
     type MatmulRoutine = SimpleAlgorithm<LL, LR, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
@@ -75,7 +75,7 @@ impl<
 }
 
 impl Routine for SimpleAsyncTmaConv {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SimpleArgs;
     type MatmulRoutine = SimpleAlgorithm<AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;

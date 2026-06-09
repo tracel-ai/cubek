@@ -12,10 +12,10 @@ use crate::{
     components::global::GlobalMatmulFamily,
 };
 use crate::{
+    definition::BatchMatmulBlueprint,
     definition::CubeMappingLaunch,
     definition::MatmulProblem,
     definition::MatmulVectorSizes,
-    definition::TilingBlueprint,
     definition::{MatmulElems, MatmulSetupError, MatmulTypes},
     launch::*,
     {components::CubeDimResource, launch::RuntimeConfig},
@@ -40,7 +40,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
 {
     type Matmul<MP: MatmulTypes> = PartitionedBatchMatmul<RC, MP, GMM::Matmul<MP>, S>;
     type Config = PartitionedBatchConfig<GMM::Config>;
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
 
     fn expand_config(
         device_props: &DeviceProperties,

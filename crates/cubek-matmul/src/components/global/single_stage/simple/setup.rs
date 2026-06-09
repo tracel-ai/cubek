@@ -17,7 +17,7 @@ use crate::{
         },
         stage::StagePartitioner,
     },
-    definition::TilingBlueprint,
+    definition::BatchMatmulBlueprint,
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
@@ -56,7 +56,7 @@ where
 
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
@@ -166,7 +166,7 @@ where
     }
 
     fn cubedim_resource(
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
@@ -183,7 +183,7 @@ where
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

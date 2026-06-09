@@ -23,11 +23,17 @@ pub enum Partitioner {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
-    sub_tile: ByAxis<usize>,
+    edges: ByAxis<usize>,
     dists: ByAxis<Distribution>,
     order: WalkOrder,
     schedule: Schedule,
     next: Partitioner,
+}
+
+impl Level {
+    pub fn schedule(&self) -> Schedule {
+        self.schedule
+    }
 }
 
 impl Partitioner {
@@ -40,7 +46,7 @@ impl Partitioner {
     }
 
     pub fn edge(&self, axis: Axis) -> usize {
-        self.level().sub_tile.get(axis)
+        self.level().edges.get(axis)
     }
 
     pub fn distribution(&self, axis: Axis) -> Distribution {
@@ -60,14 +66,14 @@ impl Partitioner {
             Partitioner::Final => tail,
             Partitioner::Level(level) => {
                 let Level {
-                    sub_tile,
+                    edges: sub_tile,
                     dists,
                     order,
                     schedule,
                     next,
                 } = *level;
                 Partitioner::Level(Box::new(Level {
-                    sub_tile,
+                    edges: sub_tile,
                     dists,
                     order,
                     schedule,
@@ -115,7 +121,7 @@ impl PartitionerBuilder {
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
     fn finish(self, schedule: Schedule) -> Partitioner {
         Partitioner::Level(Box::new(Level {
-            sub_tile: self.sub_tile,
+            edges: self.sub_tile,
             dists: self.dists,
             order: self.order,
             schedule,

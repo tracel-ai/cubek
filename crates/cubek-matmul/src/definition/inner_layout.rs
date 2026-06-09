@@ -88,6 +88,32 @@ impl InnerLayout {
         }
     }
 
+    /// Recover the logical `(batch, rows, cols)` from a physical shape in this layout
+    /// — the inverse of [`physical_dims`](Self::physical_dims). Strided variants store
+    /// the logical shape directly (leading dims are the batch); tiled variants fold the
+    /// per-level `(row, col)` factors back into `rows`/`cols`.
+    pub fn logical_dims(&self, physical: &[usize]) -> (usize, usize, usize) {
+        match self {
+            InnerLayout::RowMajor | InnerLayout::ColMajor => {
+                let n = physical.len();
+                let batch = physical[..n - 2].iter().product();
+                (batch, physical[n - 2], physical[n - 1])
+            }
+            // [batch, r0, c0, r1, c1, …]: alternating row/col factors after the batch.
+            InnerLayout::Tiled { .. } => {
+                let (mut rows, mut cols) = (1, 1);
+                for (i, &d) in physical[1..].iter().enumerate() {
+                    if i % 2 == 0 {
+                        rows *= d;
+                    } else {
+                        cols *= d;
+                    }
+                }
+                (physical[0], rows, cols)
+            }
+        }
+    }
+
     /// Canonical strides that *realize* this layout on a freshly allocated
     /// (contiguous) buffer of [`physical_dims`](Self::physical_dims). Used when
     /// building an operand in a chosen layout (e.g. the layout laboratory);
@@ -155,12 +181,18 @@ impl InnerLayout {
     /// [`Storage`] that `Tile::from_tensor` needs in-kernel. Tiled keeps its physical
     /// `[batch, grid…, tile…]` buffer (batch passthrough, `start_axis = 1`); strided
     /// reshapes to `(batch, rows, cols)` (`start_axis = 0, levels = 0`).
+    ///
+    /// `vector_size > 1` lines the innermost (`cols`) axis: its shape and every other
+    /// stride are divided by the line size, so a kernel reading `Vector<E, vector_size>`
+    /// lands on contiguous lines. Only valid when `cols` is contiguous (a row-major
+    /// operand); tiled operands must pass `vector_size = 1`.
     pub fn tensor_arg<R: Runtime>(
         &self,
         mut binding: TensorBinding<R>,
         batch: usize,
         rows: usize,
         cols: usize,
+        vector_size: usize,
     ) -> (TensorArg<R>, Storage) {
         match self {
             InnerLayout::Tiled { tiles } => (
@@ -171,8 +203,13 @@ impl InnerLayout {
                 let strides = binding.strides.to_vec();
                 let n = strides.len();
                 let batch_stride = if n >= 3 { strides[n - 3] } else { rows * cols };
-                binding.shape = [batch, rows, cols][..].into();
-                binding.strides = [batch_stride, strides[n - 2], strides[n - 1]][..].into();
+                binding.shape = [batch, rows, cols / vector_size][..].into();
+                binding.strides = [
+                    batch_stride / vector_size,
+                    strides[n - 2] / vector_size,
+                    strides[n - 1],
+                ][..]
+                    .into();
                 (binding.into_tensor_arg(), Storage::passthrough(0, 0))
             }
         }

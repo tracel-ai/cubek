@@ -8,7 +8,7 @@ use crate::{
 };
 use crate::{
     routines::LaunchInfo,
-    routines::{BlueprintStrategy, Routine},
+    routines::{BatchMatmulRoutine, BlueprintStrategy},
     {definition::MatmulElems, launch::ConfigRuntimeArg},
 };
 use cubecl::{
@@ -21,7 +21,7 @@ use cubek_std::InputBinding;
 ///
 /// Only works for concrete tensor inputs and output.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, R: Runtime, A: Routine<()>>(
+pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, R: Runtime, A: BatchMatmulRoutine<()>>(
     client: &ComputeClient<R>,
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
@@ -69,7 +69,7 @@ where
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: BatchMatmulRoutine<MA::Config>>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<MA, R>,
     output: OutputRuntimeArg<MA, R>,
@@ -87,7 +87,7 @@ pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel<MA: MatmulArgs, R: Runtime, A: Routine<MA::Config>>(
+pub fn launch_kernel<MA: MatmulArgs, R: Runtime, A: BatchMatmulRoutine<MA::Config>>(
     client: &ComputeClient<R>,
     input: InputRuntimeArg<MA, R>,
     output: OutputRuntimeArg<MA, R>,

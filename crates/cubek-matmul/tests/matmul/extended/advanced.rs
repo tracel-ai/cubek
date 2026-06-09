@@ -33,7 +33,7 @@ fn run_with(
     hypercube: HypercubeBlueprint,
     buffering: PartitionBuffering,
     specialization: LoadFlows,
-    strategy: impl FnOnce(cubek_matmul::definition::TilingBlueprint) -> Strategy,
+    strategy: impl FnOnce(cubek_matmul::definition::BatchMatmulBlueprint) -> Strategy,
 ) {
     let c = client();
     let p = problem(256, 256, 256, row_row(), f16_elems());

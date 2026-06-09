@@ -5,7 +5,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
-        layout::{Coords1d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
+        layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
     },
 };
 
@@ -36,8 +36,8 @@ impl Storage {
 /// The launchable form of a [`Tile`]: a `&Tensor` plus the comptime [`Space`] and
 /// [`Storage`]. The kernel turns it into a `Tile` with [`tile`](TileArg::tile).
 #[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric> {
-    pub tensor: &'a Tensor<Vector<E, Const<1>>>,
+pub struct TileArg<'a, E: Numeric, V: Size> {
+    pub tensor: &'a Tensor<Vector<E, V>>,
     #[cube(comptime)]
     pub space: Space,
     #[cube(comptime)]
@@ -45,8 +45,8 @@ pub struct TileArg<'a, E: Numeric> {
 }
 
 #[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
-    pub fn tile(&self) -> Tile<Vector<E, Const<1>>> {
+impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+    pub fn tile(&self) -> Tile<Vector<E, V>> {
         Tile::from_tensor(
             self.tensor,
             comptime!(self.space.clone()),
@@ -63,16 +63,6 @@ pub struct Tile<T: CubePrimitive> {
     pub space: Space,
 }
 
-/// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a
-/// [`cmma::Matrix`]); [`view`](Tile::view) rebuilds a borrowed view on demand.
-#[derive(CubeType)]
-pub enum Payload<T: CubePrimitive> {
-    Gmem(MemData<T>),
-    Smem(MemData<T>),
-    /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
-    Cmma(CmmaData<T>),
-}
-
 /// A tensor-core fragment plus its comptime config. `cmma::load` picks
 /// load-vs-`load_with_layout` by `ident`, and `store`/`cast` need the layout. The
 /// fragment's `m`/`n`/`k` and the slice stride come from the tile's [`Space`].
@@ -83,6 +73,20 @@ pub struct CmmaData<T: CubePrimitive> {
     pub ident: MatrixIdent,
     #[cube(comptime)]
     pub layout: MatrixLayout,
+}
+
+#[cube]
+impl<A: CubePrimitive> CmmaData<A> {
+    /// Tensor-core contraction `self += lhs · rhs` via `cmma::execute`. The operands must be
+    /// cmma fragments too.
+    pub fn mma<L: CubePrimitive, R: CubePrimitive>(&self, lhs: &Tile<L>, rhs: &Tile<R>) {
+        match (&lhs.payload, &rhs.payload) {
+            (Payload::Cmma(a), Payload::Cmma(b)) => {
+                cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
+            }
+            _ => panic!("cmma accumulator requires cmma lhs and rhs"),
+        }
+    }
 }
 
 /// The lifetime-erased buffer plus the physical shape/strides and tiling spec to
@@ -335,6 +339,33 @@ impl<T: CubePrimitive> MemData<T> {
 
     fn window(&self) -> Window {
         Window::new(self.origin.clone(), self.extent.clone())
+    }
+
+    /// The `i`-th batch matrix as a 2-D view. Mirrors [`Tile::matrix_mut`] for callers that
+    /// hold the payload rather than the whole tile, so the `space` is passed in.
+    pub(crate) fn matrix_mut(
+        &mut self,
+        i: usize,
+        #[comptime] space: Space,
+    ) -> ViewMut<'_, T, Coords2d> {
+        let rank = comptime!(space.rank());
+        let rows = comptime!(space.extent_at(rank - 2));
+        let cols = comptime!(space.extent_at(rank - 1));
+        let shape = self.buffer.view(self.base()).view(self.window()).shape();
+        let mut batches = CoordsDyn::new();
+        #[unroll]
+        for p in 0..rank - 2 {
+            let mut weight = 1;
+            #[unroll]
+            for q in comptime!(p + 1)..rank - 2 {
+                weight *= shape[q];
+            }
+            batches.push((i as u32 / weight) % shape[p]);
+        }
+        let layout = BatchMatrix::new(batches, rows, cols);
+        let base = self.base();
+        let window = self.window();
+        self.buffer.view_mut(base).view_mut(window).view_mut(layout)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate

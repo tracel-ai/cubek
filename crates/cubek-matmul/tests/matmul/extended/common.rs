@@ -7,7 +7,9 @@ use cubek_matmul::{
         stage::PartitionBuffering,
         tile::{TileMatmul, TileMatmulKind},
     },
-    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem, TilingBlueprint, TilingScheme},
+    definition::{
+        BatchMatmulBlueprint, MatmulElems, MatmulGlobalElems, MatmulProblem, TilingScheme,
+    },
 };
 use cubek_std::{
     MatrixLayout, PartitionSize, StageSize, SwizzleModes, TileSize,
@@ -89,7 +91,7 @@ pub(crate) fn plane_blueprint(
     tile: TileSize,
     partition: PartitionSize,
     stage: StageSize,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let scheme = tiling_scheme(tile, partition, stage);
     let plane_dim = client.properties().hardware.plane_size_max;
     // Default the partition buffering based on whether there is more than one
@@ -101,7 +103,7 @@ pub(crate) fn plane_blueprint(
     } else {
         PartitionBuffering::Single
     };
-    TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, plane_dim, problem)
+    BatchMatmulBlueprint::builder(TileMatmulKind::Cmma, scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
         .build()
 }
@@ -116,10 +118,10 @@ pub(crate) fn plane_blueprint_with(
     hypercube: HypercubeBlueprint,
     partition_buffering: PartitionBuffering,
     specialization: LoadFlows,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let scheme = tiling_scheme(tile, partition, stage);
     let plane_dim = client.properties().hardware.plane_size_max;
-    TilingBlueprint::builder(TileMatmulKind::Cmma, scheme, plane_dim, problem)
+    BatchMatmulBlueprint::builder(TileMatmulKind::Cmma, scheme, plane_dim, problem)
         .shared_swizzle(swizzle)
         .hypercube_blueprint(hypercube)
         .partition_buffering(partition_buffering)

@@ -2,18 +2,19 @@
 
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
-use crate::definition::{MatmulSetupError, TilingBlueprint};
+use crate::definition::{BatchMatmulBlueprint, MatmulSetupError};
 
 use super::{PartitionedStageMatmul, StageMatmul};
 
 pub trait StageVariant: Sized {
     /// Compute resources required for this stage variant on the given
     /// blueprint.
-    fn cubedim_resource(blueprint: &TilingBlueprint)
-    -> Result<CubeDimResource, InvalidConfigError>;
+    fn cubedim_resource(
+        blueprint: &BatchMatmulBlueprint,
+    ) -> Result<CubeDimResource, InvalidConfigError>;
 
     /// Per-variant blueprint validation.
-    fn validate_blueprint(blueprint: &TilingBlueprint) -> Result<(), MatmulSetupError>;
+    fn validate_blueprint(blueprint: &BatchMatmulBlueprint) -> Result<(), MatmulSetupError>;
 
     /// Wrap shared [`PartitionedStageMatmul`] data into the variant of
     /// [`StageMatmul`] that matches this kind.

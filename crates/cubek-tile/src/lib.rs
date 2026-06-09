@@ -4,12 +4,14 @@
 mod matmul;
 mod matrix;
 mod partitioner;
+mod payload;
 mod ring;
 mod space;
 mod tile;
 
 pub use matrix::*;
 pub use partitioner::*;
+pub use payload::*;
 pub use ring::*;
 pub use space::*;
 pub use tile::*;

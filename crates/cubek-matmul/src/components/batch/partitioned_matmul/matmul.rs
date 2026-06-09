@@ -5,8 +5,8 @@ use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
 use crate::definition::{
-    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG,
-    TilingBlueprint, cube_pos_to_m_n_batch,
+    AccG, BatchMatmulBlueprint, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes,
+    MatmulVectorSizes, RhsG, cube_pos_to_m_n_batch,
 };
 use crate::launch::MatmulArgs;
 use crate::{
@@ -39,7 +39,7 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     config: <Args as MatmulArgs>::Config,
     cube_mapping: CubeMapping,
-    #[comptime] blueprint: TilingBlueprint,
+    #[comptime] blueprint: BatchMatmulBlueprint,
     #[comptime] dtypes: MatmulElems,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],

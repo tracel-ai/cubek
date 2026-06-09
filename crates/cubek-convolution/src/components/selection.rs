@@ -6,7 +6,7 @@ use cubecl::{
 use cubek_matmul::components::stage::PartitionBuffering;
 
 use cubek_matmul::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulVectorSizes, TilingBlueprint, TilingScheme,
+    BatchMatmulBlueprint, MatmulAvailabilityError, MatmulElems, MatmulVectorSizes, TilingScheme,
     adjust_dtypes,
 };
 use cubek_matmul::{
@@ -91,7 +91,7 @@ pub fn convolution_matmul_selection<R: Runtime>(
     swizzle: bool,
     vector_sizes: &MatmulVectorSizes,
     dtypes: &mut MatmulElems,
-) -> Result<TilingBlueprint, MatmulAvailabilityError> {
+) -> Result<BatchMatmulBlueprint, MatmulAvailabilityError> {
     adjust_dtypes(client, dtypes, tile_matmul.requires_accelerator());
 
     // rough heuristic based on previous bench results where 512 channels with a 3x3 kernel seemed
@@ -134,7 +134,7 @@ pub fn convolution_matmul_selection<R: Runtime>(
         .build()
         .unwrap();
 
-    let mut builder = TilingBlueprint::builder(
+    let mut builder = BatchMatmulBlueprint::builder(
         tile_matmul,
         tiling_scheme,
         plane_dim,

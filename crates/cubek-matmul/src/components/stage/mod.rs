@@ -41,7 +41,7 @@ pub use cubek_std::stage::{
 };
 
 use crate::components::global::{MatmulPlaneCounts, PlaneFlowConfig};
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
+use crate::definition::{BatchMatmulBlueprint, MatmulElems, MatmulSetupError, MatmulVectorSizes};
 
 // =====================================================================
 // StageMatmul — matmul-domain configuration enum
@@ -146,7 +146,7 @@ impl StageMatmulKind {
     pub fn expand_stage_matmul(
         &self,
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         plane_flow_config: PlaneFlowConfig,
         num_stages: NumStages,
         dtypes: &MatmulElems,
@@ -227,7 +227,7 @@ impl StageMatmulKind {
     /// Compute resources required for this stage matmul on the given blueprint.
     pub fn cubedim_resource(
         &self,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
     ) -> Result<CubeDimResource, InvalidConfigError> {
         match self {
             StageMatmulKind::UnitPartitioned => UnitPartitioned::cubedim_resource(blueprint),
@@ -238,7 +238,7 @@ impl StageMatmulKind {
     pub fn validate_blueprint<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {

@@ -6,14 +6,13 @@ use cubecl::{
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
 use cubek_matmul::definition::{InnerLayout, MatmulElems, MatmulProblem};
-use cubek_matmul::launch::launch_mosaic::mosaic_kernel;
-use cubek_std::MatrixLayout;
+use cubek_matmul::launch::launch_cpu_gemm::{LaidOut, launch_ref};
+use cubek_matmul::routines::{BlueprintStrategy, cpu_gemm::CpuGemmBlueprint};
+use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::TestInput;
-use cubek_tile::{
-    Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
-    Storage, TileArg, TileArgLaunch,
-};
+use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
 
+use super::Dims;
 use crate::matmul::assert_result;
 
 // `B` leads (batch), then the matrix axes — so `partition`'s trailing two are
@@ -28,8 +27,8 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+    src: &TileArg<'_, E, Const<1>>,
+    dst: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let src = src.tile();
@@ -100,14 +99,6 @@ impl Operand {
     }
 }
 
-fn spatial(dim: CubeAxis) -> Distribution {
-    Distribution::Spatial {
-        scope: ComputeScope::Cube(dim),
-        spread: Spread::Contiguous,
-        coverage: Coverage::TilesEach(1),
-    }
-}
-
 /// Copy every logical element from `src` into `dst` through their views — moving
 /// data between two physical layouts in logical order.
 fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
@@ -121,13 +112,23 @@ fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
     );
 }
 
+/// The operand's binding with the layout's physical strides realized on its buffer.
+fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
+    let mut binding = op.handle.clone().binding();
+    binding.strides = op.layout.physical_strides(op.batch, op.rows, op.cols)[..].into();
+    binding
+}
+
 /// The operand's launchable `TileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric>(op: &Operand, space: Space) -> TileArgLaunch<'static, E, TestRuntime> {
-    let mut binding = op.handle.clone().binding();
-    binding.strides = op.layout.physical_strides(op.batch, op.rows, op.cols)[..].into();
-    let (tensor, storage) = op.layout.tensor_arg(binding, op.batch, op.rows, op.cols);
+fn tile_arg<E: Numeric, V: Size>(
+    op: &Operand,
+    space: Space,
+) -> TileArgLaunch<'static, E, V, TestRuntime> {
+    let (tensor, storage) = op
+        .layout
+        .tensor_arg(physical_binding(op), op.batch, op.rows, op.cols, 1);
     TileArgLaunch::new(tensor, space, storage)
 }
 
@@ -147,18 +148,15 @@ fn gather(client: &ComputeClient<TestRuntime>, src: &Operand) -> TensorHandle<Te
 
 /// Run `batch × (m, k) @ (k, n)` with each operand in its chosen layout and check
 /// it against the plain logical reference.
-fn run(
-    lhs_layout: InnerLayout,
-    rhs_layout: InnerLayout,
-    out_layout: InnerLayout,
-    batch: usize,
-    m: usize,
-    n: usize,
-    k: usize,
-    tile: usize,
-) {
+fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout, dims: Dims) {
+    let Dims {
+        batch,
+        m,
+        n,
+        k,
+        tile_size: tile,
+    } = dims;
     let client = TestRuntime::client(&Default::default());
-    let dtype = f32::as_type_native_unchecked().storage_type();
     let dtypes = MatmulElems::from_single_dtype(f32::as_type_native_unchecked());
 
     // Logical inputs (row-major) via cubek-test-utils, with host data for the
@@ -202,29 +200,30 @@ fn run(
         &rhs,
     );
 
-    // One output tile per cube (M→X, N→Y), batch on Z, K contracted in-cube.
-    let partitioner = Partitioner::row_major(
-        ByAxis::new(&[(B, 1), (M, tile), (N, tile), (K, tile)]),
-        ByAxis::new(&[
-            (B, spatial(CubeAxis::Z)),
-            (M, spatial(CubeAxis::X)),
-            (N, spatial(CubeAxis::Y)),
-            (K, Distribution::Sequential),
-        ]),
-    )
-    .staged();
-    let space =
-        Space::new(&[(B, batch), (M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
-
-    mosaic_kernel::launch::<TestRuntime>(
+    // Drive the production launch path, imposing each operand's inner layout via
+    // `LaidOut` — this is where tiled (higher-rank) operands flow through `launch_ref`.
+    launch_ref::<TestRuntime>(
         &client,
-        partitioner.cube_count(&space),
-        CubeDim::new_single(),
-        tile_arg(&lhs, space.project(&[B, M, K])),
-        tile_arg(&rhs, space.project(&[B, K, N])),
-        tile_arg(&out, space.project(&[B, M, N])),
-        dtype,
-    );
+        LaidOut {
+            binding: InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),
+            layout: lhs.layout.clone(),
+        },
+        LaidOut {
+            binding: InputBinding::Normal(physical_binding(&rhs), dtypes.rhs_global),
+            layout: rhs.layout.clone(),
+        },
+        LaidOut {
+            binding: physical_binding(&out),
+            layout: out.layout.clone(),
+        },
+        &BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile,
+            tile_n: tile,
+            tile_k: tile,
+        }),
+        &dtypes,
+    )
+    .unwrap();
 
     // Gather the result into a logical row-major tensor and check it against the
     // CPU matmul reference.
@@ -236,36 +235,76 @@ fn run(
 
 use InnerLayout::{ColMajor, RowMajor};
 
-/// A single level of square `4 × 4` blocks.
-fn tiled() -> InnerLayout {
-    InnerLayout::square_tiled(4)
-}
-
-/// Two nested levels: `4 × 4` blocks each split into `2 × 2`.
-fn recursive() -> InnerLayout {
-    InnerLayout::Tiled {
-        tiles: vec![(4, 4), (2, 2)],
-    }
-}
-
 #[test]
 fn all_row_major() {
-    run(RowMajor, RowMajor, RowMajor, 2, 8, 8, 8, 4);
+    run(
+        RowMajor,
+        RowMajor,
+        RowMajor,
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
 }
 
 #[test]
 fn row_col_natural() {
-    run(RowMajor, ColMajor, RowMajor, 2, 8, 8, 8, 4);
+    run(
+        RowMajor,
+        ColMajor,
+        RowMajor,
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
 }
 
 #[test]
 fn all_tiled() {
-    run(tiled(), tiled(), tiled(), 2, 8, 8, 8, 4);
+    // A single level of square `4 × 4` blocks.
+    run(
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
 }
 
 #[test]
 fn all_recursively_tiled() {
-    run(recursive(), recursive(), recursive(), 2, 8, 8, 8, 4);
+    // Two nested levels: `4 × 4` blocks each split into `2 × 2`.
+    run(
+        InnerLayout::Tiled {
+            tiles: vec![(4, 4), (2, 2)],
+        },
+        InnerLayout::Tiled {
+            tiles: vec![(4, 4), (2, 2)],
+        },
+        InnerLayout::Tiled {
+            tiles: vec![(4, 4), (2, 2)],
+        },
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
 }
 
 #[test]
@@ -280,20 +319,47 @@ fn rectangular_tiled() {
         InnerLayout::Tiled {
             tiles: vec![(8, 8)],
         },
-        2,
-        8,
-        8,
-        8,
-        4,
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
     );
 }
 
 #[test]
 fn mixed_layouts() {
-    run(tiled(), ColMajor, RowMajor, 2, 8, 8, 8, 4);
+    run(
+        InnerLayout::square_tiled(4),
+        ColMajor,
+        RowMajor,
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
 }
 
 #[test]
 fn tiled_inputs_recursive_output() {
-    run(tiled(), tiled(), recursive(), 2, 8, 8, 8, 4);
+    // Single-level `4 × 4` inputs, output recursively split into `2 × 2`.
+    run(
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        InnerLayout::Tiled {
+            tiles: vec![(4, 4), (2, 2)],
+        },
+        Dims {
+            batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
 }

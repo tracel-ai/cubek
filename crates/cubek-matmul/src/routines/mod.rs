@@ -1,9 +1,9 @@
 /// Naive non-cooperative matmul without tiling that can be very fast on small matrices.
 pub mod naive;
 
+pub mod cpu_gemm;
 pub mod gemm;
 pub mod gemv_unit_perpendicular;
-pub mod mosaic;
 
 pub mod double_buffering;
 pub mod double_unit;

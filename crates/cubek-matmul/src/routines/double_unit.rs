@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::tile::RowMajorTilingOrder;
 
 use crate::{
@@ -14,18 +14,34 @@ use crate::{
                 sync_partial_cyclic::SyncPartialCyclicLoading,
             },
         },
-        stage::UnitPartitioner,
+        stage::{NumStages, UnitPartitioner},
         tile::TileMatmulKind,
     },
     definition::{
-        MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
+        BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatmulVectorSizes,
     },
-    launch::RuntimeConfig,
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::{
-        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
+        BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
+        batch_validate_blueprint,
         selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
+
+/// The batch-matmul family powering [`DoubleUnitAlgorithm`].
+type DoubleUnitBatch<RC> = PartitionedBatchMatmulFamily<
+    RC,
+    DoubleBufferingMatmulFamily<
+        UnitPartitioner,
+        RC,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncFullCyclicLoading<RowMajorTilingOrder>,
+        UnitWriterFamily,
+    >,
+    RowMajorGlobalPartitionMatmul,
+>;
 
 /// Unit double buffered matmul with cyclic readers
 pub struct DoubleUnitAlgorithm {}
@@ -43,20 +59,64 @@ impl Display for DoubleUnitSelectionArgs {
 
 impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
     type Strategy = DoubleUnitSelectionArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            UnitPartitioner,
-            RC,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncFullCyclicLoading<RowMajorTilingOrder>,
-            UnitWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <DoubleUnitBatch<RC>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<DoubleUnitBatch<RC>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        DoubleUnitBatch::<RC>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -91,10 +151,10 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
 
-        <Self as Routine<RC>>::validate_blueprint(
+        <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -102,7 +162,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = DoubleUnitBatch::<RC>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,

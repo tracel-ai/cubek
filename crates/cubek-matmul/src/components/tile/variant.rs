@@ -15,7 +15,7 @@ use cubecl::{
 };
 use cubek_std::{CubeDimResource, InvalidConfigError, TileSize};
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
+use crate::definition::{BatchMatmulBlueprint, MatmulElems, MatmulSetupError, MatmulVectorSizes};
 
 pub trait TileVariant: Sized {
     /// Whether this tile matmul requires specialized hardware accelerators
@@ -45,7 +45,7 @@ pub trait TileVariant: Sized {
     /// Build the per-kind config from the matmul-flow inputs.
     fn expand(
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Self;
@@ -53,7 +53,7 @@ pub trait TileVariant: Sized {
     /// Per-kind blueprint validation.
     fn validate<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;

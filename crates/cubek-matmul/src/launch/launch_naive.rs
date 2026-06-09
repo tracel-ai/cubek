@@ -17,7 +17,7 @@ use crate::{
     launch::InputArg,
     launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
     routines::naive::NaiveRoutine,
-    routines::{BlueprintStrategy, Routine as _},
+    routines::{BatchMatmulRoutine as _, BlueprintStrategy},
 };
 
 #[allow(clippy::result_large_err)]

@@ -731,9 +731,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// from its partitioner's `Schedule` (here `.staged()` or `.double_buffered()`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -747,9 +747,9 @@ fn launch_staged_matmul<E: Numeric>(
 /// concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -803,8 +803,8 @@ fn cmma_fragment_roundtrip() {
 /// gmem → smem → cmma accumulator → smem → gmem — pure transit, no arithmetic.
 #[cube(launch)]
 fn cmma_roundtrip<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = input.tile();
@@ -884,9 +884,9 @@ fn cmma_matmul_8x8x8() {
 /// `cmma::execute` (`acc = A·B`), stored back through smem to gmem.
 #[cube(launch)]
 fn cmma_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -936,7 +936,7 @@ fn cmma_matmul<E: Numeric>(
     );
     acc.stage(&c_smem_tile);
 
-    acc.contract_cmma(&a_frag, &b_frag);
+    acc.mma(&a_frag, &b_frag);
 
     c_smem_tile.stage(&acc);
     sync_cube();

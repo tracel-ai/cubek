@@ -1,5 +1,7 @@
 use cubecl::{
+    CubeCount, CubeDim,
     features::MmaConfig,
+    ir::AddressType,
     {Runtime, client::ComputeClient},
 };
 use cubek_std::{
@@ -19,22 +21,23 @@ use crate::{
             },
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{PartitionBuffering, PlanePartitioner},
+        stage::{NumStages, PartitionBuffering, PlanePartitioner},
         tile::TileMatmulKind,
     },
     routines::{
-        Routine, TilingArgs,
+        BatchMatmulRoutine, Routine, TilingArgs, batch_validate_blueprint,
         selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     },
 };
 use crate::{
     definition::{
-        MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, MultiRowStrategy,
-        TilingBlueprint, TilingScheme, adjust_dtypes,
+        BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatmulVectorSizes, MultiRowStrategy, TilingScheme, adjust_dtypes,
     },
     routines::ExpandInfo,
 };
 use crate::{
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
     {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
 };
@@ -86,6 +89,13 @@ impl Display for SimpleArgs {
     }
 }
 
+/// The batch-matmul family powering [`SimpleAlgorithm`].
+type SimpleBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
+    RC,
+    SimpleMatmulFamily<PlanePartitioner, RC, LL, RL, AL, PlaneWriterFamily>,
+    RowMajorGlobalPartitionMatmul,
+>;
+
 impl<RC, LL, RL, AL> Routine<RC> for SimpleAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
@@ -94,13 +104,70 @@ where
     AL: FullLoadingStrategy<RC>,
 {
     type Strategy = SimpleArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        SimpleMatmulFamily<PlanePartitioner, RC, LL, RL, AL, PlaneWriterFamily>,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<RC, LL, RL, AL> BatchMatmulRoutine<RC> for SimpleAlgorithm<LL, RL, AL>
+where
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC>,
+{
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <SimpleBatch<RC, LL, RL, AL>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<SimpleBatch<RC, LL, RL, AL>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        SimpleBatch::<RC, LL, RL, AL>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -156,7 +223,7 @@ where
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
 
         let client = &device_settings.client;
@@ -169,7 +236,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = SimpleBatch::<RC, LL, RL, AL>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,
@@ -192,7 +259,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
     plane_dim: u32,
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
+) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -233,7 +300,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
+            BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_blueprint(hypercube)
                 .build(),
@@ -252,7 +319,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
+            BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
                 .partition_buffering(PartitionBuffering::Single)
                 .hypercube_blueprint(hypercube)
                 .build(),

@@ -2,10 +2,10 @@ use crate::launch::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
     TensorMapArgs,
 };
-use crate::routines::{BlueprintStrategy, Routine};
+use crate::routines::{BatchMatmulRoutine, BlueprintStrategy};
 use crate::{
     definition::MatmulProblem,
-    definition::{AvailableVectorSizes, MatmulElems, TilingBlueprint},
+    definition::{AvailableVectorSizes, BatchMatmulBlueprint, MatmulElems},
     definition::{MatmulAvailabilityError, MatmulSetupError},
     launch::launch_kernel_concrete,
 };
@@ -21,7 +21,7 @@ use cubek_std::InputBinding;
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime, A: Routine<()>>(
+pub fn launch_ref<R: Runtime, A: BatchMatmulRoutine<()>>(
     client: &ComputeClient<R>,
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
@@ -68,7 +68,7 @@ pub fn launch_ref<R: Runtime, A: Routine<()>>(
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
+pub fn launch_ref_tma<R: Runtime, A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint>>(
     client: &ComputeClient<R>,
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,
@@ -115,7 +115,7 @@ pub fn launch_ref_tma<R: Runtime, A: Routine<(), Blueprint = TilingBlueprint>>(
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: Routine<()>>(
+fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine<()>>(
     client: &ComputeClient<R>,
     lhs: InputBinding<R>,
     rhs: InputBinding<R>,

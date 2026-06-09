@@ -10,8 +10,8 @@ use crate::{
 use crate::{
     components::stage::StageMatmul as StageMatmulInstance,
     components::{global::memory::GlobalMemoryConfig, stage::NumStages},
+    definition::BatchMatmulBlueprint,
     definition::StageIdent,
-    definition::TilingBlueprint,
     definition::{AccG, MatmulSetupError},
     definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG},
     definition::{MatmulProblem, MatmulTypes},
@@ -33,7 +33,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
@@ -42,14 +42,14 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

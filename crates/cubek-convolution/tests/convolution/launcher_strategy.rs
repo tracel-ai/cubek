@@ -22,7 +22,7 @@ use cubek_matmul::{
         tile::TileMatmulKind,
     },
     definition::{
-        AvailableVectorSizes, MatmulElems, MatmulGlobalElems, TilingBlueprint, TilingScheme,
+        AvailableVectorSizes, BatchMatmulBlueprint, MatmulElems, MatmulGlobalElems, TilingScheme,
     },
     launch::{InputArg, OutputArg},
     routines::{BlueprintStrategy, Routine},
@@ -125,7 +125,7 @@ pub fn test_algo(
         address_type: AddressType::U32,
     };
 
-    let matmul_blueprint = TilingBlueprint::builder(
+    let matmul_blueprint = BatchMatmulBlueprint::builder(
         TileMatmulKind::Cmma,
         tiling_scheme,
         plane_dim,

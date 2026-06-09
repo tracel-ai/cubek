@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::Runtime;
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
@@ -12,7 +12,8 @@ use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
 use crate::definition::{
-    MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
+    BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, MultiRowStrategy,
 };
 use crate::{
     components::global::read::{
@@ -24,12 +25,15 @@ use crate::{
     },
     routines::ExpandInfo,
 };
-use crate::{components::stage::PlanePartitioner, components::tile::TileMatmulKind};
 use crate::{
-    launch::RuntimeConfig,
+    components::stage::{NumStages, PlanePartitioner},
+    components::tile::TileMatmulKind,
+};
+use crate::{
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::DeviceSettings,
     routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, LaunchInfo, TilingArgs, base},
+    routines::{BlueprintStrategy, LaunchInfo, TilingArgs, base, batch_validate_blueprint},
 };
 
 /// Plane accelerated double buffered matmul with cyclic readers
@@ -84,9 +88,67 @@ macro_rules! double_buffering_impl {
             RC: RuntimeConfig,
         {
             type Strategy = DoubleBufferingArgs;
-            type BatchMatmul = $batch;
-            type Blueprint = TilingBlueprint;
-            type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+            type Blueprint = BatchMatmulBlueprint;
+        }
+
+        impl<RC> base::BatchMatmulRoutine<RC> for $algo
+        where
+            RC: RuntimeConfig,
+        {
+            #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+            fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+                client: &ComputeClient<R>,
+                cube_dim: CubeDim,
+                cube_count: CubeCount,
+                address_type: AddressType,
+                input: InputRuntimeArg<MA, R>,
+                output: OutputRuntimeArg<MA, R>,
+                config: ConfigRuntimeArg<MA, R>,
+                cube_count_input: CubeMappingLaunch<R>,
+                blueprint: Self::Blueprint,
+                dtypes: &MatmulElems,
+                vector_sizes: &MatmulVectorSizes,
+            ) -> Result<(), MatmulSetupError> {
+                {
+                    unsafe {
+                        <$batch>::launch_unchecked::<MA, R>(
+                            client,
+                            cube_dim,
+                            cube_count,
+                            address_type,
+                            input,
+                            output,
+                            config,
+                            cube_count_input,
+                            blueprint,
+                            dtypes,
+                            vector_sizes,
+                        )?
+                    }
+                    Ok(())
+                }
+            }
+
+            #[allow(clippy::result_large_err)]
+            fn validate_blueprint<R: Runtime>(
+                client: &ComputeClient<R>,
+                blueprint: &Self::Blueprint,
+                problem: &MatmulProblem,
+                dtypes: &MatmulElems,
+                vector_sizes: &MatmulVectorSizes,
+            ) -> Result<(), MatmulSetupError> {
+                batch_validate_blueprint::<$batch, RC, R>(
+                    client,
+                    blueprint,
+                    problem,
+                    dtypes,
+                    vector_sizes,
+                )
+            }
+
+            fn num_stages() -> NumStages {
+                <$batch>::num_stages()
+            }
 
             fn expand_blueprint<R: Runtime>(
                 problem: &MatmulProblem,
@@ -130,10 +192,10 @@ macro_rules! double_buffering_impl {
                 problem: &MatmulProblem,
                 device_settings: &DeviceSettings<R>,
                 expand_info: ExpandInfo<Self::Blueprint>,
-            ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+            ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
                 let ExpandInfo { blueprint, dtypes } = expand_info;
 
-                <Self as base::Routine<RC>>::validate_blueprint(
+                <Self as base::BatchMatmulRoutine<RC>>::validate_blueprint(
                     &device_settings.client,
                     &blueprint,
                     problem,
@@ -141,11 +203,8 @@ macro_rules! double_buffering_impl {
                     &device_settings.vector_sizes,
                 )?;
 
-                let cubedim_resource = Self::BatchMatmul::cubedim_resource(
-                    &blueprint,
-                    &dtypes,
-                    &device_settings.vector_sizes,
-                )?;
+                let cubedim_resource =
+                    <$batch>::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?;
 
                 LaunchInfo::new(
                     blueprint,
