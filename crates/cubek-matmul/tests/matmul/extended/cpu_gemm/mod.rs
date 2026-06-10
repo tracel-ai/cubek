@@ -14,10 +14,12 @@ use cubek_std::MatrixLayout;
 
 type TestRuntime = cubecl::TestRuntime;
 
-/// The shape of a CpuGemm test case: a `batch × (m, k) @ (k, n)` problem run with
-/// square `tile_size` sub-tiles.
+/// The shape of a CpuGemm test case: `lhs_batch × (m, k) @ rhs_batch × (k, n)` run with
+/// square `tile_size` sub-tiles. The two batches differ only for a broadcast case (one
+/// side `1`); equal otherwise.
 struct Dims {
-    batch: usize,
+    lhs_batch: usize,
+    rhs_batch: usize,
     m: usize,
     n: usize,
     k: usize,
@@ -27,13 +29,15 @@ struct Dims {
 #[test]
 fn very_small_square() {
     let Dims {
-        batch,
+        lhs_batch,
+        rhs_batch,
         m,
         n,
         k,
         tile_size,
     } = Dims {
-        batch: 1,
+        lhs_batch: 1,
+        rhs_batch: 1,
         m: 8,
         n: 8,
         k: 8,
@@ -44,8 +48,8 @@ fn very_small_square() {
         m,
         n,
         k,
-        shape![batch],
-        shape![batch],
+        shape![lhs_batch],
+        shape![rhs_batch],
         MatrixLayout::RowMajor,
         MatrixLayout::ColMajor,
         MatrixLayout::RowMajor,
@@ -68,13 +72,15 @@ fn very_small_square() {
 #[test]
 fn small_square() {
     let Dims {
-        batch,
+        lhs_batch,
+        rhs_batch,
         m,
         n,
         k,
         tile_size,
     } = Dims {
-        batch: 1,
+        lhs_batch: 1,
+        rhs_batch: 1,
         m: 32,
         n: 32,
         k: 64,
@@ -85,8 +91,8 @@ fn small_square() {
         m,
         n,
         k,
-        shape![batch],
-        shape![batch],
+        shape![lhs_batch],
+        shape![rhs_batch],
         MatrixLayout::RowMajor,
         MatrixLayout::ColMajor,
         MatrixLayout::RowMajor,
@@ -109,13 +115,15 @@ fn small_square() {
 #[test]
 fn rectangular() {
     let Dims {
-        batch,
+        lhs_batch,
+        rhs_batch,
         m,
         n,
         k,
         tile_size,
     } = Dims {
-        batch: 1,
+        lhs_batch: 1,
+        rhs_batch: 1,
         m: 48,
         n: 32,
         k: 64,
@@ -126,8 +134,8 @@ fn rectangular() {
         m,
         n,
         k,
-        shape![batch],
-        shape![batch],
+        shape![lhs_batch],
+        shape![rhs_batch],
         MatrixLayout::RowMajor,
         MatrixLayout::ColMajor,
         MatrixLayout::RowMajor,
@@ -150,13 +158,15 @@ fn rectangular() {
 #[test]
 fn single_tile() {
     let Dims {
-        batch,
+        lhs_batch,
+        rhs_batch,
         m,
         n,
         k,
         tile_size,
     } = Dims {
-        batch: 1,
+        lhs_batch: 1,
+        rhs_batch: 1,
         m: 8,
         n: 8,
         k: 8,
@@ -167,8 +177,8 @@ fn single_tile() {
         m,
         n,
         k,
-        shape![batch],
-        shape![batch],
+        shape![lhs_batch],
+        shape![rhs_batch],
         MatrixLayout::RowMajor,
         MatrixLayout::ColMajor,
         MatrixLayout::RowMajor,
@@ -188,8 +198,9 @@ fn single_tile() {
     );
 }
 
-/// The `Inferred` strategy lets the routine pick the tile size; this shape is
-/// divisible by whatever edge the heuristic currently chooses.
+/// The `Inferred` strategy lets the routine pick the tile size. The heuristic sizes tiles
+/// for L1 (large, and not divisors of these axes), so this exercises the runtime-looped
+/// leaf path: a block too big to fully unroll loops at runtime instead.
 #[test]
 fn many_tiles_inferred_size() {
     let (batch, m, n, k) = (1, 64, 64, 128);
@@ -218,18 +229,94 @@ fn many_tiles_inferred_size() {
 #[test]
 fn batched_small() {
     let Dims {
-        batch,
+        lhs_batch,
+        rhs_batch,
         m,
         n,
         k,
         tile_size,
     } = Dims {
-        batch: 4,
+        lhs_batch: 4,
+        rhs_batch: 4,
         m: 16,
         n: 16,
         k: 32,
         tile_size: 8,
     };
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![lhs_batch],
+        shape![rhs_batch],
+        MatrixLayout::RowMajor,
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+#[test]
+fn batched_rectangular() {
+    let Dims {
+        lhs_batch,
+        rhs_batch,
+        m,
+        n,
+        k,
+        tile_size,
+    } = Dims {
+        lhs_batch: 3,
+        rhs_batch: 3,
+        m: 32,
+        n: 48,
+        k: 64,
+        tile_size: 16,
+    };
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![lhs_batch],
+        shape![rhs_batch],
+        MatrixLayout::RowMajor,
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+/// No axis is a multiple of the tile, so every axis has a partial trailing tile —
+/// exercises edge masking (zero-padded input reads, predicated output writes).
+#[test]
+fn indivisible_all_axes() {
+    let (batch, m, n, k, tile_size) = (1, 10, 10, 10, 4);
     let client = TestRuntime::client(&Default::default());
     let problem = MatmulProblem::from_parameters(
         m,
@@ -256,21 +343,11 @@ fn batched_small() {
     );
 }
 
+/// Indivisible rectangular + batched, with K exact but M and N overhanging, so the
+/// per-axis check flags differ across operands.
 #[test]
-fn batched_rectangular() {
-    let Dims {
-        batch,
-        m,
-        n,
-        k,
-        tile_size,
-    } = Dims {
-        batch: 3,
-        m: 32,
-        n: 48,
-        k: 64,
-        tile_size: 16,
-    };
+fn indivisible_rectangular_batched() {
+    let (batch, m, n, k, tile_size) = (2, 30, 20, 32, 8);
     let client = TestRuntime::client(&Default::default());
     let problem = MatmulProblem::from_parameters(
         m,
@@ -280,6 +357,192 @@ fn batched_rectangular() {
         shape![batch],
         MatrixLayout::RowMajor,
         MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+/// The `Inferred` heuristic on awkward primes: it no longer snaps the tile to a divisor,
+/// so the chosen block overhangs and relies on masking.
+#[test]
+fn indivisible_inferred() {
+    let (batch, m, n, k) = (1, 37, 41, 53);
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![batch],
+        shape![batch],
+        MatrixLayout::RowMajor,
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+    );
+}
+
+/// `rhs` unbatched (`[1]`) so it broadcasts across all of `lhs`'s batch — `rhs` omits the
+/// batch axis, every cube reads the same matrix. `rhs` row-major exercises broadcast + `N`
+/// vectorization together.
+#[test]
+fn broadcast_rhs_unbatched() {
+    let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![4], shape![1], 16, 16, 32, 8);
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        lhs_batches,
+        rhs_batches,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+/// `lhs` unbatched (`[1]`) broadcasts across `rhs`'s batch — the mirror case, so `lhs`
+/// omits the batch axis instead. `rhs` col-major keeps it on the scalar path.
+#[test]
+fn broadcast_lhs_unbatched() {
+    let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![1], shape![4], 16, 16, 32, 8);
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        lhs_batches,
+        rhs_batches,
+        MatrixLayout::RowMajor,
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+/// The genuine two-axis broadcast: `lhs [B0, 1]` and `rhs [1, B1]` give `out [B0, B1]`.
+/// Each operand carries one batch axis and omits the other, so neither has the full batch;
+/// the merge rebuilds `{B0, B1}` and both axes ride (share) cube-Z.
+#[test]
+fn broadcast_two_axes() {
+    let (lhs_batches, rhs_batches, m, n, k, tile_size) =
+        (shape![4, 1], shape![1, 3], 16, 16, 32, 8);
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        lhs_batches,
+        rhs_batches,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+/// A 2-D batch fully present on both sides (`[2, 3] @ [2, 3]`): no broadcast, but two batch
+/// axes share cube-Z, exercising the multi-axis product on `Z`.
+#[test]
+fn batched_two_axes() {
+    let (lhs_batches, rhs_batches, m, n, k, tile_size) =
+        (shape![2, 3], shape![2, 3], 16, 16, 32, 8);
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        lhs_batches,
+        rhs_batches,
+        MatrixLayout::RowMajor,
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            tile_m: tile_size,
+            tile_n: tile_size,
+            tile_k: tile_size,
+        })),
+    );
+}
+
+/// Broadcast crossed with edge masking: `rhs` broadcasts and no matrix axis divides the
+/// tile, so partial tiles and the omitted batch axis are exercised together.
+#[test]
+fn broadcast_indivisible() {
+    let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![3], shape![1], 10, 14, 10, 4);
+    let client = TestRuntime::client(&Default::default());
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        lhs_batches,
+        rhs_batches,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
         MatrixLayout::RowMajor,
         None,
         None,

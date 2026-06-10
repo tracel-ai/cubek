@@ -1,11 +1,34 @@
+//! The CpuGemm routine: a tile-DSL CPU matmul whose entire kernel body is `c.mma(a, b)`.
+//! Strategy + blueprint, launch wiring, and kernel are co-located here.
+
+mod kernel;
+mod launch;
+
+pub use launch::{WithLayout, launch_ref};
+
 use std::fmt::Display;
 
 use cubecl::Runtime;
+use cubek_tile::Axis;
 
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, Routine},
 };
+
+// Matmul's axes — the labels this routine gives the engine's opaque `Axis`. The matrix
+// axes take the low labels (`K` contracted); each output batch dimension becomes its own
+// axis `B0, B1, …` at `batch_axis(i)`, so an operand broadcasts a batch dim simply by
+// omitting that axis (the collapsed single `B` is gone — it would lose the per-dim
+// broadcast structure). `MAX_AXES = 6` caps this at three batch dims.
+pub(crate) const M: Axis = Axis(0);
+pub(crate) const N: Axis = Axis(1);
+pub(crate) const K: Axis = Axis(2);
+
+/// The axis for output batch dimension `i` (outermost is `0`).
+pub(crate) fn batch_axis(i: usize) -> Axis {
+    Axis(3 + i as u8)
+}
 
 /// L1 data-cache budget the blocking targets, in bytes. Conservative constant until
 /// the runtime exposes per-core cache sizes.
@@ -22,17 +45,14 @@ pub struct CpuGemmBlueprint {
 }
 
 impl CpuGemmBlueprint {
-    /// Reject a blueprint whose blocks don't tile the problem evenly. Temporary: edge
-    /// tiles aren't masked yet, so each block must divide its axis.
+    /// Reject a degenerate blueprint. Edge tiles are masked now (the partition walks
+    /// `ceil`, the overhang is bounds-checked), so blocks need not divide their axis —
+    /// only be non-zero.
     #[allow(clippy::result_large_err)]
-    pub fn validate(&self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
-        let (m, n, k) = (problem.m, problem.n, problem.k);
-        if !m.is_multiple_of(self.tile_m)
-            || !n.is_multiple_of(self.tile_n)
-            || !k.is_multiple_of(self.tile_k)
-        {
+    pub fn validate(&self, _problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
+        if self.tile_m == 0 || self.tile_n == 0 || self.tile_k == 0 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "CpuGemm blocks {}x{}x{} must divide M={m}, N={n}, K={k}",
+                "CpuGemm blocks must be non-zero, got {}x{}x{}",
                 self.tile_m, self.tile_n, self.tile_k
             ))));
         }
@@ -136,19 +156,12 @@ impl CpuGemmRoutine {
         let tile_k = ((L1_BYTES / elem).saturating_sub(tile_m * tile_n) / (tile_m + tile_n))
             .clamp(1, k.max(1));
 
-        // TODO(masking): edge tiles aren't masked yet, so each block must divide its axis.
-        // Drop these snaps once partial-tile masking lands — the choice above already
-        // targets the mask-free ideal.
+        // Edge tiles are masked, so the heuristic's ideal block stands — just clamp each
+        // edge to its axis (a tile no larger than the matrix) and keep it non-zero.
         CpuGemmBlueprint {
-            tile_m: largest_divisor_at_most(m, tile_m),
-            tile_n: largest_divisor_at_most(n, tile_n),
-            tile_k: largest_divisor_at_most(k, tile_k),
+            tile_m: tile_m.clamp(1, m.max(1)),
+            tile_n: tile_n.clamp(1, n.max(1)),
+            tile_k: tile_k.clamp(1, k.max(1)),
         }
     }
-}
-
-/// Largest divisor of `n` that is `≤ cap` (at least 1).
-fn largest_divisor_at_most(n: usize, cap: usize) -> usize {
-    let cap = cap.clamp(1, n.max(1));
-    (1..=cap).rev().find(|d| n % d == 0).unwrap_or(1)
 }

@@ -12,6 +12,25 @@ use cubecl::{
 use cubek_std::{MatmulProblemSize, MatrixLayout, StageIdent};
 use serde::{Deserialize, Serialize};
 
+/// Numpy-style batch broadcast: left-pad the shorter shape with 1s, then take the
+/// per-axis max. `None` if any axis pair conflicts (neither is 1 nor equal).
+pub fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Shape> {
+    let max_len = max(lhs.len(), rhs.len());
+    let lhs_padded = std::iter::repeat_n(1, max_len - lhs.len()).chain(lhs.iter().cloned());
+    let rhs_padded = std::iter::repeat_n(1, max_len - rhs.len()).chain(rhs.iter().cloned());
+
+    lhs_padded
+        .zip(rhs_padded)
+        .map(|(l, r)| {
+            if l != r && l != 1 && r != 1 {
+                None
+            } else {
+                Some(max(l, r))
+            }
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 /// Description of a matmul problem to solve, regardless of actual data
 pub struct MatmulProblem {
@@ -120,24 +139,6 @@ impl MatmulProblem {
         global_dtypes: MatmulGlobalElems,
         address_type: AddressType,
     ) -> Self {
-        fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Shape> {
-            let max_len = max(lhs.len(), rhs.len());
-            let lhs_padded = std::iter::repeat_n(1, max_len - lhs.len()).chain(lhs.iter().cloned());
-
-            let rhs_padded = std::iter::repeat_n(1, max_len - rhs.len()).chain(rhs.iter().cloned());
-
-            lhs_padded
-                .zip(rhs_padded)
-                .map(|(l, r)| {
-                    if l != r && l != 1 && r != 1 {
-                        None
-                    } else {
-                        Some(max(l, r))
-                    }
-                })
-                .collect()
-        }
-
         let out_batches =
             broadcast_batches(&lhs_batches, &rhs_batches).expect("Batches should match");
 

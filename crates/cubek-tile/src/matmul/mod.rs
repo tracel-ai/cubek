@@ -1,14 +1,16 @@
 //! The matmul reading of a [`Tile`](super::Tile): `c.mma(a, b)` treats the trailing two
 //! axes as the `row × col` matrix, leading axes as a batch, and contracts `K`. A final
 //! tile contracts via the [`Mma`] trait; otherwise [`mma`](Tile::mma) lowers (partition,
-//! locate each operand, recurse) per the head [`Schedule`].
+//! locate each operand, recurse) per the head [`Schedule`]. The two leaves live in
+//! [`register`] (memory tiles) and [`cmma`] (tensor-core fragments).
 
-use cubecl::{
-    prelude::*,
-    std::tensor::{View, ViewMut, layout::Coords2d},
-};
+mod cmma;
+mod register;
+
+use cubecl::prelude::*;
 
 use super::*;
+use register::mma_register_memory;
 
 /// The leaf contraction `acc += lhs · rhs`, reached only at a final tile. Keyed on the
 /// accumulator's element so the generic lowering can name the bound; the method takes the whole
@@ -25,10 +27,15 @@ pub trait Mma<Lhs: CubePrimitive, Rhs: CubePrimitive>: CubePrimitive {
 impl<E: Numeric, V: Size, L: Size> Mma<Vector<E, L>, Vector<E, V>> for Vector<E, V> {
     fn mma(acc: &mut Tile<Vector<E, V>>, lhs: &Tile<Vector<E, L>>, rhs: &Tile<Vector<E, V>>) {
         let space = comptime!(acc.space.clone());
+        // The output's bounds-check flag, read before borrowing the payload (only the
+        // payload reaches the leaf).
+        let acc_check = comptime!(acc.check);
         let payload = &mut acc.payload;
         match payload {
             Payload::Cmma(d) => d.mma(lhs, rhs),
-            Payload::Gmem(g) | Payload::Smem(g) => mma_register_memory::<E, L, V>(g, lhs, rhs, space),
+            Payload::Gmem(g) | Payload::Smem(g) => {
+                mma_register_memory::<E, L, V>(g, lhs, rhs, space, acc_check)
+            }
         }
     }
 }
@@ -61,103 +68,6 @@ impl<Acc: CubePrimitive> Tile<Acc> {
         Acc: Mma<Lhs, Rhs>,
     {
         self.at(region).mma(&lhs.at(region), &rhs.at(region));
-    }
-}
-
-/// Run the register microkernel over each batch matrix. `mr × nr` are the accumulator's
-/// trailing axes (`nr` in `N`-lines); `kc` is scalar `K`, read off `rhs` (whose `K` is unlined).
-#[cube]
-pub(crate) fn mma_register_memory<E: Numeric, L: Size, V: Size>(
-    acc: &mut MemData<Vector<E, V>>,
-    lhs: &Tile<Vector<E, L>>,
-    rhs: &Tile<Vector<E, V>>,
-    #[comptime] space: Space,
-) {
-    let (mr, nr, kc) = comptime! {
-        (
-            space.extent_at(space.rank() - 2),
-            space.extent_at(space.rank() - 1),
-            rhs.space.extent_at(rhs.space.rank() - 2)
-        )
-    };
-
-    let matrices = comptime! {
-        let mut count = 1;
-        for p in 0..space.rank() - 2 {
-            count *= space.extent_at(p);
-        }
-        count
-    };
-
-    for j in 0..matrices {
-        let l = lhs.matrix(j);
-        let r = rhs.matrix(j);
-        let mut a = acc.matrix_mut(j, comptime!(space.clone()));
-        mma_register::<E, L, V>(&l, &r, &mut a, mr, nr, kc);
-    }
-}
-
-/// The microkernel. The `mr × nr` block of `V`-wide accumulators lives in registers: load once,
-/// run `kc` rank-1 updates ([`outer_product`]), store once. `nr` counts `N`-lines.
-#[cube]
-fn mma_register<E: Numeric, L: Size, V: Size>(
-    lhs: &View<'_, Vector<E, L>, Coords2d>,
-    rhs: &View<'_, Vector<E, V>, Coords2d>,
-    acc: &mut ViewMut<'_, Vector<E, V>, Coords2d>,
-    #[comptime] mr: usize,
-    #[comptime] nr: usize,
-    #[comptime] kc: usize,
-) {
-    let mut c = Array::<Vector<E, V>>::new(mr * nr);
-    #[unroll]
-    for i in 0..mr {
-        #[unroll]
-        for j in 0..nr {
-            c[i * nr + j] = acc.read((i as u32, j as u32).runtime());
-        }
-    }
-
-    #[unroll]
-    for p in 0..kc {
-        outer_product::<E, L, V>(lhs, rhs, &mut c, p, mr, nr);
-    }
-
-    #[unroll]
-    for i in 0..mr {
-        #[unroll]
-        for j in 0..nr {
-            acc.write((i as u32, j as u32).runtime(), c[i * nr + j]);
-        }
-    }
-}
-
-/// One rank-1 update at scalar depth `p`: `c += outer(A[:, p], B[p, :])`. `A[i, p]` is lane
-/// `p % L` of `lhs`'s `(p / L)` `K`-line, broadcast and multiplied by `B`'s `V`-wide lines.
-#[cube]
-fn outer_product<E: Numeric, L: Size, V: Size>(
-    lhs: &View<'_, Vector<E, L>, Coords2d>,
-    rhs: &View<'_, Vector<E, V>, Coords2d>,
-    c: &mut Array<Vector<E, V>>,
-    #[comptime] p: usize,
-    #[comptime] mr: usize,
-    #[comptime] nr: usize,
-) {
-    let l = comptime!(L::value());
-    let mut b = Array::<Vector<E, V>>::new(nr);
-    #[unroll]
-    for j in 0..nr {
-        b[j] = rhs.read((p as u32, j as u32).runtime());
-    }
-    #[unroll]
-    for i in 0..mr {
-        let scalar = lhs
-            .read((i as u32, (p / l) as u32).runtime())
-            .extract(p % l);
-        let a = Vector::<E, V>::cast_from(scalar);
-        #[unroll]
-        for j in 0..nr {
-            c[i * nr + j] += a * b[j];
-        }
     }
 }
 

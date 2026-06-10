@@ -6,8 +6,8 @@ use cubecl::{
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
 use cubek_matmul::definition::{InnerLayout, MatmulElems, MatmulProblem};
-use cubek_matmul::launch::launch_cpu_gemm::{LaidOut, launch_ref};
-use cubek_matmul::routines::{BlueprintStrategy, cpu_gemm::CpuGemmBlueprint};
+use cubek_matmul::routines::BlueprintStrategy;
+use cubek_matmul::routines::cpu_gemm::{CpuGemmBlueprint, WithLayout, launch_ref};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::TestInput;
 use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
@@ -72,7 +72,7 @@ impl Operand {
     ) -> Self {
         let handle = TestInput::builder(
             client.clone(),
-            Shape::from(layout.physical_dims(batch, rows, cols)),
+            Shape::from(layout.physical_dims(&[batch], rows, cols)),
         )
         .zeros()
         .generate_without_host_data();
@@ -115,7 +115,7 @@ fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
 /// The operand's binding with the layout's physical strides realized on its buffer.
 fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
     let mut binding = op.handle.clone().binding();
-    binding.strides = op.layout.physical_strides(op.batch, op.rows, op.cols)[..].into();
+    binding.strides = op.layout.physical_strides(&[op.batch], op.rows, op.cols)[..].into();
     binding
 }
 
@@ -126,9 +126,7 @@ fn tile_arg<E: Numeric, V: Size>(
     op: &Operand,
     space: Space,
 ) -> TileArgLaunch<'static, E, V, TestRuntime> {
-    let (tensor, storage) = op
-        .layout
-        .tensor_arg(physical_binding(op), op.batch, op.rows, op.cols, 1);
+    let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
     TileArgLaunch::new(tensor, space, storage)
 }
 
@@ -146,28 +144,32 @@ fn gather(client: &ComputeClient<TestRuntime>, src: &Operand) -> TensorHandle<Te
     logical.handle
 }
 
-/// Run `batch × (m, k) @ (k, n)` with each operand in its chosen layout and check
-/// it against the plain logical reference.
+/// Run `lhs_batch × (m, k) @ rhs_batch × (k, n)` with each operand in its chosen layout
+/// and check it against the plain logical reference. When the batches differ (one side
+/// `1`) this exercises a tiled (or strided) operand whose batch axis is *omitted* — the
+/// layout's physical buffer crossed with the broadcast path.
 fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout, dims: Dims) {
     let Dims {
-        batch,
+        lhs_batch,
+        rhs_batch,
         m,
         n,
         k,
         tile_size: tile,
     } = dims;
+    let out_batch = lhs_batch.max(rhs_batch);
     let client = TestRuntime::client(&Default::default());
     let dtypes = MatmulElems::from_single_dtype(f32::as_type_native_unchecked());
 
     // Logical inputs (row-major) via cubek-test-utils, with host data for the
     // reference. The `problem` describes the *logical* matmul (the physical inner
-    // layouts below don't change it).
+    // layouts below don't change it); the reference broadcasts the batch per-dim.
     let problem = MatmulProblem::from_parameters(
         m,
         n,
         k,
-        shape![batch],
-        shape![batch],
+        shape![lhs_batch],
+        shape![rhs_batch],
         MatrixLayout::RowMajor,
         MatrixLayout::RowMajor,
         MatrixLayout::RowMajor,
@@ -176,43 +178,43 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
         dtypes.as_global_elems(),
         AddressType::U32,
     );
-    let (a_handle, a_host) = TestInput::builder(client.clone(), shape![batch, m, k])
+    let (a_handle, a_host) = TestInput::builder(client.clone(), shape![lhs_batch, m, k])
         .uniform(1234, -1., 1.)
         .generate_with_f32_host_data();
-    let (b_handle, b_host) = TestInput::builder(client.clone(), shape![batch, k, n])
+    let (b_handle, b_host) = TestInput::builder(client.clone(), shape![rhs_batch, k, n])
         .uniform(5678, -1., 1.)
         .generate_with_f32_host_data();
 
     // Operands in their chosen inner layouts; scatter the logical inputs in
     // through the views.
-    let lhs = Operand::zeros(&client, lhs_layout, [B, M, K], batch, m, k);
-    let rhs = Operand::zeros(&client, rhs_layout, [B, K, N], batch, k, n);
-    let out = Operand::zeros(&client, out_layout, [B, M, N], batch, m, n);
+    let lhs = Operand::zeros(&client, lhs_layout, [B, M, K], lhs_batch, m, k);
+    let rhs = Operand::zeros(&client, rhs_layout, [B, K, N], rhs_batch, k, n);
+    let out = Operand::zeros(&client, out_layout, [B, M, N], out_batch, m, n);
 
     copy(
         &client,
-        &Operand::wrap(a_handle, InnerLayout::RowMajor, [B, M, K], batch, m, k),
+        &Operand::wrap(a_handle, InnerLayout::RowMajor, [B, M, K], lhs_batch, m, k),
         &lhs,
     );
     copy(
         &client,
-        &Operand::wrap(b_handle, InnerLayout::RowMajor, [B, K, N], batch, k, n),
+        &Operand::wrap(b_handle, InnerLayout::RowMajor, [B, K, N], rhs_batch, k, n),
         &rhs,
     );
 
     // Drive the production launch path, imposing each operand's inner layout via
-    // `LaidOut` — this is where tiled (higher-rank) operands flow through `launch_ref`.
+    // `WithLayout` — this is where tiled (higher-rank) operands flow through `launch_ref`.
     launch_ref::<TestRuntime>(
         &client,
-        LaidOut {
+        WithLayout {
             binding: InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),
             layout: lhs.layout.clone(),
         },
-        LaidOut {
+        WithLayout {
             binding: InputBinding::Normal(physical_binding(&rhs), dtypes.rhs_global),
             layout: rhs.layout.clone(),
         },
-        LaidOut {
+        WithLayout {
             binding: physical_binding(&out),
             layout: out.layout.clone(),
         },
@@ -242,7 +244,8 @@ fn all_row_major() {
         RowMajor,
         RowMajor,
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
             m: 8,
             n: 8,
             k: 8,
@@ -258,7 +261,8 @@ fn row_col_natural() {
         ColMajor,
         RowMajor,
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
             m: 8,
             n: 8,
             k: 8,
@@ -275,7 +279,8 @@ fn all_tiled() {
         InnerLayout::square_tiled(4),
         InnerLayout::square_tiled(4),
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
             m: 8,
             n: 8,
             k: 8,
@@ -298,7 +303,8 @@ fn all_recursively_tiled() {
             tiles: vec![(4, 4), (2, 2)],
         },
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
             m: 8,
             n: 8,
             k: 8,
@@ -320,7 +326,8 @@ fn rectangular_tiled() {
             tiles: vec![(8, 8)],
         },
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
             m: 8,
             n: 8,
             k: 8,
@@ -336,7 +343,8 @@ fn mixed_layouts() {
         ColMajor,
         RowMajor,
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
             m: 8,
             n: 8,
             k: 8,
@@ -355,7 +363,68 @@ fn tiled_inputs_recursive_output() {
             tiles: vec![(4, 4), (2, 2)],
         },
         Dims {
-            batch: 2,
+            lhs_batch: 2,
+            rhs_batch: 2,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
+}
+
+/// The tiled storage (4×4 blocks, valid for 8×8) and the partitioner disagree: the GEMM
+/// walks 3×3 tiles, which don't divide 8. The partition overhang is clipped against each
+/// operand's logical bound (folded from the physical tiled shape), so masking is correct
+/// even though the physical buffer is fully populated.
+#[test]
+fn tiled_storage_partitioner_overhang() {
+    run(
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        RowMajor,
+        Dims {
+            lhs_batch: 1,
+            rhs_batch: 1,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 3,
+        },
+    );
+}
+
+/// Broadcast crossed with a tiled buffer: `rhs` is batch-1 (broadcast) and tiled, so its
+/// batch axis is omitted while its physical `[1, grid…, tile…]` buffer is reused across
+/// all of `lhs`'s batch. `lhs` and the output are tiled and batched.
+#[test]
+fn broadcast_tiled_rhs() {
+    run(
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        Dims {
+            lhs_batch: 2,
+            rhs_batch: 1,
+            m: 8,
+            n: 8,
+            k: 8,
+            tile_size: 4,
+        },
+    );
+}
+
+/// The mirror: `lhs` broadcasts (batch 1) and is tiled; `rhs`/out are batched. Also mixes
+/// a strided output with tiled inputs.
+#[test]
+fn broadcast_tiled_lhs() {
+    run(
+        InnerLayout::square_tiled(4),
+        InnerLayout::square_tiled(4),
+        RowMajor,
+        Dims {
+            lhs_batch: 1,
+            rhs_batch: 3,
             m: 8,
             n: 8,
             k: 8,

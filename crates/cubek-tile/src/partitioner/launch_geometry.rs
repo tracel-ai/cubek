@@ -34,16 +34,19 @@ impl Partitioner {
             .product()
     }
 
-    /// Instance count of the axis bound to `Cube(dim)`, or 1 if no axis rides it.
+    /// Instance count of `Cube(dim)`: the product over every axis riding it (several
+    /// may share one dim as a mixed-radix index), or 1 if none do.
     fn cube_instances(&self, space: &Space, dim: CubeAxis) -> u32 {
         space
             .axes()
-            .find(|&axis| self.distribution(axis).scope() == Some(ComputeScope::Cube(dim)))
-            .map_or(1, |axis| self.instances_along(space, axis))
+            .filter(|&axis| self.distribution(axis).scope() == Some(ComputeScope::Cube(dim)))
+            .map(|axis| self.instances_along(space, axis))
+            .product()
     }
 
     fn instances_along(&self, space: &Space, axis: Axis) -> u32 {
-        let grid = space.extent(axis) / self.edge(axis);
+        // `ceil` so an indivisible axis launches the extra instance for its partial tile.
+        let grid = space.extent(axis).div_ceil(self.edge(axis));
         self.distribution(axis).coverage().instances(grid) as u32
     }
 }

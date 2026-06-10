@@ -105,9 +105,33 @@ impl Space {
         }
     }
 
-    /// Tiles along `axis`: `extent / sub-tile edge`.
+    /// Tiles along `axis`: `ceil(extent / sub-tile edge)`, so an indivisible axis gets a
+    /// trailing partial tile (its overhang is masked at read/write).
     pub fn count(&self, axis: Axis) -> usize {
-        self.extent(axis) / self.partitioner().edge(axis)
+        self.extent(axis).div_ceil(self.partitioner().edge(axis))
+    }
+
+    /// For a `Spatial` axis, the product of the instance counts of the
+    /// later-declared axes sharing its [`ComputeScope`] — so several axes can ride one
+    /// hardware dimension as a mixed-radix index, earlier axis most significant. `1`
+    /// for a `Sequential` axis or one that owns its scope. Decodes the shared hardware
+    /// position in [`Walk`](crate::Walk); any bijection covers the same tiles, so the
+    /// per-axis assignment need not match the launch-side declaration order.
+    pub fn spatial_inner_weight(&self, axis: Axis) -> usize {
+        let scope = match self.partitioner().distribution(axis).scope() {
+            Some(scope) => scope,
+            None => return 1,
+        };
+        let pos = self.position(axis);
+        let mut weight = 1;
+        for q in (pos + 1)..self.rank() {
+            let other = self.axis_at(q);
+            let dist = self.partitioner().distribution(other);
+            if dist.scope() == Some(scope) {
+                weight *= dist.coverage().instances(self.count(other));
+            }
+        }
+        weight
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.

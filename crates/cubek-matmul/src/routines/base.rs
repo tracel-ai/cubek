@@ -83,8 +83,6 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
     ) -> Result<(), MatmulSetupError>;
 }
 
-
-
 /// Validate a blueprint against a batch-matmul family `F`. Routines delegate here from
 /// their [`BatchMatmulRoutine::validate_blueprint`].
 #[allow(clippy::result_large_err)]

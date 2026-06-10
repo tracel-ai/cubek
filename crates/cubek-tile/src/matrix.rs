@@ -108,11 +108,22 @@ impl<T: CubePrimitive> Tile<T> {
 }
 
 #[cube]
-pub fn copy_2d<T: CubePrimitive>(dst: &mut ViewMut<'_, T, Coords2d>, src: &View<'_, T, Coords2d>) {
+pub fn copy_2d<T: CubePrimitive>(
+    dst: &mut ViewMut<'_, T, Coords2d>,
+    src: &View<'_, T, Coords2d>,
+    #[comptime] checked: bool,
+) {
     let (h, w) = src.shape();
     for i in 0..h {
         for j in 0..w {
-            dst.write((i, j), src.read((i, j)));
+            // `checked` zeroes reads past the source's logical bound (the partial-tile
+            // overhang); the full cell is still written, so the staged buffer is padded.
+            let value = if comptime!(checked) {
+                src.read_checked((i, j))
+            } else {
+                src.read((i, j))
+            };
+            dst.write((i, j), value);
         }
     }
 }
