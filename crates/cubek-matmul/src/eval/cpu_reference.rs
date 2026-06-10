@@ -14,7 +14,7 @@ use cubek_test_utils::{
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
-    launch::{Strategy, launch_ref},
+    {launch::launch_ref, strategy::Strategy},
 };
 
 /// Run `strategy` against `problem` with seeded inputs and return its output as

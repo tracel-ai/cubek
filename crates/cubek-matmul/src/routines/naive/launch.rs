@@ -14,8 +14,8 @@ use crate::{
 };
 
 use crate::{
-    launch::InputArg,
-    launch::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
+    args::InputArg,
+    args::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
     routines::naive::NaiveRoutine,
     routines::{BatchMatmulRoutine as _, BlueprintStrategy},
 };

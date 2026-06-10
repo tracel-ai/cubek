@@ -1,4 +1,4 @@
-use crate::launch::{
+use crate::args::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
     TensorMapArgs,
 };
@@ -7,7 +7,7 @@ use crate::{
     definition::MatmulProblem,
     definition::{AvailableVectorSizes, BatchMatmulBlueprint, MatmulElems},
     definition::{MatmulAvailabilityError, MatmulSetupError},
-    launch::launch_kernel_concrete,
+    strategy::launch_kernel_concrete,
 };
 use cubecl::{
     features::TypeUsage,

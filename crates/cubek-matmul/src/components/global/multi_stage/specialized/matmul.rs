@@ -7,10 +7,7 @@ use crate::components::global::{
     read::{PartialStageGlobalReader, StageBuffer},
 };
 use crate::{
-    components::global::read::{FullStageGlobalReader, PartialLoaderStage},
-    definition::Stage,
-};
-use crate::{
+    args::RuntimeConfig,
     components::global::{GlobalMatmul, SharedGlobalMatmulConfig},
     components::global::{PlaneFlowPartition, read::AsyncPartialLoadingStrategy},
     components::stage::{
@@ -18,7 +15,10 @@ use crate::{
         {init_a_fragment, init_accumulator, init_b_fragments},
     },
     definition::*,
-    launch::RuntimeConfig,
+};
+use crate::{
+    components::global::read::{FullStageGlobalReader, PartialLoaderStage},
+    definition::Stage,
 };
 
 use cubecl::{

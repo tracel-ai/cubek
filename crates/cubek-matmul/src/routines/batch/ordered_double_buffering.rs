@@ -12,19 +12,19 @@ use crate::definition::{
     MatmulVectorSizes, MultiRowStrategy,
 };
 use crate::{
-    components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
-    components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
-    components::stage::{NumStages, PlanePartitioner},
-    components::tile::TileMatmulKind,
-};
-use crate::{
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+    args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     routines::{
         BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, LaunchInfo, Routine, TilingArgs,
         batch_validate_blueprint,
     },
     {components::global::PlaneWriterFamily, routines::ExpandInfo},
+};
+use crate::{
+    components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
+    components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
+    components::stage::{NumStages, PlanePartitioner},
+    components::tile::TileMatmulKind,
 };
 
 /// The batch-matmul family powering [`OrderedDoubleBufferingAlgorithm`].

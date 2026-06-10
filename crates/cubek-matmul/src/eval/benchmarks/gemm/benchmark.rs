@@ -12,7 +12,7 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::definition::{MatmulElems, MatmulPrecision};
 use crate::eval::benchmarks::gemm::problem::{GemmProblem, Precision};
-use crate::launch::{Strategy, launch_ref};
+use crate::{launch::launch_ref, strategy::Strategy};
 
 pub fn bench(
     strategy: &Strategy,

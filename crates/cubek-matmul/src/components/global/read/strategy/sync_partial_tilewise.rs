@@ -4,7 +4,7 @@ use crate::components::global::memory::GlobalIterator;
 use crate::{
     components::global::multi_stage::LoadMaxRoundPlaneCount,
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use crate::{
     components::global::read::validate_swizzle_atom_size,

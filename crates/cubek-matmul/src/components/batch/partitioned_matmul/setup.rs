@@ -6,20 +6,20 @@ use crate::components::{
 };
 use crate::definition::MatmulAvailabilityError;
 use crate::{
-    components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
-    components::batch::partitioned_matmul::matmul::matmul_entry,
-    components::batch::partitioned_matmul::partition::GlobalPartitionMatmul,
-    components::global::GlobalMatmulFamily,
-};
-use crate::{
+    args::*,
     definition::BatchMatmulBlueprint,
     definition::CubeMappingLaunch,
     definition::MatmulProblem,
     definition::MatmulVectorSizes,
     definition::{MatmulElems, MatmulSetupError, MatmulTypes},
-    launch::*,
-    {components::CubeDimResource, launch::RuntimeConfig},
-    {components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg},
+    {args::ConfigRuntimeArg, components::batch::BatchMatmulFamily},
+    {args::RuntimeConfig, components::CubeDimResource},
+};
+use crate::{
+    components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
+    components::batch::partitioned_matmul::matmul::matmul_entry,
+    components::batch::partitioned_matmul::partition::GlobalPartitionMatmul,
+    components::global::GlobalMatmulFamily,
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::stage::StageMemoryConfig;

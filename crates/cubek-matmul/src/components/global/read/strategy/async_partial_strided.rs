@@ -9,14 +9,14 @@ use crate::components::global::{
 };
 use crate::definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent};
 use crate::{
+    args::RuntimeConfig,
+    components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
+};
+use crate::{
     components::global::memory::GlobalIterator,
     components::global::read::validate_swizzle_atom_size,
     components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory},
     components::{global::read::stage::FullStageLayout, stage::StridedStageFamily},
-};
-use crate::{
-    components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
-    launch::RuntimeConfig,
 };
 use cubecl::{
     prelude::*,

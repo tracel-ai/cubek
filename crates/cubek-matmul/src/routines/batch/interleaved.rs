@@ -34,8 +34,8 @@ use crate::{
     routines::ExpandInfo,
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
     {
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
         components::batch::BatchMatmulFamily,
-        launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     },
 };
 

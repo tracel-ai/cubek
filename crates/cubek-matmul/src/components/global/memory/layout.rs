@@ -11,7 +11,7 @@ use cubek_std::MatrixLayout;
 
 use crate::{
     definition::MatmulProblem,
-    {components::global::memory::GlobalMemoryConfig, launch::BatchedCoords},
+    {args::BatchedCoords, components::global::memory::GlobalMemoryConfig},
 };
 
 /// Global layout that uses the last two dimensions and ignores all others.

@@ -1,5 +1,6 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::{
+    args::RuntimeConfig,
     components::global::{
         GlobalReaderConfig, PlaneFlowPartition,
         memory::GlobalIterator,
@@ -10,7 +11,6 @@ use cubek_matmul::{
         },
     },
     definition::{MatmulElems, MatmulProblem},
-    launch::RuntimeConfig,
 };
 use cubek_std::{
     InvalidConfigError, StageIdent,

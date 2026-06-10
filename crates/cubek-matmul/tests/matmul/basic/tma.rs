@@ -1,6 +1,6 @@
 //! Inferred-blueprint smoke tests for TMA routines.
 
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 
 use super::common::{client, f16_elems, square};
 use crate::matmul::test_matmul_strategy;

@@ -16,6 +16,12 @@ use crate::definition::{
     MatmulVectorSizes, MultiRowStrategy,
 };
 use crate::{
+    args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+    routines::DeviceSettings,
+    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    routines::{BlueprintStrategy, LaunchInfo, TilingArgs, base, batch_validate_blueprint},
+};
+use crate::{
     components::global::read::{
         async_full_cyclic::AsyncFullCyclicLoading, async_full_strided::AsyncFullStridedLoading,
         async_full_tma::AsyncFullTmaLoading, async_partial_cyclic::AsyncPartialCyclicLoading,
@@ -28,12 +34,6 @@ use crate::{
 use crate::{
     components::stage::{NumStages, PlanePartitioner},
     components::tile::TileMatmulKind,
-};
-use crate::{
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
-    routines::DeviceSettings,
-    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, LaunchInfo, TilingArgs, base, batch_validate_blueprint},
 };
 
 /// Plane accelerated double buffered matmul with cyclic readers

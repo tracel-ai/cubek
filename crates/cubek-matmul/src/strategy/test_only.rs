@@ -18,10 +18,12 @@ use crate::{
         tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::launch_tiling,
     routines::{
-        BlueprintStrategy, Routine, TilingArgs, interleaved::InterleavedAlgorithm,
-        simple::SimpleBarrierAlgorithm,
+        BlueprintStrategy, Routine, TilingArgs,
+        batch::{
+            interleaved::InterleavedAlgorithm, launch as launch_tiling,
+            simple::SimpleBarrierAlgorithm,
+        },
     },
 };
 
@@ -69,7 +71,7 @@ fn with_kind<RC, A>(
     kind: TileMatmulKind,
 ) -> BlueprintStrategy<RC, A>
 where
-    RC: crate::launch::RuntimeConfig,
+    RC: crate::args::RuntimeConfig,
     A: Routine<RC>,
     A::Strategy: TilingArgs,
 {

@@ -4,7 +4,7 @@
 
 use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, GemmProblem};
 use cubek_matmul::eval::benchmarks::gemv::{GemvCorrectness, GemvProblem};
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];

@@ -12,8 +12,8 @@ use cubek_matmul::{
         global::{InputLoadFlow, LoadFlows},
         stage::PartitionBuffering,
     },
-    launch::Strategy,
     routines::BlueprintStrategy,
+    strategy::Strategy,
 };
 use cubek_std::{
     PartitionSize, StageSize, SwizzleModes,

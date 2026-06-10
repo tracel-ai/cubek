@@ -8,7 +8,7 @@ use crate::{
     components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use cubecl::{
     std::tensor::layout::Coords2d,

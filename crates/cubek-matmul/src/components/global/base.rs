@@ -15,7 +15,7 @@ use crate::{
     definition::{AccG, MatmulSetupError},
     definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG},
     definition::{MatmulProblem, MatmulTypes},
-    {components::CubeDimResource, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::CubeDimResource},
 };
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::{fmt::Debug, hash::Hash};

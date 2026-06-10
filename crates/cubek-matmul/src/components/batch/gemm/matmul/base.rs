@@ -12,8 +12,8 @@ use crate::components::batch::{
 };
 
 use crate::{
+    args::MatmulArgs,
     definition::{cube_pos_to_m_n_batch, *},
-    launch::MatmulArgs,
 };
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]

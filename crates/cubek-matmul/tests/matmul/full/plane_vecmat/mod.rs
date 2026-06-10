@@ -2,8 +2,8 @@ mod matmul_plane_vecmat {
     use cubecl::{TestRuntime, client::ComputeClient};
     use cubek_matmul::{
         definition::{BatchMatmulBlueprint, MatmulProblem},
-        launch::Strategy,
         routines::BlueprintStrategy,
+        strategy::Strategy,
     };
 
     use crate::matmul::test_matmul_strategy;

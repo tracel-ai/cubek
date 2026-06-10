@@ -12,9 +12,9 @@ use cubecl::{
     zspace::{shape, strides},
 };
 use cubek_matmul::{
+    args::*,
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
     definition::{BatchMatmulBlueprint, Blueprint, MatmulElems},
-    launch::*,
     routines::BatchMatmulRoutine,
 };
 use cubek_std::launch::tma::remap_storage_for_tma;

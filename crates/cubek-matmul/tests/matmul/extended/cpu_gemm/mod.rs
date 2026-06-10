@@ -4,11 +4,11 @@ use crate::matmul::test_matmul_strategy;
 use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
-    launch::Strategy,
     routines::{
         BlueprintStrategy,
         cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy},
     },
+    strategy::Strategy,
 };
 use cubek_std::MatrixLayout;
 

@@ -7,6 +7,7 @@ use crate::components::global::{
     read::AsyncPartialLoadingStrategy,
 };
 use crate::{
+    args::RuntimeConfig,
     components::global::GlobalMatmulFamily,
     components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
     components::stage::StagePartitioner,
@@ -16,7 +17,6 @@ use crate::{
     definition::StageIdent,
     definition::{MatmulElems, MatmulSetupError},
     definition::{MatmulProblem, MatmulTypes},
-    launch::RuntimeConfig,
 };
 use crate::{
     components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},

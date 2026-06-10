@@ -1,6 +1,7 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
+use crate::args::MatmulArgs;
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
@@ -8,9 +9,8 @@ use crate::definition::{
     AccG, BatchMatmulBlueprint, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes,
     MatmulVectorSizes, RhsG, cube_pos_to_m_n_batch,
 };
-use crate::launch::MatmulArgs;
 use crate::{
-    components::batch::partitioned_matmul::config::PartitionedBatchConfig, launch::RuntimeConfig,
+    args::RuntimeConfig, components::batch::partitioned_matmul::config::PartitionedBatchConfig,
 };
 use crate::{
     components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily},

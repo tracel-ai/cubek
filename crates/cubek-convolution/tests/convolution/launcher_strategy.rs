@@ -24,7 +24,6 @@ use cubek_matmul::{
     definition::{
         AvailableVectorSizes, BatchMatmulBlueprint, MatmulElems, MatmulGlobalElems, TilingScheme,
     },
-    launch::{InputArg, OutputArg},
     routines::{BlueprintStrategy, Routine},
 };
 use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};

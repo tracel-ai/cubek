@@ -1,15 +1,19 @@
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
-use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
+use std::fmt::Display;
 
-use std::{fmt::Display, marker::PhantomData};
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
+use cubek_std::tile::RowMajorTilingOrder;
 
 use crate::{
+    args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     components::{
         batch::{BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
             UnitWriterFamily,
-            read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
-            single_stage::simple::SimpleMatmulFamily,
+            multi_stage::double_buffering::DoubleBufferingMatmulFamily,
+            read::{
+                sync_full_cyclic::SyncFullCyclicLoading,
+                sync_partial_cyclic::SyncPartialCyclicLoading,
+            },
         },
         stage::{NumStages, UnitPartitioner},
         tile::TileMatmulKind,
@@ -18,65 +22,47 @@ use crate::{
         BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
         MatmulVectorSizes,
     },
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::{
-        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo,
-        selector::{
-            PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
-            infer_blueprint_unit,
-        },
+        BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
+        batch_validate_blueprint,
+        selector::{TileSizeSelection, UnitTilingBlueprintOptions, infer_blueprint_unit},
     },
 };
 
-use super::{BatchMatmulRoutine, Routine, batch_validate_blueprint};
-
-/// The batch-matmul family powering [`SimpleUnitAlgorithm`].
-type SimpleUnitBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
+/// The batch-matmul family powering [`DoubleUnitAlgorithm`].
+type DoubleUnitBatch<RC> = PartitionedBatchMatmulFamily<
     RC,
-    SimpleMatmulFamily<UnitPartitioner, RC, LL, RL, AL, UnitWriterFamily>,
+    DoubleBufferingMatmulFamily<
+        UnitPartitioner,
+        RC,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncFullCyclicLoading<RowMajorTilingOrder>,
+        UnitWriterFamily,
+    >,
     RowMajorGlobalPartitionMatmul,
 >;
 
-/// Unit single stage matmul with configurable readers (default to cyclic)
-pub struct SimpleUnitAlgorithm<
-    LL = SyncFullCyclicLoading<ColMajorTilingOrder>,
-    RL = SyncFullCyclicLoading<RowMajorTilingOrder>,
-    AL = SyncFullCyclicLoading<RowMajorTilingOrder>,
-> {
-    pub _ll: PhantomData<LL>,
-    pub _rl: PhantomData<RL>,
-    pub _al: PhantomData<AL>,
-}
+/// Unit double buffered matmul with cyclic readers
+pub struct DoubleUnitAlgorithm {}
 
 #[derive(Default, Clone, Debug)]
-pub struct SimpleUnitSelectionArgs {
+pub struct DoubleUnitSelectionArgs {
     pub tile_size: TileSizeSelection,
 }
 
-impl Display for SimpleUnitSelectionArgs {
+impl Display for DoubleUnitSelectionArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_{}", self.tile_size)
     }
 }
 
-impl<RC, LL, RL, AL> Routine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
-where
-    RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC>,
-    RL: FullLoadingStrategy<RC, Stage = LL::Stage, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
-{
-    type Strategy = SimpleUnitSelectionArgs;
+impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
+    type Strategy = DoubleUnitSelectionArgs;
     type Blueprint = BatchMatmulBlueprint;
 }
 
-impl<RC, LL, RL, AL> BatchMatmulRoutine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
-where
-    RC: RuntimeConfig,
-    LL: FullLoadingStrategy<RC>,
-    RL: FullLoadingStrategy<RC, Stage = LL::Stage, SyncStrategy = LL::SyncStrategy>,
-    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
-{
+impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
         client: &ComputeClient<R>,
@@ -93,7 +79,7 @@ where
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <SimpleUnitBatch<RC, LL, RL, AL>>::launch_unchecked::<MA, R>(
+                <DoubleUnitBatch<RC>>::launch_unchecked::<MA, R>(
                     client,
                     cube_dim,
                     cube_count,
@@ -119,7 +105,7 @@ where
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<SimpleUnitBatch<RC, LL, RL, AL>, RC, R>(
+        batch_validate_blueprint::<DoubleUnitBatch<RC>, RC, R>(
             client,
             blueprint,
             problem,
@@ -129,7 +115,7 @@ where
     }
 
     fn num_stages() -> NumStages {
-        SimpleUnitBatch::<RC, LL, RL, AL>::num_stages()
+        DoubleUnitBatch::<RC>::num_stages()
     }
 
     fn expand_blueprint<R: Runtime>(
@@ -138,9 +124,8 @@ where
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
-        let tile_matmul = TileMatmulKind::Register;
 
-        if tile_matmul.can_cast_stage_element() {
+        if TileMatmulKind::Register.can_cast_stage_element() {
             dtypes.adjust_stage_dtypes();
         }
 
@@ -150,19 +135,11 @@ where
                 &device_settings.client,
                 problem,
                 device_settings.plane_dim,
-                false,
+                true,
                 &device_settings.vector_sizes,
                 UnitTilingBlueprintOptions {
                     tile: strategy.tile_size,
-                    stage: match strategy.tile_size {
-                        TileSizeSelection::MinTileSize => StageScaling::Enabled(2),
-                        TileSizeSelection::MaxTileSize => StageScaling::Disabled,
-                    },
-                    partition: match strategy.tile_size {
-                        TileSizeSelection::MinTileSize => PartitionScaling::Disabled,
-                        TileSizeSelection::MaxTileSize => PartitionScaling::Enabled,
-                    },
-                    swizzle: tile_matmul.should_swizzle(&device_settings.client),
+                    ..Default::default()
                 },
                 &problem.global_dtypes,
             ),
@@ -174,10 +151,10 @@ where
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
+    ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
 
-        Self::validate_blueprint(
+        <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -185,7 +162,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = SimpleUnitBatch::<RC, LL, RL, AL>::cubedim_resource(
+        let cubedim_resource = DoubleUnitBatch::<RC>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,

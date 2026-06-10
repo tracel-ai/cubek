@@ -7,12 +7,12 @@ use cubecl::{
     {Runtime, client::ComputeClient},
 };
 use cubek_matmul::{
-    definition::{MatmulElems, MatmulVectorSizes},
-    routines::BatchMatmulRoutine,
+    args::{InputArg, OutputArg},
+    routines::BlueprintStrategy,
 };
 use cubek_matmul::{
-    launch::{InputArg, OutputArg},
-    routines::BlueprintStrategy,
+    definition::{MatmulElems, MatmulVectorSizes},
+    routines::BatchMatmulRoutine,
 };
 use cubek_std::InputBinding;
 
@@ -71,7 +71,7 @@ pub fn launch_kernel_concrete<
         dtypes,
     );
 
-    cubek_matmul::launch::launch_kernel::<Args, R, A>(
+    cubek_matmul::strategy::launch_kernel::<Args, R, A>(
         client,
         input,
         output,

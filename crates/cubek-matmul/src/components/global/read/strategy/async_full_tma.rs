@@ -6,7 +6,7 @@ use crate::{
     components::global::{PlaneFlowPartition, read::async_tma::AsyncTma},
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use cubecl::{
     prelude::*,

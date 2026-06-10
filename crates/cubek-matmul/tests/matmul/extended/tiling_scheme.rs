@@ -9,8 +9,8 @@
 
 use cubek_matmul::{
     definition::MatmulProblem,
-    launch::{Strategy, test_only::TestStrategy},
     routines::BlueprintStrategy,
+    strategy::{Strategy, test_only::TestStrategy},
 };
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 

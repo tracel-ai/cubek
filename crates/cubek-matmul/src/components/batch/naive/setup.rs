@@ -8,6 +8,7 @@ use cubecl::{
 use cubek_std::MatrixLayout;
 
 use crate::{
+    args::*,
     components::{
         CubeDimResource,
         batch::{
@@ -21,7 +22,6 @@ use crate::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
         MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
-    launch::*,
 };
 
 /// Simple partitioned batch matmul family for any precision

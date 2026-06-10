@@ -16,23 +16,29 @@ use crate::{
         tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{launch_gemm, launch_gemv_unit_perpendicular, launch_naive, launch_tiling},
     routines::{
         BlueprintStrategy, Routine,
-        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
-        double_buffering::{
-            AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
-            CyclicDoubleBufferingAlgorithm, DoubleBufferingArgs, HybridDoubleBufferingAlgorithm,
-            TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
+        batch::{
+            double_buffering::{
+                AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
+                CyclicDoubleBufferingAlgorithm, DoubleBufferingArgs,
+                HybridDoubleBufferingAlgorithm, TilewiseDoubleBufferingAlgorithm,
+                TmaDoubleBufferingAlgorithm,
+            },
+            double_unit::DoubleUnitAlgorithm,
+            gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
+            launch as launch_tiling,
+            ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
+            simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
+            simple_unit::SimpleUnitAlgorithm,
+            specialized::{SpecializedAlgorithm, SpecializedStrategy},
         },
-        double_unit::DoubleUnitAlgorithm,
-        gemm::GemmRoutine,
-        gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
-        gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
-        ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
-        simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
-        simple_unit::SimpleUnitAlgorithm,
-        specialized::{SpecializedAlgorithm, SpecializedStrategy},
+        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
+        gemm::{GemmRoutine, launch as launch_gemm},
+        gemv_unit_perpendicular::{
+            GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
+        },
+        naive::launch as launch_naive,
     },
 };
 
@@ -45,7 +51,7 @@ fn stamp_kind<RC, A>(
     set: impl FnOnce(&mut A::Strategy, TileMatmulKind),
 ) -> BlueprintStrategy<RC, A>
 where
-    RC: crate::launch::RuntimeConfig,
+    RC: crate::args::RuntimeConfig,
     A: Routine<RC>,
 {
     let mut sel = sel.clone();

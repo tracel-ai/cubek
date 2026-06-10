@@ -5,14 +5,8 @@ pub mod cpu_gemm;
 pub mod gemm;
 pub mod gemv_unit_perpendicular;
 
-pub mod double_buffering;
-pub mod double_unit;
-pub mod gemv_innerproduct;
-pub mod interleaved;
-pub mod ordered_double_buffering;
-pub mod simple;
-pub mod simple_unit;
-pub mod specialized;
+/// The cooperative, tiled `BatchMatmulRoutine` family sharing one launch hub.
+pub mod batch;
 
 mod base;
 mod selector;

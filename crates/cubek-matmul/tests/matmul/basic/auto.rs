@@ -1,7 +1,7 @@
 //! Smoke tests for `Strategy::Auto` across representative shapes and
 //! precisions. Exercises the top-level selector end-to-end.
 
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 
 use super::common::{client, f16_elems, f32_elems, rect, square};
 use crate::matmul::test_matmul_strategy;

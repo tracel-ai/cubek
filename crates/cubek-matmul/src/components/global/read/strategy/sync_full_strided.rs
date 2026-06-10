@@ -5,7 +5,7 @@ use crate::{
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::read::validate_swizzle_atom_size},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{

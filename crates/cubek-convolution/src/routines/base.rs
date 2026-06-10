@@ -4,8 +4,8 @@ use cubecl::{
     std::tensor::{into_contiguous_pitched, is_contiguous_pitched},
 };
 use cubek_matmul::{
+    args::MatmulArgs,
     definition::{AvailableVectorSizes, Blueprint},
-    launch::MatmulArgs,
     routines::BatchMatmulRoutine as MatmulRoutine,
 };
 use std::fmt::Display;

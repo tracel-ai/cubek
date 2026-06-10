@@ -4,8 +4,8 @@ use cubecl::std::{
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
+    args::BatchedCoords,
     components::global::{GlobalConfig, memory::GlobalLayoutConfig},
-    launch::BatchedCoords,
 };
 
 use crate::components::{
