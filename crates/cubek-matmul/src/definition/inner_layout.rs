@@ -5,7 +5,7 @@ use cubecl::{
     Runtime,
     prelude::{TensorArg, TensorBinding},
 };
-use cubek_tile::Storage;
+use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, Storage};
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +59,30 @@ impl InnerLayout {
             InnerLayout::ColMajor
         } else {
             InnerLayout::RowMajor
+        }
+    }
+
+    /// The per-operand [`ConcreteLayout`] this imposes on the matrix axes `[row, col]`:
+    /// row-major makes `col` innermost, col-major `row`, a tiled layout keeps `col` innermost
+    /// with the finest tile edge per axis. Batch axes are layout-irrelevant, so only the
+    /// matrix is described. Temporary bridge while `InnerLayout` converges onto `ConcreteLayout`.
+    #[allow(dead_code)]
+    pub fn to_concrete(&self, matrix: [Axis; 2], rows: usize, cols: usize) -> ConcreteLayout {
+        let [row, col] = matrix;
+        match self {
+            InnerLayout::RowMajor => {
+                ConcreteLayout::new(&[PhysicalAxis::untiled(row, rows), PhysicalAxis::untiled(col, cols)])
+            }
+            InnerLayout::ColMajor => {
+                ConcreteLayout::new(&[PhysicalAxis::untiled(col, cols), PhysicalAxis::untiled(row, rows)])
+            }
+            InnerLayout::Tiled { tiles } => {
+                let (re, ce) = *tiles.last().expect("a tiled layout has at least one level");
+                ConcreteLayout::new(&[
+                    PhysicalAxis::tiled(row, rows, re),
+                    PhysicalAxis::tiled(col, cols, ce),
+                ])
+            }
         }
     }
 
@@ -211,5 +235,41 @@ impl From<cubek_std::MatrixLayout> for InnerLayout {
             cubek_std::MatrixLayout::RowMajor => InnerLayout::RowMajor,
             cubek_std::MatrixLayout::ColMajor => InnerLayout::ColMajor,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubek_tile::{AxisSet, Constraint, Facet, LayoutRequest};
+
+    const A: Axis = Axis(0); // matrix row axis
+    const B: Axis = Axis(1); // matrix col axis
+
+    fn wants_innermost(axis: Axis) -> LayoutRequest {
+        LayoutRequest::new().with(Constraint::required(Facet::Innermost(AxisSet::one(axis))))
+    }
+
+    #[test]
+    fn row_major_puts_col_innermost() {
+        let layout = InnerLayout::RowMajor.to_concrete([A, B], 8, 4);
+        assert!(wants_innermost(B).feasible(&layout));
+        assert!(!wants_innermost(A).feasible(&layout));
+    }
+
+    #[test]
+    fn col_major_puts_row_innermost() {
+        let layout = InnerLayout::ColMajor.to_concrete([A, B], 8, 4);
+        assert!(wants_innermost(A).feasible(&layout));
+        assert!(!wants_innermost(B).feasible(&layout));
+    }
+
+    #[test]
+    fn tiled_keeps_col_innermost_and_records_tiling() {
+        let layout = InnerLayout::square_tiled(4).to_concrete([A, B], 16, 16);
+        assert!(wants_innermost(B).feasible(&layout));
+        let wants_tiled =
+            LayoutRequest::new().with(Constraint::required(Facet::Tiled { axis: B, edge: 4 }));
+        assert!(wants_tiled.feasible(&layout));
     }
 }

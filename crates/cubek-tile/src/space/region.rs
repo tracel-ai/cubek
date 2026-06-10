@@ -1,4 +1,5 @@
-use super::{Axis, Space};
+use super::Space;
+use crate::Axis;
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 /// One region of a partitioned [`Space`]: the subset the walk visits at a step,

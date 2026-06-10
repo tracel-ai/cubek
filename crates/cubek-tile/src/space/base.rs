@@ -3,9 +3,9 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::Partitioner;
+use crate::{Axis, MAX_AXES, Partitioner};
 
-use super::{Axis, ByAxis, MAX_AXES};
+use super::ByAxis;
 
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
