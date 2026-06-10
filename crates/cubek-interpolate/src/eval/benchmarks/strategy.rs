@@ -1,6 +1,7 @@
 use cubek_test_utils::CatalogEntry;
 
 use crate::{
+    definition::TileSize,
     launch::InterpolateStrategy,
     routines::{BlueprintStrategy, GlobalMemoryStrategy, SharedMemoryStrategy},
 };
@@ -12,7 +13,7 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateStrategy>> {
             "Global Memory",
             InterpolateStrategy::GlobalMemoryStrategy(BlueprintStrategy::Inferred(
                 GlobalMemoryStrategy {
-                    tile_target_aspect_ratio: 1.0,
+                    tile_size: TileSize::new(16, 16),
                 },
             )),
         ),
@@ -21,7 +22,7 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateStrategy>> {
             "Shared Memory",
             InterpolateStrategy::SharedMemoryStrategy(BlueprintStrategy::Inferred(
                 SharedMemoryStrategy {
-                    tile_target_aspect_ratio: 1.0,
+                    tile_size: TileSize::new(16, 16),
                 },
             )),
         ),

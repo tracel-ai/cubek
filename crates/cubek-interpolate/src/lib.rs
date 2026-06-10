@@ -25,7 +25,6 @@ pub fn interpolate<R: Runtime>(
     strategy: InterpolateStrategy,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
-    validate_strategy(&strategy, options.mode)?;
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
@@ -65,23 +64,6 @@ pub fn interpolate_backward<R: Runtime>(
             "{:?} interpolation backward is not supported by JIT backend",
             options.mode
         ))),
-    }
-}
-
-// Validate shared memory strategy is supported for the given interpolation mode.
-fn validate_strategy(
-    strategy: &InterpolateStrategy,
-    mode: InterpolateMode,
-) -> Result<(), InterpolateError> {
-    match strategy {
-        InterpolateStrategy::GlobalMemoryStrategy(_) => Ok(()),
-        InterpolateStrategy::SharedMemoryStrategy(_) => match mode {
-            InterpolateMode::Nearest(_) => Err(InterpolateError::UnsupportedMode(format!(
-                "{:?} interpolation is not supported by Shared Memory strategy",
-                mode
-            ))),
-            _ => Ok(()),
-        },
     }
 }
 

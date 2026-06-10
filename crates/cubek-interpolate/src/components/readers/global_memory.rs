@@ -14,12 +14,11 @@ impl GlobalMemoryReader {
     pub fn new<EI: Float, N: Size>(
         input: &Tensor<Vector<EI, N>>,
         batch: usize,
-        vector_index: usize,
         input_height: usize,
         input_width: usize,
         #[comptime] vector_size: usize,
     ) -> Self {
-        let base_offset = batch * input.stride(0) + vector_index * input.stride(3) * vector_size;
+        let base_offset = batch * input.stride(0);
 
         GlobalMemoryReader {
             base_offset,
@@ -29,18 +28,19 @@ impl GlobalMemoryReader {
         }
     }
 
-    pub fn read_weighted<EI: Float, EA: Float, N: Size>(
+    pub fn read<EI: Float, N: Size>(
         &self,
         input: &Tensor<Vector<EI, N>>,
         row: usize,
         col: usize,
-        weight: Vector<EA, N>,
-    ) -> Vector<EA, N> {
+        vector_index: usize,
+    ) -> Vector<EI, N> {
         let input_idx = (self.base_offset
             + row.min(self.input_height - 1) * input.stride(1)
             + col.min(self.input_width - 1) * input.stride(2))
-            / self.vector_size;
+            / self.vector_size
+            + vector_index * input.stride(3);
 
-        Vector::cast_from(input[input_idx]) * weight
+        input[input_idx]
     }
 }
