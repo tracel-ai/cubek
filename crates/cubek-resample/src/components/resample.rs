@@ -102,6 +102,8 @@ fn accumulate_taps<F: Float, N: Size>(
             #[unroll]
             for v in 0..vector_size {
                 let mut in_coord = out_coord.clone();
+                in_coord[vectorized_axis] = out_coord[vectorized_axis] + v as u32;
+
                 let mut weight_nd_v = F::new(1.0);
                 let mut current_flat_idx = i;
 
@@ -135,7 +137,8 @@ fn accumulate_taps<F: Float, N: Size>(
 
                 if input.is_in_bounds(in_coord.clone()) {
                     let value_vec = input.read(in_coord.clone());
-                    let val_v = value_vec.extract(v);
+                    let extract_idx = in_coord[vectorized_axis] as usize % vector_size;
+                    let val_v = value_vec.extract(extract_idx);
                     let combined_v = semiring_combine::<F>(&config.semiring, val_v, weight_nd_v);
                     combined_vec.insert(v, combined_v);
                 }
