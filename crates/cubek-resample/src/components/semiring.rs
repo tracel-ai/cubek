@@ -32,7 +32,7 @@ pub fn semiring_combine_vec<F: Float, N: Size>(
     }
 }
 
-/// Reduce: fold a new combined value into the accumulator.
+/// Reduce a new combined value into the accumulator.
 #[cube]
 pub fn semiring_reduce<F: Float, N: Size>(
     #[comptime] s: &Semiring,

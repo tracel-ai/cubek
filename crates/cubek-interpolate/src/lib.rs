@@ -32,8 +32,19 @@ pub fn interpolate<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    //interpolate_launch(client, input, output, options, strategy, dtype)
+    // interpolate_launch(client, input, output, options, strategy, dtype); // Old Implementation
+    resample_launch(client, input, output, options, dtype); // New Implementation with cubek-resample
 
+    Ok(())
+}
+
+fn resample_launch<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    options: InterpolateOptions,
+    dtype: StorageType,
+) {
     let kernel = get_kernel(options);
 
     let resample_height = resample_axis(&input, &output, options, kernel, 1);
@@ -44,8 +55,6 @@ pub fn interpolate<R: Runtime>(
         .with_axis(resample_width);
 
     resample(client, input, output, config, dtype);
-
-    Ok(())
 }
 
 fn get_kernel(options: InterpolateOptions) -> Kernel {

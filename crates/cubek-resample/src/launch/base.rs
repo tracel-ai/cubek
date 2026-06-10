@@ -24,8 +24,6 @@ pub fn resample_launch<R: Runtime>(
 ) {
     let (vector_size, vectorized_axis) = vectorize(client, &input, &output, dtype);
 
-    println!("Vectorized axis : {}", vectorized_axis);
-
     let working_units = output.shape.iter().product::<usize>() / vector_size;
 
     let cube_dim = CubeDim::new(&client, working_units);
