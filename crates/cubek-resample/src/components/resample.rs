@@ -1,6 +1,6 @@
 use crate::components::{
     footprint::Footprint,
-    kernel::kernel_weight,
+    kernel::{kernel_weight, kernel_weight_vector},
     semiring::{semiring_combine, semiring_identity, semiring_reduce},
 };
 use crate::definition::Resample;
@@ -14,12 +14,14 @@ use cubecl::{
 
 /// Resample kernel.
 #[cube(launch_unchecked)]
-pub fn resample_kernel<F: Float>(
-    input: &View<'_, F, CoordsDyn>,
-    output: &mut ViewMut<'_, F, CoordsDyn>,
+pub fn resample_kernel<F: Float, N: Size>(
+    input: &View<'_, Vector<F, N>, CoordsDyn>,
+    output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
     output_shape: Sequence<FastDivmod<usize>>,
+    output_strides: Sequence<FastDivmod<usize>>,
     working_units: usize,
     #[comptime] config: Resample,
+    #[comptime] vectorized_axis: usize,
     #[define(F)] _dtype: StorageType,
 ) {
     let index = ABSOLUTE_POS as usize;
@@ -28,22 +30,27 @@ pub fn resample_kernel<F: Float>(
         terminate!();
     }
 
-    let out_coord = get_coord(index, &output_shape);
+    let out_coord = get_coord(index * output.vector_size(), &output_shape, &output_strides);
 
-    resample_coord::<F>(input, output, &out_coord, config);
+    resample_coord(input, output, &out_coord, config, vectorized_axis);
 }
 
 /// Convert a linear index to a coordinate.
 #[cube]
-fn get_coord(index: usize, shape: &Sequence<FastDivmod<usize>>) -> CoordsDyn {
+fn get_coord(
+    index: usize,
+    shape: &Sequence<FastDivmod<usize>>,
+    strides: &Sequence<FastDivmod<usize>>,
+) -> CoordsDyn {
     let mut coords = CoordsDyn::new();
-    let mut index = index;
 
     #[unroll]
     for i in 0..shape.len() {
-        let (new_index, coord) = shape[i].div_mod(index);
+        let (index_at_dim, _) = strides[i].div_mod(index);
+
+        let (_, coord) = shape[i].div_mod(index_at_dim);
+
         coords.push(coord as u32);
-        index = new_index;
     }
 
     coords
@@ -51,26 +58,28 @@ fn get_coord(index: usize, shape: &Sequence<FastDivmod<usize>>) -> CoordsDyn {
 
 /// Resample a single output coord.
 #[cube]
-pub fn resample_coord<F: Float>(
-    input: &View<'_, F, CoordsDyn>,
-    output: &mut ViewMut<'_, F, CoordsDyn>,
+pub fn resample_coord<F: Float, N: Size>(
+    input: &View<'_, Vector<F, N>, CoordsDyn>,
+    output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
     #[comptime] config: Resample,
+    #[comptime] vectorized_axis: usize,
 ) {
-    let mut acc = semiring_identity::<F>(&config.semiring);
+    let mut acc = semiring_identity::<F, N>(&config.semiring);
 
-    accumulate_taps::<F>(input, out_coord, &mut acc, config);
+    accumulate_taps::<F, N>(input, out_coord, &mut acc, config, vectorized_axis);
 
     output.write(out_coord.clone(), acc);
 }
 
 // Accumulate tap weights to produce a single tap value.
 #[cube]
-fn accumulate_taps<F: Float>(
-    input: &View<'_, F, CoordsDyn>,
+fn accumulate_taps<F: Float, N: Size>(
+    input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
-    acc: &mut F,
+    acc: &mut Vector<F, N>,
     #[comptime] config: Resample,
+    #[comptime] vectorized_axis: usize,
 ) {
     let mut footprints = Sequence::<Footprint<F>>::new();
 
@@ -80,13 +89,13 @@ fn accumulate_taps<F: Float>(
     #[unroll]
     for dim in 0..num_axes {
         let resample_axis = config.resample_axes.index(dim);
-        footprints.push(Footprint::<F>::new(resample_axis));
+        footprints.push(Footprint::new(resample_axis));
         total_taps *= Footprint::<F>::num_taps(resample_axis);
     }
 
     for i in 0..total_taps {
         let flat_idx = RuntimeCell::<usize>::new(i);
-        let mut weight_nd = F::cast_from(1.0);
+        let mut weight_nd = Vector::new(F::new(1.0));
         let mut in_coord = out_coord.clone();
 
         #[unroll]
@@ -106,7 +115,7 @@ fn accumulate_taps<F: Float>(
 
             let tap_pos = start_tap + tap_1d_idx as isize;
             let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
-            let weight_1d = kernel_weight::<F>(&resample_axis.kernel, x);
+            let weight_1d = kernel_weight_vector::<F, N>(&resample_axis.kernel, x);
             weight_nd *= weight_1d;
 
             in_coord[resample_axis.axis] = tap_pos as u32;
@@ -115,9 +124,9 @@ fn accumulate_taps<F: Float>(
         if input.is_in_bounds(in_coord.clone()) {
             let value = input.read(in_coord);
 
-            let combined = semiring_combine::<F>(&config.semiring, value, weight_nd);
+            let combined = semiring_combine(&config.semiring, value, weight_nd);
 
-            *acc = semiring_reduce::<F>(&config.semiring, *acc, combined);
+            *acc = semiring_reduce(&config.semiring, *acc, combined);
         }
     }
 }

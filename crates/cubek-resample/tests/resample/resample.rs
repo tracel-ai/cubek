@@ -16,7 +16,7 @@ fn resample_1d_identity_test() {
         0,
         Kernel::One,
         Placement::Continuous {
-            scale: 0.5,
+            scale: 1.0,
             offset: 0.0,
         },
     );

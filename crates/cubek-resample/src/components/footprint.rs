@@ -23,8 +23,8 @@ impl<F: Float> Footprint<F> {
         };
 
         Footprint::<F> {
-            tap_scale: F::cast_from(tap_scale),
-            tap_offset: F::cast_from(tap_offset),
+            tap_scale: F::new(tap_scale),
+            tap_offset: F::new(tap_offset),
         }
     }
 
