@@ -6,22 +6,29 @@ use cubecl::prelude::*;
 pub fn semiring_identity<F: Float, N: Size>(#[comptime] s: &Semiring) -> Vector<F, N> {
     match s {
         Semiring::Linear => Vector::new(F::new(0.0)),
-        Semiring::Tropical => Vector::min_value(),
-        Semiring::Log => Vector::min_value(),
+        Semiring::Tropical | Semiring::Log => Vector::min_value(),
+    }
+}
+
+/// Combine a value with its tap weight, per the semiring for a single scalar.
+#[cube]
+pub fn semiring_combine<F: Float>(#[comptime] s: &Semiring, value: F, weight: F) -> F {
+    match s {
+        Semiring::Linear => value * weight,
+        Semiring::Tropical | Semiring::Log => value + weight,
     }
 }
 
 /// Combine a value with its tap weight, per the semiring.
 #[cube]
-pub fn semiring_combine<F: Float, N: Size>(
+pub fn semiring_combine_vec<F: Float, N: Size>(
     #[comptime] s: &Semiring,
     value: Vector<F, N>,
     weight: Vector<F, N>,
 ) -> Vector<F, N> {
     match s {
         Semiring::Linear => value * weight,
-        Semiring::Tropical => value + weight,
-        Semiring::Log => value + weight,
+        Semiring::Tropical | Semiring::Log => value + weight,
     }
 }
 

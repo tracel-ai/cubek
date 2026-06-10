@@ -1,7 +1,7 @@
 use crate::components::{
     footprint::Footprint,
-    kernel::{kernel_weight, kernel_weight_vector},
-    semiring::{semiring_combine, semiring_identity, semiring_reduce},
+    kernel::kernel_weight,
+    semiring::{semiring_combine, semiring_combine_vec, semiring_identity, semiring_reduce},
 };
 use crate::definition::Resample;
 use cubecl::{
@@ -93,40 +93,93 @@ fn accumulate_taps<F: Float, N: Size>(
         total_taps *= Footprint::<F>::num_taps(resample_axis);
     }
 
-    for i in 0..total_taps {
-        let flat_idx = RuntimeCell::<usize>::new(i);
-        let mut weight_nd = Vector::new(F::new(1.0));
-        let mut in_coord = out_coord.clone();
+    let vector_size = N::value();
 
-        #[unroll]
-        for dim in 0..num_axes {
-            let resample_axis = config.resample_axes.index(dim);
-            let footprint = footprints.index(dim);
+    if vector_size > 1 {
+        for i in 0..total_taps {
+            let mut combined_vec = semiring_identity::<F, N>(&config.semiring);
 
-            let num_taps = Footprint::<F>::num_taps(resample_axis);
-            let radius = (num_taps + 1) / 2;
+            #[unroll]
+            for v in 0..vector_size {
+                let mut in_coord = out_coord.clone();
+                let mut weight_nd_v = F::new(1.0);
+                let mut current_flat_idx = i;
 
-            let out_pos = out_coord[resample_axis.axis] as usize;
+                #[unroll]
+                for dim in 0..num_axes {
+                    let resample_axis = config.resample_axes.index(dim);
+                    let footprint = footprints.index(dim);
 
-            let (start_tap, frac) = footprint.start_tap_and_frac(radius, out_pos);
+                    let num_taps = Footprint::<F>::num_taps(resample_axis);
+                    let radius = (num_taps + 1) / 2;
 
-            let tap_1d_idx = flat_idx.read() % (num_taps);
-            flat_idx.store(flat_idx.read() / (num_taps));
+                    let out_pos = out_coord[resample_axis.axis] as usize;
 
-            let tap_pos = start_tap + tap_1d_idx as isize;
-            let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
-            let weight_1d = kernel_weight_vector::<F, N>(&resample_axis.kernel, x);
-            weight_nd *= weight_1d;
+                    let lane_out_pos = if comptime!(resample_axis.axis == vectorized_axis) {
+                        out_pos + v
+                    } else {
+                        out_pos
+                    };
 
-            in_coord[resample_axis.axis] = tap_pos as u32;
+                    let (start_tap, frac) = footprint.start_tap_and_frac(radius, lane_out_pos);
+
+                    let tap_1d_idx = current_flat_idx % num_taps;
+                    current_flat_idx /= num_taps;
+
+                    let tap_pos = start_tap + tap_1d_idx as isize;
+                    let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
+
+                    weight_nd_v *= kernel_weight::<F>(&resample_axis.kernel, x);
+                    in_coord[resample_axis.axis] = tap_pos as u32;
+                }
+
+                if input.is_in_bounds(in_coord.clone()) {
+                    let value_vec = input.read(in_coord.clone());
+                    let val_v = value_vec.extract(v);
+                    let combined_v = semiring_combine::<F>(&config.semiring, val_v, weight_nd_v);
+                    combined_vec.insert(v, combined_v);
+                }
+            }
+
+            *acc = semiring_reduce(&config.semiring, *acc, combined_vec);
         }
+    } else {
+        for i in 0..total_taps {
+            let flat_idx = RuntimeCell::<usize>::new(i);
+            let mut weight_nd = F::new(1.0);
+            let mut in_coord = out_coord.clone();
 
-        if input.is_in_bounds(in_coord.clone()) {
-            let value = input.read(in_coord);
+            #[unroll]
+            for dim in 0..num_axes {
+                let resample_axis = config.resample_axes.index(dim);
+                let footprint = footprints.index(dim);
 
-            let combined = semiring_combine(&config.semiring, value, weight_nd);
+                let num_taps = Footprint::<F>::num_taps(resample_axis);
+                let radius = (num_taps + 1) / 2;
 
-            *acc = semiring_reduce(&config.semiring, *acc, combined);
+                let out_pos = out_coord[resample_axis.axis] as usize;
+
+                let (start_tap, frac) = footprint.start_tap_and_frac(radius, out_pos);
+
+                let tap_1d_idx = flat_idx.read() % (num_taps);
+                flat_idx.store(flat_idx.read() / (num_taps));
+
+                let tap_pos = start_tap + tap_1d_idx as isize;
+                let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
+                let weight_1d = kernel_weight::<F>(&resample_axis.kernel, x);
+                weight_nd *= weight_1d;
+
+                in_coord[resample_axis.axis] = tap_pos as u32;
+            }
+
+            if input.is_in_bounds(in_coord.clone()) {
+                let value = input.read(in_coord);
+
+                let combined =
+                    semiring_combine_vec(&config.semiring, value, Vector::new(weight_nd));
+
+                *acc = semiring_reduce(&config.semiring, *acc, combined);
+            }
         }
     }
 }

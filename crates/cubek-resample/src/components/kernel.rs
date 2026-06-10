@@ -13,10 +13,6 @@ pub fn kernel_num_taps(#[comptime] kernel: &Kernel) -> usize {
     }
 }
 
-#[cube]
-pub fn kernel_weight_vector<F: Float, N: Size>(#[comptime] kernel: &Kernel, x: F) -> Vector<F, N> {
-    Vector::new(kernel_weight::<F>(kernel, x))
-}
 
 /// Evaluate the kernel weight where x is the distance from center.
 #[cube]

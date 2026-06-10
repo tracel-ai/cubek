@@ -23,12 +23,29 @@ pub fn resample_launch<R: Runtime>(
     config: Resample,
     dtype: StorageType,
 ) {
-    let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
-        &input.shape,
-        &input.strides,
-        input.shape.len() - 1,
-    );
+    let supported_vector_sizes = client.io_optimized_vector_sizes(dtype.size());
+    let mut vector_size = 1;
+
+    for vs in supported_vector_sizes {
+        let vs_in = tensor_vector_size_parallel(
+            core::iter::once(vs),
+            &input.shape,
+            &input.strides,
+            input.shape.len() - 1,
+        );
+        let vs_out = tensor_vector_size_parallel(
+            core::iter::once(vs),
+            &output.shape,
+            &output.strides,
+            output.shape.len() - 1,
+        );
+
+        if vs_in == vs && vs_out == vs {
+            vector_size = vs;
+            break;
+        }
+    }
+
     let vectorized_axis = input.shape.len() - 1;
 
     let working_units = output.shape.iter().product::<usize>() / vector_size;
