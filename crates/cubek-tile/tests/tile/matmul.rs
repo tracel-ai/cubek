@@ -295,6 +295,37 @@ fn matmul_broadcast_lhs_only() {
     );
 }
 
+/// Both batch axes ride cube-Z at once: `B0` and `B1` are `Spatial { Cube(Z) }`, so
+/// the launch puts their *product* on Z and the walk decodes one cube's `CUBE_POS_Z`
+/// back into `(b0, b1)`. The same broadcast result as the sequential variants — this
+/// is what lets CpuGemm parallelise the whole batch on Z.
+#[test]
+fn matmul_broadcast_two_batch_axes_on_z() {
+    let z = || Distribution::Spatial {
+        scope: ComputeScope::Cube(CubeAxis::Z),
+        spread: Spread::Contiguous,
+        coverage: Coverage::TilesEach(1),
+    };
+    check_matmul_broadcast(
+        4,
+        3,
+        4,
+        &[{
+            Partitioner::row_major(
+                ByAxis::new(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)]),
+                ByAxis::new(&[
+                    (B0, z()),
+                    (B1, z()),
+                    (M, Distribution::Sequential),
+                    (N, Distribution::Sequential),
+                    (K, Distribution::Sequential),
+                ]),
+            )
+            .staged()
+        }],
+    );
+}
+
 /// The two-axis broadcast tiled across *two* levels: L0 walks the batch
 /// (`batch_edge = 1`) and stages the whole `4×4` matrix, then L1 tiles that matrix
 /// into `2×2` final tiles. The broadcast (omitted) batch axes must stay correct
@@ -731,9 +762,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// from its partitioner's `Schedule` (here `.staged()` or `.double_buffered()`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -747,9 +778,9 @@ fn launch_staged_matmul<E: Numeric>(
 /// concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -803,8 +834,8 @@ fn cmma_fragment_roundtrip() {
 /// gmem → smem → cmma accumulator → smem → gmem — pure transit, no arithmetic.
 #[cube(launch)]
 fn cmma_roundtrip<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = input.tile();
@@ -884,9 +915,9 @@ fn cmma_matmul_8x8x8() {
 /// `cmma::execute` (`acc = A·B`), stored back through smem to gmem.
 #[cube(launch)]
 fn cmma_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -936,7 +967,7 @@ fn cmma_matmul<E: Numeric>(
     );
     acc.stage(&c_smem_tile);
 
-    acc.contract_cmma(&a_frag, &b_frag);
+    acc.mma(&a_frag, &b_frag);
 
     c_smem_tile.stage(&acc);
     sync_cube();

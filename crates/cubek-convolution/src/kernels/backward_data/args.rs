@@ -13,9 +13,9 @@ use cubecl::{
 };
 use cubek_matmul::{
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-    definition::{Blueprint, MatmulElems, TilingBlueprint},
+    definition::{BatchMatmulBlueprint, Blueprint, MatmulElems},
     launch::*,
-    routines::Routine,
+    routines::BatchMatmulRoutine,
 };
 use cubek_std::launch::tma::remap_storage_for_tma;
 use cubek_std::{InputBinding, MatrixLayout};
@@ -33,7 +33,7 @@ use crate::components::{
     },
 };
 
-pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
+pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
     MatmulArgs<
         Input<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>: ConcreteInputsFactory<A>,
         Output<Vector<Acc, AccSize>>: ConcreteOutputFactory<A>,
@@ -48,7 +48,7 @@ pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     ) -> ConvolutionProblem;
 }
 
-impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
+impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
@@ -67,13 +67,13 @@ impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     }
 }
 
-impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
+impl<A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>> ConcreteArgs<A>
     for TensorMapArgs<RuntimeArgs>
 {
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let channel_align = blueprint.tiling_scheme.tile_size.k() as usize;
@@ -89,7 +89,7 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
+pub trait ConcreteInputsFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
         out_grad: InputBinding<R>,
@@ -102,7 +102,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
+pub trait ConcreteOutputFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     fn create<R: Runtime>(
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
@@ -110,7 +110,7 @@ pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     ) -> Self::RuntimeArg<R>;
 }
 
-impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<RuntimeArgs>>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
@@ -171,7 +171,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
     }
 }
 
-impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
+impl<EG: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>> ConcreteOutputFactory<A>
+    for TensorOutput<EG>
+{
     fn create<R: Runtime>(
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
@@ -192,13 +194,13 @@ impl<
     Lhs: CubePrimitive,
     Rhs: CubePrimitive,
     EO: CubePrimitive,
-    A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>,
+    A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>,
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
         out_grad: InputBinding<R>,
         weights: InputBinding<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {

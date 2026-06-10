@@ -7,7 +7,7 @@ use cubek_matmul::{
         async_partial_strided::AsyncPartialStridedLoading,
         async_partial_tma::AsyncPartialTmaLoading,
     },
-    definition::{AvailableVectorSizes, TilingBlueprint},
+    definition::{AvailableVectorSizes, BatchMatmulBlueprint},
     launch::{TensorArgs, TensorMapArgs},
     routines::specialized::{SpecializedAlgorithm, SpecializedStrategy},
 };
@@ -34,7 +34,7 @@ pub type SpecializedAsyncStridedConv = SpecializedConv<AsyncPartialStridedLoadin
 pub struct SpecializedTmaConv;
 
 impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L> {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SpecializedStrategy;
     type MatmulRoutine = SpecializedAlgorithm<L, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
@@ -51,7 +51,7 @@ impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L>
 }
 
 impl Routine for SpecializedTmaConv {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SpecializedStrategy;
     type MatmulRoutine = SpecializedAlgorithm<AsyncPartialTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;

@@ -1,6 +1,6 @@
 use super::*;
 use cubecl::{Runtime, TestRuntime};
-use cubek_matmul::definition::{TilingBlueprint, TilingScheme};
+use cubek_matmul::definition::{BatchMatmulBlueprint, TilingScheme};
 
 #[test]
 pub fn test() {
@@ -11,7 +11,7 @@ pub fn test() {
         .unwrap();
     let plane_dim = client.properties().hardware.plane_size_max;
     let problem = problem();
-    let blueprint_builder = TilingBlueprint::builder(tiling_scheme, plane_dim, &problem);
+    let blueprint_builder = BatchMatmulBlueprint::builder(tiling_scheme, plane_dim, &problem);
     let blueprint = blueprint_builder
         .shared_swizzle(swizzle())
         .hypercube_blueprint(hypercube_blueprint(&tiling_scheme, &problem))

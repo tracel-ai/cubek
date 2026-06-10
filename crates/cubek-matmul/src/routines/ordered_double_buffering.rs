@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::Runtime;
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::tile::RowMajorTilingOrder;
 
 use crate::components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul};
@@ -8,19 +8,37 @@ use crate::components::{
     batch::BatchMatmulFamily, global::read::sync_full_cyclic::SyncFullCyclicLoading,
 };
 use crate::definition::{
-    MatmulElems, MatmulProblem, MatmulSetupError, MultiRowStrategy, TilingBlueprint,
+    BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, MultiRowStrategy,
 };
 use crate::{
     components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
     components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading,
-    components::stage::PlanePartitioner, components::tile::TileMatmulKind,
+    components::stage::{NumStages, PlanePartitioner},
+    components::tile::TileMatmulKind,
 };
 use crate::{
-    launch::RuntimeConfig,
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, Routine, TilingArgs},
+    routines::{
+        BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, LaunchInfo, Routine, TilingArgs,
+        batch_validate_blueprint,
+    },
     {components::global::PlaneWriterFamily, routines::ExpandInfo},
 };
+
+/// The batch-matmul family powering [`OrderedDoubleBufferingAlgorithm`].
+type OrderedDoubleBufferingBatch<RC> = PartitionedBatchMatmulFamily<
+    RC,
+    OrderedDoubleBufferingMatmulFamily<
+        PlanePartitioner,
+        RC,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncFullCyclicLoading<RowMajorTilingOrder>,
+        PlaneWriterFamily,
+    >,
+    RowMajorGlobalPartitionMatmul,
+>;
 
 /// Plane accelerated double buffered matmul ordered on Lhs with cyclic reader on Rhs
 pub struct OrderedDoubleBufferingAlgorithm;
@@ -71,19 +89,67 @@ where
     RC: RuntimeConfig,
 {
     type Strategy = OrderedSelectionArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        OrderedDoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncFullCyclicLoading<RowMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<RC> BatchMatmulRoutine<RC> for OrderedDoubleBufferingAlgorithm
+where
+    RC: RuntimeConfig,
+{
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <OrderedDoubleBufferingBatch<RC>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<OrderedDoubleBufferingBatch<RC>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        OrderedDoubleBufferingBatch::<RC>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -134,7 +200,7 @@ where
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
 
-        <Self as Routine<RC>>::validate_blueprint(
+        <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -142,7 +208,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = OrderedDoubleBufferingBatch::<RC>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,

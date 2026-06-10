@@ -15,7 +15,7 @@ use crate::{
 use crate::{
     components::stage::StagePartitioner,
     components::{global::GlobalMatmulFamily, stage::NumStages},
-    definition::TilingBlueprint,
+    definition::BatchMatmulBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
     definition::{MatmulVectorSizes, StageIdent},
     {components::CubeDimResource, launch::RuntimeConfig},
@@ -53,7 +53,7 @@ where
 
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
@@ -159,7 +159,7 @@ where
     }
 
     fn cubedim_resource(
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
@@ -186,7 +186,7 @@ where
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

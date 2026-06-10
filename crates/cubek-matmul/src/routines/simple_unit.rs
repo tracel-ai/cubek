@@ -1,4 +1,4 @@
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use std::{fmt::Display, marker::PhantomData};
@@ -11,13 +11,14 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::UnitPartitioner,
+        stage::{NumStages, UnitPartitioner},
         tile::TileMatmulKind,
     },
     definition::{
-        MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
+        BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatmulVectorSizes,
     },
-    launch::RuntimeConfig,
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::{
         BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo,
         selector::{
@@ -27,7 +28,14 @@ use crate::{
     },
 };
 
-use super::Routine;
+use super::{BatchMatmulRoutine, Routine, batch_validate_blueprint};
+
+/// The batch-matmul family powering [`SimpleUnitAlgorithm`].
+type SimpleUnitBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
+    RC,
+    SimpleMatmulFamily<UnitPartitioner, RC, LL, RL, AL, UnitWriterFamily>,
+    RowMajorGlobalPartitionMatmul,
+>;
 
 /// Unit single stage matmul with configurable readers (default to cyclic)
 pub struct SimpleUnitAlgorithm<
@@ -59,13 +67,70 @@ where
     AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = SimpleUnitSelectionArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        SimpleMatmulFamily<UnitPartitioner, RC, LL, RL, AL, UnitWriterFamily>,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<RC, LL, RL, AL> BatchMatmulRoutine<RC> for SimpleUnitAlgorithm<LL, RL, AL>
+where
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, Stage = LL::Stage, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+{
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <SimpleUnitBatch<RC, LL, RL, AL>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<SimpleUnitBatch<RC, LL, RL, AL>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        SimpleUnitBatch::<RC, LL, RL, AL>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -120,7 +185,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = SimpleUnitBatch::<RC, LL, RL, AL>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,

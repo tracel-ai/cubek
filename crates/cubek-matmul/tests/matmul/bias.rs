@@ -13,15 +13,14 @@ use cubecl::{
     std::tensor::{TensorHandle, launch::ViewArg, layout::VirtualLayoutLaunch},
 };
 use cubek_matmul::{
-    components::{
-        batch::BatchMatmulFamily,
-        global::memory::{BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutLaunch},
+    components::global::memory::{
+        BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutLaunch,
     },
     definition::{
         AvailableVectorSizes, Blueprint as _, MatmulElems, MatmulProblem, cube_mapping_launch,
     },
     launch::{TensorArgs, TensorInputsLaunch, TensorOutputLaunch},
-    routines::{BlueprintStrategy, Routine, simple_unit::SimpleUnitAlgorithm},
+    routines::{BatchMatmulRoutine, BlueprintStrategy, simple_unit::SimpleUnitAlgorithm},
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{
@@ -134,7 +133,7 @@ fn add_bias_to_reference(reference: &mut HostData, bias: &HostData) {
     }
 }
 
-fn launch_with_bias<A: Routine<()>>(
+fn launch_with_bias<A: BatchMatmulRoutine<()>>(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,
     lhs: &TensorHandle<TestRuntime>,
@@ -230,22 +229,20 @@ fn launch_with_bias<A: Routine<()>>(
     );
     let output = TensorOutputLaunch::new(out_view, out_batch);
 
-    unsafe {
-        A::BatchMatmul::launch_unchecked::<TensorArgs, TestRuntime>(
-            client,
-            launch_info.cube_dim,
-            launch_info.cube_count_plan.resolve(),
-            AddressType::U32,
-            inputs,
-            output,
-            (),
-            cube_mapping_launch(&launch_info.cube_count_plan),
-            blueprint,
-            &dtypes,
-            &vector_sizes,
-        )
-        .map_err(|e| format!("launch: {e:?}"))?;
-    }
+    A::launch::<TensorArgs, TestRuntime>(
+        client,
+        launch_info.cube_dim,
+        launch_info.cube_count_plan.resolve(),
+        AddressType::U32,
+        inputs,
+        output,
+        (),
+        cube_mapping_launch(&launch_info.cube_count_plan),
+        blueprint,
+        &dtypes,
+        &vector_sizes,
+    )
+    .map_err(|e| format!("launch: {e:?}"))?;
 
     client.flush().map_err(|e| format!("flush: {e:?}"))?;
     Ok(())

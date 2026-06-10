@@ -4,7 +4,6 @@
 use cubecl::{
     Runtime,
     prelude::{TensorArg, TensorBinding},
-    std::tensor::layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
 use cubek_tile::Storage;
 
@@ -63,22 +62,26 @@ impl InnerLayout {
         }
     }
 
-    /// Physical buffer dims to allocate for a logical `(batch, rows, cols)`
-    /// operand. Strided variants store the logical shape (the *strides* carry the
-    /// layout); tiled variants expand the matrix axes into `[grid…, tile…]`.
-    pub fn physical_dims(&self, batch: usize, rows: usize, cols: usize) -> Vec<usize> {
+    /// Physical buffer dims to allocate for a logical `(batches, rows, cols)`
+    /// operand. `batches` is the per-dimension batch shape (one entry per batch axis;
+    /// empty for an unbatched operand). Strided variants store the logical shape (the
+    /// *strides* carry the layout); tiled variants expand the matrix axes into
+    /// `[grid…, tile…]`.
+    pub fn physical_dims(&self, batches: &[usize], rows: usize, cols: usize) -> Vec<usize> {
         match self {
             InnerLayout::RowMajor | InnerLayout::ColMajor => {
-                vec![batch, rows, cols]
+                let mut dims = batches.to_vec();
+                dims.extend([rows, cols]);
+                dims
             }
-            // Level-major, coarse→fine: [batch, grid_r, grid_c, …, finest_r,
+            // Level-major, coarse→fine: [batches…, grid_r, grid_c, …, finest_r,
             // finest_c] — each level contributes both axes' factors, as
             // `TiledLayout` expects (`[pre, grid…, level1…, …]`).
             InnerLayout::Tiled { tiles } => {
                 let row_factors = axis_factors(tiles.iter().map(|t| t.0), rows);
                 let col_factors = axis_factors(tiles.iter().map(|t| t.1), cols);
-                let mut dims = Vec::with_capacity(1 + row_factors.len() * 2);
-                dims.push(batch);
+                let mut dims = batches.to_vec();
+                dims.reserve(row_factors.len() * 2);
                 for (r, c) in row_factors.into_iter().zip(col_factors) {
                     dims.push(r);
                     dims.push(c);
@@ -88,91 +91,114 @@ impl InnerLayout {
         }
     }
 
+    /// Recover the logical `(batches, rows, cols)` from a physical shape in this layout
+    /// — the inverse of [`physical_dims`](Self::physical_dims). `batches` is the
+    /// per-dimension batch shape (the leading dims). Strided variants store the logical
+    /// shape directly; tiled variants fold the per-level `(row, col)` factors back into
+    /// `rows`/`cols`, the leading `physical.len() - 2·(levels)` dims being the batch.
+    pub fn logical_dims(&self, physical: &[usize]) -> (Vec<usize>, usize, usize) {
+        match self {
+            InnerLayout::RowMajor | InnerLayout::ColMajor => {
+                let n = physical.len();
+                (physical[..n - 2].to_vec(), physical[n - 2], physical[n - 1])
+            }
+            // [batches…, r0, c0, r1, c1, …]: the trailing `2·(tiles+1)` dims are the
+            // matrix's per-level row/col factors; everything before them is the batch.
+            InnerLayout::Tiled { tiles } => {
+                let matrix = 2 * (tiles.len() + 1);
+                let split = physical.len() - matrix;
+                let (mut rows, mut cols) = (1, 1);
+                for (i, &d) in physical[split..].iter().enumerate() {
+                    if i % 2 == 0 {
+                        rows *= d;
+                    } else {
+                        cols *= d;
+                    }
+                }
+                (physical[..split].to_vec(), rows, cols)
+            }
+        }
+    }
+
     /// Canonical strides that *realize* this layout on a freshly allocated
     /// (contiguous) buffer of [`physical_dims`](Self::physical_dims). Used when
     /// building an operand in a chosen layout (e.g. the layout laboratory);
     /// [`view`](Self::view) itself only preserves whatever strides a binding
     /// already carries.
-    pub fn physical_strides(&self, batch: usize, rows: usize, cols: usize) -> Vec<usize> {
+    pub fn physical_strides(&self, batches: &[usize], rows: usize, cols: usize) -> Vec<usize> {
+        // Row-major (contiguous) strides over an arbitrary shape.
+        fn row_major_strides(dims: &[usize]) -> Vec<usize> {
+            let mut strides = vec![1usize; dims.len()];
+            for i in (0..dims.len().saturating_sub(1)).rev() {
+                strides[i] = strides[i + 1] * dims[i + 1];
+            }
+            strides
+        }
         match self {
-            InnerLayout::RowMajor => vec![rows * cols, cols, 1],
-            InnerLayout::ColMajor => vec![rows * cols, 1, rows],
+            // Batch is row-major over `rows·cols`-sized matrices; the matrix itself is
+            // contiguous (RowMajor) or transposed (ColMajor).
+            InnerLayout::RowMajor => {
+                let mut strides = row_major_strides(batches)
+                    .iter()
+                    .map(|s| s * rows * cols)
+                    .collect::<Vec<_>>();
+                strides.extend([cols, 1]);
+                strides
+            }
+            InnerLayout::ColMajor => {
+                let mut strides = row_major_strides(batches)
+                    .iter()
+                    .map(|s| s * rows * cols)
+                    .collect::<Vec<_>>();
+                strides.extend([1, rows]);
+                strides
+            }
             // Tiled buffers carry the layout in their *shape*; strides are plain
             // row-major over those physical dims.
             InnerLayout::Tiled { .. } => {
-                let dims = self.physical_dims(batch, rows, cols);
-                let mut strides = vec![1usize; dims.len()];
-                for i in (0..dims.len() - 1).rev() {
-                    strides[i] = strides[i + 1] * dims[i + 1];
-                }
-                strides
+                row_major_strides(&self.physical_dims(batches, rows, cols))
             }
         }
     }
 
-    /// A launch view over `binding` presenting the logical `(batch, rows, cols)`.
-    /// The binding's strides are *preserved* — they (or its physical shape, for
-    /// tiled) already encode the layout — so this is correct for any incoming
-    /// layout. Strided variants are reshaped to a `(batch, rows, cols)` view;
-    /// tiled variants keep their physical `[grid…, tile…]` shape and a
-    /// [`TileSpec`] reads the tile sizes from it.
-    pub fn view<R: Runtime>(
-        &self,
-        mut binding: TensorBinding<R>,
-        batch: usize,
-        rows: usize,
-        cols: usize,
-    ) -> TiledViewLaunch<R> {
-        let spec = match self {
-            // Batch is a passthrough "pre" axis; only the two matrix axes tile,
-            // with one nesting level per `tiles` entry.
-            InnerLayout::Tiled { tiles } => TileSpec {
-                start_axis: 1,
-                num_tiled: 2,
-                levels: tiles.len(),
-            },
-            // Strided: reshape to (batch, rows, cols), preserving the operand's
-            // own strides (batch stride taken from the binding, not assumed).
-            _ => {
-                let strides = binding.strides.to_vec();
-                let n = strides.len();
-                let batch_stride = if n >= 3 { strides[n - 3] } else { rows * cols };
-                binding.shape = [batch, rows, cols][..].into();
-                binding.strides = [batch_stride, strides[n - 2], strides[n - 1]][..].into();
-                TileSpec {
-                    start_axis: 0,
-                    num_tiled: 3,
-                    levels: 0,
-                }
-            }
-        };
-
-        let arg: TensorArg<R> = binding.into_tensor_arg();
-        TiledViewLaunch::new_tensor::<TiledViewLayout>(arg, spec)
-    }
-
     /// The raw [`TensorArg`] (operand strides preserved) plus the tensor's physical
-    /// [`Storage`] that `Tile::from_tensor` needs in-kernel. Tiled keeps its physical
-    /// `[batch, grid…, tile…]` buffer (batch passthrough, `start_axis = 1`); strided
-    /// reshapes to `(batch, rows, cols)` (`start_axis = 0, levels = 0`).
+    /// [`Storage`] that `Tile::from_tensor` needs in-kernel. The batch count is read off
+    /// the binding's rank: every leading dim before the matrix is a batch axis, so a
+    /// broadcast operand simply arrives with the size-1 batch dims already squeezed out
+    /// (its omitted axes). Tiled keeps its physical `[batches…, grid…, tile…]` buffer
+    /// (batch passthrough, `start_axis = num_batch`); strided is a plain
+    /// `[batches…, rows, cols]` dot (`levels = 0`).
+    ///
+    /// `vector_size > 1` lines the innermost (`cols`) axis: its shape and every
+    /// non-contiguous stride are divided by the line size, so a kernel reading
+    /// `Vector<E, vector_size>` lands on contiguous lines. Only valid when `cols` is
+    /// contiguous (a row-major operand); tiled operands must pass `vector_size = 1`.
     pub fn tensor_arg<R: Runtime>(
         &self,
         mut binding: TensorBinding<R>,
-        batch: usize,
-        rows: usize,
-        cols: usize,
+        vector_size: usize,
     ) -> (TensorArg<R>, Storage) {
         match self {
-            InnerLayout::Tiled { tiles } => (
-                binding.into_tensor_arg(),
-                Storage::passthrough(1, tiles.len()),
-            ),
+            InnerLayout::Tiled { tiles } => {
+                let levels = tiles.len();
+                let num_batch = binding.shape.len() - 2 * (levels + 1);
+                (
+                    binding.into_tensor_arg(),
+                    Storage::passthrough(num_batch, levels),
+                )
+            }
             _ => {
-                let strides = binding.strides.to_vec();
-                let n = strides.len();
-                let batch_stride = if n >= 3 { strides[n - 3] } else { rows * cols };
-                binding.shape = [batch, rows, cols][..].into();
-                binding.strides = [batch_stride, strides[n - 2], strides[n - 1]][..].into();
+                // Re-line the buffer as `Vector<E, v>`: the contiguous innermost stride
+                // stays 1, every coarser stride and the `cols` extent shrink by `v`.
+                let n = binding.strides.len();
+                let mut shape = binding.shape.to_vec();
+                let mut strides = binding.strides.to_vec();
+                shape[n - 1] /= vector_size;
+                for s in &mut strides[..n - 1] {
+                    *s /= vector_size;
+                }
+                binding.shape = shape[..].into();
+                binding.strides = strides[..].into();
                 (binding.into_tensor_arg(), Storage::passthrough(0, 0))
             }
         }

@@ -5,7 +5,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
-        layout::{Coords1d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
+        layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
     },
 };
 
@@ -17,6 +17,10 @@ use super::*;
 pub struct Storage {
     pub start_axis: usize,
     pub levels: usize,
+    /// Whether this operand's logical extent can overhang its tile grid, so edge
+    /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
+    /// keeps the unchecked (divisible) fast path.
+    pub check_bounds: bool,
 }
 
 impl Storage {
@@ -25,19 +29,30 @@ impl Storage {
         Storage {
             start_axis: 0,
             levels: physical_rank / logical_rank - 1,
+            check_bounds: false,
         }
     }
 
     pub fn passthrough(start_axis: usize, levels: usize) -> Self {
-        Storage { start_axis, levels }
+        Storage {
+            start_axis,
+            levels,
+            check_bounds: false,
+        }
+    }
+
+    /// Set whether edge reads/writes must be bounds-checked.
+    pub fn checked(mut self, check_bounds: bool) -> Self {
+        self.check_bounds = check_bounds;
+        self
     }
 }
 
 /// The launchable form of a [`Tile`]: a `&Tensor` plus the comptime [`Space`] and
 /// [`Storage`]. The kernel turns it into a `Tile` with [`tile`](TileArg::tile).
 #[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric> {
-    pub tensor: &'a Tensor<Vector<E, Const<1>>>,
+pub struct TileArg<'a, E: Numeric, V: Size> {
+    pub tensor: &'a Tensor<Vector<E, V>>,
     #[cube(comptime)]
     pub space: Space,
     #[cube(comptime)]
@@ -45,8 +60,8 @@ pub struct TileArg<'a, E: Numeric> {
 }
 
 #[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
-    pub fn tile(&self) -> Tile<Vector<E, Const<1>>> {
+impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+    pub fn tile(&self) -> Tile<Vector<E, V>> {
         Tile::from_tensor(
             self.tensor,
             comptime!(self.space.clone()),
@@ -61,16 +76,10 @@ pub struct Tile<T: CubePrimitive> {
     pub payload: Payload<T>,
     #[cube(comptime)]
     pub space: Space,
-}
-
-/// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a
-/// [`cmma::Matrix`]); [`view`](Tile::view) rebuilds a borrowed view on demand.
-#[derive(CubeType)]
-pub enum Payload<T: CubePrimitive> {
-    Gmem(MemData<T>),
-    Smem(MemData<T>),
-    /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
-    Cmma(CmmaData<T>),
+    /// Comptime: whether this operand's edge reads/writes must be bounds-checked (the
+    /// logical extent overhangs its tile grid). `false` is the unchecked fast path.
+    #[cube(comptime)]
+    pub check: bool,
 }
 
 /// A tensor-core fragment plus its comptime config. `cmma::load` picks
@@ -98,6 +107,10 @@ pub struct MemData<T: CubePrimitive> {
     /// Accumulates across [`at`](Tile::at)s.
     origin: CoordsDyn,
     extent: CoordsDyn,
+    /// Absolute logical extent per axis (the valid region). `origin + pos` beyond this is
+    /// the partial-tile overhang. Preserved across [`at`](Tile::at), unlike `extent`
+    /// (the tile cell size). Runtime, so one kernel serves any shape.
+    bound: CoordsDyn,
     #[cube(comptime)]
     start_axis: usize,
     /// Tiled axes, each split into `levels + 1` `[grid…, tile…]` parts.
@@ -129,6 +142,9 @@ impl<T: CubePrimitive> Tile<T> {
         }
         let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
         let (origin, extent) = full_window(comptime!(space.clone()));
+        // Logical bound folded from the physical shape, so it's correct for tiled
+        // operands too (the physical buffer is padded; the logical extent is not).
+        let bound = logical_bound(&physical_shape, start_axis, num_tiled, levels);
         Tile::<T> {
             payload: Payload::new_Gmem(MemData::<T> {
                 buffer,
@@ -136,11 +152,13 @@ impl<T: CubePrimitive> Tile<T> {
                 physical_strides,
                 origin,
                 extent,
+                bound,
                 start_axis,
                 num_tiled,
                 levels,
             }),
             space: comptime!(space),
+            check: comptime!(storage.check_bounds),
         }
     }
 
@@ -150,6 +168,9 @@ impl<T: CubePrimitive> Tile<T> {
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
         let (physical_shape, physical_strides) = row_major(comptime!(space.clone()));
         let (origin, extent) = full_window(comptime!(space.clone()));
+        // Smem is its own full buffer — never overhangs — so the bound is the extent and
+        // checks are off.
+        let bound = extent.clone();
         Tile::<T> {
             payload: Payload::new_Smem(MemData::<T> {
                 buffer,
@@ -157,11 +178,13 @@ impl<T: CubePrimitive> Tile<T> {
                 physical_strides,
                 origin,
                 extent,
+                bound,
                 start_axis: comptime!(0usize),
                 num_tiled: comptime!(space.rank()),
                 levels: comptime!(0usize),
             }),
             space: comptime!(space),
+            check: comptime!(false),
         }
     }
 
@@ -183,6 +206,7 @@ impl<T: CubePrimitive> Tile<T> {
                 layout,
             }),
             space: comptime!(space),
+            check: comptime!(false),
         }
     }
 
@@ -224,6 +248,7 @@ impl<T: CubePrimitive> Tile<T> {
         Tile::<T> {
             payload,
             space: comptime!(self.space.divide()),
+            check: comptime!(self.check),
         }
     }
 
@@ -310,11 +335,12 @@ impl<T: CubePrimitive> Tile<T> {
     /// Memory to memory transit: copy each 2-D matrix of `src` into `self`
     /// element-wise.
     fn stage_from_memory(&mut self, src: &Tile<T>) {
+        let checked = comptime!(src.check);
         let matrices = self.matrix_count();
         for j in 0..matrices {
             let s = src.matrix(j);
             let mut d = self.matrix_mut(j);
-            copy_2d::<T>(&mut d, &s);
+            copy_2d::<T>(&mut d, &s, checked);
         }
     }
 }
@@ -334,11 +360,40 @@ impl<T: CubePrimitive> MemData<T> {
     }
 
     fn window(&self) -> Window {
-        Window::new(self.origin.clone(), self.extent.clone())
+        Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
+    }
+
+    /// The `i`-th batch matrix as a 2-D view. Mirrors [`Tile::matrix_mut`] for callers that
+    /// hold the payload rather than the whole tile, so the `space` is passed in.
+    pub(crate) fn matrix_mut(
+        &mut self,
+        i: usize,
+        #[comptime] space: Space,
+    ) -> ViewMut<'_, T, Coords2d> {
+        let rank = comptime!(space.rank());
+        let rows = comptime!(space.extent_at(rank - 2));
+        let cols = comptime!(space.extent_at(rank - 1));
+        let shape = self.buffer.view(self.base()).view(self.window()).shape();
+        let mut batches = CoordsDyn::new();
+        #[unroll]
+        for p in 0..rank - 2 {
+            let mut weight = 1;
+            #[unroll]
+            for q in comptime!(p + 1)..rank - 2 {
+                weight *= shape[q];
+            }
+            batches.push((i as u32 / weight) % shape[p]);
+        }
+        let layout = BatchMatrix::new(batches, rows, cols);
+        let base = self.base();
+        let window = self.window();
+        self.buffer.view_mut(base).view_mut(window).view_mut(layout)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate
     /// times the sub-tile edge, crop each axis to that edge, re-box the same buffer.
+    /// `bound` (the absolute valid extent) is carried through unchanged — only `origin`
+    /// moves — so the leaf masks `origin + pos < bound` regardless of nesting depth.
     fn at(&self, region: &Region, #[comptime] space: Space) -> MemData<T> {
         let mut origin = CoordsDyn::new();
         let mut extent = CoordsDyn::new();
@@ -359,11 +414,39 @@ impl<T: CubePrimitive> MemData<T> {
             physical_strides: self.physical_strides.clone(),
             origin,
             extent,
+            bound: self.bound.clone(),
             start_axis: comptime!(self.start_axis),
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
         }
     }
+}
+
+/// The operand's logical extent per axis, folded from its physical `[pre…, grid…, tile…]`
+/// shape: passthrough axes pass through, each tiled axis multiplies its per-level factors.
+/// Reduces to `physical_shape` for an untiled (strided) operand.
+#[cube]
+fn logical_bound(
+    physical_shape: &CoordsDyn,
+    #[comptime] start_axis: usize,
+    #[comptime] num_tiled: usize,
+    #[comptime] levels: usize,
+) -> CoordsDyn {
+    let mut bound = CoordsDyn::new();
+    #[unroll]
+    for i in 0..start_axis {
+        bound.push(physical_shape[i]);
+    }
+    #[unroll]
+    for a in 0..num_tiled {
+        let mut prod = 1u32;
+        #[unroll]
+        for l in 0..comptime!(levels + 1) {
+            prod *= physical_shape[comptime!(start_axis) + l * num_tiled + a];
+        }
+        bound.push(prod);
+    }
+    bound
 }
 
 /// The whole-tile window: `origin = 0`, `extent =` the space's per-axis extents.
@@ -486,12 +569,20 @@ impl Layout for GmemLayout {
 pub struct Window {
     origin: CoordsDyn,
     extent: CoordsDyn,
+    /// Absolute logical extent (the valid region). `shape()` stays `extent` (the tile
+    /// cell, so loops cover the whole padded tile), but `is_in_bounds` clips against
+    /// `bound` so a checked read/write zeroes / skips the overhang.
+    bound: CoordsDyn,
 }
 
 #[cube]
 impl Window {
-    pub fn new(origin: CoordsDyn, extent: CoordsDyn) -> Self {
-        Window { origin, extent }
+    pub fn new(origin: CoordsDyn, extent: CoordsDyn, bound: CoordsDyn) -> Self {
+        Window {
+            origin,
+            extent,
+            bound,
+        }
     }
 }
 
@@ -523,9 +614,11 @@ impl Layout for Window {
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let mut valid = true;
 
+        // The cell can overhang the matrix; a position is valid only if its absolute
+        // coordinate (`origin + pos`) is within the logical `bound`.
         #[unroll]
-        for i in 0..self.extent.len() {
-            valid = valid && pos[i] < self.extent[i];
+        for i in 0..self.bound.len() {
+            valid = valid && self.origin[i] + pos[i] < self.bound[i];
         }
 
         valid

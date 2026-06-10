@@ -1,5 +1,7 @@
 use cubecl::{
+    CubeCount, CubeDim,
     features::MmaConfig,
+    ir::AddressType,
     {Runtime, client::ComputeClient},
 };
 use cubek_std::{
@@ -9,8 +11,8 @@ use cubek_std::{
 use std::{fmt::Display, marker::PhantomData};
 
 use crate::definition::{
-    CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
-    MultiRowStrategy, TilingBlueprint, TilingScheme, adjust_dtypes,
+    BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, MultiRowStrategy, TilingScheme, adjust_dtypes,
 };
 use crate::{
     components::{
@@ -20,18 +22,21 @@ use crate::{
             read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{PartitionBuffering, PlanePartitioner},
+        stage::{NumStages, PartitionBuffering, PlanePartitioner},
         tile::TileMatmulKind,
     },
     routines::{
-        Routine,
+        BatchMatmulRoutine, Routine, batch_validate_blueprint,
         selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
     },
 };
 use crate::{
     routines::ExpandInfo,
     routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
-    {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
+    {
+        components::batch::BatchMatmulFamily,
+        launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+    },
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)
@@ -57,6 +62,13 @@ impl Display for InterleavedArgs {
     }
 }
 
+/// The batch-matmul family powering [`InterleavedAlgorithm`].
+type InterleavedBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<
+    RC,
+    SimpleMatmulFamily<PlanePartitioner, RC, LL, RL, AL, PlaneWriterFamily>,
+    RowMajorGlobalPartitionMatmul,
+>;
+
 impl<LL, RL, AL, RC> Routine<RC> for InterleavedAlgorithm<LL, RL, AL>
 where
     RC: RuntimeConfig,
@@ -65,13 +77,70 @@ where
     AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     type Strategy = InterleavedArgs;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        SimpleMatmulFamily<PlanePartitioner, RC, LL, RL, AL, PlaneWriterFamily>,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<LL, RL, AL, RC> BatchMatmulRoutine<RC> for InterleavedAlgorithm<LL, RL, AL>
+where
+    RC: RuntimeConfig,
+    LL: FullLoadingStrategy<RC>,
+    RL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+    AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
+{
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <InterleavedBatch<RC, LL, RL, AL>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<InterleavedBatch<RC, LL, RL, AL>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        InterleavedBatch::<RC, LL, RL, AL>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -123,7 +192,7 @@ where
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         expand_info: ExpandInfo<Self::Blueprint>,
-    ) -> Result<LaunchInfo<TilingBlueprint>, MatmulSetupError> {
+    ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
         let client = &device_settings.client;
 
@@ -135,7 +204,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = InterleavedBatch::<RC, LL, RL, AL>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,
@@ -149,73 +218,6 @@ where
             device_settings,
         )
     }
-
-    fn launch<MA: crate::launch::MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
-        cube_dim: cubecl::CubeDim,
-        cube_count: cubecl::CubeCount,
-        address_type: cubecl::prelude::AddressType,
-        input: crate::launch::InputRuntimeArg<MA, R>,
-        output: crate::launch::OutputRuntimeArg<MA, R>,
-        config: crate::launch::ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
-        blueprint: Self::Blueprint,
-        dtypes: &MatmulElems,
-        vector_sizes: &MatmulVectorSizes,
-    ) -> Result<(), MatmulSetupError> {
-        unsafe {
-            Self::BatchMatmul::launch_unchecked::<MA, R>(
-                client,
-                cube_dim,
-                cube_count,
-                address_type,
-                input,
-                output,
-                config,
-                cube_count_input,
-                blueprint,
-                dtypes,
-                vector_sizes,
-            )?
-        }
-        Ok(())
-    }
-
-    fn num_stages() -> crate::components::stage::NumStages {
-        Self::BatchMatmul::num_stages()
-    }
-
-    fn device_settings<R: Runtime>(
-        client: &ComputeClient<R>,
-        vector_sizes: MatmulVectorSizes,
-    ) -> DeviceSettings<R> {
-        // Sometimes the GPU doesn't support plane instructions and doesn't report the
-        // plane size, but we can still execute algorithms that don't use plane instructions.
-        //
-        // In this case, we set a plane size for the selector to work, defaulting to 32 as it
-        // is a common plane size.
-        let plane_dim = match client.properties().hardware.plane_size_max {
-            0 => 32,
-            plane_dim => plane_dim,
-        };
-
-        DeviceSettings {
-            client: client.clone(),
-            plane_dim,
-            vector_sizes,
-            max_cube_count: client.properties().hardware.max_cube_count,
-        }
-    }
-
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
-        blueprint: &Self::Blueprint,
-        problem: &MatmulProblem,
-        dtypes: &MatmulElems,
-        vector_sizes: &MatmulVectorSizes,
-    ) -> Result<(), MatmulSetupError> {
-        Self::BatchMatmul::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
-    }
 }
 
 fn infer_blueprint_multi_rows<R: Runtime>(
@@ -225,7 +227,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
     plane_dim: u32,
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
+) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -266,7 +268,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(
+            BatchMatmulBlueprint::builder(
                 TileMatmulKind::Interleaved,
                 tiling_scheme,
                 plane_dim,
@@ -290,7 +292,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             .build();
 
         Ok((
-            TilingBlueprint::builder(
+            BatchMatmulBlueprint::builder(
                 TileMatmulKind::Interleaved,
                 tiling_scheme,
                 plane_dim,

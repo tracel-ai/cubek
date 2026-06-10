@@ -16,11 +16,10 @@ use crate::{
         tile::TileMatmulKind,
     },
     definition::{MatmulElems, MatmulSetupError},
-    launch::{
-        launch_gemm, launch_gemv_unit_perpendicular, launch_mosaic, launch_naive, launch_tiling,
-    },
+    launch::{launch_gemm, launch_gemv_unit_perpendicular, launch_naive, launch_tiling},
     routines::{
         BlueprintStrategy, Routine,
+        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
         double_buffering::{
             AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
             CyclicDoubleBufferingAlgorithm, DoubleBufferingArgs, HybridDoubleBufferingAlgorithm,
@@ -30,7 +29,6 @@ use crate::{
         gemm::GemmRoutine,
         gemv_innerproduct::{DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm},
         gemv_unit_perpendicular::GemvUnitPerpendicularRoutine,
-        mosaic::MosaicStrategy,
         ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
         simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
         simple_unit::SimpleUnitAlgorithm,
@@ -183,7 +181,7 @@ pub enum Strategy {
     DoubleVecMat(BlueprintStrategy<(), DoubleVecMatInnerProductAlgorithm>),
     GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
     Gemm(BlueprintStrategy<(), GemmRoutine>),
-    Mosaic(MosaicStrategy),
+    CpuGemm(BlueprintStrategy<(), CpuGemmRoutine>),
     Naive,
     #[default]
     Auto,
@@ -240,7 +238,7 @@ impl Display for Strategy {
             Strategy::Auto => f.write_str("matmul_auto"),
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
             Strategy::Gemm(s) => write!(f, "gemm{}", s),
-            Strategy::Mosaic(s) => write!(f, "mosaic{}", s),
+            Strategy::CpuGemm(s) => write!(f, "cpu_gemm{}", s),
         }
     }
 }
@@ -540,9 +538,14 @@ impl Strategy {
             Strategy::Gemm(blueprint_strategy) => {
                 launch_gemm::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
             }
-            Strategy::Mosaic(strategy) => {
-                launch_mosaic::launch_ref(client, lhs, rhs, out, strategy, dtypes)
-            }
+            Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
+                client,
+                WithLayout::strided_input(lhs),
+                WithLayout::strided_input(rhs),
+                WithLayout::strided_output(out),
+                strategy,
+                dtypes,
+            ),
         }
     }
 }

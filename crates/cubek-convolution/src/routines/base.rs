@@ -6,7 +6,7 @@ use cubecl::{
 use cubek_matmul::{
     definition::{AvailableVectorSizes, Blueprint},
     launch::MatmulArgs,
-    routines::Routine as MatmulRoutine,
+    routines::BatchMatmulRoutine as MatmulRoutine,
 };
 use std::fmt::Display;
 

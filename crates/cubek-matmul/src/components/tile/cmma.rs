@@ -9,7 +9,7 @@ use cubek_std::{
 };
 
 use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint,
+    BatchMatmulBlueprint, MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes,
 };
 
 use super::variant::TileVariant;
@@ -71,7 +71,7 @@ impl TileVariant for CmmaMatmul {
 
     fn expand(
         _device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Self {
@@ -84,7 +84,7 @@ impl TileVariant for CmmaMatmul {
 
     fn validate<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {

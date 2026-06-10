@@ -1,4 +1,4 @@
-use cubek_matmul::definition::TilingBlueprint;
+use cubek_matmul::definition::BatchMatmulBlueprint;
 
 use crate::components::Dimensionality;
 
@@ -6,7 +6,7 @@ use crate::components::Dimensionality;
 ///
 /// The blueprint captures the minimal comptime information needed to specialize
 /// the kernel: which operation (forward / data-grad / weight-grad), the matmul
-/// `TilingBlueprint`, and per-operation comptime tunables. A different blueprint
+/// `BatchMatmulBlueprint`, and per-operation comptime tunables. A different blueprint
 /// retriggers JIT compilation, so it is kept minimal.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ConvBlueprint {
@@ -17,25 +17,25 @@ pub enum ConvBlueprint {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ForwardBlueprint {
-    pub matmul: TilingBlueprint,
+    pub matmul: BatchMatmulBlueprint,
     pub dimensionality: Dimensionality,
     pub has_bias: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BackwardDataBlueprint {
-    pub matmul: TilingBlueprint,
+    pub matmul: BatchMatmulBlueprint,
     pub dimensionality: Dimensionality,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BackwardWeightBlueprint {
-    pub matmul: TilingBlueprint,
+    pub matmul: BatchMatmulBlueprint,
     pub dimensionality: Dimensionality,
 }
 
 impl ConvBlueprint {
-    pub fn matmul(&self) -> &TilingBlueprint {
+    pub fn matmul(&self) -> &BatchMatmulBlueprint {
         match self {
             ConvBlueprint::Forward(b) => &b.matmul,
             ConvBlueprint::BackwardData(b) => &b.matmul,

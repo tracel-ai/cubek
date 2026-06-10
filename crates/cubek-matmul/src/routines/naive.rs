@@ -1,14 +1,25 @@
 use std::fmt::Display;
 
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::cube_count::CubeCountPlan;
 
 use crate::{
-    components::batch::{
-        BatchMatmulFamily,
-        naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
+    components::{
+        batch::{
+            BatchMatmulFamily,
+            naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
+        },
+        stage::NumStages,
     },
-    definition::{MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError},
-    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
+    definition::{
+        CubeMappingLaunch, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatmulVectorSizes,
+    },
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    routines::{
+        BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
+        batch_validate_blueprint,
+    },
 };
 
 pub struct NaiveRoutine {}
@@ -30,9 +41,64 @@ impl From<()> for NaiveStrategy {
 
 impl Routine<()> for NaiveRoutine {
     type Strategy = NaiveStrategy;
-    type BatchMatmul = NaiveBatchMatmulFamily;
-    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
+    type Blueprint = NaiveBlueprint;
+}
+
+impl BatchMatmulRoutine<()> for NaiveRoutine {
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = ()>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <NaiveBatchMatmulFamily>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<NaiveBatchMatmulFamily, (), R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        NaiveBatchMatmulFamily::num_stages()
+    }
 
     fn expand_blueprint<R: cubecl::Runtime>(
         problem: &MatmulProblem,
@@ -62,7 +128,7 @@ impl Routine<()> for NaiveRoutine {
             &device_settings.vector_sizes,
         )?;
 
-        let cube_dim = Self::BatchMatmul::cubedim_resource(
+        let cube_dim = NaiveBatchMatmulFamily::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,

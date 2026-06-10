@@ -18,7 +18,7 @@ use super::common::{client, default_tile_size, f16_elems, plane_blueprint, probl
 use crate::matmul::{extended::test_matmul_test_strategy, test_matmul_strategy};
 
 fn run_plane(
-    strategy: impl FnOnce(cubek_matmul::definition::TilingBlueprint) -> Strategy,
+    strategy: impl FnOnce(cubek_matmul::definition::BatchMatmulBlueprint) -> Strategy,
     partition: PartitionSize,
     stage: StageSize,
 ) {
@@ -29,7 +29,7 @@ fn run_plane(
 }
 
 fn run_plane_test_only(
-    strategy: impl FnOnce(cubek_matmul::definition::TilingBlueprint) -> TestStrategy,
+    strategy: impl FnOnce(cubek_matmul::definition::BatchMatmulBlueprint) -> TestStrategy,
     partition: PartitionSize,
     stage: StageSize,
 ) {

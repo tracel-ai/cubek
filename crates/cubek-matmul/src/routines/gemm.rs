@@ -3,16 +3,24 @@ use std::{
     fmt::Display,
 };
 
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 use crate::{
-    components::batch::{
-        BatchMatmulFamily, CheckBounds,
-        gemm::{GemmBlueprint, GemmFamily, MatmulOperandLayouts, PlanesSplit, Variant},
+    components::{
+        batch::{
+            BatchMatmulFamily, CheckBounds,
+            gemm::{GemmBlueprint, GemmFamily, MatmulOperandLayouts, PlanesSplit, Variant},
+        },
+        stage::NumStages,
     },
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    definition::{
+        CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    },
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
     routines::{
-        BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine, num_concurrent_planes,
+        BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
+        batch_validate_blueprint, num_concurrent_planes,
     },
 };
 
@@ -44,9 +52,64 @@ fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -
 
 impl Routine<()> for GemmRoutine {
     type Strategy = GemmStrategy;
-    type BatchMatmul = GemmFamily;
-    type Blueprint = <Self::BatchMatmul as BatchMatmulFamily<()>>::Blueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<()>>::Config;
+    type Blueprint = GemmBlueprint;
+}
+
+impl BatchMatmulRoutine<()> for GemmRoutine {
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = ()>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <GemmFamily>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<GemmFamily, (), R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        GemmFamily::num_stages()
+    }
 
     fn expand_blueprint<R: cubecl::Runtime>(
         problem: &MatmulProblem,
@@ -117,12 +180,9 @@ impl Routine<()> for GemmRoutine {
             &device_settings.vector_sizes,
         )?;
 
-        let cube_dim = Self::BatchMatmul::cubedim_resource(
-            &blueprint,
-            &dtypes,
-            &device_settings.vector_sizes,
-        )?
-        .to_cube_dim(device_settings.plane_dim)?;
+        let cube_dim =
+            GemmFamily::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?
+                .to_cube_dim(device_settings.plane_dim)?;
 
         let variant = blueprint.kind.variant();
         let vector_size = device_settings.vector_sizes.lhs;

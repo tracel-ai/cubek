@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::{
     PartitionSize, TileSize,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
@@ -19,13 +19,47 @@ use crate::{
             },
             single_stage::simple::SimpleMatmulFamily,
         },
-        stage::{PartitionBuffering, PlanePartitioner},
+        stage::{NumStages, PartitionBuffering, PlanePartitioner},
         tile::TileMatmulKind,
     },
-    definition::{MatmulElems, MatmulProblem, MatmulSetupError, TilingBlueprint, TilingScheme},
-    launch::RuntimeConfig,
-    routines::{BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine},
+    definition::{
+        BatchMatmulBlueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatmulVectorSizes, TilingScheme,
+    },
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+    routines::{
+        BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
+        batch_validate_blueprint,
+    },
 };
+
+/// The batch-matmul family powering [`VecMatInnerProductAlgorithm`].
+type VecMatBatch<RC> = PartitionedBatchMatmulFamily<
+    RC,
+    SimpleMatmulFamily<
+        PlanePartitioner,
+        RC,
+        SyncFullCyclicLoading<RowMajorTilingOrder>,
+        SyncFullCyclicLoading<ColMajorTilingOrder>,
+        SyncFullCyclicLoading<ColMajorTilingOrder>,
+        PlaneWriterFamily,
+    >,
+    RowMajorGlobalPartitionMatmul,
+>;
+
+/// The batch-matmul family powering [`DoubleVecMatInnerProductAlgorithm`].
+type DoubleVecMatBatch<RC> = PartitionedBatchMatmulFamily<
+    RC,
+    DoubleBufferingMatmulFamily<
+        PlanePartitioner,
+        RC,
+        SyncPartialCyclicLoading<RowMajorTilingOrder>,
+        SyncPartialCyclicLoading<ColMajorTilingOrder>,
+        SyncFullCyclicLoading<ColMajorTilingOrder>,
+        PlaneWriterFamily,
+    >,
+    RowMajorGlobalPartitionMatmul,
+>;
 
 pub struct VecMatInnerProductAlgorithm {}
 
@@ -46,20 +80,64 @@ impl From<()> for VecMatInnerProductStrategy {
 
 impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     type Strategy = VecMatInnerProductStrategy;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        SimpleMatmulFamily<
-            PlanePartitioner,
-            RC,
-            SyncFullCyclicLoading<RowMajorTilingOrder>,
-            SyncFullCyclicLoading<ColMajorTilingOrder>,
-            SyncFullCyclicLoading<ColMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <VecMatBatch<RC>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<VecMatBatch<RC>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        VecMatBatch::<RC>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -101,7 +179,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
 
-        <Self as Routine<RC>>::validate_blueprint(
+        <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -109,7 +187,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = VecMatBatch::<RC>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,
@@ -129,21 +207,64 @@ pub struct DoubleVecMatInnerProductAlgorithm {}
 
 impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     type Strategy = VecMatInnerProductStrategy;
+    type Blueprint = BatchMatmulBlueprint;
+}
 
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        DoubleBufferingMatmulFamily<
-            PlanePartitioner,
-            RC,
-            SyncPartialCyclicLoading<RowMajorTilingOrder>,
-            SyncPartialCyclicLoading<ColMajorTilingOrder>,
-            SyncFullCyclicLoading<ColMajorTilingOrder>,
-            PlaneWriterFamily,
-        >,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleVecMatInnerProductAlgorithm {
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <DoubleVecMatBatch<RC>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<DoubleVecMatBatch<RC>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        DoubleVecMatBatch::<RC>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -185,7 +306,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
 
-        <Self as Routine<RC>>::validate_blueprint(
+        <Self as BatchMatmulRoutine<RC>>::validate_blueprint(
             &device_settings.client,
             &blueprint,
             problem,
@@ -193,7 +314,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = DoubleVecMatBatch::<RC>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,
@@ -214,7 +335,7 @@ fn infer_blueprint_vecmat<R: Runtime>(
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let tiling_scheme = TilingScheme::builder()
         .with_tile_size(tile_size)
         .with_partition_size(PartitionSize::new(1, 1, 1))
@@ -235,7 +356,7 @@ fn infer_blueprint_vecmat<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(TileMatmulKind::PlaneVec, tiling_scheme, plane_dim, problem)
+    BatchMatmulBlueprint::builder(TileMatmulKind::PlaneVec, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .build()

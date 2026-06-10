@@ -1,6 +1,8 @@
 use std::{fmt::Display, marker::PhantomData};
 
-use cubecl::{Runtime, client::ComputeClient, features::MmaConfig};
+use cubecl::{
+    CubeCount, CubeDim, Runtime, client::ComputeClient, features::MmaConfig, ir::AddressType,
+};
 use cubek_std::{
     MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
@@ -8,11 +10,11 @@ use cubek_std::{
 
 use crate::components::{
     global::read::sync_full_strided::SyncFullStridedLoading,
-    stage::{PlanePartitioner, StageFamily},
+    stage::{NumStages, PlanePartitioner, StageFamily},
 };
 use crate::definition::{
-    MatmulProblem, MatmulSetupError, MatmulVectorSizes, SwizzleModes, TilingBlueprint,
-    adjust_dtypes,
+    BatchMatmulBlueprint, CubeMappingLaunch, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    SwizzleModes, adjust_dtypes,
 };
 use crate::{
     components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
@@ -35,11 +37,20 @@ use crate::{
     routines::selector::select_swizzle,
 };
 use crate::{
-    launch::RuntimeConfig,
+    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
     routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo, TilingArgs, base},
+    routines::{
+        BlueprintStrategy, DeviceSettings, LaunchInfo, TilingArgs, base, batch_validate_blueprint,
+    },
     {components::batch::BatchMatmulFamily, routines::ExpandInfo},
 };
+
+/// The batch-matmul family powering [`SpecializedAlgorithm`].
+type SpecializedBatch<RC, L, AL> = PartitionedBatchMatmulFamily<
+    RC,
+    SpecializedMatmulFamily<PlanePartitioner, RC, L, AL, PlaneWriterFamily>,
+    RowMajorGlobalPartitionMatmul,
+>;
 
 /// Plane accelerated specialized matmul with TMA readers
 pub struct SpecializedAlgorithm<L = AsyncPartialTmaLoading, AL = SyncFullStridedLoading> {
@@ -84,13 +95,69 @@ where
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,
 {
     type Strategy = SpecializedStrategy;
-    type BatchMatmul = PartitionedBatchMatmulFamily<
-        RC,
-        SpecializedMatmulFamily<PlanePartitioner, RC, L, AL, PlaneWriterFamily>,
-        RowMajorGlobalPartitionMatmul,
-    >;
-    type Blueprint = TilingBlueprint;
-    type Config = <Self::BatchMatmul as BatchMatmulFamily<RC>>::Config;
+    type Blueprint = BatchMatmulBlueprint;
+}
+
+impl<RC, L, AL> base::BatchMatmulRoutine<RC> for SpecializedAlgorithm<L, AL>
+where
+    RC: RuntimeConfig,
+    L: AsyncPartialLoadingStrategy<RC, Stage: StageFamily>,
+    AL: FullLoadingStrategy<RC, Stage: StageFamily>,
+{
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<MA, R>,
+        output: OutputRuntimeArg<MA, R>,
+        config: ConfigRuntimeArg<MA, R>,
+        cube_count_input: CubeMappingLaunch<R>,
+        blueprint: Self::Blueprint,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        {
+            unsafe {
+                <SpecializedBatch<RC, L, AL>>::launch_unchecked::<MA, R>(
+                    client,
+                    cube_dim,
+                    cube_count,
+                    address_type,
+                    input,
+                    output,
+                    config,
+                    cube_count_input,
+                    blueprint,
+                    dtypes,
+                    vector_sizes,
+                )?
+            }
+            Ok(())
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_blueprint<R: Runtime>(
+        client: &ComputeClient<R>,
+        blueprint: &Self::Blueprint,
+        problem: &MatmulProblem,
+        dtypes: &MatmulElems,
+        vector_sizes: &MatmulVectorSizes,
+    ) -> Result<(), MatmulSetupError> {
+        batch_validate_blueprint::<SpecializedBatch<RC, L, AL>, RC, R>(
+            client,
+            blueprint,
+            problem,
+            dtypes,
+            vector_sizes,
+        )
+    }
+
+    fn num_stages() -> NumStages {
+        SpecializedBatch::<RC, L, AL>::num_stages()
+    }
 
     fn expand_blueprint<R: Runtime>(
         problem: &MatmulProblem,
@@ -145,7 +212,7 @@ where
             &device_settings.vector_sizes,
         )?;
 
-        let cubedim_resource = Self::BatchMatmul::cubedim_resource(
+        let cubedim_resource = SpecializedBatch::<RC, L, AL>::cubedim_resource(
             &blueprint,
             &dtypes,
             &device_settings.vector_sizes,
@@ -170,7 +237,7 @@ fn infer_blueprint_specialized<R: Runtime>(
     swizzle: bool,
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
+) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     let supported = |m: u32, n: u32, k: u32| {
@@ -231,7 +298,7 @@ fn infer_blueprint_specialized<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
+    let mut builder = BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .load_specialization_config(LoadFlows {
