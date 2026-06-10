@@ -72,15 +72,18 @@ fn accumulate_taps<F: Float>(
     acc: &mut F,
     #[comptime] config: Resample,
 ) {
-    let footprint = Footprint::<F>::new(&config);
+    let mut footprints = Sequence::<Footprint<F>>::new();
 
-    let num_axes = comptime!(config.axes.len());
-    let num_taps = comptime!(Footprint::<F>::num_taps(&config));
-    let total_taps = comptime!(num_taps.pow(num_axes as u32));
+    let num_axes = comptime!(config.resample_axes.len());
 
-    let radius = (num_taps + 1) / 2;
-
+    let mut total_taps = 1;
     #[unroll]
+    for dim in 0..num_axes {
+        let resample_axis = config.resample_axes.index(dim);
+        footprints.push(Footprint::<F>::new(resample_axis));
+        total_taps *= Footprint::<F>::num_taps(resample_axis);
+    }
+
     for i in 0..total_taps {
         let flat_idx = RuntimeCell::<usize>::new(i);
         let mut weight_nd = F::cast_from(1.0);
@@ -88,9 +91,13 @@ fn accumulate_taps<F: Float>(
 
         #[unroll]
         for dim in 0..num_axes {
-            let axis = comptime!(config.axes.index(dim));
+            let resample_axis = config.resample_axes.index(dim);
+            let footprint = footprints.index(dim);
 
-            let out_pos = out_coord[*axis] as usize;
+            let num_taps = Footprint::<F>::num_taps(resample_axis);
+            let radius = (num_taps + 1) / 2;
+
+            let out_pos = out_coord[resample_axis.axis] as usize;
 
             let (start_tap, frac) = footprint.start_tap_and_frac(radius, out_pos);
 
@@ -99,10 +106,10 @@ fn accumulate_taps<F: Float>(
 
             let tap_pos = start_tap + tap_1d_idx as isize;
             let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
-            let weight_1d = kernel_weight::<F>(&config.kernel, x);
+            let weight_1d = kernel_weight::<F>(&resample_axis.kernel, x);
             weight_nd *= weight_1d;
 
-            in_coord[*axis] = tap_pos as u32;
+            in_coord[resample_axis.axis] = tap_pos as u32;
         }
 
         if input.is_in_bounds(in_coord.clone()) {

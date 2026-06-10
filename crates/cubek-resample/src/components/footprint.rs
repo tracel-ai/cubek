@@ -1,6 +1,6 @@
 use crate::{
     components::kernel::kernel_num_taps,
-    definition::{Placement, Resample},
+    definition::{Placement, ResampleAxis},
 };
 
 use cubecl::prelude::*;
@@ -16,8 +16,8 @@ pub struct Footprint<F: Float> {
 
 #[cube]
 impl<F: Float> Footprint<F> {
-    pub fn new(#[comptime] config: &Resample) -> Footprint<F> {
-        let (tap_scale, tap_offset) = match config.placement {
+    pub fn new(#[comptime] axis: &ResampleAxis) -> Footprint<F> {
+        let (tap_scale, tap_offset) = match axis.placement {
             Placement::Continuous { scale, offset } => (scale, offset),
             Placement::Windowed { step, pad } => (1.0 / (step as f32), -(pad as f32)),
         };
@@ -28,8 +28,8 @@ impl<F: Float> Footprint<F> {
         }
     }
 
-    pub fn num_taps(#[comptime] config: &Resample) -> usize {
-        kernel_num_taps(&config.kernel)
+    pub fn num_taps(#[comptime] axis: &ResampleAxis) -> usize {
+        kernel_num_taps(&axis.kernel)
     }
 
     pub fn start_tap_and_frac(&self, radius: usize, pos: usize) -> (isize, F) {

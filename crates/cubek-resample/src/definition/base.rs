@@ -1,47 +1,46 @@
-use cubecl::prelude::Sequence;
+use cubecl::prelude::*;
 
 /// Resampling operation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
 pub struct Resample {
-    pub axes: Sequence<usize>,
-    pub kernel: Kernel,
-    pub placement: Placement,
+    pub resample_axes: Sequence<ResampleAxis>,
     pub semiring: Semiring,
 }
 
 impl Resample {
-    pub fn new() -> Self {
+    pub fn new(semiring: Semiring) -> Self {
         Self {
-            axes: Sequence::new(),
-            kernel: Kernel::One,
-            semiring: Semiring::Linear,
-            placement: Placement::Windowed { step: 1, pad: 0 },
+            resample_axes: Sequence::new(),
+            semiring,
         }
     }
 
-    pub fn with_axis(mut self, axis: usize) -> Self {
-        self.axes.push(axis);
-        self
-    }
-
-    pub fn with_kernel(mut self, kernel: Kernel) -> Self {
-        self.kernel = kernel;
-        self
-    }
-
-    pub fn with_placement(mut self, placement: Placement) -> Self {
-        self.placement = placement;
-        self
-    }
-
-    pub fn with_semiring(mut self, semiring: Semiring) -> Self {
-        self.semiring = semiring;
+    pub fn with_axis(mut self, axis: ResampleAxis) -> Self {
+        self.resample_axes.push(axis);
         self
     }
 }
 
+/// Resample axis operation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
+pub struct ResampleAxis {
+    pub axis: usize,
+    pub kernel: Kernel,
+    pub placement: Placement,
+}
+
+impl ResampleAxis {
+    pub fn new(axis: usize, kernel: Kernel, placement: Placement) -> Self {
+        Self {
+            axis,
+            kernel,
+            placement,
+        }
+    }
+}
+
 /// The semiring, it determines how the values are combined.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, CubeType)]
 pub enum Semiring {
     /// Linear algebra: `y = A·x`.
     Linear,
@@ -52,7 +51,7 @@ pub enum Semiring {
 }
 
 /// The kernel function, it determines the shape of the kernel.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, CubeType)]
 pub enum Kernel {
     /// Weight of one.
     One,
@@ -82,7 +81,7 @@ impl core::hash::Hash for Kernel {
 }
 
 /// Coordinate map: output index to source coordinate.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, CubeType)]
 pub enum Placement {
     /// Continuous affine slide: `start = scale * pos + offset`.
     Continuous { scale: f32, offset: f32 },

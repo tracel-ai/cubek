@@ -12,7 +12,7 @@ use crate::{
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
 use cubek_resample::{
-    definition::{Kernel, Placement, Resample, Semiring},
+    definition::{Kernel, Placement, Resample, ResampleAxis, Semiring},
     resample,
 };
 
@@ -34,22 +34,43 @@ pub fn interpolate<R: Runtime>(
 
     //interpolate_launch(client, input, output, options, strategy, dtype)
 
-    let config = Resample::new()
-        .with_kernel(Kernel::One)
-        .with_placement(Placement::Continuous {
-            scale: 1.0,
-            offset: 0.0,
-        })
-        .with_semiring(Semiring::Linear)
-        .with_axis(1)
-        .with_axis(2);
+    let kernel = get_kernel(options);
+
+    let resample_height = resample_axis(&input, &output, options, kernel, 1);
+    let resample_width = resample_axis(&input, &output, options, kernel, 2);
+
+    let config = Resample::new(Semiring::Linear)
+        .with_axis(resample_height)
+        .with_axis(resample_width);
 
     resample(client, input, output, config, dtype);
 
     Ok(())
 }
 
-pub fn get_scale_and_offset(
+fn get_kernel(options: InterpolateOptions) -> Kernel {
+    match options.mode {
+        InterpolateMode::Nearest(_) => Kernel::One,
+        InterpolateMode::Bilinear => Kernel::Triangle,
+        InterpolateMode::Bicubic => Kernel::Cubic { a: -0.75 },
+        InterpolateMode::Lanczos3 => Kernel::Lanczos { lobes: 3 },
+    }
+}
+
+fn resample_axis<R: Runtime>(
+    input: &TensorBinding<R>,
+    output: &TensorBinding<R>,
+    options: InterpolateOptions,
+    kernel: Kernel,
+    axis: usize,
+) -> ResampleAxis {
+    let (input_size, output_size) = (input.shape[axis], output.shape[axis]);
+    let (scale, offset) = get_scale_and_offset(input_size, output_size, options);
+
+    ResampleAxis::new(axis, kernel, Placement::Continuous { scale, offset })
+}
+
+fn get_scale_and_offset(
     input_size: usize,
     output_size: usize,
     options: InterpolateOptions,
