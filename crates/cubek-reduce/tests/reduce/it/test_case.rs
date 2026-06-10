@@ -122,10 +122,14 @@ impl TestCase {
         // Bernoulli with p ≈ 1.5/axis_len makes ~22% of reduced slices all-zero
         // (any = 0) and the rest contain a non-zero (any = 1), so both merge
         // outcomes are exercised instead of the trivial all-ones case `uniform`
-        // would produce.
+        // would produce. The output is u32 like the bool tensor backing callers
+        // request (u32 is the one flag storage every test runtime supports), so
+        // the in-kernel flag conversion is covered for every input dtype of the
+        // matrix.
+        let u32_dtype = u32::as_type_native_unchecked().storage_type();
         self.run_reduce_test_with(
             |input, axis| reference_any(input, axis, None),
-            self.input_dtype,
+            u32_dtype,
             ReduceOperationConfig::Any,
             0.0,
             Distribution::Bernoulli(self.flag_probability()),
@@ -135,9 +139,10 @@ impl TestCase {
     pub fn test_all(&self) {
         // Mirror of `test_any`: p ≈ 1 - 1.5/axis_len makes ~22% of slices
         // all-ones (all = 1) and the rest contain a zero (all = 0).
+        let u32_dtype = u32::as_type_native_unchecked().storage_type();
         self.run_reduce_test_with(
             |input, axis| reference_all(input, axis, None),
-            self.input_dtype,
+            u32_dtype,
             ReduceOperationConfig::All,
             0.0,
             Distribution::Bernoulli(1.0 - self.flag_probability()),

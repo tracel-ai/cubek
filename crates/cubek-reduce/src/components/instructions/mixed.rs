@@ -59,26 +59,30 @@ impl ReduceOperationConfig {
             | ReduceOperationConfig::Prod
             | ReduceOperationConfig::Mean => {}
             // No benefit to mixed precision accumulation.
-            // `Any` / `All` keep the accumulator narrow (it only ever holds 0/1 flags).
             ReduceOperationConfig::MaxAbs
             | ReduceOperationConfig::Max
             | ReduceOperationConfig::TopK(_)
-            | ReduceOperationConfig::Min
-            | ReduceOperationConfig::Any
-            | ReduceOperationConfig::All => {
+            | ReduceOperationConfig::Min => {
                 return ReduceDtypes {
                     input: input.into(),
                     output: input.into(),
                     accumulation: input.into(),
                 };
             }
+            // The output is not a value of the input but an index (Arg*) or a
+            // logical flag (`Any` / `All`), so the caller must pick its dtype;
+            // the conversion happens for free in the final output write. The
+            // accumulator stays narrow (= input): indices live in a separate
+            // u32 accumulator, and logical flags only ever hold 0/1.
             ReduceOperationConfig::ArgMax
             | ReduceOperationConfig::ArgMin
-            | ReduceOperationConfig::ArgTopK(_) => {
+            | ReduceOperationConfig::ArgTopK(_)
+            | ReduceOperationConfig::Any
+            | ReduceOperationConfig::All => {
                 return ReduceDtypes {
                     input: input.into(),
                     output: output
-                        .expect("ArgMax, ArgMin and ArgTopK must specify output type")
+                        .expect("ArgMax, ArgMin, ArgTopK, Any and All must specify output type")
                         .into(),
                     accumulation: input.into(),
                 };
@@ -611,17 +615,24 @@ mod tests {
     /// The key benefit of `Any` / `All` over the sum-based emulation is that the
     /// dynamic dispatch path keeps `accumulation = input`: the accumulator only
     /// ever holds 0/1 flags, so there is no need to widen (and no overflow) the
-    /// way `Sum` / `Mean` do. Check the narrow accumulator for a narrow float
-    /// (f16, the type that motivated this work) and an integer input.
+    /// way `Sum` / `Mean` do. The output dtype is the caller-provided flag
+    /// storage (e.g. the u8/u32 backing of a bool tensor), like Arg* indices.
+    /// Check both for a narrow float (f16, the type that motivated this work)
+    /// and an integer input.
     #[test]
-    fn any_all_precision_keeps_input_dtype() {
+    fn any_all_precision_keeps_accumulation_narrow() {
         let inputs = [ElemType::Float(FloatKind::F16), ElemType::Int(IntKind::I32)];
+        let output = ElemType::UInt(UIntKind::U8);
         for config in [ReduceOperationConfig::Any, ReduceOperationConfig::All] {
             for input in inputs {
-                let dtypes = config.precision(input, None);
+                let dtypes = config.precision(input, Some(output));
                 let expected: StorageType = input.into();
                 assert_eq!(dtypes.input, expected, "input for {input:?}");
-                assert_eq!(dtypes.output, expected, "output for {input:?}");
+                assert_eq!(
+                    dtypes.output,
+                    output.into(),
+                    "output must follow the requested flag storage for {input:?}"
+                );
                 assert_eq!(
                     dtypes.accumulation, expected,
                     "accumulation must stay narrow for {input:?}"
