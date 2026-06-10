@@ -21,7 +21,7 @@ use crate::definition::{MatmulElems, MatmulGlobalElems};
 use crate::eval::benchmarks::quantized_matmul::problem::{
     Layout, Mode, QuantSide, QuantizedMatmulProblem,
 };
-use crate::launch::{Strategy, launch_ref as matmul_launch_ref};
+use crate::{launch::launch_ref as matmul_launch_ref, strategy::Strategy};
 
 pub fn bench(
     strategy: &Strategy,

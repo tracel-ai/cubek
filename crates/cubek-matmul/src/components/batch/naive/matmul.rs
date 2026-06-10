@@ -7,9 +7,9 @@ use crate::{
 };
 
 use crate::{
+    args::MatmulArgs,
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
     definition::*,
-    launch::MatmulArgs,
 };
 use cubecl::{
     prelude::*,

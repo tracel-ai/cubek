@@ -1,6 +1,6 @@
 //! Inferred-blueprint smoke tests for the GEMV routines.
 
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 use cubek_std::MatrixLayout;
 
 use super::common::{client, f16_elems, rect_with_layouts};

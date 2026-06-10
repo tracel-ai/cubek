@@ -1,7 +1,7 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::launch::Strategy;
-use crate::routines::{BlueprintStrategy, gemm::GemmStrategy, simple::SimpleArgs};
+use crate::routines::{BlueprintStrategy, batch::simple::SimpleArgs, gemm::GemmStrategy};
+use crate::strategy::Strategy;
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     vec![

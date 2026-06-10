@@ -1,3 +1,4 @@
+use crate::args::RuntimeConfig;
 use crate::components::global::{
     GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
@@ -7,7 +8,6 @@ use crate::components::global::{
 use crate::definition::{
     MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes, MatmulVectorSizes, StageIdent,
 };
-use crate::launch::RuntimeConfig;
 use crate::{
     components::global::GlobalMatmulFamily,
     components::global::read::PartialLoadingStrategy,

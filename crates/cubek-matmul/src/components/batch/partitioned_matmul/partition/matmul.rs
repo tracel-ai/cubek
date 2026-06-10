@@ -2,11 +2,11 @@ use cubecl::prelude::*;
 
 use crate::definition::{AccG, LhsG, MatmulTypes, RhsG};
 use crate::{
+    args::MatmulArgs,
     components::{
         batch::SliceIndex,
         global::{self, GlobalConfig},
     },
-    launch::MatmulArgs,
 };
 
 #[derive(CubeType)]

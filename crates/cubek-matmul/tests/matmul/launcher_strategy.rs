@@ -2,8 +2,8 @@ use cubecl::{TestRuntime, prelude::*};
 use cubek_matmul::{
     definition::MatmulElems,
     definition::{MatmulProblem, MatmulSetupError},
-    launch::Strategy,
     launch::launch_ref,
+    strategy::Strategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};

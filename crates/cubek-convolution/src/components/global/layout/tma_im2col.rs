@@ -5,7 +5,7 @@ use cubecl::{
         tensor::layout::{CoordsDyn, Layout, LayoutExpand},
     },
 };
-use cubek_matmul::launch::BatchedCoords;
+use cubek_matmul::args::BatchedCoords;
 
 use crate::components::{
     ConvolutionOperation, ConvolutionParams, ConvolutionProblem, global::layout::NhwcCoords,

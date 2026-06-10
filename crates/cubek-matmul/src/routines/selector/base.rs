@@ -1,4 +1,4 @@
-use crate::{components::tile::TileMatmulKind, launch::RuntimeConfig, routines::Routine};
+use crate::{args::RuntimeConfig, components::tile::TileMatmulKind, routines::Routine};
 use std::fmt::Display;
 
 /// Strategy args that carry a [TileMatmul] kind, so convolution / other crates can

@@ -17,6 +17,14 @@ use crate::definition::{
     SwizzleModes, adjust_dtypes,
 };
 use crate::{
+    args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    routines::{
+        BlueprintStrategy, DeviceSettings, LaunchInfo, TilingArgs, base, batch_validate_blueprint,
+    },
+    {components::batch::BatchMatmulFamily, routines::ExpandInfo},
+};
+use crate::{
     components::batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
     components::global::PlaneWriterFamily,
     components::global::read::FullLoadingStrategy,
@@ -35,14 +43,6 @@ use crate::{
         stage::PartitionBuffering,
     },
     routines::selector::select_swizzle,
-};
-use crate::{
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
-    routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
-    routines::{
-        BlueprintStrategy, DeviceSettings, LaunchInfo, TilingArgs, base, batch_validate_blueprint,
-    },
-    {components::batch::BatchMatmulFamily, routines::ExpandInfo},
 };
 
 /// The batch-matmul family powering [`SpecializedAlgorithm`].

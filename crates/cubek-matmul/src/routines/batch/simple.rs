@@ -11,6 +11,11 @@ use cubek_std::{
 use std::{fmt::Display, marker::PhantomData};
 
 use crate::{
+    args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
+    {args::RuntimeConfig, components::batch::BatchMatmulFamily},
+};
+use crate::{
     components::{
         batch::{PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul},
         global::{
@@ -35,11 +40,6 @@ use crate::{
         MatmulVectorSizes, MultiRowStrategy, TilingScheme, adjust_dtypes,
     },
     routines::ExpandInfo,
-};
-use crate::{
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
-    routines::{BlueprintStrategy, DeviceSettings, LaunchInfo},
-    {components::batch::BatchMatmulFamily, launch::RuntimeConfig},
 };
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)

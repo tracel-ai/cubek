@@ -2,14 +2,14 @@ use cubecl::{
     Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
+    args::{TensorArgs, TensorMapArgs},
     components::global::read::{
         AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
         async_partial_strided::AsyncPartialStridedLoading,
         async_partial_tma::AsyncPartialTmaLoading,
     },
     definition::{AvailableVectorSizes, BatchMatmulBlueprint},
-    launch::{TensorArgs, TensorMapArgs},
-    routines::specialized::{SpecializedAlgorithm, SpecializedStrategy},
+    routines::batch::specialized::{SpecializedAlgorithm, SpecializedStrategy},
 };
 use cubek_std::tile::ColMajorTilingOrder;
 use std::marker::PhantomData;

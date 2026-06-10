@@ -1,3 +1,5 @@
+pub mod launch;
+
 use std::{
     cmp::{max, min},
     fmt::Display,
@@ -7,6 +9,7 @@ use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 use crate::{
+    args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
     components::{
         batch::{
             BatchMatmulFamily, CheckBounds,
@@ -17,7 +20,6 @@ use crate::{
     definition::{
         CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
     },
-    launch::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
     routines::{
         BatchMatmulRoutine, BlueprintStrategy, DeviceSettings, ExpandInfo, LaunchInfo, Routine,
         batch_validate_blueprint, num_concurrent_planes,

@@ -2,8 +2,8 @@ use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatK
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     eval::cpu_reference::matmul_cpu_reference,
-    launch::Strategy,
     launch::launch_ref,
+    strategy::Strategy,
 };
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_std::{InputBinding, MatrixLayout};

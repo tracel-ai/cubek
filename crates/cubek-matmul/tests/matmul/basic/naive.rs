@@ -1,6 +1,6 @@
 //! Smoke tests for the naive routine.
 
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 
 use super::common::{client, f16_elems, f32_elems, rect, square};
 use crate::matmul::test_matmul_strategy;

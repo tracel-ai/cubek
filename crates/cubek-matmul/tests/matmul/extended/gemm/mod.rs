@@ -1,6 +1,6 @@
 use crate::matmul::test_matmul_strategy;
 use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
-use cubek_matmul::{launch::Strategy, routines::BlueprintStrategy};
+use cubek_matmul::{routines::BlueprintStrategy, strategy::Strategy};
 
 use cubek_matmul::{
     definition::MatmulGlobalElems,

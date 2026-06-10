@@ -3,8 +3,8 @@ mod matmul_plane_accelerated {
         use cubecl::{TestRuntime, client::ComputeClient};
         use cubek_matmul::{
             definition::{BatchMatmulBlueprint, MatmulProblem},
-            launch::{Strategy, test_only::TestStrategy},
             routines::BlueprintStrategy,
+            strategy::{Strategy, test_only::TestStrategy},
         };
 
         use crate::matmul::{test_matmul_strategy, test_matmul_test_strategy};
@@ -138,8 +138,8 @@ mod matmul_plane_accelerated {
         use cubecl::{TestRuntime, client::ComputeClient};
         use cubek_matmul::{
             definition::{BatchMatmulBlueprint, MatmulProblem},
-            launch::{Strategy, test_only::TestStrategy},
             routines::BlueprintStrategy,
+            strategy::{Strategy, test_only::TestStrategy},
         };
 
         use crate::matmul::{test_matmul_strategy, test_matmul_test_strategy};

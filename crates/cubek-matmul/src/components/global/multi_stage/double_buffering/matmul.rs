@@ -3,6 +3,14 @@ use crate::components::global::{
     read::{FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer},
 };
 use crate::{
+    args::RuntimeConfig,
+    components::stage::{
+        {StagePartitioner, partition_coordinates},
+        {init_a_fragment, init_accumulator, init_b_fragments},
+    },
+    definition::{AccG, AccRE, AccSE, AccSS, LhsG, LhsRE, MatmulTypes, MatrixTypes, RhsG, RhsRE},
+};
+use crate::{
     components::global::{
         GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
         read::{FullLoaderStage, PartialLoaderStage},
@@ -21,14 +29,6 @@ use crate::{
         read::FullLoadingStrategy,
     },
     definition::Acc,
-};
-use crate::{
-    components::stage::{
-        {StagePartitioner, partition_coordinates},
-        {init_a_fragment, init_accumulator, init_b_fragments},
-    },
-    definition::{AccG, AccRE, AccSE, AccSS, LhsG, LhsRE, MatmulTypes, MatrixTypes, RhsG, RhsRE},
-    launch::RuntimeConfig,
 };
 use cubecl::{
     prelude::*,

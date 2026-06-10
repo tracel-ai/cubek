@@ -1,4 +1,5 @@
 use crate::{
+    args::RuntimeConfig,
     components::{
         global::{
             GlobalReaderConfig,
@@ -12,7 +13,6 @@ use crate::{
         stage::{StridedStageFamily, StridedStageMemory},
     },
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    launch::RuntimeConfig,
 };
 use cubecl::{
     ir::DeviceProperties,

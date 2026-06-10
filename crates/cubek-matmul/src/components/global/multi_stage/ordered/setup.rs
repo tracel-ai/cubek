@@ -18,7 +18,7 @@ use crate::{
     definition::BatchMatmulBlueprint,
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes},
     definition::{MatmulVectorSizes, StageIdent},
-    {components::CubeDimResource, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::CubeDimResource},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;

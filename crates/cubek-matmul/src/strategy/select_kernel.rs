@@ -1,4 +1,4 @@
-use crate::launch::{
+use crate::args::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
     OutputRuntimeArg,
 };
@@ -9,7 +9,7 @@ use crate::{
 use crate::{
     routines::LaunchInfo,
     routines::{BatchMatmulRoutine, BlueprintStrategy},
-    {definition::MatmulElems, launch::ConfigRuntimeArg},
+    {args::ConfigRuntimeArg, definition::MatmulElems},
 };
 use cubecl::{
     prelude::TensorBinding,

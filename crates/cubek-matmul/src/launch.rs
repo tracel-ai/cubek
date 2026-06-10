@@ -3,7 +3,7 @@ use cubek_std::InputBinding;
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError},
-    launch::Strategy,
+    strategy::Strategy,
 };
 
 #[allow(clippy::result_large_err)]

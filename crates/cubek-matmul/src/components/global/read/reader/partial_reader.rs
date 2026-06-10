@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use super::{StageBuffer, TaskCounter};
 use crate::{
+    args::RuntimeConfig,
     components::{
         global::{
             GlobalReaderConfig, SharedGlobalMatmulConfig,
@@ -12,7 +13,6 @@ use crate::{
         stage::LoadStageFamily,
     },
     definition::MatmulTypes,
-    launch::RuntimeConfig,
 };
 use cubecl::prelude::{barrier::Barrier, *};
 use cubecl::std::tensor::{View, layout::Coords2d};

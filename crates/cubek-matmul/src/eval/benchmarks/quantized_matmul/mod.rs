@@ -8,7 +8,7 @@ pub use strategy::strategies;
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
-use crate::launch::Strategy;
+use crate::strategy::Strategy;
 
 pub struct Category;
 

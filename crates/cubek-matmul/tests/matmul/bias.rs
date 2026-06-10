@@ -13,14 +13,14 @@ use cubecl::{
     std::tensor::{TensorHandle, launch::ViewArg, layout::VirtualLayoutLaunch},
 };
 use cubek_matmul::{
+    args::{TensorArgs, TensorInputsLaunch, TensorOutputLaunch},
     components::global::memory::{
         BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutLaunch,
     },
     definition::{
         AvailableVectorSizes, Blueprint as _, MatmulElems, MatmulProblem, cube_mapping_launch,
     },
-    launch::{TensorArgs, TensorInputsLaunch, TensorOutputLaunch},
-    routines::{BatchMatmulRoutine, BlueprintStrategy, simple_unit::SimpleUnitAlgorithm},
+    routines::{BatchMatmulRoutine, BlueprintStrategy, batch::simple_unit::SimpleUnitAlgorithm},
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{

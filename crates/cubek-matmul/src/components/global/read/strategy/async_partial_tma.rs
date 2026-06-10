@@ -1,11 +1,11 @@
 use crate::components::{global::SharedGlobalMatmulConfig, stage::StridedStageFamily};
 use crate::{
-    components::global::memory::GlobalIterator,
-    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
+    args::RuntimeConfig,
+    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
 };
 use crate::{
-    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
-    launch::RuntimeConfig,
+    components::global::memory::GlobalIterator,
+    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
 use crate::{
     components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
