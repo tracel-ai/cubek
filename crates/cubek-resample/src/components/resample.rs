@@ -1,6 +1,6 @@
 use crate::components::{
     footprint::Footprint,
-    line_combiner::{LineCombiner, ScalarLineCombiner, VectorizedLineCombiner},
+    lane_combiner::{LaneCombiner, ScalarLaneCombiner, VectorizedLaneCombiner},
     semiring::{semiring_identity, semiring_reduce},
     tap_resolver::TapResolver,
 };
@@ -71,7 +71,7 @@ pub fn resample_coord<F: Float, N: Size>(
     let vector_size = N::value();
 
     if comptime!(vector_size > 1) {
-        accumulate_taps::<F, N, VectorizedLineCombiner>(
+        accumulate_taps::<F, N, VectorizedLaneCombiner>(
             input,
             out_coord,
             &mut acc,
@@ -80,7 +80,7 @@ pub fn resample_coord<F: Float, N: Size>(
             vector_size,
         );
     } else {
-        accumulate_taps::<F, N, ScalarLineCombiner>(
+        accumulate_taps::<F, N, ScalarLaneCombiner>(
             input,
             out_coord,
             &mut acc,
@@ -95,7 +95,7 @@ pub fn resample_coord<F: Float, N: Size>(
 
 // Accumulate tap weights to produce a single tap value.
 #[cube]
-fn accumulate_taps<F: Float, N: Size, L: LineCombiner<F, N>>(
+fn accumulate_taps<F: Float, N: Size, L: LaneCombiner<F, N>>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
     acc: &mut Vector<F, N>,
@@ -109,42 +109,69 @@ fn accumulate_taps<F: Float, N: Size, L: LineCombiner<F, N>>(
 
     let mut in_coord = out_coord.clone();
 
-    for i in 0..total_taps {
-        let mut combined = L::init_combined(&config);
-
-        #[unroll]
-        for lane in 0..vector_size {
-            let weight = TapResolver::resolve::<F>(
-                i,
-                out_coord,
-                &mut in_coord,
-                lane,
-                &footprints,
-                &config,
-                vectorized_axis,
-                num_axes,
-            );
-
-            if input.is_in_bounds(in_coord.clone()) {
-                let value = input.read(in_coord.clone());
-
-                combined = L::process_lane(
-                    &in_coord,
-                    combined,
-                    lane,
-                    value,
-                    weight,
-                    &config,
-                    vectorized_axis,
-                    vector_size,
-                );
-            }
-        }
-
-        *acc = semiring_reduce(&config.semiring, *acc, combined);
+    for tap_idx in 0..total_taps {
+        accumulate_tap::<F, N, L>(
+            tap_idx,
+            input,
+            out_coord,
+            &mut in_coord,
+            acc,
+            &footprints,
+            &config,
+            vectorized_axis,
+            vector_size,
+            num_axes,
+        );
     }
 }
 
+/// Accumulate taps for a single tap index.
+#[cube]
+fn accumulate_tap<F: Float, N: Size, L: LaneCombiner<F, N>>(
+    tap_idx: usize,
+    input: &View<'_, Vector<F, N>, CoordsDyn>,
+    out_coord: &CoordsDyn,
+    in_coord: &mut CoordsDyn,
+    acc: &mut Vector<F, N>,
+    footprints: &Sequence<Footprint<F>>,
+    #[comptime] config: &Resample,
+    #[comptime] vectorized_axis: usize,
+    #[comptime] vector_size: usize,
+    #[comptime] num_axes: usize,
+) {
+    let mut combined = L::init_combined(config);
+
+    #[unroll]
+    for lane in 0..vector_size {
+        let weight = TapResolver::resolve::<F>(
+            tap_idx,
+            out_coord,
+            in_coord,
+            lane,
+            &footprints,
+            config,
+            vectorized_axis,
+            num_axes,
+        );
+
+        let value = input.read(in_coord.clone());
+
+        combined = L::combine_lane(
+            &*in_coord,
+            combined,
+            lane,
+            value,
+            weight,
+            config,
+            vectorized_axis,
+            vector_size,
+        );
+    }
+
+    *acc = semiring_reduce(&config.semiring, *acc, combined);
+}
+
+/// Build footprints for each dimension and calculate total taps.
 #[cube]
 fn build_footprints<F: Float>(
     #[comptime] config: &Resample,

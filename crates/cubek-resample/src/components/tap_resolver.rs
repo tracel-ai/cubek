@@ -24,16 +24,16 @@ impl TapResolver {
         let mut current_flat_idx = tap_idx;
 
         #[unroll]
-        for dim in 0..num_axes {
-            let resample_axis = config.resample_axes.index(dim);
-            let footprint = footprints.index(dim);
+        for axis in 0..num_axes {
+            let resample_axis = config.resample_axes.index(axis);
+            let footprint = footprints.index(axis);
 
             let num_taps = Footprint::<F>::num_taps(resample_axis);
             let radius = (num_taps + 1) / 2;
 
             let out_pos = out_coord[resample_axis.axis] as usize;
 
-            let lane_out_pos = if comptime!(resample_axis.axis == vectorized_axis) {
+            let lane_out_pos = if resample_axis.axis == vectorized_axis {
                 out_pos + lane
             } else {
                 out_pos

@@ -1,6 +1,6 @@
 mod footprint;
 mod kernel;
-mod line_combiner;
+mod lane_combiner;
 mod placement;
 mod resample;
 mod semiring;

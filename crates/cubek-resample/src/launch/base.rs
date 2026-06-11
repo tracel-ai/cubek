@@ -58,11 +58,16 @@ fn vectorize<R: Runtime>(
     output: &TensorBinding<R>,
     dtype: StorageType,
 ) -> (usize, usize) {
-    let rank = input.shape.len();
     let supported_sizes = client.io_optimized_vector_sizes(dtype.size());
+    let rank = input.shape.len();
 
     for i in 1..=rank {
         let axis = rank - i;
+
+        // Break and don't vectorize if the axis is not contiguous.
+        if input.strides[axis] > 1 || output.strides[axis] > 1 {
+            break;
+        }
 
         // Find the largest vector size that works for both tensors on this axis
         for vector_size in supported_sizes.clone() {
@@ -70,13 +75,8 @@ fn vectorize<R: Runtime>(
                 continue;
             }
 
-            let in_valid =
-                is_vectorization_valid(&input.shape, &input.strides, axis, vector_size as usize);
-            let out_valid =
-                is_vectorization_valid(&output.shape, &output.strides, axis, vector_size as usize);
-
             // If this vector size is supported by both, take it and break.
-            if in_valid && out_valid {
+            if input.shape[axis] % vector_size == 0 && output.shape[axis] % vector_size == 0 {
                 return (vector_size as usize, axis);
             }
         }
@@ -84,22 +84,6 @@ fn vectorize<R: Runtime>(
 
     // Fallback if no axis can be vectorized.
     (1, rank.saturating_sub(1))
-}
-
-fn is_vectorization_valid(
-    shape: &[usize],
-    strides: &[usize],
-    axis: usize,
-    vector_size: usize,
-) -> bool {
-    // Skip vectorizing on a non-contiguous axis.
-    // This can be removed in the future to have vectorization on non-contiguous axis (high computational cost vs memory bandwidth)
-    if strides[axis] != 1 {
-        return false;
-    }
-
-    // Axis can be vectorised.
-    shape[axis] % vector_size == 0
 }
 
 /// Convert a sequence of shapes to a sequence of fast divmod.
