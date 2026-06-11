@@ -13,7 +13,7 @@ fn matrix(order: &[Axis], extents: &[(Axis, usize)]) -> ConcreteLayout {
         .iter()
         .map(|&a| {
             let extent = extents.iter().find(|(x, _)| *x == a).unwrap().1;
-            PhysicalAxis::untiled(a, extent)
+            PhysicalAxis::new(a, extent)
         })
         .collect::<Vec<_>>();
     ConcreteLayout::new(&axes)
@@ -65,19 +65,52 @@ fn minor_requires_trailing_axes() {
 
 #[test]
 fn tiled_is_satisfied_by_a_finer_multiple() {
+    // Storage tiling = higher rank: M splits into a `(grid, leaf)` pair, leaf innermost. The
+    // request wants leaf tiles whose edge is a multiple of 8.
     let req = LayoutRequest::new().with(Constraint::required(Facet::Tiled { axis: M, edge: 8 }));
-    let tiled_8 =
-        ConcreteLayout::new(&[PhysicalAxis::tiled(M, 64, 8), PhysicalAxis::untiled(K, 64)]);
-    let tiled_16 =
-        ConcreteLayout::new(&[PhysicalAxis::tiled(M, 64, 16), PhysicalAxis::untiled(K, 64)]);
-    let tiled_12 =
-        ConcreteLayout::new(&[PhysicalAxis::tiled(M, 64, 12), PhysicalAxis::untiled(K, 64)]);
-    let untiled =
-        ConcreteLayout::new(&[PhysicalAxis::untiled(M, 64), PhysicalAxis::untiled(K, 64)]);
-    assert!(req.feasible(&tiled_8));
-    assert!(req.feasible(&tiled_16)); // finer multiple satisfies
-    assert!(!req.feasible(&tiled_12)); // not a multiple
-    assert!(!req.feasible(&untiled));
+    // (M extent, grid, leaf): leaf is the inner M fragment, so it lands after the grid.
+    let leaf_8 = ConcreteLayout::new(&[
+        PhysicalAxis::new(M, 8), // grid
+        PhysicalAxis::new(M, 8), // leaf
+        PhysicalAxis::new(K, 64),
+    ]);
+    let leaf_16 = ConcreteLayout::new(&[
+        PhysicalAxis::new(M, 4),  // grid
+        PhysicalAxis::new(M, 16), // leaf
+        PhysicalAxis::new(K, 64),
+    ]);
+    let leaf_12 = ConcreteLayout::new(&[
+        PhysicalAxis::new(M, 2),  // grid
+        PhysicalAxis::new(M, 12), // leaf
+        PhysicalAxis::new(K, 64),
+    ]);
+    let untiled = ConcreteLayout::new(&[PhysicalAxis::new(M, 64), PhysicalAxis::new(K, 64)]);
+    assert!(req.feasible(&leaf_8));
+    assert!(req.feasible(&leaf_16)); // finer multiple satisfies
+    assert!(!req.feasible(&leaf_12)); // 12 not a multiple of 8
+    assert!(!req.feasible(&untiled)); // single fragment: not storage-tiled
+}
+
+#[test]
+fn tiling_is_higher_rank_with_leaf_innermost() {
+    // A tiled matmul-lhs operand: `[grid_M, grid_K, leaf_M, leaf_K]`, leaf_K innermost. The
+    // leaf drives vectorization, so Innermost lands on a leaf fragment, not the logical axis.
+    let layout = ConcreteLayout::new(&[
+        PhysicalAxis::new(M, 8), // grid_M
+        PhysicalAxis::new(K, 8), // grid_K
+        PhysicalAxis::new(M, 8), // leaf_M
+        PhysicalAxis::new(K, 8), // leaf_K
+    ]);
+    let inner_k =
+        LayoutRequest::new().with(Constraint::required(Facet::Innermost(AxisSet::one(K))));
+    let tiled_m =
+        LayoutRequest::new().with(Constraint::required(Facet::Tiled { axis: M, edge: 8 }));
+    // Divisible reads the logical extent: the product of M's fragments, 8 * 8 = 64.
+    let div_m =
+        LayoutRequest::new().with(Constraint::required(Facet::Divisible { axis: M, by: 64 }));
+    assert!(inner_k.feasible(&layout));
+    assert!(tiled_m.feasible(&layout));
+    assert!(div_m.feasible(&layout));
 }
 
 #[test]

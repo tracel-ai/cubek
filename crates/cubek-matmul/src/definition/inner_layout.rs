@@ -63,27 +63,31 @@ impl InnerLayout {
     }
 
     /// The per-operand [`ConcreteLayout`] this imposes on the matrix axes `[row, col]`:
-    /// row-major makes `col` innermost, col-major `row`, a tiled layout keeps `col` innermost
-    /// with the finest tile edge per axis. Batch axes are layout-irrelevant, so only the
-    /// matrix is described. Temporary bridge while `InnerLayout` converges onto `ConcreteLayout`.
+    /// row-major makes `col` innermost, col-major `row`, a tiled layout expands each matrix
+    /// axis into its `[grid…, leaf]` fragments (level-major, leaf innermost) just like the
+    /// physical buffer. Batch axes are layout-irrelevant, so only the matrix is described.
+    /// Temporary bridge while `InnerLayout` converges onto `ConcreteLayout`.
     #[allow(dead_code)]
     pub fn to_concrete(&self, matrix: [Axis; 2], rows: usize, cols: usize) -> ConcreteLayout {
         let [row, col] = matrix;
         match self {
-            InnerLayout::RowMajor => ConcreteLayout::new(&[
-                PhysicalAxis::untiled(row, rows),
-                PhysicalAxis::untiled(col, cols),
-            ]),
-            InnerLayout::ColMajor => ConcreteLayout::new(&[
-                PhysicalAxis::untiled(col, cols),
-                PhysicalAxis::untiled(row, rows),
-            ]),
+            InnerLayout::RowMajor => {
+                ConcreteLayout::new(&[PhysicalAxis::new(row, rows), PhysicalAxis::new(col, cols)])
+            }
+            InnerLayout::ColMajor => {
+                ConcreteLayout::new(&[PhysicalAxis::new(col, cols), PhysicalAxis::new(row, rows)])
+            }
+            // Level-major `[grid_r, grid_c, …, leaf_r, leaf_c]`, mirroring `physical_dims`: a
+            // tiled axis is repeated, one fragment per level, so the leaf lands innermost.
             InnerLayout::Tiled { tiles } => {
-                let (re, ce) = *tiles.last().expect("a tiled layout has at least one level");
-                ConcreteLayout::new(&[
-                    PhysicalAxis::tiled(row, rows, re),
-                    PhysicalAxis::tiled(col, cols, ce),
-                ])
+                let row_factors = axis_factors(tiles.iter().map(|t| t.0), rows);
+                let col_factors = axis_factors(tiles.iter().map(|t| t.1), cols);
+                let mut axes = Vec::with_capacity(row_factors.len() * 2);
+                for (r, c) in row_factors.into_iter().zip(col_factors) {
+                    axes.push(PhysicalAxis::new(row, r));
+                    axes.push(PhysicalAxis::new(col, c));
+                }
+                ConcreteLayout::new(&axes)
             }
         }
     }

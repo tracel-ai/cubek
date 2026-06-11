@@ -31,6 +31,10 @@ impl AxisSet {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = Axis> + '_ {
+        self.0.iter().copied()
+    }
 }
 
 /// One facet of a desired physical layout. Every variant is extent-independent: tile edges
@@ -55,14 +59,14 @@ impl Facet {
     pub(super) fn holds(&self, layout: &ConcreteLayout) -> bool {
         match self {
             Facet::Innermost(set) => layout.innermost().map(|a| set.contains(a)).unwrap_or(false),
-            // The innermost `set.len()` axes are exactly the set: each is a member and the
-            // counts match, so it is a bijection regardless of their order.
+            // The set occupies the innermost physical slots: the largest in-set suffix covers
+            // every member, so no foreign axis is more inner than any of them (order-free).
             Facet::Minor(set) => {
-                let minor = layout.minor(set.len());
-                minor.len() == set.len() && minor.iter().all(|&a| set.contains(a))
+                let block = layout.inner_block(|a| set.contains(a));
+                set.iter().all(|a| block.contains(&a))
             }
-            Facet::Tiled { axis, edge } => match layout.tile_edge(*axis) {
-                Some(have) => have % edge == 0,
+            Facet::Tiled { axis, edge } => match layout.leaf_edge(*axis) {
+                Some(leaf) => leaf % edge == 0,
                 None => false,
             },
             Facet::Divisible { axis, by } => layout.extent(*axis) % by == 0,

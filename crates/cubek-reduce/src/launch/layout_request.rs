@@ -28,7 +28,7 @@ pub(crate) fn concrete_from_strides(shape: &[usize], strides: &[usize]) -> Concr
     order.sort_by(|&a, &b| strides[b].cmp(&strides[a])); // major (large stride) first
     let axes: Vec<PhysicalAxis> = order
         .into_iter()
-        .map(|i| PhysicalAxis::untiled(Axis(i as u8), shape[i]))
+        .map(|i| PhysicalAxis::new(Axis(i as u8), shape[i]))
         .collect();
     ConcreteLayout::new(&axes)
 }
