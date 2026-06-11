@@ -3,13 +3,13 @@
 //! strategy. This module is the vocabulary plus its feasibility/preference predicate;
 //! realizing a request against real extents + the delivered layout lives elsewhere.
 
+mod base;
 mod concrete;
 mod facet;
-mod request;
 
 #[cfg(test)]
 mod tests;
 
+pub use base::{Constraint, LayoutRequest, Strength};
 pub use concrete::{ConcreteLayout, PhysicalAxis};
 pub use facet::{AxisSet, Facet};
-pub use request::{Constraint, LayoutRequest, Strength};

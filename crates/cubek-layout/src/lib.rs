@@ -4,7 +4,7 @@
 //! GPU coupling.
 
 mod axis;
-mod layout_request;
+mod request;
 
 pub use axis::*;
-pub use layout_request::*;
+pub use request::*;

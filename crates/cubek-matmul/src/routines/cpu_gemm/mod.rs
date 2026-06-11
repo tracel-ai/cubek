@@ -200,19 +200,28 @@ mod tests {
     fn cpu_gemm_prefers_n_innermost_on_rhs_and_out() {
         let req = CpuGemmStrategy::layout_request();
 
-        // rhs matrix is [K, N], out matrix is [M, N]. Row-major lands N innermost (the
-        // current kernel's vectorizable case); col-major lands the row axis innermost.
-        let rhs_row = InnerLayout::RowMajor.to_concrete([K, N], 16, 16);
-        let rhs_col = InnerLayout::ColMajor.to_concrete([K, N], 16, 16);
-        let out_row = InnerLayout::RowMajor.to_concrete([M, N], 16, 16);
-        let out_col = InnerLayout::ColMajor.to_concrete([M, N], 16, 16);
-
         // The preferred wish is met exactly when N is contiguous, mirroring the kernel's
         // vectorize-vs-scalar condition on rhs and out.
-        assert_eq!(req.rhs.preference(&rhs_row), 1);
-        assert_eq!(req.rhs.preference(&rhs_col), 0);
-        assert_eq!(req.out.preference(&out_row), 1);
-        assert_eq!(req.out.preference(&out_col), 0);
+        assert_eq!(
+            req.rhs
+                .preference(&InnerLayout::RowMajor.to_concrete([K, N], 16, 16)),
+            1
+        );
+        assert_eq!(
+            req.rhs
+                .preference(&InnerLayout::ColMajor.to_concrete([K, N], 16, 16)),
+            0
+        );
+        assert_eq!(
+            req.out
+                .preference(&InnerLayout::RowMajor.to_concrete([M, N], 16, 16)),
+            1
+        );
+        assert_eq!(
+            req.out
+                .preference(&InnerLayout::ColMajor.to_concrete([M, N], 16, 16)),
+            0
+        );
 
         // lhs is broadcast scalar: no layout wish.
         assert!(req.lhs.constraints.is_empty());

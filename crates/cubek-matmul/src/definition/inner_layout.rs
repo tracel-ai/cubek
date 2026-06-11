@@ -68,20 +68,27 @@ impl InnerLayout {
     /// physical buffer. Batch axes are layout-irrelevant, so only the matrix is described.
     /// Temporary bridge while `InnerLayout` converges onto `ConcreteLayout`.
     #[allow(dead_code)]
-    pub fn to_concrete(&self, matrix: [Axis; 2], rows: usize, cols: usize) -> ConcreteLayout {
+    pub fn to_concrete(
+        &self,
+        matrix: [Axis; 2],
+        num_rows: usize,
+        num_cols: usize,
+    ) -> ConcreteLayout {
         let [row, col] = matrix;
         match self {
-            InnerLayout::RowMajor => {
-                ConcreteLayout::new(&[PhysicalAxis::new(row, rows), PhysicalAxis::new(col, cols)])
-            }
-            InnerLayout::ColMajor => {
-                ConcreteLayout::new(&[PhysicalAxis::new(col, cols), PhysicalAxis::new(row, rows)])
-            }
+            InnerLayout::RowMajor => ConcreteLayout::new(&[
+                PhysicalAxis::new(row, num_rows),
+                PhysicalAxis::new(col, num_cols),
+            ]),
+            InnerLayout::ColMajor => ConcreteLayout::new(&[
+                PhysicalAxis::new(col, num_cols),
+                PhysicalAxis::new(row, num_rows),
+            ]),
             // Level-major `[grid_r, grid_c, …, leaf_r, leaf_c]`, mirroring `physical_dims`: a
             // tiled axis is repeated, one fragment per level, so the leaf lands innermost.
             InnerLayout::Tiled { tiles } => {
-                let row_factors = axis_factors(tiles.iter().map(|t| t.0), rows);
-                let col_factors = axis_factors(tiles.iter().map(|t| t.1), cols);
+                let row_factors = axis_factors(tiles.iter().map(|t| t.0), num_rows);
+                let col_factors = axis_factors(tiles.iter().map(|t| t.1), num_cols);
                 let mut axes = Vec::with_capacity(row_factors.len() * 2);
                 for (r, c) in row_factors.into_iter().zip(col_factors) {
                     axes.push(PhysicalAxis::new(row, r));

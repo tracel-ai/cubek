@@ -21,7 +21,7 @@ impl AxisSet {
     }
 
     pub fn contains(&self, axis: Axis) -> bool {
-        self.0.iter().any(|&a| a == axis)
+        self.0.contains(&axis)
     }
 
     pub fn len(&self) -> usize {
@@ -69,7 +69,7 @@ impl Facet {
                 Some(leaf) => leaf % edge == 0,
                 None => false,
             },
-            Facet::Divisible { axis, by } => layout.extent(*axis) % by == 0,
+            Facet::Divisible { axis, by } => layout.extent(*axis).is_multiple_of(*by),
         }
     }
 }
