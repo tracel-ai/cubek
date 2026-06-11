@@ -4,7 +4,6 @@ mod line_combiner;
 mod placement;
 mod resample;
 mod semiring;
+mod tap_resolver;
 
-pub use line_combiner::*;
-pub use placement::*;
 pub use resample::*;

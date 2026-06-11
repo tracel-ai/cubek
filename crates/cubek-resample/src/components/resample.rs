@@ -1,8 +1,8 @@
 use crate::components::{
-    LineCombiner, ScalarLineCombiner, VectorizedLineCombiner,
     footprint::Footprint,
-    kernel::kernel_weight,
+    line_combiner::{LineCombiner, ScalarLineCombiner, VectorizedLineCombiner},
     semiring::{semiring_identity, semiring_reduce},
+    tap_resolver::TapResolver,
 };
 use crate::definition::Resample;
 use cubecl::{
@@ -103,48 +103,27 @@ fn accumulate_taps<F: Float, N: Size, L: LineCombiner<F, N>>(
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
 ) {
-    let (footprints, total_taps) = build_footprints::<F>(&config);
-
     let num_axes = config.resample_axes.len();
+
+    let (footprints, total_taps) = build_footprints::<F>(&config, num_axes);
+
+    let mut in_coord = out_coord.clone();
 
     for i in 0..total_taps {
         let mut combined = L::init_combined(&config);
 
         #[unroll]
         for lane in 0..vector_size {
-            let mut in_coord = out_coord.clone();
-            in_coord[vectorized_axis] = out_coord[vectorized_axis] + lane as u32;
-
-            let mut weight_nd_v = F::new(1.0);
-            let mut current_flat_idx = i;
-
-            #[unroll]
-            for dim in 0..num_axes {
-                let resample_axis = config.resample_axes.index(dim);
-                let footprint = footprints.index(dim);
-
-                let num_taps = Footprint::<F>::num_taps(resample_axis);
-                let radius = (num_taps + 1) / 2;
-
-                let out_pos = out_coord[resample_axis.axis] as usize;
-
-                let lane_out_pos = if comptime!(resample_axis.axis == vectorized_axis) {
-                    out_pos + lane
-                } else {
-                    out_pos
-                };
-
-                let (start_tap, frac) = footprint.start_tap_and_frac(radius, lane_out_pos);
-
-                let tap_1d_idx = current_flat_idx % num_taps;
-                current_flat_idx /= num_taps;
-
-                let tap_pos = start_tap + tap_1d_idx as isize;
-                let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
-
-                weight_nd_v *= kernel_weight::<F>(&resample_axis.kernel, x);
-                in_coord[resample_axis.axis] = tap_pos as u32;
-            }
+            let weight = TapResolver::resolve::<F>(
+                i,
+                out_coord,
+                &mut in_coord,
+                lane,
+                &footprints,
+                &config,
+                vectorized_axis,
+                num_axes,
+            );
 
             if input.is_in_bounds(in_coord.clone()) {
                 let value = input.read(in_coord.clone());
@@ -154,7 +133,7 @@ fn accumulate_taps<F: Float, N: Size, L: LineCombiner<F, N>>(
                     combined,
                     lane,
                     value,
-                    weight_nd_v,
+                    weight,
                     &config,
                     vectorized_axis,
                     vector_size,
@@ -167,9 +146,11 @@ fn accumulate_taps<F: Float, N: Size, L: LineCombiner<F, N>>(
 }
 
 #[cube]
-fn build_footprints<F: Float>(#[comptime] config: &Resample) -> (Sequence<Footprint<F>>, usize) {
+fn build_footprints<F: Float>(
+    #[comptime] config: &Resample,
+    #[comptime] num_axes: usize,
+) -> (Sequence<Footprint<F>>, usize) {
     let mut footprints = Sequence::<Footprint<F>>::new();
-    let num_axes = comptime!(config.resample_axes.len());
     let mut total_taps = 1;
 
     #[unroll]
