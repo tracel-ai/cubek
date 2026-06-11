@@ -70,12 +70,14 @@ impl InnerLayout {
     pub fn to_concrete(&self, matrix: [Axis; 2], rows: usize, cols: usize) -> ConcreteLayout {
         let [row, col] = matrix;
         match self {
-            InnerLayout::RowMajor => {
-                ConcreteLayout::new(&[PhysicalAxis::untiled(row, rows), PhysicalAxis::untiled(col, cols)])
-            }
-            InnerLayout::ColMajor => {
-                ConcreteLayout::new(&[PhysicalAxis::untiled(col, cols), PhysicalAxis::untiled(row, rows)])
-            }
+            InnerLayout::RowMajor => ConcreteLayout::new(&[
+                PhysicalAxis::untiled(row, rows),
+                PhysicalAxis::untiled(col, cols),
+            ]),
+            InnerLayout::ColMajor => ConcreteLayout::new(&[
+                PhysicalAxis::untiled(col, cols),
+                PhysicalAxis::untiled(row, rows),
+            ]),
             InnerLayout::Tiled { tiles } => {
                 let (re, ce) = *tiles.last().expect("a tiled layout has at least one level");
                 ConcreteLayout::new(&[

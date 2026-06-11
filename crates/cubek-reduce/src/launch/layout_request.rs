@@ -14,7 +14,9 @@ pub(crate) fn reduce_layout_request(rank: usize, reduce_axis: usize) -> LayoutRe
         .filter(|&i| i != reduce_axis)
         .map(|i| Axis(i as u8))
         .collect();
-    LayoutRequest::new().with(Constraint::preferred(Facet::Innermost(AxisSet::new(&non_reduce))))
+    LayoutRequest::new().with(Constraint::preferred(Facet::Innermost(AxisSet::new(
+        &non_reduce,
+    ))))
 }
 
 /// The delivered layout as a [`ConcreteLayout`]: one axis per tensor dim (`Axis(i)`), ordered
