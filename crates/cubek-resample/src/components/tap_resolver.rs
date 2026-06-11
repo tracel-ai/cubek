@@ -3,18 +3,37 @@ use crate::{
     definition::Resample,
 };
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
-
-pub struct TapResolver {}
+use std::hash::Hash;
 
 #[cube]
-impl TapResolver {
-    pub fn resolve<F: Float>(
+pub trait TapResolver<F: Float>: Send + Sync + 'static {
+    type Config: CubeType + Clone + Send + Sync + core::fmt::Debug + Hash + core::cmp::Eq;
+
+    fn resolve(
         tap_idx: usize,
         out_coord: &CoordsDyn,
         in_coord: &mut CoordsDyn,
         lane: usize,
         footprints: &Sequence<Footprint<F>>,
-        #[comptime] config: &Resample,
+        #[comptime] config: &Self::Config,
+        #[comptime] vectorized_axis: usize,
+        #[comptime] num_axes: usize,
+    ) -> F;
+}
+
+pub struct SeparableTapResolver;
+
+#[cube]
+impl<F: Float> TapResolver<F> for SeparableTapResolver {
+    type Config = Resample;
+
+    fn resolve(
+        tap_idx: usize,
+        out_coord: &CoordsDyn,
+        in_coord: &mut CoordsDyn,
+        lane: usize,
+        footprints: &Sequence<Footprint<F>>,
+        #[comptime] config: &Self::Config,
         #[comptime] vectorized_axis: usize,
         #[comptime] num_axes: usize,
     ) -> F {
