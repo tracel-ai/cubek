@@ -215,29 +215,29 @@ fn launch_vectorized<R: Runtime>(
     let dists: Vec<_> = (batch.iter().map(|&p| {
         (
             batch_axis(p),
-            (|axis| Distribution::Spatial {
-                scope: ComputeScope::Cube(axis),
+            Distribution::Spatial {
+                scope: ComputeScope::Cube(CubeAxis::Z),
                 spread: Spread::Contiguous,
                 coverage: Coverage::TilesEach(1),
-            })(CubeAxis::Z),
+            },
         )
     }))
     .chain([
         (
             M,
-            (|axis| Distribution::Spatial {
-                scope: ComputeScope::Cube(axis),
+            Distribution::Spatial {
+                scope: ComputeScope::Cube(CubeAxis::X),
                 spread: Spread::Contiguous,
                 coverage: Coverage::TilesEach(1),
-            })(CubeAxis::X),
+            },
         ),
         (
             N,
-            (|axis| Distribution::Spatial {
-                scope: ComputeScope::Cube(axis),
+            Distribution::Spatial {
+                scope: ComputeScope::Cube(CubeAxis::Y),
                 spread: Spread::Contiguous,
                 coverage: Coverage::TilesEach(1),
-            })(CubeAxis::Y),
+            },
         ),
         (K, Distribution::Sequential),
     ])
