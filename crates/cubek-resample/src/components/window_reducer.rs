@@ -1,5 +1,5 @@
 use crate::{
-    components::semiring::{semiring_identity, semiring_reduce},
+    components::semiring::{semiring_combine, semiring_identity, semiring_reduce},
     definition::Resample,
 };
 use cubecl::{
@@ -10,24 +10,30 @@ use std::hash::Hash;
 
 #[cube]
 pub trait WindowReducer<F: Float, N: Size>: Send + Sync + 'static {
-    type Accumulator: CubeType;
+    type Accumulator: CubeType + CubePrimitive;
     type Config: CubeType + Clone + Send + Sync + core::fmt::Debug + Hash + core::cmp::Eq;
-
     type Indices: LaunchArg;
 
     fn initialize(#[comptime] config: &Self::Config) -> Self::Accumulator;
+
+    fn combine(
+        #[comptime] config: &Self::Config,
+        value: &mut Vector<F, N>,
+        index: usize,
+        weight: Vector<F, N>,
+    );
 
     fn accumulate(
         #[comptime] config: &Self::Config,
         accumulator: &mut Self::Accumulator,
         index: usize,
-        result: Vector<F, N>,
+        combined: Vector<F, N>,
     );
 
     fn count_position(
         #[comptime] config: &Self::Config,
         accumulator: &mut Self::Accumulator,
-        position: CoordsDyn,
+        position: &CoordsDyn,
     );
 
     fn store(
@@ -51,10 +57,19 @@ impl<F: Float, N: Size> WindowReducer<F, N> for AccumulateWindowReducer {
         semiring_identity(&config.semiring)
     }
 
+    fn combine(
+        #[comptime] config: &Self::Config,
+        value: &mut Vector<F, N>,
+        _index: usize,
+        weight: Vector<F, N>,
+    ) {
+        *value = semiring_combine(&config.semiring, *value, weight)
+    }
+
     fn accumulate(
         #[comptime] config: &Self::Config,
         accumulator: &mut Self::Accumulator,
-        _index: VectorSize,
+        _index: usize,
         combined: Vector<F, N>,
     ) {
         *accumulator = semiring_reduce(&config.semiring, *accumulator, combined);
@@ -63,7 +78,7 @@ impl<F: Float, N: Size> WindowReducer<F, N> for AccumulateWindowReducer {
     fn count_position(
         #[comptime] _config: &Self::Config,
         _accumulator: &mut Self::Accumulator,
-        _position: CoordsDyn,
+        _position: &CoordsDyn,
     ) {
     }
 

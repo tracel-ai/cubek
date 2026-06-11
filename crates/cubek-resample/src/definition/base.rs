@@ -15,7 +15,7 @@ impl Resample {
         }
     }
 
-    // Order matters, last axis is the most changing. It is applied first, and then the second to last, and so on.
+    /// Order matters, last axis added is innermost.
     pub fn with_axis(mut self, axis: ResampleAxis) -> Self {
         self.resample_axes.push(axis);
         self

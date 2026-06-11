@@ -63,6 +63,37 @@ fn resample_1d_test() {
 }
 
 #[test]
+fn resample_2d_test() {
+    let client = TestRuntime::client(&Default::default());
+
+    let input_shape = vec![2, 2, 2];
+    let input_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+    let output_shape = vec![1, 2, 1];
+    let expected_output = vec![1.0, 3.0];
+
+    let kernel = Kernel::One;
+    let placement = Placement::Continuous {
+        scale: 0.5,
+        offset: 0.0,
+    };
+    let resample_axis0 = ResampleAxis::new(0, kernel, placement);
+    let resample_axis2 = ResampleAxis::new(2, kernel, placement);
+    let config = Resample::new(Semiring::Linear)
+        .with_axis(resample_axis0)
+        .with_axis(resample_axis2);
+
+    run_test(
+        &client,
+        input_shape,
+        input_data,
+        output_shape,
+        expected_output,
+        config,
+    );
+}
+
+#[test]
 fn resample_nhwc_2d_test() {
     let client = TestRuntime::client(&Default::default());
 
@@ -82,37 +113,6 @@ fn resample_nhwc_2d_test() {
     let config = Resample::new(Semiring::Linear)
         .with_axis(resample_axis0)
         .with_axis(resample_axis1);
-
-    run_test(
-        &client,
-        input_shape,
-        input_data,
-        output_shape,
-        expected_output,
-        config,
-    );
-}
-
-#[test]
-fn resample_nhwc_3d_test() {
-    let client = TestRuntime::client(&Default::default());
-
-    let input_shape = vec![2, 2, 2];
-    let input_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-
-    let output_shape = vec![1, 2, 1];
-    let expected_output = vec![1.0, 3.0];
-
-    let kernel = Kernel::One;
-    let placement = Placement::Continuous {
-        scale: 0.5,
-        offset: 0.0,
-    };
-    let resample_axis0 = ResampleAxis::new(0, kernel, placement);
-    let resample_axis2 = ResampleAxis::new(2, kernel, placement);
-    let config = Resample::new(Semiring::Linear)
-        .with_axis(resample_axis0)
-        .with_axis(resample_axis2);
 
     run_test(
         &client,

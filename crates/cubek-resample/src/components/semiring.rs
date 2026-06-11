@@ -10,18 +10,9 @@ pub fn semiring_identity<F: Float, N: Size>(#[comptime] s: &Semiring) -> Vector<
     }
 }
 
-/// Combine a value with its tap weight, per the semiring for a single scalar.
-#[cube]
-pub fn semiring_combine<F: Float>(#[comptime] s: &Semiring, value: F, weight: F) -> F {
-    match s {
-        Semiring::Linear => value * weight,
-        Semiring::Tropical | Semiring::Log => value + weight,
-    }
-}
-
 /// Combine a value with its tap weight, per the semiring.
 #[cube]
-pub fn semiring_combine_vec<F: Float, N: Size>(
+pub fn semiring_combine<F: Float, N: Size>(
     #[comptime] s: &Semiring,
     value: Vector<F, N>,
     weight: Vector<F, N>,
