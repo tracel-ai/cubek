@@ -69,8 +69,16 @@ pub fn resample_coord<F: Float, N: Size>(
     let mut acc = semiring_identity::<F, N>(&config.semiring);
 
     let vector_size = N::value();
+    let num_axes = config.resample_axes.len();
 
-    if comptime!(vector_size > 1) {
+    let resampling_vectorized_axis = comptime!(is_resampling_vectorized_axis(
+        &config,
+        vectorized_axis,
+        vector_size,
+        num_axes
+    ));
+
+    if resampling_vectorized_axis {
         accumulate_taps::<F, N, VectorizedLaneCombiner>(
             input,
             out_coord,
@@ -78,6 +86,7 @@ pub fn resample_coord<F: Float, N: Size>(
             config,
             vectorized_axis,
             vector_size,
+            num_axes,
         );
     } else {
         accumulate_taps::<F, N, ScalarLaneCombiner>(
@@ -87,10 +96,29 @@ pub fn resample_coord<F: Float, N: Size>(
             config,
             vectorized_axis,
             vector_size,
+            num_axes,
         );
     }
 
     output.write(out_coord.clone(), acc);
+}
+
+fn is_resampling_vectorized_axis(
+    config: &Resample,
+    vectorized_axis: usize,
+    vector_size: usize,
+    num_axes: usize,
+) -> bool {
+    let mut is_vectorized = vector_size > 1;
+
+    for axis in 0..num_axes {
+        let resample_axes = config.resample_axes.to_vec();
+        let resample_axis = &resample_axes[axis];
+
+        is_vectorized |= resample_axis.axis == vectorized_axis;
+    }
+
+    is_vectorized
 }
 
 // Accumulate tap weights to produce a single tap value.
@@ -102,9 +130,8 @@ fn accumulate_taps<F: Float, N: Size, L: LaneCombiner<F, N>>(
     #[comptime] config: Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
+    #[comptime] num_axes: usize,
 ) {
-    let num_axes = config.resample_axes.len();
-
     let (footprints, total_taps) = build_footprints::<F>(&config, num_axes);
 
     let mut in_coord = out_coord.clone();
