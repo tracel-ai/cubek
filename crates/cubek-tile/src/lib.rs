@@ -9,6 +9,9 @@ mod ring;
 mod space;
 mod tile;
 
+// The layout-request vocabulary and `Axis`/`MAX_AXES` live in the leaf `cubek-layout` crate,
+// re-exported here so tile-engine code and clients keep using `cubek_tile::{Axis, ...}`.
+pub use cubek_layout::*;
 pub use matrix::*;
 pub use partitioner::*;
 pub use payload::*;

@@ -9,7 +9,7 @@ pub use launch::{WithLayout, launch_ref};
 use std::fmt::Display;
 
 use cubecl::Runtime;
-use cubek_tile::Axis;
+use cubek_tile::{Axis, AxisSet, Constraint, Facet, LayoutRequest};
 
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
@@ -77,6 +77,31 @@ impl Default for CpuGemmStrategy {
 impl Display for CpuGemmStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "_a{}", self.alpha)
+    }
+}
+
+/// The per-operand layout wishes a matmul strategy declares. Burn pairs a relayout with the
+/// strategy to satisfy these; the kernel still runs on whatever it is handed.
+#[allow(dead_code)]
+pub struct MatmulLayoutRequest {
+    pub lhs: LayoutRequest,
+    pub rhs: LayoutRequest,
+    pub out: LayoutRequest,
+}
+
+impl CpuGemmStrategy {
+    /// CpuGemm vectorizes over `N`, so it wants `N` innermost (contiguous) on `rhs` and the
+    /// output. `lhs` is broadcast scalar, so its layout is free. Preferred, not required: the
+    /// kernel falls back to scalar when a delivered operand puts another axis innermost.
+    #[allow(dead_code)]
+    pub fn layout_request() -> MatmulLayoutRequest {
+        let n_innermost =
+            || LayoutRequest::new().with(Constraint::preferred(Facet::Innermost(AxisSet::one(N))));
+        MatmulLayoutRequest {
+            lhs: LayoutRequest::new(),
+            rhs: n_innermost(),
+            out: n_innermost(),
+        }
     }
 }
 
@@ -163,5 +188,42 @@ impl CpuGemmRoutine {
             tile_n: tile_n.clamp(1, n.max(1)),
             tile_k: tile_k.clamp(1, k.max(1)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::definition::InnerLayout;
+
+    #[test]
+    fn cpu_gemm_prefers_n_innermost_on_rhs_and_out() {
+        let req = CpuGemmStrategy::layout_request();
+
+        // The preferred wish is met exactly when N is contiguous, mirroring the kernel's
+        // vectorize-vs-scalar condition on rhs and out.
+        assert_eq!(
+            req.rhs
+                .preference(&InnerLayout::RowMajor.to_concrete([K, N], 16, 16)),
+            1
+        );
+        assert_eq!(
+            req.rhs
+                .preference(&InnerLayout::ColMajor.to_concrete([K, N], 16, 16)),
+            0
+        );
+        assert_eq!(
+            req.out
+                .preference(&InnerLayout::RowMajor.to_concrete([M, N], 16, 16)),
+            1
+        );
+        assert_eq!(
+            req.out
+                .preference(&InnerLayout::ColMajor.to_concrete([M, N], 16, 16)),
+            0
+        );
+
+        // lhs is broadcast scalar: no layout wish.
+        assert!(req.lhs.constraints.is_empty());
     }
 }

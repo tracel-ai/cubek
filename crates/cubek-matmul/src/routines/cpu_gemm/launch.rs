@@ -197,12 +197,6 @@ fn launch_vectorized<R: Runtime>(
     v: usize,
     dtype: StorageType,
 ) {
-    let cube = |axis| Distribution::Spatial {
-        scope: ComputeScope::Cube(axis),
-        spread: Spread::Contiguous,
-        coverage: Coverage::TilesEach(1),
-    };
-
     // Output batch dims that survive (extent > 1)
     let batch: Vec<usize> = (0..out_batches.len())
         .filter(|&p| out_batches[p] > 1)
@@ -218,13 +212,36 @@ fn launch_vectorized<R: Runtime>(
             (K, blueprint.tile_k),
         ])
         .collect();
-    let dists: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), cube(CubeAxis::Z))))
-        .chain([
-            (M, cube(CubeAxis::X)),
-            (N, cube(CubeAxis::Y)),
-            (K, Distribution::Sequential),
-        ])
-        .collect();
+    let dists: Vec<_> = (batch.iter().map(|&p| {
+        (
+            batch_axis(p),
+            Distribution::Spatial {
+                scope: ComputeScope::Cube(CubeAxis::Z),
+                spread: Spread::Contiguous,
+                coverage: Coverage::TilesEach(1),
+            },
+        )
+    }))
+    .chain([
+        (
+            M,
+            Distribution::Spatial {
+                scope: ComputeScope::Cube(CubeAxis::X),
+                spread: Spread::Contiguous,
+                coverage: Coverage::TilesEach(1),
+            },
+        ),
+        (
+            N,
+            Distribution::Spatial {
+                scope: ComputeScope::Cube(CubeAxis::Y),
+                spread: Spread::Contiguous,
+                coverage: Coverage::TilesEach(1),
+            },
+        ),
+        (K, Distribution::Sequential),
+    ])
+    .collect();
 
     let partitioner = Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists)).staged();
     let space = Space::new(&extents).with_partitioner(partitioner.clone());
