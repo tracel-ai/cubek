@@ -14,7 +14,7 @@ fn resample_1d_identity_test() {
 
     let resample_axis = ResampleAxis::new(
         0,
-        Kernel::One,
+        Kernel::one(),
         Placement::Continuous {
             scale: 1.0,
             offset: 0.0,
@@ -44,7 +44,7 @@ fn resample_1d_test() {
 
     let resample_axis = ResampleAxis::new(
         0,
-        Kernel::One,
+        Kernel::one(),
         Placement::Continuous {
             scale: 0.5,
             offset: 0.0,
@@ -72,7 +72,7 @@ fn resample_2d_test() {
     let output_shape = vec![1, 2, 1];
     let expected_output = vec![1.0, 3.0];
 
-    let kernel = Kernel::One;
+    let kernel = Kernel::one();
     let placement = Placement::Continuous {
         scale: 0.5,
         offset: 0.0,
@@ -103,7 +103,7 @@ fn resample_nhwc_2d_test() {
     let output_shape = vec![1, 4, 2, 1];
     let expected_output = vec![1.0, 2.0, 1.0, 2.0, 3.0, 4.0, 3.0, 4.0];
 
-    let kernel = Kernel::One;
+    let kernel = Kernel::one();
     let placement = Placement::Continuous {
         scale: 0.5,
         offset: 0.0,

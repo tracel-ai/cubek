@@ -3,23 +3,49 @@ use cubecl::prelude::*;
 /// The kernel function, it determines the shape of the kernel.
 #[derive(Debug, Clone, Copy, PartialEq, CubeType, Eq, Hash)]
 pub enum Kernel {
-    /// Weight of one.
-    One,
     /// Uniform taps.
     Uniform { scale: u8 },
     /// Triangle, support 2.
     Linear,
     /// Cubic convolution.
-    Cubic { a_numerator: u8, a_denominator: u8 },
+    Cubic { a_numerator: i8, a_denominator: u8 },
     /// Sinc-sinc function with `lobes` side-lobes (2 or 3).
     Lanczos { lobes: u8 },
 }
 
 impl Kernel {
+    pub fn one() -> Self {
+        Kernel::Uniform { scale: 1 }
+    }
+
+    pub fn cubic_catmull_rom() -> Self {
+        Kernel::Cubic {
+            a_numerator: -1,
+            a_denominator: 2,
+        }
+    }
+
+    pub fn cubic_sharp() -> Self {
+        Kernel::Cubic {
+            a_numerator: -3,
+            a_denominator: 4,
+        }
+    }
+
+    pub fn lanczos_2() -> Self {
+        Kernel::Lanczos { lobes: 2 }
+    }
+
+    pub fn lanczos_3() -> Self {
+        Kernel::Lanczos { lobes: 3 }
+    }
+}
+
+#[cube]
+impl Kernel {
     /// Number of taps in the kernel.
-    pub fn num_taps(&self) -> usize {
-        match self {
-            Kernel::One => 1,
+    pub fn num_taps(#[comptime] this: &Self) -> usize {
+        match this {
             Kernel::Uniform { .. } => 1,
             Kernel::Linear => 2,
             Kernel::Cubic { .. } => 4,
@@ -27,28 +53,28 @@ impl Kernel {
         }
     }
 
-    /// Computes the weight of the kernel for a given position.
-    pub fn weight<F: Float>(&self, x: F) -> F {
-        match self {
-            Kernel::One => F::new(1.0),
+    /// Computes the weight of the kernel for a given fractional position within a tap.
+    pub fn weight<F: Float>(x: F, #[comptime] this: &Self) -> F {
+        match this {
             Kernel::Uniform { scale } => F::new(1.0) / F::cast_from(*scale),
-            Kernel::Linear => linear_weight(x),
+            Kernel::Linear => linear_weight::<F>(x),
             Kernel::Cubic {
                 a_numerator,
                 a_denominator,
-            } => cubic_weight(x, *a_numerator, *a_denominator),
-            Kernel::Lanczos { lobes } => lanczos_weight(x, *lobes),
+            } => cubic_weight::<F>(x, *a_numerator, *a_denominator),
+            Kernel::Lanczos { lobes } => lanczos_weight::<F>(x, *lobes),
         }
     }
 }
 
+#[cube]
 fn linear_weight<F: Float>(x: F) -> F {
     let abs_x = x.abs();
     select(abs_x < F::new(1.0), F::new(1.0) - abs_x, F::new(0.0))
 }
 
 #[cube]
-fn cubic_weight<F: Float>(x: F, #[comptime] a_numerator: u8, #[comptime] a_denominator: u8) -> F {
+fn cubic_weight<F: Float>(x: F, #[comptime] a_numerator: i8, #[comptime] a_denominator: u8) -> F {
     let a = F::cast_from(a_numerator) / F::cast_from(a_denominator);
     let abs_x = x.abs();
 

@@ -14,8 +14,8 @@ pub enum Semiring {
 #[cube]
 impl Semiring {
     /// Get the identity element for the semiring.
-    pub fn identity<F: Float, N: Size>(&self) -> Vector<F, N> {
-        match self {
+    pub fn identity<F: Float, N: Size>(#[comptime] this: &Self) -> Vector<F, N> {
+        match this {
             Semiring::Linear => Vector::new(F::new(0.0)),
             Semiring::Tropical | Semiring::Log => Vector::min_value(),
         }
@@ -23,11 +23,11 @@ impl Semiring {
 
     /// Combine a value with its weight.
     pub fn combine<F: Float, N: Size>(
-        &self,
         value: Vector<F, N>,
         weight: Vector<F, N>,
+        #[comptime] this: &Self,
     ) -> Vector<F, N> {
-        match self {
+        match this {
             Semiring::Linear => value * weight,
             Semiring::Tropical | Semiring::Log => value + weight,
         }
@@ -35,12 +35,11 @@ impl Semiring {
 
     /// Reduce an accumulator with a new value.
     pub fn reduce<F: Float, N: Size>(
-        &self,
         accumulator: Vector<F, N>,
         value: Vector<F, N>,
+        #[comptime] this: &Self,
     ) -> Vector<F, N> {
-        #[comptime]
-        match self {
+        match this {
             Semiring::Linear => accumulator + value,
             Semiring::Tropical => accumulator.max(value),
             Semiring::Log => {

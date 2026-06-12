@@ -1,9 +1,12 @@
-use crate::components::{
-    combiner_reducer::{AccumulateCombinerReducer, CombinerReducer},
-    footprint::Footprint,
-    tap_resolver::{SeparableTapResolver, TapResolver},
-};
 use crate::definition::Resample;
+use crate::{
+    components::{
+        combiner_reducer::{AccumulateCombinerReducer, CombinerReducer},
+        footprint::Footprint,
+        tap_resolver::{SeparableTapResolver, TapResolver},
+    },
+    definition::Kernel,
+};
 use cubecl::{
     prelude::*,
     std::{
@@ -188,7 +191,7 @@ fn build_footprints<F: Float>(
     for dim in 0..num_axes {
         let resample_axis = config.resample_axes.index(dim);
         footprints.push(Footprint::new(resample_axis));
-        total_taps *= resample_axis.kernel.num_taps()
+        total_taps *= Kernel::num_taps(&resample_axis.kernel)
     }
 
     (footprints, total_taps)

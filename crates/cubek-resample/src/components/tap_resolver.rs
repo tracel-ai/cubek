@@ -1,4 +1,7 @@
-use crate::{components::footprint::Footprint, definition::Resample};
+use crate::{
+    components::footprint::Footprint,
+    definition::{Kernel, Resample},
+};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::CoordsDyn},
@@ -128,7 +131,7 @@ fn compute_weight<F: Float>(
         let resample_axis = config.resample_axes.index(axis);
         let footprint = footprints.index(axis);
 
-        let num_taps = resample_axis.kernel.num_taps();
+        let num_taps = Kernel::num_taps(&resample_axis.kernel);
         let radius = num_taps.div_ceil(2);
 
         let out_pos = out_coord[resample_axis.axis] as usize;
@@ -147,7 +150,7 @@ fn compute_weight<F: Float>(
         let tap_pos = start_tap + tap_1d_idx as isize;
         let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
 
-        weight *= resample_axis.kernel.weight::<F>(x);
+        weight *= Kernel::weight::<F>(x, &resample_axis.kernel);
         in_coord[resample_axis.axis] = tap_pos as u32;
     }
 
