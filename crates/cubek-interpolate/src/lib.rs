@@ -6,15 +6,11 @@ pub mod launch;
 pub mod routines;
 
 use crate::{
-    definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
+    definition::{InterpolateError, InterpolateMode, InterpolateOptions},
     launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
-use cubek_resample::{
-    definition::{Kernel, Placement, Resample, ResampleAxis, Semiring},
-    resample,
-};
 
 /// Interpolate operation
 ///
@@ -32,81 +28,7 @@ pub fn interpolate<R: Runtime>(
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    // interpolate_launch(client, input, output, options, strategy, dtype); // Old Implementation
-    resample_launch(client, input, output, options, dtype); // New Implementation with cubek-resample
-
-    Ok(())
-}
-
-fn resample_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    options: InterpolateOptions,
-    dtype: StorageType,
-) {
-    let kernel = get_kernel(options);
-
-    let resample_height = resample_axis(&input, &output, options, kernel, 1);
-    let resample_width = resample_axis(&input, &output, options, kernel, 2);
-
-    let config = Resample::new(Semiring::Linear)
-        .with_axis(resample_height)
-        .with_axis(resample_width);
-
-    resample(client, input, output, config, dtype);
-}
-
-fn get_kernel(options: InterpolateOptions) -> Kernel {
-    match options.mode {
-        InterpolateMode::Nearest(_) => Kernel::One,
-        InterpolateMode::Bilinear => Kernel::Triangle,
-        InterpolateMode::Bicubic => Kernel::Cubic { a: -0.75 },
-        InterpolateMode::Lanczos3 => Kernel::Lanczos { lobes: 3 },
-    }
-}
-
-fn resample_axis<R: Runtime>(
-    input: &TensorBinding<R>,
-    output: &TensorBinding<R>,
-    options: InterpolateOptions,
-    kernel: Kernel,
-    axis: usize,
-) -> ResampleAxis {
-    let (input_size, output_size) = (input.shape[axis], output.shape[axis]);
-    let (scale, offset) = get_scale_and_offset(input_size, output_size, options);
-
-    ResampleAxis::new(axis, kernel, Placement::Continuous { scale, offset })
-}
-
-fn get_scale_and_offset(
-    input_size: usize,
-    output_size: usize,
-    options: InterpolateOptions,
-) -> (f32, f32) {
-    let standard_scale = input_size as f32 / output_size as f32;
-
-    match options.mode {
-        InterpolateMode::Nearest(nearest_mode) => match nearest_mode {
-            NearestMode::Exact => (standard_scale, standard_scale / 2.0),
-            NearestMode::Floor => (standard_scale, 0.0),
-        },
-        _ => {
-            if options.align_corners {
-                let scale_num = if output_size > 1 {
-                    input_size.saturating_sub(1) as f32
-                } else {
-                    0.0
-                };
-                let scale_den = output_size.saturating_sub(1).max(1) as f32;
-
-                (scale_num / scale_den, 0.0)
-            } else {
-                let offset = (standard_scale - 1.0) / 2.0;
-                (standard_scale, offset)
-            }
-        }
-    }
+    interpolate_launch(client, input, output, options, strategy, dtype)
 }
 
 /// Backward interpolate operation
