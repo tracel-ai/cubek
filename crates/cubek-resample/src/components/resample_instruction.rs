@@ -4,7 +4,7 @@ use cubecl::{
     std::tensor::{ViewMut, layout::CoordsDyn},
 };
 
-/// Combiner-reducer that accumulates tap weights to produce a single tap value.
+/// Resample instruction that accumulates tap weights to produce a single tap value.
 pub struct ResampleInstruction;
 
 /// Accumulator that stores the accumulated tap weights and arguments.
