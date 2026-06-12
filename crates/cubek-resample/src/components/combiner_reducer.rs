@@ -1,7 +1,4 @@
-use crate::{
-    components::semiring::{semiring_combine, semiring_identity, semiring_reduce},
-    definition::Resample,
-};
+use crate::definition::Resample;
 use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::CoordsDyn},
@@ -54,7 +51,7 @@ impl<F: Float, N: Size> CombinerReducer<F, N> for AccumulateCombinerReducer {
     type Indices = ();
 
     fn initialize(#[comptime] config: &Self::Config) -> Self::Accumulator {
-        semiring_identity(&config.semiring)
+        config.semiring.identity()
     }
 
     fn combine(
@@ -63,7 +60,7 @@ impl<F: Float, N: Size> CombinerReducer<F, N> for AccumulateCombinerReducer {
         _tap_idx: usize,
         #[comptime] config: &Self::Config,
     ) {
-        *value = semiring_combine(*value, weight, &config.semiring)
+        *value = config.semiring.combine(*value, weight)
     }
 
     fn accumulate(
@@ -72,7 +69,7 @@ impl<F: Float, N: Size> CombinerReducer<F, N> for AccumulateCombinerReducer {
         _tap_idx: usize,
         #[comptime] config: &Self::Config,
     ) {
-        *accumulator = semiring_reduce(*accumulator, combined, &config.semiring);
+        *accumulator = config.semiring.reduce(*accumulator, combined);
     }
 
     fn count_position(

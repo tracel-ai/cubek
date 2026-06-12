@@ -1,7 +1,6 @@
 use crate::components::{
     combiner_reducer::{AccumulateCombinerReducer, CombinerReducer},
     footprint::Footprint,
-    kernel::kernel_num_taps,
     tap_resolver::{SeparableTapResolver, TapResolver},
 };
 use crate::definition::Resample;
@@ -189,7 +188,7 @@ fn build_footprints<F: Float>(
     for dim in 0..num_axes {
         let resample_axis = config.resample_axes.index(dim);
         footprints.push(Footprint::new(resample_axis));
-        total_taps *= kernel_num_taps(&resample_axis.kernel)
+        total_taps *= resample_axis.kernel.num_taps()
     }
 
     (footprints, total_taps)

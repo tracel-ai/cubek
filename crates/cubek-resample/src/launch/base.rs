@@ -26,9 +26,9 @@ pub fn resample_launch<R: Runtime>(
 
     let working_units = output.shape.iter().product::<usize>() / vector_size;
 
-    let cube_dim = CubeDim::new(&client, working_units);
+    let cube_dim = CubeDim::new(client, working_units);
 
-    let cube_count = calculate_cube_count_elemwise(&client, working_units, cube_dim);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
 
     let output_shape = divmod_sequence(&output.shape);
     let output_strides = divmod_sequence(&output.strides);
@@ -76,8 +76,10 @@ fn vectorize<R: Runtime>(
             }
 
             // If this vector size is supported by both, take it and break.
-            if input.shape[axis] % vector_size == 0 && output.shape[axis] % vector_size == 0 {
-                return (vector_size as usize, axis);
+            if input.shape[axis].is_multiple_of(vector_size)
+                && output.shape[axis].is_multiple_of(vector_size)
+            {
+                return (vector_size, axis);
             }
         }
     }

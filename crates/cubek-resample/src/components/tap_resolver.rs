@@ -1,10 +1,4 @@
-use crate::{
-    components::{
-        footprint::Footprint,
-        kernel::{kernel_num_taps, kernel_weight},
-    },
-    definition::Resample,
-};
+use crate::{components::footprint::Footprint, definition::Resample};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::CoordsDyn},
@@ -34,6 +28,7 @@ pub struct SeparableTapResolver;
 impl<F: Float, N: Size> TapResolver<F, N> for SeparableTapResolver {
     type Config = Resample;
 
+    #[allow(clippy::type_complexity)]
     fn resolve(
         tap_idx: usize,
         input: &View<'_, Vector<F, N>, CoordsDyn>,
@@ -133,8 +128,8 @@ fn compute_weight<F: Float>(
         let resample_axis = config.resample_axes.index(axis);
         let footprint = footprints.index(axis);
 
-        let num_taps = kernel_num_taps(&resample_axis.kernel);
-        let radius = (num_taps + 1) / 2;
+        let num_taps = resample_axis.kernel.num_taps();
+        let radius = num_taps.div_ceil(2);
 
         let out_pos = out_coord[resample_axis.axis] as usize;
 
@@ -152,7 +147,7 @@ fn compute_weight<F: Float>(
         let tap_pos = start_tap + tap_1d_idx as isize;
         let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
 
-        weight *= kernel_weight::<F>(x, &resample_axis.kernel);
+        weight *= resample_axis.kernel.weight::<F>(x);
         in_coord[resample_axis.axis] = tap_pos as u32;
     }
 

@@ -4,9 +4,7 @@ use cubecl::prelude::*;
 /// Footprint of a resample kernel.
 #[derive(CubeType)]
 pub struct Footprint<F: Float> {
-    /// Tap scale
     pub tap_scale: F,
-    /// Tap offset
     pub tap_offset: F,
 }
 
