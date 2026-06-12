@@ -7,7 +7,7 @@
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
     components::tile::TileMatmulKind,
-    definition::{MatmulElems, TilingBlueprint},
+    definition::{BatchMatmulBlueprint, MatmulElems},
     routines::{BlueprintStrategy, Routine as MatmulRoutine, TilingArgs},
 };
 
@@ -107,7 +107,7 @@ pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
 fn dispatch_routine<R: Runtime, const N_SPATIAL: usize>(
     algorithm: ConvAlgorithm,
     tile_kind: AcceleratedTileKind,
-    forced_matmul: Option<TilingBlueprint>,
+    forced_matmul: Option<BatchMatmulBlueprint>,
     client: &ComputeClient<R>,
     inputs: ConvolutionInputs<R>,
     args: ConvolutionArgs<N_SPATIAL>,
@@ -204,12 +204,16 @@ fn dispatch_routine<R: Runtime, const N_SPATIAL: usize>(
 /// blanket impls on `TensorArgs<RuntimeArgs>` / `TensorMapArgs<RuntimeArgs>`,
 /// so the where clause simply requires an impl per operation.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-fn dispatch_inputs<R: Runtime, const N_SPATIAL: usize, Rt: Routine<Blueprint = TilingBlueprint>>(
+fn dispatch_inputs<
+    R: Runtime,
+    const N_SPATIAL: usize,
+    Rt: Routine<Blueprint = BatchMatmulBlueprint>,
+>(
     client: &ComputeClient<R>,
     inputs: ConvolutionInputs<R>,
     args: ConvolutionArgs<N_SPATIAL>,
     tile_matmul: TileMatmulKind,
-    forced_matmul: Option<TilingBlueprint>,
+    forced_matmul: Option<BatchMatmulBlueprint>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
@@ -265,12 +269,12 @@ where
     }
 }
 
-/// Build a matmul `BlueprintStrategy` from either a forced `TilingBlueprint`
+/// Build a matmul `BlueprintStrategy` from either a forced `BatchMatmulBlueprint`
 /// (extracted from `ConvBlueprint`) or an `Inferred` strategy stamped with the
 /// requested tile-matmul kind.
-fn build_blueprint_strategy<Rt: Routine<Blueprint = TilingBlueprint>>(
+fn build_blueprint_strategy<Rt: Routine<Blueprint = BatchMatmulBlueprint>>(
     tile_matmul: TileMatmulKind,
-    forced_matmul: Option<TilingBlueprint>,
+    forced_matmul: Option<BatchMatmulBlueprint>,
 ) -> BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>
 where
     Rt::Strategy: TilingArgs,

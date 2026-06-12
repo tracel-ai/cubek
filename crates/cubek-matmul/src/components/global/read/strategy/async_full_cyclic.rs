@@ -4,16 +4,16 @@ use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount, read::async_copy::async_copy_from,
 };
 use crate::{
-    components::global::memory::GlobalIterator,
-    components::stage::{StridedStageFamily, StridedStageMemory},
-    definition::{MatmulElems, MatmulProblem, StageIdent},
-};
-use crate::{
+    args::RuntimeConfig,
     components::global::read::{
         FullLoadingStrategy, async_barrier::AsyncCopy, async_copy::ASYNC_COPY_WIDTH,
         tiled::TiledLayout,
     },
-    launch::RuntimeConfig,
+};
+use crate::{
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
 };
 use crate::{
     components::global::read::{validate_async_barrier, validate_swizzle_atom_size},

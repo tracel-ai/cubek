@@ -8,7 +8,7 @@
 
 use cubecl::{
     TestRuntime,
-    ir::{ElemType, FloatKind},
+    ir::{ElemType, FloatKind, UIntKind},
     prelude::*,
     zspace::Shape,
 };
@@ -45,14 +45,22 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
         .custom(data)
         .generate_with_f32_host_data();
 
+    // Drives the real `precision()` path: Any/All require the flag storage as
+    // output (u32 here — the bool backing callers request on runtimes without
+    // 8-bit storage, and the dtype every test runtime supports) while
+    // accumulation stays = input. The kernel writes the flags directly into
+    // the u32 output, so the f32-input -> flag-output conversion is exercised
+    // end to end.
+    let dtypes = config.precision(
+        ElemType::Float(FloatKind::F32),
+        Some(ElemType::UInt(UIntKind::U32)),
+    );
+
     let output_handle = TestInput::builder(client.clone(), Shape::new([3, 1]))
-        .dtype(input_dtype)
+        .dtype(dtypes.output)
         .layout(StridedLayout::Explicit(vec![1, 1]))
         .zeros()
         .generate_without_host_data();
-
-    // Drives the real `precision()` path: Any/All keep accumulation = input.
-    let dtypes = config.precision(ElemType::Float(FloatKind::F32), None);
     let strategy = ReduceStrategy {
         routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
         vectorization: VectorizationStrategy {

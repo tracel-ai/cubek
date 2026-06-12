@@ -2,14 +2,14 @@ use cubecl::{
     Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
+    args::{TensorArgs, TensorMapArgs},
     components::global::read::{
         AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
         async_partial_strided::AsyncPartialStridedLoading,
         async_partial_tma::AsyncPartialTmaLoading,
     },
-    definition::{AvailableVectorSizes, TilingBlueprint},
-    launch::{TensorArgs, TensorMapArgs},
-    routines::specialized::{SpecializedAlgorithm, SpecializedStrategy},
+    definition::{AvailableVectorSizes, BatchMatmulBlueprint},
+    routines::batch::specialized::{SpecializedAlgorithm, SpecializedStrategy},
 };
 use cubek_std::tile::ColMajorTilingOrder;
 use std::marker::PhantomData;
@@ -34,7 +34,7 @@ pub type SpecializedAsyncStridedConv = SpecializedConv<AsyncPartialStridedLoadin
 pub struct SpecializedTmaConv;
 
 impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L> {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SpecializedStrategy;
     type MatmulRoutine = SpecializedAlgorithm<L, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
@@ -51,7 +51,7 @@ impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L>
 }
 
 impl Routine for SpecializedTmaConv {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SpecializedStrategy;
     type MatmulRoutine = SpecializedAlgorithm<AsyncPartialTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;

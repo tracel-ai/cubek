@@ -3,8 +3,8 @@ use std::fmt::Display;
 use crate::{
     components::{stage::PartitionBuffering, tile::TileMatmulKind},
     definition::{
-        MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes, SwizzleModes,
-        TilingBlueprint, TilingScheme,
+        BatchMatmulBlueprint, MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem,
+        MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
 };
 use cubecl::{
@@ -58,7 +58,7 @@ pub struct UnitTilingBlueprintOptions {
     pub swizzle: bool,
 }
 
-/// Computes a [TilingBlueprint] depending on the problem kind
+/// Computes a [BatchMatmulBlueprint] depending on the problem kind
 pub fn infer_blueprint_unit<R: Runtime>(
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
@@ -67,7 +67,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
     vector_sizes: &MatmulVectorSizes,
     options: UnitTilingBlueprintOptions,
     global_elems: &MatmulGlobalElems,
-) -> (TilingBlueprint, MatmulElems) {
+) -> (BatchMatmulBlueprint, MatmulElems) {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
     let min_tile_size = usize::max(vector_sizes.lhs, vector_sizes.rhs);
@@ -172,7 +172,7 @@ fn general_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     use cubek_std::MatrixLayout::*;
 
     // Manually tested for good performance on many shapes.
@@ -242,7 +242,7 @@ fn matvec_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (MatrixLayout::RowMajor, _) => ((1, 1, tile_size), (1, 1, tile_size * 2)),
         _ => ((tile_size, 1, tile_size), (1, 1, 1)),
@@ -278,7 +278,7 @@ fn vecmat_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = ((1, tile_size, tile_size), (1, 1, 1));
 
     selection(
@@ -311,7 +311,7 @@ fn scalarvec_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     use cubek_std::MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (RowMajor, RowMajor) => ((1, tile_size, tile_size), (1, 2, 1)),
@@ -350,7 +350,7 @@ fn vecscalar_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = ((tile_size, 1, 1), (1, 1, 1));
 
     selection(
@@ -383,7 +383,7 @@ fn inner_product_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     use cubek_std::MatrixLayout::*;
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         (RowMajor, RowMajor) => ((1, 1, tile_size), (1, 1, 1)),
@@ -419,7 +419,7 @@ fn outer_product_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = ((tile_size, tile_size, 1), (1, 1, 1));
 
     selection(
@@ -449,7 +449,7 @@ fn scalar_product_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = ((1, 1, 1), (1, 1, 1));
 
     selection(
@@ -505,7 +505,7 @@ fn selection(
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     let (stage_size_m, stage_size_n) = stage.into_stages();
 
     debug_assert!(
@@ -540,7 +540,7 @@ fn selection(
         .build();
 
     let mut builder =
-        TilingBlueprint::builder(TileMatmulKind::Register, tiling_scheme, plane_dim, problem)
+        BatchMatmulBlueprint::builder(TileMatmulKind::Register, tiling_scheme, plane_dim, problem)
             .partition_buffering(buffering)
             .hypercube_blueprint(hypercube);
 

@@ -79,7 +79,8 @@ impl Walk {
             let local = (idx / weight) % *counts.index(p);
             let axis = comptime!(self.space.axis_at(p));
             let dist = comptime!(self.space.partitioner().distribution(axis));
-            coords.push(coord_of(local, *self.counts.index(p), dist) as u32);
+            let inner_weight = comptime!(self.space.spatial_inner_weight(axis));
+            coords.push(coord_of(local, *self.counts.index(p), inner_weight, dist) as u32);
         }
         coords
     }
@@ -97,17 +98,27 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 
 /// Grid coordinate for a runtime local `step`: `step` for `Sequential`, else the
 /// `Spatial` axis folds its hardware instance in (`Contiguous`: instance owns a run;
-/// `Interleaved`: instances take turns).
+/// `Interleaved`: instances take turns). `inner_weight` is this axis's stride in a
+/// hardware dim it may share with others: the raw hardware position is decoded to this
+/// axis's own instance via `(pos / inner_weight) % instances`. With one axis on the dim
+/// `inner_weight = 1` and the position is in range, so the decode is a no-op.
 #[cube]
-fn coord_of(step: usize, grid: usize, #[comptime] dist: Distribution) -> usize {
+fn coord_of(
+    step: usize,
+    grid: usize,
+    #[comptime] inner_weight: usize,
+    #[comptime] dist: Distribution,
+) -> usize {
     let mut coord = step;
     if comptime!(matches!(dist, Distribution::Spatial { .. })) {
         let cov = comptime!(dist.coverage());
         let unit = comptime!(dist.unit());
+        let instances = instance_count(grid, cov);
+        let pos = (hardware_pos(unit) / inner_weight) % instances;
         if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-            coord = step + hardware_pos(unit) * tiles_per_instance(grid, cov);
+            coord = step + pos * tiles_per_instance(grid, cov);
         } else {
-            coord = step * instance_count(grid, cov) + hardware_pos(unit);
+            coord = step * instances + pos;
         }
     }
     coord

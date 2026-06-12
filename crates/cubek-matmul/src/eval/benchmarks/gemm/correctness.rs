@@ -5,7 +5,7 @@ use cubek_test_utils::{HostData, Progress};
 use crate::definition::{MatmulElems, MatmulProblem};
 use crate::eval::benchmarks::gemm::problem::{GemmProblem, Precision};
 use crate::eval::cpu_reference::{cpu_reference_result, strategy_result};
-use crate::launch::Strategy;
+use crate::strategy::Strategy;
 
 pub struct GemmCorrectness;
 

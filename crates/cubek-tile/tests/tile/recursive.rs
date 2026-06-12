@@ -58,8 +58,8 @@ fn recursive_two_level_tiled_view() {
 /// Copy every logical element of `input` into `output` through their views.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let input = input.tile();

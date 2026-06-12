@@ -8,7 +8,7 @@ use crate::{
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::validate_async_copy},
     components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::read::async_barrier::AsyncCopy, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::read::async_barrier::AsyncCopy},
 };
 use crate::{
     components::global::read::async_copy::ASYNC_COPY_WIDTH,

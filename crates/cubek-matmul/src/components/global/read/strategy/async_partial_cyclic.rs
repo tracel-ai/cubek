@@ -27,7 +27,7 @@ use crate::{
     definition::MatmulProblem,
     definition::MatmulTypes,
     definition::StageIdent,
-    {components::global::read::validate_async_barrier, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::read::validate_async_barrier},
 };
 use cubecl::{
     prelude::*,

@@ -4,7 +4,7 @@
 //! and quantization.
 
 use cubecl::{TestRuntime, client::ComputeClient};
-use cubek_matmul::{definition::MatmulProblem, launch::test_only::TestStrategy};
+use cubek_matmul::{definition::MatmulProblem, strategy::test_only::TestStrategy};
 
 use crate::matmul::launcher_strategy::run;
 
@@ -12,9 +12,9 @@ mod common;
 
 mod advanced;
 mod alt_shapes;
+mod cpu_gemm;
 mod gemm;
 mod layouts;
-mod mosaic;
 mod quantization;
 mod tiling_scheme;
 

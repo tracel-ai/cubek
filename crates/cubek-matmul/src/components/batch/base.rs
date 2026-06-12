@@ -1,15 +1,15 @@
 use crate::{
+    args::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    definition::{CubeMapping, CubeMappingLaunch},
+    {args::ConfigRuntimeArg, components::global::memory::GlobalLayoutConfig},
+    {args::RuntimeConfig, components::CubeDimResource},
+};
+use crate::{
     components::stage::NumStages,
     definition::{
         AccG, Blueprint, LhsG, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
         MatmulVectorSizes, RhsG,
     },
-};
-use crate::{
-    definition::{CubeMapping, CubeMappingLaunch},
-    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
-    {components::CubeDimResource, launch::RuntimeConfig},
-    {components::global::memory::GlobalLayoutConfig, launch::ConfigRuntimeArg},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::{fmt::Debug, hash::Hash};

@@ -4,7 +4,7 @@
 //! requires `tile.k % plane_dim == 0`, which the inferred selector doesn't
 //! enforce — a forced-blueprint variant lives in `extended/tiling_scheme.rs`.
 
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 
 use super::common::{client, f16_elems, square};
 use crate::matmul::test_matmul_strategy;

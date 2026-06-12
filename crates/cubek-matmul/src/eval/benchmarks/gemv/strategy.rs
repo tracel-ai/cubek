@@ -1,11 +1,12 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::launch::Strategy;
 use crate::routines::{
-    BlueprintStrategy, TileSizeSelection, gemm::GemmStrategy,
-    gemv_unit_perpendicular::GemvUnitPerpendicularStrategy, simple::SimpleArgs,
-    simple_unit::SimpleUnitSelectionArgs,
+    BlueprintStrategy, TileSizeSelection,
+    batch::{simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs},
+    gemm::GemmStrategy,
+    gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
 };
+use crate::strategy::Strategy;
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     vec![

@@ -11,7 +11,7 @@ use crate::components::{
         {init_a_fragment, init_accumulator, init_b_fragments},
     },
 };
-use crate::{components::global::multi_stage::ordered::LL, launch::RuntimeConfig};
+use crate::{args::RuntimeConfig, components::global::multi_stage::ordered::LL};
 use crate::{
     components::global::read::{
         FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, LoadingValidation as _,

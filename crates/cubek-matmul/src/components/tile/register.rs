@@ -8,7 +8,7 @@ use cubek_std::{
     tile::{ProductType, TileScope, Unit},
 };
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
+use crate::definition::{BatchMatmulBlueprint, MatmulElems, MatmulSetupError, MatmulVectorSizes};
 
 use super::{common::check_types_available, variant::TileVariant};
 
@@ -71,7 +71,7 @@ impl TileVariant for RegisterMatmul {
 
     fn expand(
         _device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
     ) -> Self {
@@ -86,7 +86,7 @@ impl TileVariant for RegisterMatmul {
 
     fn validate<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {

@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::{
+    args::MatmulArgs,
     components::batch::{
         BatchConfig as _, BatchMatmul, CheckBounds, SliceIndex,
         base::BatchMatmulFamily,
@@ -10,7 +11,6 @@ use crate::{
         },
     },
     definition::{cube_pos_to_matrix_batch, *},
-    launch::MatmulArgs,
 };
 
 use cubecl::{

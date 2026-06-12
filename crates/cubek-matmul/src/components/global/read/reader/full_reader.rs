@@ -10,7 +10,7 @@ use crate::{
     components::global::read::TaskCounter,
     components::global::{multi_stage::JobIterator, read::FullLoaderStage},
     components::{global::memory::GlobalIterator, stage::LoadStageFamily},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use cubecl::{
     prelude::*,

@@ -12,8 +12,8 @@ use cubek_std::{
 };
 
 use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
-    MultiRowStrategy, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
+    BatchMatmulBlueprint, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, MultiRowStrategy, SwizzleModes, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 use crate::{
@@ -26,7 +26,7 @@ pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;
 
 #[derive(Default, Debug)]
-/// Options to select the best plane matmul [selection](TilingBlueprint).
+/// Options to select the best plane matmul [selection](BatchMatmulBlueprint).
 pub struct PlaneTilingBlueprintOptions {
     pub partition_k: Option<u32>,
     pub specialized: bool,
@@ -46,7 +46,7 @@ pub fn infer_blueprint_plane<R: Runtime>(
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
     options: PlaneTilingBlueprintOptions,
-) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
+) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
     adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     if plane_dim == 1 {
@@ -181,7 +181,7 @@ pub fn infer_blueprint_plane<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
+    let mut builder = BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
         .hypercube_blueprint(hypercube);
 
@@ -261,7 +261,7 @@ fn select_size(
     // The number of rows handled per plane cannot exceed the number of available
     // planes: otherwise `plane_count / rows` underflows to 0, producing a degenerate
     // tiling scheme with `stage_size.m == 0` that divides by zero in
-    // `TilingBlueprint::cube_launch_info`. Clamp so there is always at least one stage
+    // `BatchMatmulBlueprint::cube_launch_info`. Clamp so there is always at least one stage
     // along `m` (e.g. a large `problem_m` requesting 2 rows when only 1 plane fits).
     let rows = rows.min(plane_count).max(1);
 
@@ -349,7 +349,7 @@ fn selection_tiny<R: Runtime>(
     tile_size: TileSize,
     plane_dim: u32,
     tile_matmul: TileMatmulKind,
-) -> TilingBlueprint {
+) -> BatchMatmulBlueprint {
     // If the K axis is big, we can leverage that.
     let pk = u32::min(problem.k as u32 / tile_size.k(), 8);
     let pk = u32::max(pk, 1);
@@ -374,7 +374,7 @@ fn selection_tiny<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
+    BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .build()
@@ -388,7 +388,7 @@ mod tests {
     /// rows-per-plane (e.g. a large `problem_m` asks for 2 rows but only 1 plane
     /// fits), `select_size` must not return `stage_size_m == 0`. The zero used to
     /// propagate into a degenerate `TilingScheme` (`stage_size.m == 0`) and panic
-    /// with "attempt to divide by zero" in `TilingBlueprint::cube_launch_info`.
+    /// with "attempt to divide by zero" in `BatchMatmulBlueprint::cube_launch_info`.
     /// Reproduces the rf-detr crash on the `m=1024, n=4, k=256` matmul.
     #[test]
     fn select_size_never_yields_zero_stage_size_m() {

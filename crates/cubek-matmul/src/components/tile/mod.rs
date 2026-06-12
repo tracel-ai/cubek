@@ -40,7 +40,7 @@ use cubek_std::{
     },
 };
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes, TilingBlueprint};
+use crate::definition::{BatchMatmulBlueprint, MatmulElems, MatmulSetupError, MatmulVectorSizes};
 
 /// Tile-level matmul configuration. Each variant carries the per-kind config.
 ///
@@ -175,7 +175,7 @@ impl TileMatmulKind {
     pub fn expand_tile_matmul(
         &self,
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<TileMatmul, MatmulSetupError> {
@@ -216,7 +216,7 @@ impl TileMatmulKind {
     pub fn validate_blueprint<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {

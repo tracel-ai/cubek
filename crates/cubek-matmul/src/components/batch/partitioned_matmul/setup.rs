@@ -6,20 +6,20 @@ use crate::components::{
 };
 use crate::definition::MatmulAvailabilityError;
 use crate::{
+    args::*,
+    definition::BatchMatmulBlueprint,
+    definition::CubeMappingLaunch,
+    definition::MatmulProblem,
+    definition::MatmulVectorSizes,
+    definition::{MatmulElems, MatmulSetupError, MatmulTypes},
+    {args::ConfigRuntimeArg, components::batch::BatchMatmulFamily},
+    {args::RuntimeConfig, components::CubeDimResource},
+};
+use crate::{
     components::batch::partitioned_matmul::matmul::PartitionedBatchMatmul,
     components::batch::partitioned_matmul::matmul::matmul_entry,
     components::batch::partitioned_matmul::partition::GlobalPartitionMatmul,
     components::global::GlobalMatmulFamily,
-};
-use crate::{
-    definition::CubeMappingLaunch,
-    definition::MatmulProblem,
-    definition::MatmulVectorSizes,
-    definition::TilingBlueprint,
-    definition::{MatmulElems, MatmulSetupError, MatmulTypes},
-    launch::*,
-    {components::CubeDimResource, launch::RuntimeConfig},
-    {components::batch::BatchMatmulFamily, launch::ConfigRuntimeArg},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::stage::StageMemoryConfig;
@@ -40,7 +40,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
 {
     type Matmul<MP: MatmulTypes> = PartitionedBatchMatmul<RC, MP, GMM::Matmul<MP>, S>;
     type Config = PartitionedBatchConfig<GMM::Config>;
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
 
     fn expand_config(
         device_props: &DeviceProperties,

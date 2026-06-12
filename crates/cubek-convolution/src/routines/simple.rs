@@ -5,15 +5,15 @@ use cubecl::{
 use cubek_matmul::components::global::read::FullLoadingStrategy;
 use cubek_matmul::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
 use cubek_matmul::{
+    args::{TensorArgs, TensorMapArgs},
+    definition::{AvailableVectorSizes, BatchMatmulBlueprint},
+};
+use cubek_matmul::{
     components::global::read::{
         async_full_tma::AsyncFullTmaLoading, sync_full_strided::SyncFullStridedLoading,
         sync_full_tilewise::SyncFullTilewiseLoading,
     },
-    routines::simple::{SimpleAlgorithm, SimpleArgs},
-};
-use cubek_matmul::{
-    definition::{AvailableVectorSizes, TilingBlueprint},
-    launch::{TensorArgs, TensorMapArgs},
+    routines::batch::simple::{SimpleAlgorithm, SimpleArgs},
 };
 use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use std::marker::PhantomData;
@@ -59,7 +59,7 @@ impl<
     LR: FullLoadingStrategy<RuntimeArgs, SyncStrategy = LL::SyncStrategy>,
 > Routine for SimpleConv<LL, LR>
 {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SimpleArgs;
     type MatmulRoutine = SimpleAlgorithm<LL, LR, SyncBiasLoading>;
     type Args = TensorArgs<RuntimeArgs>;
@@ -75,7 +75,7 @@ impl<
 }
 
 impl Routine for SimpleAsyncTmaConv {
-    type Blueprint = TilingBlueprint;
+    type Blueprint = BatchMatmulBlueprint;
     type Strategy = SimpleArgs;
     type MatmulRoutine = SimpleAlgorithm<AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;

@@ -1,6 +1,6 @@
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
-use crate::definition::{MatmulSetupError, TilingBlueprint};
+use crate::definition::{BatchMatmulBlueprint, MatmulSetupError};
 
 use super::{PartitionedStageMatmul, StageMatmul, variant::StageVariant};
 
@@ -10,7 +10,7 @@ pub struct PlanePartitioned;
 
 impl StageVariant for PlanePartitioned {
     fn cubedim_resource(
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
     ) -> Result<CubeDimResource, InvalidConfigError> {
         let inner = blueprint.tile_matmul.cubedim_resource()?;
         let factor = blueprint.tiling_scheme.partitions_per_stage_along_m()
@@ -23,7 +23,7 @@ impl StageVariant for PlanePartitioned {
         }
     }
 
-    fn validate_blueprint(blueprint: &TilingBlueprint) -> Result<(), MatmulSetupError> {
+    fn validate_blueprint(blueprint: &BatchMatmulBlueprint) -> Result<(), MatmulSetupError> {
         let num_planes_needed = blueprint.tiling_scheme.partitions_per_stage_along_m()
             * blueprint.tiling_scheme.partitions_per_stage_along_n();
         let num_compute_planes =

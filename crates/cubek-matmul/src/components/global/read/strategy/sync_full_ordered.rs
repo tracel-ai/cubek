@@ -6,7 +6,7 @@ use crate::{
     definition::MatmulElems,
     definition::MatmulProblem,
     definition::StageIdent,
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{

@@ -7,12 +7,12 @@ use cubecl::{
     {Runtime, client::ComputeClient},
 };
 use cubek_matmul::{
-    definition::{MatmulElems, MatmulVectorSizes},
-    routines::Routine,
+    args::{InputArg, OutputArg},
+    routines::BlueprintStrategy,
 };
 use cubek_matmul::{
-    launch::{InputArg, OutputArg},
-    routines::BlueprintStrategy,
+    definition::{MatmulElems, MatmulVectorSizes},
+    routines::BatchMatmulRoutine,
 };
 use cubek_std::InputBinding;
 
@@ -22,7 +22,11 @@ use crate::components::{ConvSetupError, ConvolutionProblem};
 ///
 /// Only works for concrete tensor inputs and output.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<RuntimeArgs>>(
+pub fn launch_kernel_concrete<
+    R: Runtime,
+    Args: ConcreteArgs<A>,
+    A: BatchMatmulRoutine<RuntimeArgs>,
+>(
     client: &ComputeClient<R>,
     input: InputBinding<R>,
     weight: InputBinding<R>,
@@ -67,7 +71,7 @@ pub fn launch_kernel_concrete<R: Runtime, Args: ConcreteArgs<A>, A: Routine<Runt
         dtypes,
     );
 
-    cubek_matmul::launch::launch_kernel::<Args, R, A>(
+    cubek_matmul::strategy::launch_kernel::<Args, R, A>(
         client,
         input,
         output,
