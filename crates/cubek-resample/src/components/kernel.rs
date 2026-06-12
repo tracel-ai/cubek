@@ -13,10 +13,9 @@ pub fn kernel_num_taps(#[comptime] kernel: &Kernel) -> usize {
     }
 }
 
-
 /// Evaluate the kernel weight where x is the distance from center.
 #[cube]
-pub fn kernel_weight<F: Float>(#[comptime] kernel: &Kernel, x: F) -> F {
+pub fn kernel_weight<F: Float>(x: F, #[comptime] kernel: &Kernel) -> F {
     match kernel {
         Kernel::One => F::new(1.0),
         Kernel::Uniform { scale } => F::new(1.0 / *scale as f32),

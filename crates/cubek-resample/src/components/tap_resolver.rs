@@ -12,10 +12,10 @@ use cubecl::{
 use std::hash::Hash;
 
 #[cube]
-pub trait TapResolver<F: Float>: Send + Sync + 'static {
+pub trait TapResolver<F: Float, N: Size>: Send + Sync + 'static {
     type Config: CubeType + Clone + Send + Sync + core::fmt::Debug + Hash + core::cmp::Eq;
 
-    fn resolve<N: Size>(
+    fn resolve(
         tap_idx: usize,
         input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
@@ -31,10 +31,10 @@ pub trait TapResolver<F: Float>: Send + Sync + 'static {
 pub struct SeparableTapResolver;
 
 #[cube]
-impl<F: Float> TapResolver<F> for SeparableTapResolver {
+impl<F: Float, N: Size> TapResolver<F, N> for SeparableTapResolver {
     type Config = Resample;
 
-    fn resolve<N: Size>(
+    fn resolve(
         tap_idx: usize,
         input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
@@ -152,7 +152,7 @@ fn compute_weight<F: Float>(
         let tap_pos = start_tap + tap_1d_idx as isize;
         let x = F::cast_from(tap_1d_idx as isize - radius as isize) - frac;
 
-        weight *= kernel_weight::<F>(&resample_axis.kernel, x);
+        weight *= kernel_weight::<F>(x, &resample_axis.kernel);
         in_coord[resample_axis.axis] = tap_pos as u32;
     }
 

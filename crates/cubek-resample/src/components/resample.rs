@@ -1,8 +1,8 @@
 use crate::components::{
+    combiner_reducer::{AccumulateCombinerReducer, CombinerReducer},
     footprint::Footprint,
     kernel::kernel_num_taps,
     tap_resolver::{SeparableTapResolver, TapResolver},
-    window_reducer::{AccumulateWindowReducer, WindowReducer},
 };
 use crate::definition::Resample;
 use cubecl::{
@@ -33,7 +33,7 @@ pub fn resample_kernel<F: Float, N: Size>(
 
     let out_coord = get_coord(index * output.vector_size(), &output_shape, &output_strides);
 
-    resample_coord::<F, N, AccumulateWindowReducer>(
+    resample_coord::<F, N, AccumulateCombinerReducer>(
         input,
         output,
         &mut (),
@@ -69,7 +69,7 @@ fn get_coord(
 pub fn resample_coord<
     F: Float,
     N: Size,
-    W: WindowReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
+    W: CombinerReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
 >(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
@@ -94,11 +94,11 @@ pub fn resample_coord<
     );
 
     W::store(
-        config,
         out_coord.clone(),
         output,
         output_indices,
         accumulator,
+        config,
     );
 }
 
@@ -107,7 +107,7 @@ pub fn resample_coord<
 fn accumulate_taps<
     F: Float,
     N: Size,
-    W: WindowReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
+    W: CombinerReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
 >(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
@@ -142,7 +142,7 @@ fn accumulate_taps<
 fn accumulate_tap<
     F: Float,
     N: Size,
-    W: WindowReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
+    W: CombinerReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
 >(
     tap_idx: usize,
     input: &View<'_, Vector<F, N>, CoordsDyn>,
@@ -155,7 +155,7 @@ fn accumulate_tap<
     #[comptime] vector_size: usize,
     #[comptime] num_axes: usize,
 ) {
-    let (mut value, weight) = SeparableTapResolver::resolve(
+    let (mut value, weight) = <SeparableTapResolver as TapResolver<F, N>>::resolve(
         tap_idx,
         input,
         out_coord,
@@ -168,12 +168,12 @@ fn accumulate_tap<
     );
 
     if input.is_in_bounds(in_coord.clone()) {
-        W::count_position(config, accumulator, &out_coord);
+        W::count_position(accumulator, &out_coord, config);
     }
 
-    W::combine(config, &mut value, tap_idx, weight);
+    W::combine(&mut value, weight, tap_idx, config);
 
-    W::accumulate(config, accumulator, tap_idx, value);
+    W::accumulate(accumulator, value, tap_idx, config);
 }
 
 /// Build footprints for each dimension and calculate total taps.
