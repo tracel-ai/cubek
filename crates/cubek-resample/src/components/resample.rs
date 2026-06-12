@@ -1,5 +1,6 @@
 use crate::components::{
     footprint::Footprint,
+    kernel::kernel_num_taps,
     tap_resolver::{SeparableTapResolver, TapResolver},
     window_reducer::{AccumulateWindowReducer, WindowReducer},
 };
@@ -154,8 +155,9 @@ fn accumulate_tap<
     #[comptime] vector_size: usize,
     #[comptime] num_axes: usize,
 ) {
-    let weight = SeparableTapResolver::resolve(
+    let (mut value, weight) = SeparableTapResolver::resolve(
         tap_idx,
+        input,
         out_coord,
         in_coord,
         &footprints,
@@ -165,13 +167,8 @@ fn accumulate_tap<
         num_axes,
     );
 
-    let mut value = Vector::empty();
-
     if input.is_in_bounds(in_coord.clone()) {
         W::count_position(config, accumulator, &out_coord);
-        value = input.read(in_coord.clone());
-    } else {
-        value = Vector::cast_from(0.0);
     }
 
     W::combine(config, &mut value, tap_idx, weight);
@@ -192,7 +189,7 @@ fn build_footprints<F: Float>(
     for dim in 0..num_axes {
         let resample_axis = config.resample_axes.index(dim);
         footprints.push(Footprint::new(resample_axis));
-        total_taps *= Footprint::<F>::num_taps(resample_axis);
+        total_taps *= kernel_num_taps(&resample_axis.kernel)
     }
 
     (footprints, total_taps)

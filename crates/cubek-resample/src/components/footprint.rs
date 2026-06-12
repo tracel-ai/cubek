@@ -1,8 +1,4 @@
-use crate::{
-    components::kernel::kernel_num_taps,
-    definition::{Placement, ResampleAxis},
-};
-
+use crate::definition::{Placement, ResampleAxis};
 use cubecl::prelude::*;
 
 /// Footprint of a resample kernel.
@@ -26,10 +22,6 @@ impl<F: Float> Footprint<F> {
             tap_scale: F::new(tap_scale),
             tap_offset: F::new(tap_offset),
         }
-    }
-
-    pub fn num_taps(#[comptime] axis: &ResampleAxis) -> usize {
-        kernel_num_taps(&axis.kernel)
     }
 
     pub fn start_tap_and_frac(&self, radius: usize, pos: usize) -> (isize, F) {

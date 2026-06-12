@@ -1,8 +1,14 @@
 use crate::{
-    components::{footprint::Footprint, kernel::kernel_weight},
+    components::{
+        footprint::Footprint,
+        kernel::{kernel_num_taps, kernel_weight},
+    },
     definition::Resample,
 };
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::CoordsDyn},
+};
 use std::hash::Hash;
 
 #[cube]
@@ -11,6 +17,7 @@ pub trait TapResolver<F: Float>: Send + Sync + 'static {
 
     fn resolve<N: Size>(
         tap_idx: usize,
+        input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
         in_coord: &mut CoordsDyn,
         footprints: &Sequence<Footprint<F>>,
@@ -18,7 +25,7 @@ pub trait TapResolver<F: Float>: Send + Sync + 'static {
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
         #[comptime] num_axes: usize,
-    ) -> Vector<F, N>;
+    ) -> (Vector<F, N>, Vector<F, N>);
 }
 
 pub struct SeparableTapResolver;
@@ -29,6 +36,7 @@ impl<F: Float> TapResolver<F> for SeparableTapResolver {
 
     fn resolve<N: Size>(
         tap_idx: usize,
+        input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
         in_coord: &mut CoordsDyn,
         footprints: &Sequence<Footprint<F>>,
@@ -36,7 +44,7 @@ impl<F: Float> TapResolver<F> for SeparableTapResolver {
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
         #[comptime] num_axes: usize,
-    ) -> Vector<F, N> {
+    ) -> (Vector<F, N>, Vector<F, N>) {
         let resampling_vectorized_axis = comptime!(is_resampling_vectorized_axis(
             config,
             vectorized_axis,
@@ -45,14 +53,11 @@ impl<F: Float> TapResolver<F> for SeparableTapResolver {
         ));
 
         if resampling_vectorized_axis {
-            let mut weights = Vector::empty();
+            let mut weight = Vector::empty();
+            let mut value = Vector::empty();
 
-            for i in 0..vector_size {
-                // Reverse the order for the read to have the first tap index,
-                // which correspond to the smallest input index.
-                let lane = vector_size - 1 - i;
-
-                let weight = compute_weight(
+            for lane in 0..vector_size {
+                let lane_weight = compute_weight(
                     tap_idx,
                     out_coord,
                     in_coord,
@@ -63,12 +68,17 @@ impl<F: Float> TapResolver<F> for SeparableTapResolver {
                     num_axes,
                 );
 
-                weights.insert(lane, weight);
+                let lane_values = input.read(in_coord.clone());
+                let extract_idx = in_coord[vectorized_axis] as usize % vector_size;
+                let lane_value = lane_values.extract(extract_idx);
+
+                weight.insert(lane, lane_weight);
+                value.insert(lane, lane_value);
             }
 
-            weights
+            (value, weight)
         } else {
-            Vector::new(compute_weight(
+            let weight = Vector::new(compute_weight(
                 tap_idx,
                 out_coord,
                 in_coord,
@@ -77,7 +87,11 @@ impl<F: Float> TapResolver<F> for SeparableTapResolver {
                 config,
                 vectorized_axis,
                 num_axes,
-            ))
+            ));
+
+            let value = input.read(in_coord.clone());
+
+            (value, weight)
         }
     }
 }
@@ -119,7 +133,7 @@ fn compute_weight<F: Float>(
         let resample_axis = config.resample_axes.index(axis);
         let footprint = footprints.index(axis);
 
-        let num_taps = Footprint::<F>::num_taps(resample_axis);
+        let num_taps = kernel_num_taps(&resample_axis.kernel);
         let radius = (num_taps + 1) / 2;
 
         let out_pos = out_coord[resample_axis.axis] as usize;
