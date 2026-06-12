@@ -60,13 +60,12 @@ impl Kernel {
         out_coord: &CoordsDyn,
         #[comptime] config: &Resample,
         #[comptime] vectorized_axis: usize,
-        #[comptime] num_axes: usize,
         #[comptime] lane: usize,
     ) -> F {
         let mut weight = F::new(1.0);
 
         #[unroll]
-        for axis_idx in 0..num_axes {
+        for axis_idx in 0..comptime!(config.resample_axes.len()) {
             let resample_axis = config.resample_axes.index(axis_idx);
 
             let out_pos = out_coord[resample_axis.axis] as usize;

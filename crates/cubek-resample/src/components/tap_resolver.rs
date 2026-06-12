@@ -18,13 +18,11 @@ impl TapResolver {
         #[comptime] config: &Resample,
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
-        #[comptime] num_axes: usize,
     ) -> (Vector<F, N>, Vector<F, N>) {
         let resampling_vectorized_axis = comptime!(is_resampling_vectorized_axis(
             config,
             vectorized_axis,
             vector_size,
-            num_axes
         ));
 
         if resampling_vectorized_axis {
@@ -35,18 +33,10 @@ impl TapResolver {
                 in_coord,
                 config,
                 vectorized_axis,
-                num_axes,
                 vector_size,
             )
         } else {
-            resolve_scalar_tap(
-                input,
-                out_coord,
-                in_coord,
-                config,
-                vectorized_axis,
-                num_axes,
-            )
+            resolve_scalar_tap(input, out_coord, in_coord, config, vectorized_axis)
         }
     }
 }
@@ -55,11 +45,10 @@ fn is_resampling_vectorized_axis(
     config: &Resample,
     vectorized_axis: usize,
     vector_size: usize,
-    num_axes: usize,
 ) -> bool {
     let mut is_vectorized = false;
 
-    for axis in 0..num_axes {
+    for axis in comptime!(0..config.resample_axes.len()) {
         let resample_axis = config.resample_axes.index(axis);
         is_vectorized |= resample_axis.axis == vectorized_axis;
     }
@@ -74,15 +63,13 @@ fn resolve_scalar_tap<F: Float, N: Size>(
     in_coord: &mut CoordsDyn,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] num_axes: usize,
 ) -> (Vector<F, N>, Vector<F, N>) {
     let weight = Vector::new(Kernel::weight::<F>(
         in_coord,
         out_coord,
         config,
         vectorized_axis,
-        num_axes,
-        0 as usize,
+        0_usize,
     ));
 
     let value = input.read(in_coord.clone());
@@ -98,7 +85,6 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
     in_coord: &mut CoordsDyn,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] num_axes: usize,
     #[comptime] vector_size: usize,
 ) -> (Vector<F, N>, Vector<F, N>) {
     let mut weight = Vector::empty();
@@ -106,18 +92,9 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
 
     #[unroll]
     for lane in 0..vector_size {
-        map_coord::<F>(
-            tap_idx,
-            out_coord,
-            in_coord,
-            lane,
-            config,
-            vectorized_axis,
-            num_axes,
-        );
+        map_coord::<F>(tap_idx, out_coord, in_coord, lane, config, vectorized_axis);
 
-        let lane_weight =
-            Kernel::weight::<F>(in_coord, out_coord, config, vectorized_axis, num_axes, lane);
+        let lane_weight = Kernel::weight::<F>(in_coord, out_coord, config, vectorized_axis, lane);
 
         let lane_values = input.read(in_coord.clone());
         let extract_idx = in_coord[vectorized_axis] as usize % vector_size;

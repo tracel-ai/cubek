@@ -24,7 +24,7 @@ pub fn resample_kernel<F: Float, N: Size>(
     #[comptime] vectorized_axis: usize,
     #[define(F)] _dtype: StorageType,
 ) {
-    let index = ABSOLUTE_POS as usize;
+    let index = ABSOLUTE_POS;
 
     if index >= working_units {
         terminate!();
@@ -68,7 +68,6 @@ pub fn resample_coord<F: Float, N: Size>(
     let mut accumulator = ResampleInstruction::initialize(config);
 
     let vector_size = N::value();
-    let num_axes = config.resample_axes.len();
 
     accumulate_taps::<F, N>(
         input,
@@ -77,7 +76,6 @@ pub fn resample_coord<F: Float, N: Size>(
         config,
         vectorized_axis,
         vector_size,
-        num_axes,
     );
 
     ResampleInstruction::store(out_coord.clone(), output, accumulator, config);
@@ -92,11 +90,10 @@ fn accumulate_taps<F: Float, N: Size>(
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
-    #[comptime] num_axes: usize,
 ) {
     let num_taps = comptime! {
         let mut num_taps = 1;
-        for axis_idx in 0..num_axes {
+        for axis_idx in comptime!(0..config.resample_axes.len()) {
             let resample_axis = config.resample_axes.index(axis_idx);
             num_taps *= Kernel::num_taps(&resample_axis.kernel)
         }
@@ -116,7 +113,6 @@ fn accumulate_taps<F: Float, N: Size>(
             config,
             vectorized_axis,
             vector_size,
-            num_axes,
         );
     }
 }
@@ -130,14 +126,13 @@ pub fn map_coord<F: Float>(
     lane: usize,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] num_axes: usize,
 ) {
     in_coord[vectorized_axis] = out_coord[vectorized_axis] + lane as u32;
 
     let mut current_flat_idx = tap_idx;
 
     #[unroll]
-    for axis_idx in 0..num_axes {
+    for axis_idx in comptime!(0..config.resample_axes.len()) {
         let resample_axis = config.resample_axes.index(axis_idx);
 
         let num_taps = Kernel::num_taps(&resample_axis.kernel);
@@ -175,19 +170,10 @@ fn accumulate_tap<F: Float, N: Size>(
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
-    #[comptime] num_axes: usize,
 ) {
-    map_coord::<F>(
-        tap_idx,
-        out_coord,
-        in_coord,
-        0,
-        config,
-        vectorized_axis,
-        num_axes,
-    );
+    map_coord::<F>(tap_idx, out_coord, in_coord, 0, config, vectorized_axis);
 
-    ResampleInstruction::count_position(accumulator, &out_coord, config);
+    ResampleInstruction::count_position(accumulator, out_coord, config);
 
     if input.is_in_bounds(in_coord.clone()) {
         let (mut value, weight) = TapResolver::resolve(
@@ -198,7 +184,6 @@ fn accumulate_tap<F: Float, N: Size>(
             config,
             vectorized_axis,
             vector_size,
-            num_axes,
         );
 
         ResampleInstruction::combine(&mut value, weight, tap_idx, config);

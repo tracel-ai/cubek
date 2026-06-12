@@ -7,6 +7,7 @@ use cubecl::{
 /// Combiner-reducer that accumulates tap weights to produce a single tap value.
 pub struct ResampleInstruction;
 
+/// Accumulator that stores the accumulated tap weights and arguments.
 #[derive(CubeType)]
 #[allow(dead_code)]
 pub struct Accumulator<F: Float, N: Size> {
@@ -14,18 +15,18 @@ pub struct Accumulator<F: Float, N: Size> {
     pub args: Value<Vector<u32, N>>,
 }
 
-/// Whether the accumulator has zero, one or more vectors
+/// Whether the accumulator has zero, one or more vectors.
 #[derive(CubeType)]
 #[allow(dead_code)]
 pub enum Value<T: CubePrimitive> {
     Multiple(Array<T>),
-    /// Wrap the item to be able to modify it as a field
+    /// Wrap the item to be able to modify it as a field.
     Single(ValueWrapper<T>),
     None,
 }
 
+/// Wrap the item to be able to modify it as a field.
 #[derive(CubeType)]
-/// Wrap the item to be able to modify it as a field
 pub struct ValueWrapper<T: CubePrimitive> {
     value: T,
 }
