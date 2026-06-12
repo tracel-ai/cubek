@@ -1,0 +1,32 @@
+[package]
+authors = ["samuelbelanger <samuel.belanger.11@ulaval.ca>"]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeK: Resample"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-resample"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-resample"
+version.workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std"]
+
+extended = ["heavy"]
+full = ["extended"]
+heavy = []
+
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
+cpu-reference = ["cubek-test-utils"]
+
+[dependencies]
+cubecl = { workspace = true }
+cubecl-common = { workspace = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
+
+[dev-dependencies]
+cubecl = { workspace = true, features = ["test-runtime"] }
+cubecl-common = { workspace = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
