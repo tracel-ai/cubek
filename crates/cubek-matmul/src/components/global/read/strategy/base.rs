@@ -6,7 +6,7 @@ use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
 use cubecl::{
-    ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType},
+    ir::{BarrierLevel, DeviceProperties, OpaqueType},
     prelude::*,
 };
 use cubek_std::{
@@ -138,14 +138,14 @@ pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), Inval
     Ok(())
 }
 
-/// Validates if [tensor memory accelerator features](SemanticType::TensorMap) are available on the current
+/// Validates if [tensor memory accelerator features](OpaqueType::TensorMap) are available on the current
 /// device.
 pub fn validate_tma(
     device_props: &DeviceProperties,
     smem_config: &StageMemoryConfig,
     global_dtype: &StorageType,
 ) -> Result<(), InvalidConfigError> {
-    if !device_props.features.supports_type(SemanticType::TensorMap) {
+    if !device_props.features.supports_type(OpaqueType::TensorMap) {
         return Err(Box::new(
             "Tensor memory accelerator features are not available on the current device",
         ));
