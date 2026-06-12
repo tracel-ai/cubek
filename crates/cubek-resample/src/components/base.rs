@@ -1,7 +1,8 @@
+use crate::components::resample_instruction::Accumulator;
 use crate::definition::Resample;
 use crate::{
     components::{
-        combiner_reducer::{AccumulateCombinerReducer, CombinerReducer},
+        resample_instruction::ResampleInstruction,
         tap_resolver::{SeparableTapResolver, TapResolver},
     },
     definition::Kernel,
@@ -34,14 +35,7 @@ pub fn resample_kernel<F: Float, N: Size>(
 
     let out_coord = get_coord(index * output.vector_size(), &output_shape, &output_strides);
 
-    resample_coord::<F, N, AccumulateCombinerReducer>(
-        input,
-        output,
-        &mut (),
-        &out_coord,
-        &config,
-        vectorized_axis,
-    );
+    resample_coord::<F, N>(input, output, &out_coord, &config, vectorized_axis);
 }
 
 /// Convert a linear index to a coordinate.
@@ -67,24 +61,19 @@ fn get_coord(
 
 /// Resample a single output coord.
 #[cube]
-pub fn resample_coord<
-    F: Float,
-    N: Size,
-    W: CombinerReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
->(
+pub fn resample_coord<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
-    output_indices: &mut W::Indices,
     out_coord: &CoordsDyn,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
 ) {
-    let mut accumulator = W::initialize(config);
+    let mut accumulator = ResampleInstruction::initialize(config);
 
     let vector_size = N::value();
     let num_axes = config.resample_axes.len();
 
-    accumulate_taps::<F, N, W>(
+    accumulate_taps::<F, N>(
         input,
         out_coord,
         &mut accumulator,
@@ -94,25 +83,15 @@ pub fn resample_coord<
         num_axes,
     );
 
-    W::store(
-        out_coord.clone(),
-        output,
-        output_indices,
-        accumulator,
-        config,
-    );
+    ResampleInstruction::store(out_coord.clone(), output, accumulator, config);
 }
 
 /// Accumulate tap weights to produce a single tap value.
 #[cube]
-fn accumulate_taps<
-    F: Float,
-    N: Size,
-    W: CombinerReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
->(
+fn accumulate_taps<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
-    accumulator: &mut W::Accumulator,
+    accumulator: &mut Accumulator<F, N>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
@@ -128,7 +107,7 @@ fn accumulate_taps<
     let mut in_coord = out_coord.clone();
 
     for tap_idx in 0..num_taps {
-        accumulate_tap::<F, N, W>(
+        accumulate_tap::<F, N>(
             tap_idx,
             input,
             out_coord,
@@ -144,16 +123,12 @@ fn accumulate_taps<
 
 /// Accumulate taps for a single tap index.
 #[cube]
-fn accumulate_tap<
-    F: Float,
-    N: Size,
-    W: CombinerReducer<F, N, Accumulator = Vector<F, N>, Config = Resample>,
->(
+fn accumulate_tap<F: Float, N: Size>(
     tap_idx: usize,
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
     in_coord: &mut CoordsDyn,
-    accumulator: &mut W::Accumulator,
+    accumulator: &mut Accumulator<F, N>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
@@ -171,10 +146,10 @@ fn accumulate_tap<
     );
 
     if input.is_in_bounds(in_coord.clone()) {
-        W::count_position(accumulator, &out_coord, config);
+        ResampleInstruction::count_position(accumulator, &out_coord, config);
     }
 
-    W::combine(&mut value, weight, tap_idx, config);
+    ResampleInstruction::combine(&mut value, weight, tap_idx, config);
 
-    W::accumulate(accumulator, value, tap_idx, config);
+    ResampleInstruction::accumulate(accumulator, value, tap_idx, config);
 }

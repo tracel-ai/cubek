@@ -1,5 +1,5 @@
 mod base;
-mod combiner_reducer;
+mod resample_instruction;
 mod tap_resolver;
 
 pub use base::*;
