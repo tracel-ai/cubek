@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 
 /// The kernel function, it determines the shape of the kernel.
-#[derive(Debug, Clone, Copy, PartialEq, CubeType, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
 pub enum Kernel {
     /// Uniform taps.
     Uniform { scale: u8 },

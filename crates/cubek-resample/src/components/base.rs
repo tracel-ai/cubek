@@ -2,7 +2,6 @@ use crate::definition::Resample;
 use crate::{
     components::{
         combiner_reducer::{AccumulateCombinerReducer, CombinerReducer},
-        footprint::Footprint,
         tap_resolver::{SeparableTapResolver, TapResolver},
     },
     definition::Kernel,
@@ -119,18 +118,22 @@ fn accumulate_taps<
     #[comptime] vector_size: usize,
     #[comptime] num_axes: usize,
 ) {
-    let (footprints, total_taps) = build_footprints::<F>(config, num_axes);
+    let mut num_taps = 1;
+    #[unroll]
+    for axis_idx in 0..num_axes {
+        let resample_axis = config.resample_axes.index(axis_idx);
+        num_taps *= Kernel::num_taps(&resample_axis.kernel)
+    }
 
     let mut in_coord = out_coord.clone();
 
-    for tap_idx in 0..total_taps {
+    for tap_idx in 0..num_taps {
         accumulate_tap::<F, N, W>(
             tap_idx,
             input,
             out_coord,
             &mut in_coord,
             accumulator,
-            &footprints,
             config,
             vectorized_axis,
             vector_size,
@@ -151,7 +154,6 @@ fn accumulate_tap<
     out_coord: &CoordsDyn,
     in_coord: &mut CoordsDyn,
     accumulator: &mut W::Accumulator,
-    footprints: &Sequence<Footprint<F>>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
@@ -162,7 +164,6 @@ fn accumulate_tap<
         input,
         out_coord,
         in_coord,
-        &footprints,
         config,
         vectorized_axis,
         vector_size,
@@ -176,23 +177,4 @@ fn accumulate_tap<
     W::combine(&mut value, weight, tap_idx, config);
 
     W::accumulate(accumulator, value, tap_idx, config);
-}
-
-/// Build footprints for each dimension and calculate total taps.
-#[cube]
-fn build_footprints<F: Float>(
-    #[comptime] config: &Resample,
-    #[comptime] num_axes: usize,
-) -> (Sequence<Footprint<F>>, usize) {
-    let mut footprints = Sequence::<Footprint<F>>::new();
-    let mut total_taps = 1;
-
-    #[unroll]
-    for dim in 0..num_axes {
-        let resample_axis = config.resample_axes.index(dim);
-        footprints.push(Footprint::new(resample_axis));
-        total_taps *= Kernel::num_taps(&resample_axis.kernel)
-    }
-
-    (footprints, total_taps)
 }

@@ -1,4 +1,4 @@
-use crate::definition::{Kernel, Semiring};
+use crate::definition::{Kernel, Placement, Semiring};
 use cubecl::prelude::*;
 
 /// Resampling operation.
@@ -37,34 +37,6 @@ impl ResampleAxis {
             axis,
             kernel,
             placement,
-        }
-    }
-}
-
-/// Coordinate map: output index to source coordinate.
-#[derive(Debug, Clone, Copy, PartialEq, CubeType)]
-pub enum Placement {
-    /// Continuous affine slide: `start = scale * pos + offset`.
-    Continuous { scale: f32, offset: f32 },
-    /// Windowed: `start = step * pos − pad`.
-    Windowed { step: usize, pad: usize },
-}
-
-impl Eq for Placement {}
-
-// Hash implementation to fix f32 `#[derive(Hash)]` error.
-impl core::hash::Hash for Placement {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        core::mem::discriminant(self).hash(state);
-        match self {
-            Placement::Continuous { scale, offset } => {
-                scale.to_bits().hash(state);
-                offset.to_bits().hash(state);
-            }
-            Placement::Windowed { step, pad } => {
-                step.hash(state);
-                pad.hash(state);
-            }
         }
     }
 }

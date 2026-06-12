@@ -1,7 +1,4 @@
-use crate::{
-    components::footprint::Footprint,
-    definition::{Kernel, Resample},
-};
+use crate::definition::{Kernel, Placement, Resample};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::CoordsDyn},
@@ -17,7 +14,6 @@ pub trait TapResolver<F: Float, N: Size>: Send + Sync + 'static {
         input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
         in_coord: &mut CoordsDyn,
-        footprints: &Sequence<Footprint<F>>,
         #[comptime] config: &Self::Config,
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
@@ -37,7 +33,6 @@ impl<F: Float, N: Size> TapResolver<F, N> for SeparableTapResolver {
         input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
         in_coord: &mut CoordsDyn,
-        footprints: &Sequence<Footprint<F>>,
         #[comptime] config: &Self::Config,
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
@@ -55,12 +50,11 @@ impl<F: Float, N: Size> TapResolver<F, N> for SeparableTapResolver {
             let mut value = Vector::empty();
 
             for lane in 0..vector_size {
-                let lane_weight = compute_weight(
+                let lane_weight = compute_weight::<F>(
                     tap_idx,
                     out_coord,
                     in_coord,
                     lane,
-                    footprints,
                     config,
                     vectorized_axis,
                     num_axes,
@@ -76,12 +70,11 @@ impl<F: Float, N: Size> TapResolver<F, N> for SeparableTapResolver {
 
             (value, weight)
         } else {
-            let weight = Vector::new(compute_weight(
+            let weight = Vector::new(compute_weight::<F>(
                 tap_idx,
                 out_coord,
                 in_coord,
                 0,
-                footprints,
                 config,
                 vectorized_axis,
                 num_axes,
@@ -116,7 +109,6 @@ fn compute_weight<F: Float>(
     out_coord: &CoordsDyn,
     in_coord: &mut CoordsDyn,
     lane: usize,
-    footprints: &Sequence<Footprint<F>>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] num_axes: usize,
@@ -127,9 +119,8 @@ fn compute_weight<F: Float>(
     let mut current_flat_idx = tap_idx;
 
     #[unroll]
-    for axis in 0..num_axes {
-        let resample_axis = config.resample_axes.index(axis);
-        let footprint = footprints.index(axis);
+    for axis_idx in 0..num_axes {
+        let resample_axis = config.resample_axes.index(axis_idx);
 
         let num_taps = Kernel::num_taps(&resample_axis.kernel);
         let radius = num_taps.div_ceil(2);
@@ -142,7 +133,12 @@ fn compute_weight<F: Float>(
             out_pos
         };
 
-        let (start_tap, frac) = footprint.start_tap_and_frac(radius, lane_out_pos);
+        let center = Placement::map::<F>(lane_out_pos, &resample_axis.placement);
+        let center_floored = center.floor();
+
+        let frac = center - center_floored;
+
+        let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
 
         let tap_1d_idx = current_flat_idx % num_taps;
         current_flat_idx /= num_taps;

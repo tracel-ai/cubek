@@ -77,7 +77,7 @@ fn resample_2d_test() {
         scale: 0.5,
         offset: 0.0,
     };
-    let resample_axis0 = ResampleAxis::new(0, kernel, placement);
+    let resample_axis0 = ResampleAxis::new(0, kernel.clone(), placement.clone());
     let resample_axis2 = ResampleAxis::new(2, kernel, placement);
     let config = Resample::new(Semiring::Linear)
         .with_axis(resample_axis0)
@@ -108,7 +108,7 @@ fn resample_nhwc_2d_test() {
         scale: 0.5,
         offset: 0.0,
     };
-    let resample_axis0 = ResampleAxis::new(0, kernel, placement);
+    let resample_axis0 = ResampleAxis::new(0, kernel.clone(), placement.clone());
     let resample_axis1 = ResampleAxis::new(1, kernel, placement);
     let config = Resample::new(Semiring::Linear)
         .with_axis(resample_axis0)
