@@ -1,4 +1,5 @@
-use cubecl::prelude::*;
+use crate::definition::{Placement, Resample};
+use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 /// The kernel function, it determines the shape of the kernel.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
@@ -53,26 +54,61 @@ impl Kernel {
         }
     }
 
-    /// Computes the weight of the kernel for a given fractional position within a tap.
-    pub fn weight<F: Float>(x: F, #[comptime] this: &Self) -> F {
-        match this {
-            Kernel::Uniform { scale } => F::new(1.0) / F::cast_from(*scale),
-            Kernel::Linear => linear_weight::<F>(x),
-            Kernel::Cubic {
-                a_numerator,
-                a_denominator,
-            } => cubic_weight::<F>(x, *a_numerator, *a_denominator),
-            Kernel::Lanczos { lobes } => lanczos_weight::<F>(x, *lobes),
+    /// Compute the combined weight from already-mapped coordinates across all resample axes.
+    pub fn weight<F: Float>(
+        in_coord: &mut CoordsDyn,
+        out_coord: &CoordsDyn,
+        #[comptime] config: &Resample,
+        #[comptime] vectorized_axis: usize,
+        #[comptime] num_axes: usize,
+        #[comptime] lane: usize,
+    ) -> F {
+        let mut weight = F::new(1.0);
+
+        #[unroll]
+        for axis_idx in 0..num_axes {
+            let resample_axis = config.resample_axes.index(axis_idx);
+
+            let out_pos = out_coord[resample_axis.axis] as usize;
+
+            let lane_out_pos = if resample_axis.axis == vectorized_axis {
+                out_pos + lane
+            } else {
+                out_pos
+            };
+
+            let center = Placement::map::<F>(lane_out_pos, &resample_axis.placement);
+            let x = F::cast_from(in_coord[resample_axis.axis]) - center - F::new(1.0);
+
+            weight *= weight_1d::<F>(x, &resample_axis.kernel);
         }
+
+        weight
     }
 }
 
+/// Computes the weight of a single kernel for a given fractional position.
+#[cube]
+fn weight_1d<F: Float>(x: F, #[comptime] kernel: &Kernel) -> F {
+    match kernel {
+        Kernel::Uniform { scale } => F::new(1.0) / F::cast_from(*scale),
+        Kernel::Linear => linear_weight::<F>(x),
+        Kernel::Cubic {
+            a_numerator,
+            a_denominator,
+        } => cubic_weight::<F>(x, *a_numerator, *a_denominator),
+        Kernel::Lanczos { lobes } => lanczos_weight::<F>(x, *lobes),
+    }
+}
+
+/// Computes the linear weight for a given fractional position.
 #[cube]
 fn linear_weight<F: Float>(x: F) -> F {
     let abs_x = x.abs();
     select(abs_x < F::new(1.0), F::new(1.0) - abs_x, F::new(0.0))
 }
 
+/// Computes the cubic weight for a given fractional position.
 #[cube]
 fn cubic_weight<F: Float>(x: F, #[comptime] a_numerator: i8, #[comptime] a_denominator: u8) -> F {
     let a = F::cast_from(a_numerator) / F::cast_from(a_denominator);
@@ -94,6 +130,7 @@ fn cubic_weight<F: Float>(x: F, #[comptime] a_numerator: i8, #[comptime] a_denom
     )
 }
 
+/// Computes the Lanczos weight for a given fractional position.
 #[cube]
 fn lanczos_weight<F: Float>(x: F, #[comptime] lobes: u8) -> F {
     let abs_x = x.abs();

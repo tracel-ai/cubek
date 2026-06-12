@@ -80,7 +80,7 @@ impl ResampleInstruction {
         *value = Semiring::combine(*value, weight, &config.semiring)
     }
 
-    pub fn accumulate<F: Float, N: Size>(
+    pub fn reduce<F: Float, N: Size>(
         accumulator: &mut Accumulator<F, N>,
         combined: Vector<F, N>,
         _tap_idx: usize,
