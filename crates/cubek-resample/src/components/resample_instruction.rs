@@ -81,16 +81,16 @@ impl ResampleInstruction {
         *value = Semiring::combine(*value, weight, &config.semiring)
     }
 
-    pub fn reduce<F: Float, N: Size>(
+    pub fn accumulate<F: Float, N: Size>(
         accumulator: &mut Accumulator<F, N>,
         combined: Vector<F, N>,
         _tap_idx: usize,
         #[comptime] config: &Resample,
     ) {
         let elements = accumulator.elements.item();
-        let reduced = Semiring::reduce(elements, combined, &config.semiring);
+        let accumulated = Semiring::accumulate(elements, combined, &config.semiring);
 
-        accumulator.elements.assign(&Value::new_single(reduced));
+        accumulator.elements.assign(&Value::new_single(accumulated));
     }
 
     pub fn count_position<F: Float, N: Size>(

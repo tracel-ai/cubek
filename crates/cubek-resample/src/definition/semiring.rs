@@ -33,8 +33,8 @@ impl Semiring {
         }
     }
 
-    /// Reduce an accumulator with a new value.
-    pub fn reduce<F: Float, N: Size>(
+    /// Accumulate the a new value in the accumulator.
+    pub fn accumulate<F: Float, N: Size>(
         accumulator: Vector<F, N>,
         value: Vector<F, N>,
         #[comptime] this: &Self,

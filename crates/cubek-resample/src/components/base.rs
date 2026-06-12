@@ -188,6 +188,6 @@ fn accumulate_tap<F: Float, N: Size>(
 
         ResampleInstruction::combine(&mut value, weight, tap_idx, config);
 
-        ResampleInstruction::reduce(accumulator, value, tap_idx, config);
+        ResampleInstruction::accumulate(accumulator, value, tap_idx, config);
     }
 }
