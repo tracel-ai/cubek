@@ -5,7 +5,12 @@
 //! - [`cpu_reference_result`] runs the naive triple-loop on the same seeded
 //!   inputs and returns its output as a [`HostData`].
 
-use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
+use cubecl::{
+    TestRuntime,
+    ir::{ElemType, FloatKind},
+    prelude::*,
+    std::tensor::TensorHandle,
+};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
@@ -16,6 +21,17 @@ use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     {launch::launch_ref, strategy::Strategy},
 };
+
+/// Host data type to use for a tensor with this storage type: `F64` for f64
+/// tensors (so both the reference computation and the GPU readback retain
+/// full precision), `F32` otherwise.
+fn host_data_type_for(dtype: StorageType) -> HostDataType {
+    if matches!(dtype.elem_type(), ElemType::Float(FloatKind::F64)) {
+        HostDataType::F64
+    } else {
+        HostDataType::F32
+    }
+}
 
 /// Run `strategy` against `problem` with seeded inputs and return its output as
 /// a [`HostData`].
@@ -96,7 +112,7 @@ where
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             &client,
             out,
-            HostDataType::F32,
+            host_data_type_for(problem.global_dtypes.out),
         )),
     }
 }
@@ -109,16 +125,25 @@ fn seed_inputs(
     seed_lhs: u64,
     seed_rhs: u64,
 ) -> (Tensor, HostData, Tensor, HostData, Tensor, MatmulProblem) {
-    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+    let lhs_input = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
         .layout(problem.lhs_layout)
-        .uniform(seed_lhs, -1., 1.)
-        .generate_with_f32_host_data();
-    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .uniform(seed_lhs, -1., 1.);
+    let (lhs, lhs_data) = if host_data_type_for(problem.global_dtypes.lhs) == HostDataType::F64 {
+        lhs_input.generate_with_f64_host_data()
+    } else {
+        lhs_input.generate_with_f32_host_data()
+    };
+
+    let rhs_input = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
         .layout(problem.rhs_layout)
-        .uniform(seed_rhs, -1., 1.)
-        .generate_with_f32_host_data();
+        .uniform(seed_rhs, -1., 1.);
+    let (rhs, rhs_data) = if host_data_type_for(problem.global_dtypes.rhs) == HostDataType::F64 {
+        rhs_input.generate_with_f64_host_data()
+    } else {
+        rhs_input.generate_with_f32_host_data()
+    };
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
         .layout(MatrixLayout::RowMajor)
@@ -156,7 +181,8 @@ pub fn assert_result_with_epsilon(
     epsilon: f32,
 ) -> ValidationResult {
     let expected = matmul_cpu_reference(lhs, rhs, problem, None);
-    let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
+    let actual =
+        HostData::from_tensor_handle(client, out, host_data_type_for(problem.global_dtypes.out));
     assert_equals_approx(&actual, &expected, epsilon)
 }
 
@@ -196,7 +222,7 @@ pub fn matmul_cpu_reference(
         p.set_total((num_batches * m * n) as u64);
     }
 
-    let mut out = vec![0.0; num_batches * m * n];
+    let mut out = vec![0.0f64; num_batches * m * n];
 
     let mut batch_index = vec![0usize; rank - 2];
     let mut lhs_index = vec![0usize; rank];
@@ -236,12 +262,12 @@ pub fn matmul_cpu_reference(
                 rhs_index[rank - 1] = j;
                 out_index[rank - 1] = j;
 
-                let mut sum = 0.0;
+                let mut sum = 0.0f64;
                 for kk in 0..k {
                     lhs_index[rank - 1] = kk;
                     rhs_index[rank - 2] = kk;
 
-                    sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index);
+                    sum += lhs.get_f64(&lhs_index) * rhs.get_f64(&rhs_index);
                 }
 
                 let out_linear = batch_flat * (m * n) + i * n + j;
@@ -255,8 +281,14 @@ pub fn matmul_cpu_reference(
 
     let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
+    let data = if host_data_type_for(problem.global_dtypes.out) == HostDataType::F64 {
+        HostDataVec::F64(out)
+    } else {
+        HostDataVec::F32(out.into_iter().map(|x| x as f32).collect())
+    };
+
     HostData {
-        data: HostDataVec::F32(out),
+        data,
         shape: out_shape,
         strides,
     }

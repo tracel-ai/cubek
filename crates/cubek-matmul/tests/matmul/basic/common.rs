@@ -21,6 +21,11 @@ pub(crate) fn f32_elems() -> MatmulGlobalElems {
     MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
 }
 
+pub(crate) fn f64_elems() -> MatmulGlobalElems {
+    use cubecl::frontend::CubePrimitive;
+    MatmulElems::from_single_dtype(f64::as_type_native_unchecked()).as_global_elems()
+}
+
 pub(crate) fn square(dim: usize, elems: MatmulGlobalElems) -> MatmulProblem {
     rect(dim, dim, dim, elems)
 }

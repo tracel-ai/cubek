@@ -174,6 +174,12 @@ impl TestInput {
         self.generate_host_data(HostDataType::F32)
     }
 
+    /// Like [`generate_with_f32_host_data`](Self::generate_with_f32_host_data),
+    /// but reads the host reference copy back at full `f64` precision.
+    pub fn generate_with_f64_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+        self.generate_host_data(HostDataType::F64)
+    }
+
     pub fn generate_with_bool_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
         self.generate_host_data(HostDataType::Bool)
     }
