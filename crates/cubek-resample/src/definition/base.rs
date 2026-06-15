@@ -6,13 +6,15 @@ use cubecl::prelude::*;
 pub struct Resample {
     pub resample_axes: Sequence<ResampleAxis>,
     pub semiring: Semiring,
+    pub boundary: BoundaryMode,
 }
 
 impl Resample {
-    pub fn new(semiring: Semiring) -> Self {
+    pub fn new(semiring: Semiring, boundary: BoundaryMode) -> Self {
         Self {
             resample_axes: Sequence::new(),
             semiring,
+            boundary,
         }
     }
 
@@ -39,4 +41,13 @@ impl ResampleAxis {
             placement,
         }
     }
+}
+
+/// Boundary handling mode for out-of-bounds taps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
+pub enum BoundaryMode {
+    /// Out-of-bounds taps contribute zero (skip the tap).
+    Zero,
+    /// Out-of-bounds coordinates are clamped to the nearest valid input coordinate.
+    Clamp,
 }

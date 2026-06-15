@@ -1,5 +1,8 @@
 use super::map_coord;
-use crate::definition::{Kernel, Resample};
+use crate::{
+    components::clamp_to_coords_dyn,
+    definition::{Kernel, Resample},
+};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::CoordsDyn},
@@ -14,11 +17,13 @@ impl TapResolver {
         tap_idx: usize,
         input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
-        in_coord: &mut CoordsDyn,
+        in_coord: &mut Sequence<i32>,
         #[comptime] config: &Resample,
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
     ) -> (Vector<F, N>, Vector<F, N>) {
+        let input_shape = input.shape();
+
         let resampling_vectorized_axis = comptime!(is_resampling_vectorized_axis(
             config,
             vectorized_axis,
@@ -29,6 +34,7 @@ impl TapResolver {
             resolve_vectorized_tap(
                 tap_idx,
                 input,
+                &input_shape,
                 out_coord,
                 in_coord,
                 config,
@@ -36,7 +42,14 @@ impl TapResolver {
                 vector_size,
             )
         } else {
-            resolve_scalar_tap(input, out_coord, in_coord, config, vectorized_axis)
+            resolve_scalar_tap(
+                input,
+                &input_shape,
+                out_coord,
+                in_coord,
+                config,
+                vectorized_axis,
+            )
         }
     }
 }
@@ -59,12 +72,13 @@ fn is_resampling_vectorized_axis(
 #[cube]
 fn resolve_scalar_tap<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
+    input_shape: &CoordsDyn,
     out_coord: &CoordsDyn,
-    in_coord: &mut CoordsDyn,
+    in_coord: &mut Sequence<i32>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
 ) -> (Vector<F, N>, Vector<F, N>) {
-    let weight = Vector::new(Kernel::weight::<F>(
+    let weight = Vector::new(Kernel::weight::<F, N>(
         in_coord,
         out_coord,
         config,
@@ -72,7 +86,7 @@ fn resolve_scalar_tap<F: Float, N: Size>(
         0_usize,
     ));
 
-    let value = input.read(in_coord.clone());
+    let value = input.read(clamp_to_coords_dyn(input_shape, in_coord));
 
     (value, weight)
 }
@@ -81,8 +95,9 @@ fn resolve_scalar_tap<F: Float, N: Size>(
 fn resolve_vectorized_tap<F: Float, N: Size>(
     tap_idx: usize,
     input: &View<'_, Vector<F, N>, CoordsDyn>,
+    input_shape: &CoordsDyn,
     out_coord: &CoordsDyn,
-    in_coord: &mut CoordsDyn,
+    in_coord: &mut Sequence<i32>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
@@ -94,9 +109,10 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
     for lane in 0..vector_size {
         map_coord::<F>(tap_idx, out_coord, in_coord, lane, config, vectorized_axis);
 
-        let lane_weight = Kernel::weight::<F>(in_coord, out_coord, config, vectorized_axis, lane);
+        let lane_weight =
+            Kernel::weight::<F, N>(in_coord, out_coord, config, vectorized_axis, lane);
 
-        let lane_values = input.read(in_coord.clone());
+        let lane_values = input.read(clamp_to_coords_dyn(input_shape, in_coord));
         let extract_idx = in_coord[vectorized_axis] as usize % vector_size;
         let lane_value = lane_values.extract(extract_idx);
 
