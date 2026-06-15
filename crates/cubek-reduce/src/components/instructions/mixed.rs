@@ -52,6 +52,36 @@ pub enum ReduceOperationConfig {
 }
 
 impl ReduceOperationConfig {
+    /// Shared-memory bytes one accumulator slot uses (total usage is this times the
+    /// slot count). `acc_elem_size` is the accumulation element size (`P::EA`),
+    /// `vector_size` the input vectorization. Mirrors each instruction's
+    /// `SharedAccumulator` layout: one value slice, plus a `u32` index slice for
+    /// `Arg*`, scaled by `k` for top-k.
+    pub fn shared_memory_bytes_per_accumulator(
+        &self,
+        acc_elem_size: usize,
+        vector_size: usize,
+    ) -> usize {
+        // Index slices are `Vector<u32, SI>` for every instruction that has them
+        // (`ArgAccumulator` and `ArgTopKSharedAccumulator`), so the index element is
+        // always u32. Revisit this if indices ever widen (e.g. u64 coordinates).
+        let index_elem_size = core::mem::size_of::<u32>();
+        let (value_slices, index_slices) = match self {
+            ReduceOperationConfig::Sum
+            | ReduceOperationConfig::Prod
+            | ReduceOperationConfig::Mean
+            | ReduceOperationConfig::MaxAbs
+            | ReduceOperationConfig::Max
+            | ReduceOperationConfig::Min
+            | ReduceOperationConfig::Any
+            | ReduceOperationConfig::All => (1, 0),
+            ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMin => (1, 1),
+            ReduceOperationConfig::ArgTopK(k) => (*k, *k),
+            ReduceOperationConfig::TopK(k) => (*k, 0),
+        };
+        (value_slices * acc_elem_size + index_slices * index_elem_size) * vector_size
+    }
+
     /// Computes the best case precision for the given config.
     pub fn precision(&self, input: ElemType, output: Option<ElemType>) -> ReduceDtypes {
         match self {
@@ -619,6 +649,31 @@ mod tests {
     /// storage (e.g. the u8/u32 backing of a bool tensor), like Arg* indices.
     /// Check both for a narrow float (f16, the type that motivated this work)
     /// and an integer input.
+    /// Pin the footprint for one op of each layout. f32 is 4 bytes, so `ArgTopK(k)`
+    /// is `8 * k` bytes.
+    #[test]
+    fn shared_memory_footprint_matches_accumulator_layout() {
+        use ReduceOperationConfig::*;
+        let cases = [
+            (Sum, 4),
+            (ArgMax, 8),
+            (TopK(7), 7 * 4),
+            (ArgTopK(13), 13 * 8),
+        ];
+        for (config, expected) in cases {
+            assert_eq!(
+                config.shared_memory_bytes_per_accumulator(4, 1),
+                expected,
+                "footprint for {config:?}"
+            );
+        }
+        // Vectorization scales every slice uniformly.
+        assert_eq!(
+            ArgTopK(13).shared_memory_bytes_per_accumulator(4, 4),
+            13 * 8 * 4
+        );
+    }
+
     #[test]
     fn any_all_precision_keeps_accumulation_narrow() {
         let inputs = [ElemType::Float(FloatKind::F16), ElemType::Int(IntKind::I32)];
