@@ -67,16 +67,7 @@ pub fn resample_coord<F: Float, N: Size>(
 ) {
     let mut accumulator = ResampleInstruction::initialize(config);
 
-    let vector_size = N::value();
-
-    accumulate_taps::<F, N>(
-        input,
-        out_coord,
-        &mut accumulator,
-        config,
-        vectorized_axis,
-        vector_size,
-    );
+    accumulate_taps::<F, N>(input, out_coord, &mut accumulator, config, vectorized_axis);
 
     ResampleInstruction::store(out_coord.clone(), output, accumulator, config);
 }
@@ -89,7 +80,6 @@ fn accumulate_taps<F: Float, N: Size>(
     accumulator: &mut Accumulator<F, N>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] vector_size: usize,
 ) {
     let num_taps = comptime! {
         let mut num_taps = 1;
@@ -112,7 +102,6 @@ fn accumulate_taps<F: Float, N: Size>(
             accumulator,
             config,
             vectorized_axis,
-            vector_size,
         );
     }
 }
@@ -182,21 +171,13 @@ fn accumulate_tap<F: Float, N: Size>(
     accumulator: &mut Accumulator<F, N>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] vector_size: usize,
 ) {
     map_coord::<F>(tap_idx, out_coord, in_coord, 0, config, vectorized_axis);
 
     ResampleInstruction::count_position(accumulator, out_coord, config);
 
-    let (mut value, weight) = TapResolver::resolve(
-        tap_idx,
-        input,
-        out_coord,
-        in_coord,
-        config,
-        vectorized_axis,
-        vector_size,
-    );
+    let (mut value, weight) =
+        TapResolver::resolve(tap_idx, input, out_coord, in_coord, config, vectorized_axis);
 
     ResampleInstruction::combine(&mut value, weight, tap_idx, config);
 

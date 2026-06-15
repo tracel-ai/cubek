@@ -17,14 +17,13 @@ impl TapResolver {
         in_coord: &mut Sequence<i32>,
         #[comptime] config: &Resample,
         #[comptime] vectorized_axis: usize,
-        #[comptime] vector_size: usize,
     ) -> (Vector<F, N>, Vector<F, N>) {
         let input_shape = input.shape();
 
         let resampling_vectorized_axis = comptime!(is_resampling_vectorized_axis(
             config,
             vectorized_axis,
-            vector_size,
+            N::value(),
         ));
 
         if resampling_vectorized_axis {
@@ -36,7 +35,6 @@ impl TapResolver {
                 in_coord,
                 config,
                 vectorized_axis,
-                vector_size,
             )
         } else {
             resolve_scalar_tap(
@@ -103,8 +101,9 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
     in_coord: &mut Sequence<i32>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] vector_size: usize,
 ) -> (Vector<F, N>, Vector<F, N>) {
+    let vector_size = N::value();
+
     let mut weight = Vector::empty();
     let mut value = Vector::empty();
 
