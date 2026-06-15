@@ -8,11 +8,12 @@
 //! blocks are just different arguments. Operand data and the comparison come from
 //! `cubek-test-utils`; only the cubek-tile `Space`/`Partitioner` wiring is built here.
 
-use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape,
-};
+use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
-use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, TileArgLaunch};
+use cubek_tile::{
+    Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
+    TileArgLaunch,
+};
 
 const SEED: u64 = 0xC0FF_EE00;
 
@@ -74,11 +75,17 @@ fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) 
         .untiled()
         .zeros();
 
+    // One cube per tile: the spatial partitioner maps each tiled axis to a cube
+    // dimension, so the kernel's walk gives each cube exactly its own tile.
+    let values_space = values.space();
+    let cube_count = values_space.partitioner().cube_count(&values_space);
+    let cube_dim = values_space.partitioner().cube_dim(&client, &values_space);
+
     let dtype = f32::as_type_native_unchecked().storage_type();
     cubek_quant::dequantize_tiled::dequantize::launch::<TestRuntime>(
         &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
+        cube_count,
+        cube_dim,
         TileArgLaunch::new(values.tensor_arg(1), values.space(), values.storage()),
         TileArgLaunch::new(scales.tensor_arg(1), scales.space(), scales.storage()),
         TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
@@ -150,12 +157,26 @@ fn axes(rank: usize) -> Vec<Axis> {
     (0..rank as u8).map(Axis).collect()
 }
 
-/// A row-major, single-instance partitioner tiling `axes` by the given per-axis edges.
-fn row_major_seq_nd(axes: &[Axis], edges: &[usize]) -> Partitioner {
+/// A row-major partitioner that hands **one tile per cube**: each tiled axis is spread
+/// `Spatial` across a cube dimension (X/Y/Z), one tile per instance. The kernel's walk
+/// then resolves to exactly this cube's tile, so tiles run in parallel. Rank must be ≤ 3.
+fn row_major_spatial_nd(axes: &[Axis], edges: &[usize]) -> Partitioner {
+    const CUBE_AXES: [CubeAxis; 3] = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
+    assert!(axes.len() <= CUBE_AXES.len(), "spatial tiling supports rank ≤ 3");
     let edges: Vec<(Axis, usize)> = axes.iter().copied().zip(edges.iter().copied()).collect();
     let dists: Vec<(Axis, Distribution)> = axes
         .iter()
-        .map(|&a| (a, Distribution::Sequential))
+        .enumerate()
+        .map(|(i, &a)| {
+            (
+                a,
+                Distribution::Spatial {
+                    scope: ComputeScope::Cube(CUBE_AXES[i]),
+                    spread: Spread::Contiguous,
+                    coverage: Coverage::TilesEach(1),
+                },
+            )
+        })
         .collect();
     Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists)).direct()
 }
@@ -163,7 +184,7 @@ fn row_major_seq_nd(axes: &[Axis], edges: &[usize]) -> Partitioner {
 /// A `Space` over `axes` with the given extents, tiled by `edges`.
 fn space_nd(axes: &[Axis], extents: &[usize], edges: &[usize]) -> Space {
     let entries: Vec<(Axis, usize)> = axes.iter().copied().zip(extents.iter().copied()).collect();
-    Space::new(&entries).with_partitioner(row_major_seq_nd(axes, edges))
+    Space::new(&entries).with_partitioner(row_major_spatial_nd(axes, edges))
 }
 
 /// Row-major unravel of a flat index into per-axis coordinates.
