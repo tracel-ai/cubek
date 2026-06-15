@@ -78,6 +78,10 @@ name = "gemm"
 
 [[bench]]
 harness = false
+name = "gemm_cpu"
+
+[[bench]]
+harness = false
 name = "gemv"
 
 [[bench]]

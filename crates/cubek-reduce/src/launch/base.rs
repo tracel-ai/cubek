@@ -50,6 +50,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         reduce_count,
         axis: reduce_axis,
         dtypes,
+        instruction: inst,
         address_type,
     };
     let vectorization_mode = match input.strides[reduce_axis] {

@@ -40,6 +40,13 @@ pub enum ReduceError {
     #[error("Atomic add not supported by the client for {0}")]
     MissingAtomicAdd(StorageType),
 
+    /// The selected blueprint stages more accumulators in shared memory than the
+    /// device allows.
+    #[error(
+        "Reduce blueprint requires {requested} bytes of shared memory, but only {available} bytes are available on the device."
+    )]
+    SharedMemoryOverflow { requested: usize, available: usize },
+
     /// An error happened during launch.
     #[error("An error happened during launch\nCaused by:\n  {0}")]
     Launch(LaunchError),
