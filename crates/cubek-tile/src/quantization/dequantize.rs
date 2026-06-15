@@ -1,4 +1,5 @@
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::{Space, Tile, TileExpand, Walk};
 
@@ -87,6 +88,74 @@ impl<O: CubeMul + Cast> Tile<O> {
                         o.write((r, c), O::cast_from(q) * O::cast_from(scale));
                     }
                 }
+            }
+        }
+    }
+}
+
+#[cube]
+impl<O: CubeMul + Cast> Tile<O> {
+    /// Native per-tensor and per-block dequantization for blocks of any rank.
+    ///
+    /// Scales are an N-D block *grid*: one scale per block, with the grid `extent[a] /
+    /// block_size[a]` on each axis. The per-axis block size is derived from how much
+    /// coarser the scale grid is than the values, so per-tensor, 1-D, 2-D and N-D blocks
+    /// all share this code. Each value element maps to a block-grid cell by
+    /// `cell[a] = global[a] / block_size[a]`.
+    pub fn dequantize3<I: CubePrimitive, S: CubePrimitive>(
+        &mut self,
+        values: &Tile<I>,
+        scales: &Tile<S>,
+    ) {
+        let space = comptime!(values.space.clone());
+        let rank = comptime!(space.rank());
+
+        let walk = Walk::over(comptime!(space.clone()));
+        for i in 0..walk.total() {
+            let region = walk.region(i);
+
+            let lhs = values.at(&region);
+            let mut out = self.at(&region);
+            // The whole block grid, read at absolute cell coords (scales aren't tiled).
+            let s_all = scales.view();
+
+            let v = lhs.view();
+            let mut o = out.view_mut();
+            let shape = v.shape(); // this tile's extent, per axis
+
+            let mut total = 1u32;
+            #[unroll]
+            for a in 0..rank {
+                total *= shape[a];
+            }
+
+            for lin in 0..total {
+                // Unravel the linear index into local (in-tile) coords, row-major.
+                let mut local = CoordsDyn::new();
+                #[unroll]
+                for a in 0..rank {
+                    let mut weight = 1u32;
+                    #[unroll]
+                    for b in a + 1..rank {
+                        weight *= shape[b];
+                    }
+                    local.push((lin / weight) % shape[a]);
+                }
+
+                // Map each axis's global position to its block-grid cell.
+                let mut cell = CoordsDyn::new();
+                #[unroll]
+                for a in 0..rank {
+                    let axis = comptime!(space.axis_at(a));
+                    let edge = comptime!(space.partitioner().edge(axis));
+                    let block = comptime!(space.extent_at(a) / scales.space.extent_at(a));
+                    let global = region.coord(axis) * edge + local[a] as usize;
+                    cell.push((global / block) as u32);
+                }
+
+                let q = v.read(local.clone());
+                let scale = s_all.read(cell);
+                o.write(local, O::cast_from(q) * O::cast_from(scale));
             }
         }
     }
