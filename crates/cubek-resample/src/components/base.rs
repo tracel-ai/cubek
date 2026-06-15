@@ -1,8 +1,8 @@
 use crate::components::resample_instruction::Accumulator;
-use crate::definition::Resample;
+use crate::definition::{Resample, ResampleArgs};
 use crate::{
     components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver},
-    definition::{Kernel, Placement},
+    definition::Kernel,
 };
 use cubecl::{
     prelude::*,
@@ -20,6 +20,7 @@ pub fn resample_kernel<F: Float, N: Size>(
     output_shape: Sequence<FastDivmod<usize>>,
     output_strides: Sequence<FastDivmod<usize>>,
     working_units: usize,
+    args: ResampleArgs,
     #[comptime] config: Resample,
     #[comptime] vectorized_axis: usize,
     #[define(F)] _dtype: StorageType,
@@ -32,7 +33,7 @@ pub fn resample_kernel<F: Float, N: Size>(
 
     let out_coord = get_coord(index * output.vector_size(), &output_shape, &output_strides);
 
-    resample_coord::<F, N>(input, output, &out_coord, &config, vectorized_axis);
+    resample_coord::<F, N>(input, output, &out_coord, &args, &config, vectorized_axis);
 }
 
 /// Convert a linear index to a coordinate.
@@ -62,6 +63,7 @@ pub fn resample_coord<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
 ) {
@@ -73,6 +75,7 @@ pub fn resample_coord<F: Float, N: Size>(
         input,
         out_coord,
         &mut accumulator,
+        args,
         config,
         vectorized_axis,
         vector_size,
@@ -87,6 +90,7 @@ fn accumulate_taps<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
     accumulator: &mut Accumulator<F, N>,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
@@ -110,6 +114,7 @@ fn accumulate_taps<F: Float, N: Size>(
             out_coord,
             &mut in_coord,
             accumulator,
+            args,
             config,
             vectorized_axis,
             vector_size,
@@ -137,6 +142,7 @@ pub fn map_coord<F: Float>(
     out_coord: &CoordsDyn,
     in_coord: &mut Sequence<i32>,
     lane: usize,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
 ) {
@@ -147,6 +153,7 @@ pub fn map_coord<F: Float>(
     #[unroll]
     for axis_idx in comptime!(0..config.resample_axes.len()) {
         let resample_axis = config.resample_axes.index(axis_idx);
+        let placement_args = args.placement_args.index(axis_idx);
 
         let num_taps = Kernel::num_taps(&resample_axis.kernel);
         let radius = num_taps.div_ceil(2);
@@ -159,7 +166,7 @@ pub fn map_coord<F: Float>(
             out_pos
         };
 
-        let center = Placement::map::<F>(lane_out_pos, &resample_axis.placement);
+        let center = placement_args.map::<F>(lane_out_pos, &resample_axis.placement);
         let center_floored = center.floor();
 
         let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
@@ -180,11 +187,20 @@ fn accumulate_tap<F: Float, N: Size>(
     out_coord: &CoordsDyn,
     in_coord: &mut Sequence<i32>,
     accumulator: &mut Accumulator<F, N>,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
 ) {
-    map_coord::<F>(tap_idx, out_coord, in_coord, 0, config, vectorized_axis);
+    map_coord::<F>(
+        tap_idx,
+        out_coord,
+        in_coord,
+        0,
+        args,
+        config,
+        vectorized_axis,
+    );
 
     ResampleInstruction::count_position(accumulator, out_coord, config);
 
@@ -193,6 +209,7 @@ fn accumulate_tap<F: Float, N: Size>(
         input,
         out_coord,
         in_coord,
+        args,
         config,
         vectorized_axis,
         vector_size,

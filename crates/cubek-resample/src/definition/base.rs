@@ -1,5 +1,32 @@
-use crate::definition::{Kernel, Placement, Semiring};
+use crate::definition::{Kernel, Placement, PlacementArg, Semiring};
 use cubecl::prelude::*;
+
+/// Resampling operation.
+#[derive(CubeType, CubeLaunch)]
+pub struct ResampleArgs {
+    pub placement_args: Sequence<PlacementArg>,
+}
+
+impl ResampleArgs {
+    pub fn new() -> Self {
+        Self {
+            placement_args: Sequence::new(),
+        }
+    }
+
+    pub fn with_placement_arg(mut self, placement_arg: PlacementArg) -> Self {
+        self.placement_args.push(placement_arg);
+        self
+    }
+
+    pub fn to_launch<R: Runtime>(self) -> ResampleArgsLaunch<R> {
+        let mut placement_args = SequenceArg::new();
+        for placement_arg in self.placement_args.iter() {
+            placement_args.push(placement_arg.to_launch::<R>());
+        }
+        ResampleArgsLaunch::new(placement_args)
+    }
+}
 
 /// Resampling operation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]

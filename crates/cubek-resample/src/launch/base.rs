@@ -1,4 +1,7 @@
-use crate::{components::resample_kernel, definition::Resample};
+use crate::{
+    components::resample_kernel,
+    definition::{Resample, ResampleArgsLaunch},
+};
 use cubecl::{
     calculate_cube_count_elemwise,
     prelude::*,
@@ -19,6 +22,7 @@ pub fn resample_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
+    args: ResampleArgsLaunch<R>,
     config: Resample,
     dtype: StorageType,
 ) {
@@ -44,6 +48,7 @@ pub fn resample_launch<R: Runtime>(
             output_shape,
             output_strides,
             working_units,
+            args,
             config,
             vectorized_axis,
             dtype,

@@ -1,5 +1,5 @@
 use super::map_coord;
-use crate::definition::{BoundaryMode, Kernel, Resample};
+use crate::definition::{BoundaryMode, Kernel, Resample, ResampleArgs};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::CoordsDyn},
@@ -15,6 +15,7 @@ impl TapResolver {
         input: &View<'_, Vector<F, N>, CoordsDyn>,
         out_coord: &CoordsDyn,
         in_coord: &mut Sequence<i32>,
+        args: &ResampleArgs,
         #[comptime] config: &Resample,
         #[comptime] vectorized_axis: usize,
         #[comptime] vector_size: usize,
@@ -34,6 +35,7 @@ impl TapResolver {
                 &input_shape,
                 out_coord,
                 in_coord,
+                args,
                 config,
                 vectorized_axis,
                 vector_size,
@@ -44,6 +46,7 @@ impl TapResolver {
                 &input_shape,
                 out_coord,
                 in_coord,
+                args,
                 config,
                 vectorized_axis,
             )
@@ -74,6 +77,7 @@ fn resolve_scalar_tap<F: Float, N: Size>(
     input_shape: &CoordsDyn,
     out_coord: &CoordsDyn,
     in_coord: &mut Sequence<i32>,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
 ) -> (Vector<F, N>, Vector<F, N>) {
@@ -83,6 +87,7 @@ fn resolve_scalar_tap<F: Float, N: Size>(
         out_coord,
         in_coord,
         &clamped_coord,
+        args,
         config,
         vectorized_axis,
         0_usize,
@@ -101,6 +106,7 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
     input_shape: &CoordsDyn,
     out_coord: &CoordsDyn,
     in_coord: &mut Sequence<i32>,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
@@ -110,7 +116,15 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
 
     #[unroll]
     for lane in 0..vector_size {
-        map_coord::<F>(tap_idx, out_coord, in_coord, lane, config, vectorized_axis);
+        map_coord::<F>(
+            tap_idx,
+            out_coord,
+            in_coord,
+            lane,
+            args,
+            config,
+            vectorized_axis,
+        );
 
         let clamped_coord = clamp_to_coords_dyn(input_shape, in_coord);
 
@@ -118,6 +132,7 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
             out_coord,
             in_coord,
             &clamped_coord,
+            args,
             config,
             vectorized_axis,
             lane,
@@ -155,17 +170,18 @@ fn compute_weight<F: Float, N: Size>(
     out_coord: &CoordsDyn,
     in_coord: &mut Sequence<i32>,
     clamped_coord: &CoordsDyn,
+    args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] lane: usize,
 ) -> F {
     match config.boundary {
         BoundaryMode::Clamp => {
-            Kernel::weight::<F, N>(in_coord, out_coord, config, vectorized_axis, lane)
+            Kernel::weight::<F, N>(in_coord, out_coord, args, config, vectorized_axis, lane)
         }
         BoundaryMode::Zero => select(
             is_in_bounds(in_coord, &clamped_coord),
-            Kernel::weight::<F, N>(in_coord, out_coord, config, vectorized_axis, lane),
+            Kernel::weight::<F, N>(in_coord, out_coord, args, config, vectorized_axis, lane),
             F::zero(),
         ),
     }
