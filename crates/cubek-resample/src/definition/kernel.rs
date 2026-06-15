@@ -101,7 +101,7 @@ fn compute_frac_kernel<F: Float>(
     #[comptime] vectorized_axis: usize,
     #[comptime] lane: usize,
 ) -> F {
-    let lane_pos = compute_lane_pos::<F>(out_coord, resample_axis, vectorized_axis, lane);
+    let lane_pos = compute_lane_pos(out_coord, resample_axis, vectorized_axis, lane);
     let frac = compute_frac::<F>(in_coord, lane_pos, resample_axis);
 
     match resample_axis.kernel {
@@ -117,7 +117,7 @@ fn compute_frac_kernel<F: Float>(
 
 /// Computes the lane position.
 #[cube]
-fn compute_lane_pos<F: Float>(
+fn compute_lane_pos(
     out_coord: &CoordsDyn,
     #[comptime] resample_axis: &ResampleAxis,
     #[comptime] vectorized_axis: usize,
@@ -140,9 +140,8 @@ fn compute_frac<F: Float>(
     #[comptime] resample_axis: &ResampleAxis,
 ) -> F {
     let center = Placement::map::<F>(lane_pos, &resample_axis.placement);
-    let frac = F::cast_from(in_coord[resample_axis.axis]) - center;
 
-    frac
+    F::cast_from(in_coord[resample_axis.axis]) - center
 }
 
 /// Computes the linear weight for a given fractional position.

@@ -164,7 +164,7 @@ fn compute_weight<F: Float, N: Size>(
             Kernel::weight::<F, N>(in_coord, out_coord, config, vectorized_axis, lane)
         }
         BoundaryMode::Zero => select(
-            is_in_bounds(in_coord, &clamped_coord),
+            is_in_bounds(in_coord, clamped_coord),
             Kernel::weight::<F, N>(in_coord, out_coord, config, vectorized_axis, lane),
             F::zero(),
         ),
