@@ -117,6 +117,19 @@ fn accumulate_taps<F: Float, N: Size>(
     }
 }
 
+/// Convert CoordsDyn to Sequence<i32>.
+#[cube]
+fn from_coords_dyn(coords: &CoordsDyn) -> Sequence<i32> {
+    let mut coords_i32 = Sequence::new();
+
+    #[unroll]
+    for i in 0..coords.len() {
+        coords_i32.push(coords[i] as i32);
+    }
+
+    coords_i32
+}
+
 /// Map output coordinate to input coordinate for a given tap index and lane.
 #[cube]
 pub fn map_coord<F: Float>(
@@ -187,31 +200,5 @@ fn accumulate_tap<F: Float, N: Size>(
 
     ResampleInstruction::combine(&mut value, weight, tap_idx, config);
 
-    ResampleInstruction::accumulate(accumulator, value, tap_idx, config);
-}
-
-/// Convert CoordsDyn to Sequence<i32>.
-#[cube]
-fn from_coords_dyn(coords: &CoordsDyn) -> Sequence<i32> {
-    let mut coords_i32 = Sequence::new();
-
-    #[unroll]
-    for i in 0..coords.len() {
-        coords_i32.push(coords[i] as i32);
-    }
-
-    coords_i32
-}
-
-/// Clamp coordinates from Sequence<i32> to CoordsDyn, with bounds check.
-#[cube]
-pub fn clamp_to_coords_dyn(shape: &CoordsDyn, coords: &mut Sequence<i32>) -> CoordsDyn {
-    let mut clamped_coord = CoordsDyn::new();
-
-    #[unroll]
-    for i in 0..coords.len() {
-        clamped_coord.push(coords[i].clamp(0, (shape[i] - 1) as i32) as u32);
-    }
-
-    clamped_coord
+    ResampleInstruction::accumulate(accumulator, value, weight, tap_idx, config);
 }
