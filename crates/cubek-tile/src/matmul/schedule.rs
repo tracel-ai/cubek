@@ -3,8 +3,7 @@
 
 use cubecl::prelude::*;
 
-use super::leaf::Mma;
-use crate::*;
+use crate::{matmul::lower::Mma, *};
 
 /// `Direct`: no staging
 #[cube]

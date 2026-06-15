@@ -6,8 +6,10 @@ use crate::*;
 
 /// Fully unroll the `mr × nr` register block only up to this many cells. Past it the
 /// load/store loops run at runtime: a larger block (the heuristic sizes tiles for L1, not
-/// registers) would inline hundreds of cells — and, when edge-masked, as many bounds
-/// branches — into one straight chain, overflowing the optimizer's recursive block pass.
+/// registers) would inline hundreds of cells into one straight chain, overflowing the
+/// optimizer's recursive block pass. An *edge-masked* block never fully unrolls regardless
+/// of size — each guarded load/store is its own CFG branch, so `mr × nr` of them in a chain
+/// blow the recursive passes even well under this cap (see [`mma_register`]).
 const UNROLL_BLOCK: usize = 64;
 
 /// Run the register microkernel over each batch matrix. `mr × nr` are the accumulator's
@@ -54,20 +56,20 @@ fn mma_register<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
     #[comptime] nr: usize,
     #[comptime] kc: usize,
 ) {
-    let unroll = comptime!(mr * nr <= UNROLL_BLOCK);
+    // Unroll only when no mask, otherwise compilation too long
+    let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs.check && !rhs.check && !acc.check);
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
+
     #[unroll(unroll)]
     for i in 0..mr {
         #[unroll(unroll)]
         for j in 0..nr {
-            // An out-of-bounds accumulator cell reads 0; its store is skipped below, so
-            // the overhang never round-trips through gmem.
             c[i * nr + j] = acc.read((i as u32, j as u32));
         }
     }
 
     for p in 0..kc {
-        outer_product::<E, EL, ER, L, V>(lhs, rhs, &mut c, p, mr, nr);
+        outer_product::<E, EL, ER, L, V>(lhs, rhs, &mut c, p, mr, nr, unroll);
     }
 
     #[unroll(unroll)]
@@ -90,10 +92,11 @@ fn outer_product<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
     p: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
+    #[comptime] unroll: bool,
 ) {
     // `p` is a runtime K step (the `kc` loop never unrolls), so the line index and lane
-    // fold are runtime too; `extract` takes a runtime index.
-    let unroll = comptime!(mr * nr <= UNROLL_BLOCK);
+    // fold are runtime too; `extract` takes a runtime index. `unroll` mirrors the caller's
+    // masked-block decision so a masked tile keeps these inner loops at runtime too.
     let l = comptime!(L::value());
     let mut b = Array::<Vector<E, V>>::new(nr);
     #[unroll(unroll)]

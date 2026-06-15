@@ -122,7 +122,7 @@ impl<T: CubePrimitive> Tile<T> {
 pub struct MaskedView<'a, T: CubePrimitive> {
     view: View<'a, T, Coords2d>,
     #[cube(comptime)]
-    check: bool,
+    pub(crate) check: bool,
 }
 
 #[cube]
@@ -150,7 +150,7 @@ impl<'a, T: CubePrimitive> MaskedView<'a, T> {
 pub struct MaskedViewMut<'a, T: CubePrimitive> {
     view: ViewMut<'a, T, Coords2d>,
     #[cube(comptime)]
-    check: bool,
+    pub(crate) check: bool,
 }
 
 #[cube]

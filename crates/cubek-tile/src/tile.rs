@@ -386,7 +386,11 @@ impl<T: CubePrimitive> MemData<T> {
 
     /// The `i`-th batch matrix as a 2-D view. Mirrors [`Tile::matrix_mut`] for callers that
     /// hold the payload rather than the whole tile, so the `space` is passed in.
-    pub(crate) fn matrix_mut(&mut self, i: usize, #[comptime] space: Space) -> MaskedViewMut<'_, T> {
+    pub(crate) fn matrix_mut(
+        &mut self,
+        i: usize,
+        #[comptime] space: Space,
+    ) -> MaskedViewMut<'_, T> {
         let rank = comptime!(space.rank());
         let rows = comptime!(space.extent_at(rank - 2));
         let cols = comptime!(space.extent_at(rank - 1));
