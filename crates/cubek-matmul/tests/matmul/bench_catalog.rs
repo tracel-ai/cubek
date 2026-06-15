@@ -76,6 +76,13 @@ fn gemm_square_1x6144_rr_f16() {
     run_gemm("simple_cyclic_cmma", "square_1x6144_rr_f16");
 }
 
+/// CpuGemm through the benchmark-catalog path (vs the extended tests' `test_matmul_strategy`
+/// path). `vecmat` keeps the CPU reference cheap (`m = 1`).
+#[test]
+fn gemm_cpu_gemm_vecmat_2x1x4096x4096_rr_f32() {
+    run_gemm("cpu_gemm", "vecmat_2x1x4096x4096_rr_f32");
+}
+
 #[test]
 fn gemv_vecmat_b2_out4096_k8192_rr() {
     run_gemv("simple_vecmat", "vecmat_b2_out4096_k8192_rr");

@@ -546,9 +546,9 @@ impl Strategy {
             }
             Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
                 client,
-                WithLayout::strided_input(lhs),
-                WithLayout::strided_input(rhs),
-                WithLayout::strided_output(out),
+                WithLayout::strided_input(lhs)?,
+                WithLayout::strided_input(rhs)?,
+                WithLayout::strided_output(out)?,
                 strategy,
                 dtypes,
             ),

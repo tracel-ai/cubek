@@ -5,7 +5,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
-        layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
+        layout::{Coords1d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
     },
 };
 
@@ -76,10 +76,6 @@ pub struct Tile<T: CubePrimitive> {
     pub payload: Payload<T>,
     #[cube(comptime)]
     pub space: Space,
-    /// Comptime: whether this operand's edge reads/writes must be bounds-checked (the
-    /// logical extent overhangs its tile grid). `false` is the unchecked fast path.
-    #[cube(comptime)]
-    pub check: bool,
 }
 
 /// A tensor-core fragment plus its comptime config. `cmma::load` picks
@@ -119,6 +115,11 @@ pub struct MemData<T: CubePrimitive> {
     /// `0` = smem / untiled.
     #[cube(comptime)]
     levels: usize,
+    /// Whether edge reads/writes must be bounds-checked (the logical extent overhangs
+    /// the tile grid). `false` is the unchecked fast path. Smem never overhangs, so it's
+    /// always `false` there; gmem inherits its operand's launch-time flag.
+    #[cube(comptime)]
+    check: bool,
 }
 
 #[cube]
@@ -156,9 +157,9 @@ impl<T: CubePrimitive> Tile<T> {
                 start_axis,
                 num_tiled,
                 levels,
+                check: comptime!(storage.check_bounds),
             }),
             space: comptime!(space),
-            check: comptime!(storage.check_bounds),
         }
     }
 
@@ -182,9 +183,9 @@ impl<T: CubePrimitive> Tile<T> {
                 start_axis: comptime!(0usize),
                 num_tiled: comptime!(space.rank()),
                 levels: comptime!(0usize),
+                check: comptime!(false),
             }),
             space: comptime!(space),
-            check: comptime!(false),
         }
     }
 
@@ -206,7 +207,6 @@ impl<T: CubePrimitive> Tile<T> {
                 layout,
             }),
             space: comptime!(space),
-            check: comptime!(false),
         }
     }
 
@@ -248,7 +248,6 @@ impl<T: CubePrimitive> Tile<T> {
         Tile::<T> {
             payload,
             space: comptime!(self.space.divide()),
-            check: comptime!(self.check),
         }
     }
 
@@ -335,12 +334,11 @@ impl<T: CubePrimitive> Tile<T> {
     /// Memory to memory transit: copy each 2-D matrix of `src` into `self`
     /// element-wise.
     fn stage_from_memory(&mut self, src: &Tile<T>) {
-        let checked = comptime!(src.check);
         let matrices = self.matrix_count();
         for j in 0..matrices {
             let s = src.matrix(j);
             let mut d = self.matrix_mut(j);
-            copy_2d::<T>(&mut d, &s, checked);
+            copy_2d::<T>(&mut d, &s);
         }
     }
 }
@@ -363,13 +361,36 @@ impl<T: CubePrimitive> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
+    /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
+    /// so the leaf masks without being asked.
+    pub(crate) fn masked(&self, layout: BatchMatrix) -> MaskedView<'_, T> {
+        MaskedView::new(
+            self.buffer
+                .view(self.base())
+                .view(self.window())
+                .view(layout),
+            comptime!(self.check),
+        )
+    }
+
+    /// The mutable twin of [`masked`](MemData::masked).
+    pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MaskedViewMut<'_, T> {
+        let base = self.base();
+        let window = self.window();
+        let check = comptime!(self.check);
+        MaskedViewMut::new(
+            self.buffer.view_mut(base).view_mut(window).view_mut(layout),
+            check,
+        )
+    }
+
     /// The `i`-th batch matrix as a 2-D view. Mirrors [`Tile::matrix_mut`] for callers that
     /// hold the payload rather than the whole tile, so the `space` is passed in.
     pub(crate) fn matrix_mut(
         &mut self,
         i: usize,
         #[comptime] space: Space,
-    ) -> ViewMut<'_, T, Coords2d> {
+    ) -> MaskedViewMut<'_, T> {
         let rank = comptime!(space.rank());
         let rows = comptime!(space.extent_at(rank - 2));
         let cols = comptime!(space.extent_at(rank - 1));
@@ -384,10 +405,7 @@ impl<T: CubePrimitive> MemData<T> {
             }
             batches.push((i as u32 / weight) % shape[p]);
         }
-        let layout = BatchMatrix::new(batches, rows, cols);
-        let base = self.base();
-        let window = self.window();
-        self.buffer.view_mut(base).view_mut(window).view_mut(layout)
+        self.masked_mut(BatchMatrix::new(batches, rows, cols))
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate
@@ -418,6 +436,7 @@ impl<T: CubePrimitive> MemData<T> {
             start_axis: comptime!(self.start_axis),
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
+            check: comptime!(self.check),
         }
     }
 }
