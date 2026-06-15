@@ -153,7 +153,7 @@ pub fn map_coord<F: Float>(
     #[unroll]
     for axis_idx in comptime!(0..config.resample_axes.len()) {
         let resample_axis = config.resample_axes.index(axis_idx);
-        let placement_args = args.placement_args.index(axis_idx);
+        let resample_axis_args = args.resample_axes.index(axis_idx);
 
         let num_taps = Kernel::num_taps(&resample_axis.kernel);
         let radius = num_taps.div_ceil(2);
@@ -166,7 +166,9 @@ pub fn map_coord<F: Float>(
             out_pos
         };
 
-        let center = placement_args.map::<F>(lane_out_pos, &resample_axis.placement);
+        let center = resample_axis_args
+            .placement_args
+            .map::<F>(lane_out_pos, &resample_axis.placement);
         let center_floored = center.floor();
 
         let start_tap = isize::cast_from(center_floored) - radius as isize + 1;

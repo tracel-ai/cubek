@@ -10,7 +10,7 @@ pub enum Placement {
 }
 
 #[derive(CubeType, CubeLaunch)]
-pub struct PlacementArg {
+pub struct PlacementArgs {
     // Continuous args
     pub scale: f32,
     pub offset: f32,
@@ -19,7 +19,7 @@ pub struct PlacementArg {
     pub padding: isize,
 }
 
-impl PlacementArg {
+impl PlacementArgs {
     pub fn identity() -> Self {
         Self::windowed(1, 0)
     }
@@ -42,15 +42,15 @@ impl PlacementArg {
         }
     }
 
-    pub fn to_launch<R: Runtime>(&self) -> PlacementArgLaunch<R> {
-        PlacementArgLaunch::new(self.scale, self.offset, self.step, self.padding)
+    pub fn to_launch<R: Runtime>(&self) -> PlacementArgsLaunch<R> {
+        PlacementArgsLaunch::new(self.scale, self.offset, self.step, self.padding)
     }
 }
 
 #[cube]
-impl PlacementArg {
-    pub fn new() -> PlacementArg {
-        PlacementArg {
+impl PlacementArgs {
+    pub fn new() -> PlacementArgs {
+        PlacementArgs {
             scale: 0.0,
             offset: 0.0,
             step: 0,

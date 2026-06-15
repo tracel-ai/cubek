@@ -1,30 +1,46 @@
-use crate::definition::{Kernel, Placement, PlacementArg, Semiring};
+use crate::definition::{Kernel, Placement, PlacementArgs, Semiring};
 use cubecl::prelude::*;
 
-/// Resampling operation.
+/// Resampling args.
 #[derive(CubeType, CubeLaunch)]
 pub struct ResampleArgs {
-    pub placement_args: Sequence<PlacementArg>,
+    pub resample_axes: Sequence<ResampleAxisArgs>,
 }
 
 impl ResampleArgs {
     pub fn new() -> Self {
         Self {
-            placement_args: Sequence::new(),
+            resample_axes: Sequence::new(),
         }
     }
 
-    pub fn with_placement_arg(mut self, placement_arg: PlacementArg) -> Self {
-        self.placement_args.push(placement_arg);
+    pub fn with_resample_axis_args(mut self, resample_axis_args: ResampleAxisArgs) -> Self {
+        self.resample_axes.push(resample_axis_args);
         self
     }
 
     pub fn to_launch<R: Runtime>(self) -> ResampleArgsLaunch<R> {
-        let mut placement_args = SequenceArg::new();
-        for placement_arg in self.placement_args.iter() {
-            placement_args.push(placement_arg.to_launch::<R>());
+        let mut resample_axes_launch = SequenceArg::new();
+        for resample_axes_args in self.resample_axes.iter() {
+            resample_axes_launch.push(resample_axes_args.to_launch::<R>());
         }
-        ResampleArgsLaunch::new(placement_args)
+        ResampleArgsLaunch::new(resample_axes_launch)
+    }
+}
+
+/// Resampling axis args.
+#[derive(CubeType, CubeLaunch)]
+pub struct ResampleAxisArgs {
+    pub placement_args: PlacementArgs,
+}
+
+impl ResampleAxisArgs {
+    pub fn new(placement_args: PlacementArgs) -> Self {
+        Self { placement_args }
+    }
+
+    pub fn to_launch<R: Runtime>(&self) -> ResampleAxisArgsLaunch<R> {
+        ResampleAxisArgsLaunch::new(self.placement_args.to_launch::<R>())
     }
 }
 

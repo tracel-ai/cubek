@@ -1,4 +1,4 @@
-use crate::definition::{PlacementArg, Resample, ResampleArgs, ResampleAxis};
+use crate::definition::{PlacementArgs, Resample, ResampleArgs, ResampleAxis};
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 /// The kernel function, it determines the shape of the kernel.
@@ -68,12 +68,12 @@ impl Kernel {
         #[unroll]
         for axis_idx in 0..comptime!(config.resample_axes.len()) {
             let resample_axis = config.resample_axes.index(axis_idx);
-            let placement_args = args.placement_args.index(axis_idx);
+            let resample_axis_args = args.resample_axes.index(axis_idx);
 
             weight *= weight_1d::<F>(
                 in_coord,
                 out_coord,
-                placement_args,
+                &resample_axis_args.placement_args,
                 resample_axis,
                 vectorized_axis,
                 lane,
@@ -89,7 +89,7 @@ impl Kernel {
 fn weight_1d<F: Float>(
     in_coord: &mut Sequence<i32>,
     out_coord: &CoordsDyn,
-    placement_args: &PlacementArg,
+    placement_args: &PlacementArgs,
     #[comptime] resample_axis: &ResampleAxis,
     #[comptime] vectorized_axis: usize,
     #[comptime] lane: usize,
@@ -112,7 +112,7 @@ fn weight_1d<F: Float>(
 fn compute_frac_kernel<F: Float>(
     in_coord: &mut Sequence<i32>,
     out_coord: &CoordsDyn,
-    placement_args: &PlacementArg,
+    placement_args: &PlacementArgs,
     #[comptime] resample_axis: &ResampleAxis,
     #[comptime] vectorized_axis: usize,
     #[comptime] lane: usize,
@@ -153,7 +153,7 @@ fn compute_lane_pos<F: Float>(
 fn compute_frac<F: Float>(
     in_coord: &mut Sequence<i32>,
     lane_pos: usize,
-    placement_args: &PlacementArg,
+    placement_args: &PlacementArgs,
     #[comptime] resample_axis: &ResampleAxis,
 ) -> F {
     let center = placement_args.map::<F>(lane_pos, &resample_axis.placement);
