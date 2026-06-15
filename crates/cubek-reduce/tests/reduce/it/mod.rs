@@ -1,5 +1,6 @@
 pub mod test_case;
 
+mod argtopk_shared_memory;
 mod logical;
 
 macro_rules! testgen_reduce {

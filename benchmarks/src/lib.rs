@@ -6,6 +6,7 @@ pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
 pub use cubek_matmul::eval::benchmarks::gemm;
+pub use cubek_matmul::eval::benchmarks::gemm_cpu;
 pub use cubek_matmul::eval::benchmarks::gemv;
 pub use cubek_matmul::eval::benchmarks::quantized_matmul;
 pub use cubek_pool::eval::benchmarks as pool;
@@ -28,6 +29,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::conv2d::Category,
         &crate::fft::Category,
         &crate::gemm::Category,
+        &crate::gemm_cpu::Category,
         &crate::gemv::Category,
         &crate::interpolate::Category,
         &crate::memcpy_async::Category,
@@ -51,6 +53,9 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
             println!("---- {} / {} ----", strategy.label, problem.label);
             match category.run(&strategy.id, &problem.id, SAMPLES) {
                 Ok(samples) => {
+                    if let Some(tflops) = samples.tflops {
+                        println!("{tflops:.3} TFLOPS");
+                    }
                     let durations = BenchmarkDurations {
                         timing_method: category.timing_method(),
                         durations: samples.durations,

@@ -5,7 +5,10 @@ use cubecl::{
     Runtime,
     prelude::{TensorArg, TensorBinding},
 };
+use cubek_std::MatrixLayout;
 use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, Storage};
+
+use crate::definition::MatmulSetupError;
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,13 +56,13 @@ impl InnerLayout {
     /// whichever of the trailing two matrix axes is contiguous. Tiled layouts
     /// aren't expressible as plain strides, so a standard binding only ever
     /// resolves to a strided variant.
-    pub fn from_shape_and_strides(shape: &[usize], strides: &[usize]) -> Self {
-        let n = shape.len();
-        if strides[n - 2] == 1 && strides[n - 1] >= shape[n - 2] {
-            InnerLayout::ColMajor
-        } else {
-            InnerLayout::RowMajor
-        }
+    ///
+    /// Strict: one of the two matrix axes must be unit-stride.
+    pub fn from_shape_and_strides(
+        shape: &[usize],
+        strides: &[usize],
+    ) -> Result<Self, MatmulSetupError> {
+        Ok(MatrixLayout::from_shape_and_strides(shape, strides, None)?.into())
     }
 
     /// The per-operand [`ConcreteLayout`] this imposes on the matrix axes `[row, col]`:
@@ -284,5 +287,25 @@ mod tests {
         let wants_tiled =
             LayoutRequest::new().with(Constraint::required(Facet::Tiled { axis: B, edge: 4 }));
         assert!(wants_tiled.feasible(&layout));
+    }
+
+    // `[batch=2, rows=4, cols=8]` in each candidate physical layout.
+    #[test]
+    fn deduces_row_major_from_contiguous_cols() {
+        let l = InnerLayout::from_shape_and_strides(&[2, 4, 8], &[32, 8, 1]).unwrap();
+        assert_eq!(l, InnerLayout::RowMajor);
+    }
+
+    #[test]
+    fn deduces_col_major_from_contiguous_rows() {
+        let l = InnerLayout::from_shape_and_strides(&[2, 4, 8], &[32, 1, 4]).unwrap();
+        assert_eq!(l, InnerLayout::ColMajor);
+    }
+
+    #[test]
+    fn rejects_strided_contiguous_in_neither_axis() {
+        // A doubly-strided slice: neither matrix axis is unit-stride, so it's not a plain
+        // row/col matrix and must be rejected rather than silently labelled row-major.
+        assert!(InnerLayout::from_shape_and_strides(&[2, 4, 8], &[64, 16, 2]).is_err());
     }
 }
