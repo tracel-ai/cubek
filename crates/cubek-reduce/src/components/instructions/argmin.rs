@@ -1,8 +1,10 @@
 use super::{
-    ArgAccumulator, ReduceCoordinate, ReduceCoordinateExpand, ReduceFamily, ReduceInstruction,
-    ReduceRequirements, lowest_coordinate_matching,
+    ArgAccumulator, ReduceFamily, ReduceInstruction, ReduceRequirements, lowest_coordinate_matching,
 };
-use crate::components::precision::ReducePrecision;
+use crate::components::{
+    instructions::{Accumulator, AccumulatorFormat, Item, ReduceStep, Value},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 
 /// Compute the coordinate of the maximum item returning the smallest coordinate in case of equality.
@@ -26,9 +28,9 @@ impl ArgMin {
         coordinates1: Vector<u32, N>,
     ) -> (Vector<T, N>, Vector<u32, N>) {
         let to_keep = select_many(
-            items0.equal(items1),
-            coordinates0.less_than(coordinates1),
-            items0.less_than(items1),
+            items0.equal(&items1),
+            coordinates0.less_than(&coordinates1),
+            items0.less_than(&items1),
         );
         let items = select_many(to_keep, items0, items1);
         let coordinates = select_many(to_keep, coordinates0, coordinates1);
@@ -38,13 +40,17 @@ impl ArgMin {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
-    type AccumulatorItem = (Vector<P::EA, P::SI>, Vector<u32, P::SI>);
-    type SharedAccumulator = ArgAccumulator<P::EA, P::SI>;
+    type SharedAccumulator = ArgAccumulator<P>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
         ReduceRequirements { coordinates: true }
     }
+
+    fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
+        AccumulatorFormat::Single
+    }
+
     fn from_config(_config: Self::Config) -> Self {
         ArgMin {}
     }
@@ -53,87 +59,87 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
         Vector::empty().fill(P::EI::max_value())
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
-        (
-            Vector::empty().fill(P::EA::max_value()),
-            Vector::empty().fill(u32::MAX),
-        )
-    }
-
-    fn assign_accumulator(
-        _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
-    ) {
-        destination.0 = source.0;
-        destination.1 = source.1;
-    }
-
-    fn read_accumulator(
-        _this: &Self,
-        accumulator: &Self::AccumulatorItem,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        (
-            Vector::cast_from(accumulator.0),
-            ReduceCoordinate::new_Required(accumulator.1),
-        )
+    fn null_accumulator(_this: &Self) -> Accumulator<P> {
+        Accumulator::<P> {
+            elements: Value::new_single(Vector::empty().fill(P::EA::max_value())),
+            args: Value::new_single(Vector::empty().fill(u32::MAX)),
+        }
     }
 
     fn reduce(
         _this: &Self,
-        accumulator: &Self::AccumulatorItem,
-        item: Vector<P::EI, P::SI>,
-        coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: bool,
-    ) -> Self::AccumulatorItem {
-        #[comptime]
-        let coordinate = match coordinate {
-            ReduceCoordinate::Required(val) => val,
-            ReduceCoordinate::NotRequired => {
-                comptime! {panic!("Coordinates are required for ArgMin")};
-                #[allow(unreachable_code)]
-                Vector::new(0)
+        accumulator: &mut Accumulator<P>,
+        item: Item<P>,
+        #[comptime] reduce_step: ReduceStep,
+    ) {
+        let coordinate = item.args.item();
+        let item = item.elements;
+
+        let (candidate_item, candidate_coordinate) = match reduce_step {
+            ReduceStep::Plane => {
+                let candidate_item = plane_min(item);
+                let candidate_coordinate =
+                    lowest_coordinate_matching(candidate_item, item, coordinate);
+                (candidate_item, candidate_coordinate)
             }
+            ReduceStep::Identity => (item, coordinate),
         };
 
-        let (candidate_item, candidate_coordinate) = if use_planes {
-            let candidate_item = plane_min(item);
-            let candidate_coordinate = lowest_coordinate_matching(candidate_item, item, coordinate);
-            (candidate_item, candidate_coordinate)
-        } else {
-            (item, coordinate)
-        };
-
-        Self::choose_argmin(
-            accumulator.0,
-            accumulator.1,
+        let (elements, args) = Self::choose_argmin(
+            accumulator.elements.item(),
+            accumulator.args.item(),
             Vector::cast_from(candidate_item),
             candidate_coordinate,
-        )
+        );
+
+        accumulator.elements.assign(&Value::new_single(elements));
+        accumulator.args.assign(&Value::new_single(args));
     }
 
-    fn fuse_accumulators(
-        _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
-        Self::choose_argmin(lhs.0, lhs.1, rhs.0, rhs.1)
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let acc_item = accumulator.elements.item();
+        let coordinate = accumulator.args.item();
+
+        let candidate_item = plane_min(acc_item);
+        let candidate_coordinate = lowest_coordinate_matching(candidate_item, acc_item, coordinate);
+
+        let (elements, args) = Self::choose_argmin(
+            accumulator.elements.item(),
+            accumulator.args.item(),
+            Vector::cast_from(candidate_item),
+            candidate_coordinate,
+        );
+
+        accumulator.elements.assign(&Value::new_single(elements));
+        accumulator.args.assign(&Value::new_single(args));
     }
 
-    fn merge_vector<Out: Numeric>(
+    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+        let (elements, args) = Self::choose_argmin(
+            accumulator.elements.item(),
+            accumulator.args.item(),
+            other.elements.item(),
+            other.args.item(),
+        );
+
+        accumulator.elements.assign(&Value::new_single(elements));
+        accumulator.args.assign(&Value::new_single(args));
+    }
+
+    fn to_output_parallel<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Out {
-        let vector_size = accumulator.0.size().comptime();
-        if vector_size > 1 {
+    ) -> Value<Out> {
+        let vector_size = accumulator.elements.item().size().comptime();
+        let value = if vector_size > 1 {
             let mut min = P::EA::max_value();
             let mut coordinate = u32::MAX.runtime();
 
             #[unroll]
             for k in 0..vector_size {
-                let acc_element = accumulator.0[k];
-                let acc_coordinate = accumulator.1[k];
+                let acc_element = accumulator.elements.item().extract(k);
+                let acc_coordinate = accumulator.args.item().extract(k);
                 // TODO replace with select
                 if acc_element == min && acc_coordinate < coordinate {
                     coordinate = acc_coordinate;
@@ -144,15 +150,17 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ArgMin {
             }
             Out::cast_from(coordinate)
         } else {
-            Out::cast_from(accumulator.1)
-        }
+            Out::cast_from(accumulator.args.item())
+        };
+
+        Value::new_single(value)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Vector<Out, P::SI> {
-        Vector::cast_from(accumulator.1)
+    ) -> Value<Vector<Out, P::SI>> {
+        Value::new_single(Vector::cast_from(accumulator.args.item()))
     }
 }

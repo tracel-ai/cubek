@@ -1,24 +1,24 @@
 use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
-        args::NumericLine,
-        instructions::{ReduceCoordinate, ReduceRequirements},
+        args::NumericVector,
+        instructions::{ReduceRequirements, Value},
         readers::{parallel::ParallelReader, perpendicular::PerpendicularReader},
     },
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
-pub enum Reader<P: ReducePrecision> {
-    Parallel(ParallelReader<P>),
-    Perpendicular(PerpendicularReader<P>),
+pub enum Reader<'a, P: ReducePrecision> {
+    Parallel(ParallelReader<'a, P>),
+    Perpendicular(PerpendicularReader<'a, P>),
 }
 
 #[cube]
-impl<P: ReducePrecision> Reader<P> {
+impl<'a, P: ReducePrecision> Reader<'a, P> {
     #[allow(clippy::too_many_arguments)]
-    pub fn new<I: ReduceInstruction<P>, Out: NumericLine>(
-        input: &VirtualTensor<P::EI, P::SI>,
+    pub fn new<I: ReduceInstruction<P>, Out: NumericVector>(
+        input: &'a VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         inst: &I,
         reduce_axis: usize,
@@ -26,7 +26,13 @@ impl<P: ReducePrecision> Reader<P> {
         idle: ComptimeOption<bool>,
         #[comptime] bound_checks: BoundChecks,
         #[comptime] vectorization_mode: VectorizationMode,
-    ) -> Reader<P> {
+        #[comptime] plane_dim_ceil: bool,
+    ) -> Reader<'a, P> {
+        let effective_plane_dim = if plane_dim_ceil {
+            min(CUBE_DIM_X, PLANE_DIM)
+        } else {
+            CUBE_DIM_X
+        };
         match vectorization_mode {
             VectorizationMode::Parallel => {
                 Reader::<P>::new_Parallel(ParallelReader::<P>::new::<I, Out>(
@@ -36,6 +42,7 @@ impl<P: ReducePrecision> Reader<P> {
                     reduce_axis,
                     reduce_index,
                     idle,
+                    effective_plane_dim,
                     bound_checks,
                 ))
             }
@@ -47,6 +54,7 @@ impl<P: ReducePrecision> Reader<P> {
                     reduce_axis,
                     reduce_index,
                     idle,
+                    effective_plane_dim,
                     bound_checks,
                 ))
             }
@@ -55,23 +63,21 @@ impl<P: ReducePrecision> Reader<P> {
 }
 
 #[cube]
-impl<N: Size> ReduceCoordinate<N> {
-    pub fn new(
-        coordinate: usize,
-        requirements: ReduceRequirements,
-        #[comptime] vectorization_mode: VectorizationMode,
-    ) -> Self {
-        if requirements.coordinates.comptime() {
-            // TODO: Make this generic to allow 64-bit coordinate output.
-            // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
-            // kernel boundary.
-            ReduceCoordinate::new_Required(fill_coordinate_vector(
-                coordinate as u32,
-                vectorization_mode,
-            ))
-        } else {
-            ReduceCoordinate::new_NotRequired()
-        }
+pub fn new_coordinates<N: Size>(
+    coordinate: usize,
+    requirements: ReduceRequirements,
+    #[comptime] vectorization_mode: VectorizationMode,
+) -> Value<Vector<u32, N>> {
+    if requirements.coordinates.comptime() {
+        // TODO: Make this generic to allow 64-bit coordinate output.
+        // Can't directly use `usize` for the buffer, since its size isn't defined beyond the
+        // kernel boundary.
+        Value::new_single(fill_coordinate_vector(
+            coordinate as u32,
+            vectorization_mode,
+        ))
+    } else {
+        Value::new_None()
     }
 }
 
@@ -87,7 +93,7 @@ pub(crate) fn fill_coordinate_vector<N: Size>(
             let mut coordinates = Vector::empty();
             #[unroll]
             for j in 0..N::value() {
-                coordinates[j] = first + j as u32;
+                coordinates.insert(j, first + j as u32);
             }
             coordinates
         }

@@ -1,6 +1,6 @@
 use cubecl::{prelude::*, std::tensor::layout::*};
 
-use crate::launch::BatchedCoords;
+use crate::args::BatchedCoords;
 
 /// Slice the layout at a specific batch, and reduce its dimensionality
 /// Not general enough to be in cubecl-std

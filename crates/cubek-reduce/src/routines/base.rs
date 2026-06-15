@@ -1,4 +1,7 @@
-use crate::{ReduceDtypes, ReduceError, VectorizationMode, routines::ReduceBlueprint};
+use crate::{
+    ReduceDtypes, ReduceError, VectorizationMode, components::instructions::ReduceOperationConfig,
+    routines::ReduceBlueprint,
+};
 use cubecl::prelude::*;
 
 #[derive(Debug)]
@@ -18,10 +21,16 @@ pub struct ReduceLaunchSettings {
 
 #[derive(Debug)]
 pub struct ReduceProblem {
-    pub vector_size: usize,
-    pub vector_count: usize,
+    /// Number of elements in reduce axis
+    pub reduce_len: usize,
+    /// Number of instances of the reduce axis
+    pub reduce_count: usize,
     pub axis: usize,
     pub dtypes: ReduceDtypes,
+    /// The reduce operation being launched. The blueprint selector bounds the cube
+    /// width by this instruction's per-accumulator shared-memory footprint (which
+    /// scales with `k` for `ArgTopK` / `TopK`).
+    pub instruction: ReduceOperationConfig,
     /// The address type, defined by the max of each handle's `required_address_type`
     pub address_type: AddressType,
 }

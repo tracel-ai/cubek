@@ -31,3 +31,6 @@ Cargo.lock
 
 # tags file
 tags
+
+# Claude artifacts
+.claude

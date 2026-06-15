@@ -1,6 +1,5 @@
+pub mod args;
 pub mod launch;
 pub mod selector;
 
-pub mod args;
-
-pub use launch::*;
+pub use launch::launch_kernel;

@@ -1,9 +1,9 @@
 use cubecl::prelude::*;
+use cubek_std::tile::{StageEvent, StageEventListener};
 
 use crate::{
     components::global::read::{StageBuffer, SyncStrategy},
     components::global::{GlobalConfig, GlobalReaderConfig, LoadingSides},
-    components::stage::{StageConfig, StageEvent, StageEventListener},
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -76,7 +76,7 @@ impl<S: SyncStrategy, Lhs: JobExecutor<S>, Rhs: JobExecutor<S>, G: GlobalConfig>
         #[comptime] stage_buffer: StageBuffer,
         reader_lhs: &Lhs,
         reader_rhs: &Rhs,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: G,
         #[comptime] event_loading_side: LoadingSides,
     ) -> DoubleBufferingEventListener<S, Lhs, Rhs, G> {
@@ -119,7 +119,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             let analysis = this.analyse(current, total);
 
             if comptime![analysis.lhs.should_execute(current)] {
-                let lhs_job = this.state_lhs.index_mut(0usize);
+                let lhs_job = &mut this.state_lhs[0];
 
                 if this.must_sync_plane_after_execution {
                     sync_plane();
@@ -128,13 +128,13 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                 L::execute_task(
                     &mut this.reader_lhs,
                     lhs_job,
-                    &mut this.barrier,
+                    &this.barrier,
                     this.config.comptime().lhs_reader_config(),
                 );
             }
 
             if comptime![analysis.rhs.should_execute(current)] {
-                let rhs_job = this.state_rhs.index_mut(0usize);
+                let rhs_job = &mut this.state_rhs[0];
 
                 if this.must_sync_plane_after_execution {
                     sync_plane();
@@ -143,7 +143,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
                 R::execute_task(
                     &mut this.reader_rhs,
                     rhs_job,
-                    &mut this.barrier,
+                    &this.barrier,
                     this.config.comptime().rhs_reader_config(),
                 );
             }
@@ -160,7 +160,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             let mut rhs_num_task_executed = 0u32.comptime();
 
             if lhs_len > 0 {
-                let lhs_job = this.state_lhs.index_mut(0usize);
+                let lhs_job = &this.state_lhs[0];
                 let num_tasks = L::JobIterator::num_tasks(lhs_job);
                 let num_task_executed = L::JobIterator::current(lhs_job);
                 comptime!(lhs_num_tasks += num_tasks);
@@ -168,7 +168,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             if rhs_len > 0 {
-                let rhs_job = this.state_rhs.index_mut(0usize);
+                let rhs_job = &this.state_rhs[0];
                 let num_tasks = R::JobIterator::num_tasks(rhs_job);
                 let num_task_executed = R::JobIterator::current(rhs_job);
                 comptime!(rhs_num_tasks += num_tasks);
@@ -184,26 +184,26 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig> Sta
             }
 
             if lhs_len > 0 {
-                let lhs_job = this.state_lhs.index_mut(0usize);
+                let lhs_job = &mut this.state_lhs[0];
                 #[unroll]
                 for _ in lhs_num_task_executed..lhs_num_tasks {
                     L::execute_task(
                         &mut this.reader_lhs,
                         lhs_job,
-                        &mut this.barrier,
+                        &this.barrier,
                         this.config.comptime().lhs_reader_config(),
                     );
                 }
             }
 
             if rhs_len > 0 {
-                let rhs_job = this.state_rhs.index_mut(0usize);
+                let rhs_job = &mut this.state_rhs[0];
                 #[unroll]
                 for _ in rhs_num_task_executed..rhs_num_tasks {
                     R::execute_task(
                         &mut this.reader_rhs,
                         rhs_job,
-                        &mut this.barrier,
+                        &this.barrier,
                         this.config.comptime().rhs_reader_config(),
                     );
                 }
@@ -298,7 +298,7 @@ impl<S: SyncStrategy, L: JobExecutor<S>, R: JobExecutor<S>, G: GlobalConfig>
 
 #[cube]
 /// Something that can execute a job, i.e. a reader
-pub trait JobExecutor<S: SyncStrategy>: CubeType + Clone {
+pub trait JobExecutor<S: SyncStrategy>: CubeType<ExpandType: Clone> + Clone {
     /// The job to execute
     type JobIterator: JobIterator;
 
@@ -313,7 +313,7 @@ pub trait JobExecutor<S: SyncStrategy>: CubeType + Clone {
     fn execute_task(
         this: &mut Self,
         job: &mut Self::JobIterator,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
 
@@ -321,14 +321,14 @@ pub trait JobExecutor<S: SyncStrategy>: CubeType + Clone {
     fn execute_all_remaining_tasks(
         this: &mut Self,
         job: &mut Self::JobIterator,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
 
     /// Create a job and execute all its tasks at once
     fn execute_whole_job(
         this: &mut Self,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] stage_buffer: StageBuffer,
         #[comptime] config: GlobalReaderConfig,
     );

@@ -6,33 +6,26 @@ Implements a wide variety of reduction algorithms across multiple instruction se
 
 ### Important Environment Variables
 
-Two environment variables control test execution behavior:
+Test behavior is controlled by the shared `CUBE_TEST_MODE` env var (see `cubek-test-utils`).
 
-- `CUBEK_TEST_MODE`  
-  Controls handling of tests that cannot run on the current hardware (e.g., due to missing support for certain algorithms).
-  - `skip` (default): Skipped tests are silently ignored and reported as passed by the Rust test runner.
-  - `verbose`: Skipped tests are reported with an explanation why they were skipped, but still marked as passed.
-  - `panic`: Skipped tests cause a failure, printing the reason. The test run will show failures.  
-    Useful for discovering which tests are being skipped on your hardware.
-
-- `CUBEK_TEST_FULL`  
-  Controls whether time-consuming tests are executed.
-  - `0` (default): Long-running tests are skipped with an explanatory message.
-  - `1`: All tests are run, including the longer ones.
+- `CUBE_TEST_MODE=Correct` (default): numerical errors fail the test; compilation / hardware-incompatibility errors are accepted.
+- `CUBE_TEST_MODE=Strict`: both numerical and compilation errors fail the test. Useful to surface tests that are silently skipped on your hardware.
+- `CUBE_TEST_MODE=PrintAll[:<filter>]` / `PrintFail[:<filter>]`: print tensor elements; see `cubek-test-utils` docs.
 
 ### Important Feature Flags
 
-The test suite can be run on different CubeCL runtimes by enabling the corresponding feature flag.
+- `extended`: enables the `Cube` reduction-routine strategy tests. These are slow on CPU and can stall CI, so they're opt-in.
+- `full`: alias for `extended` (room for future growth).
 
 #### Examples
 
 ```bash
-# Run all tests (including long ones) on the CUDA runtime, skipping unsupported tests silently
-CUBEK_TEST_FULL=1 cargo test --features cubecl/cuda
+# Default (fast) test run on CUDA
+cargo test --features cubecl/cuda
 
-# Run all tests on CUDA, failing on any unsupported tests (to see what is skipped)
-CUBEK_TEST_MODE=panic CUBEK_TEST_FULL=1 cargo test --features cubecl/cuda
+# Run the full suite, including Cube-strategy tests
+cargo test --features cubecl/cuda,extended
 
-# Run tests on the WGSL (web GPU) runtime with verbose skipping
-CUBEK_TEST_MODE=verbose cargo test --features cubecl/wgsl
+# Fail on any silently-skipped tests
+CUBE_TEST_MODE=Strict cargo test --features cubecl/cuda,extended
 ```

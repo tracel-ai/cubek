@@ -14,65 +14,23 @@ version.workspace = true
 default = ["std", "cubecl/default"]
 std = ["cubecl/std"]
 
-matmul_tests_mma = []
-matmul_tests_plane = []
-matmul_tests_tma = []
-matmul_tests_unit = []
-matmul_tests_vecmat = []
+heavy = []
+extended = ["heavy"]
+full = ["extended", "benchmarks"]
 
-matmul_tests_double = []
-matmul_tests_ordered = []
-matmul_tests_simple = []
-
-matmul_tests_cyclic = []
-matmul_tests_hybrid = []
-matmul_tests_strided = []
-matmul_tests_tilewise = []
-
-matmul_tests_barrier = []
-
-matmul_tests_hypercube = []
-matmul_tests_partition_buffering = []
-matmul_tests_specialized = []
-
-matmul_tests_f16 = []
-matmul_tests_f32 = []
-
-matmul_tests_alt_shapes = []
-matmul_tests_layouts = []
-matmul_tests_swizzle = []
-
-extended = [
-    "matmul_tests_plane",
-    "matmul_tests_vecmat",
-    "matmul_tests_double",
-    "matmul_tests_simple",
-    "matmul_tests_ordered",
-    "matmul_tests_cyclic",
-    "matmul_tests_f16",
-]
-
-full = [
-    "extended",
-    "matmul_tests_mma",
-    "matmul_tests_tma",
-    "matmul_tests_unit",
-    "matmul_tests_hybrid",
-    "matmul_tests_strided",
-    "matmul_tests_tilewise",
-    "matmul_tests_barrier",
-    "matmul_tests_hypercube",
-    "matmul_tests_partition_buffering",
-    "matmul_tests_specialized",
-    "matmul_tests_f32",
-    "matmul_tests_alt_shapes",
-    "matmul_tests_layouts",
-    "matmul_tests_swizzle",
-]
-
+cpu-reference = ["dep:cubek-test-utils", "cubek-std/testing"]
+# Enables `pub mod benchmarks` — catalogues for the gemm, gemv, and
+# quantized_matmul subcategories. Off by default; the top-level `benchmarks`
+# crate turns it on.
+benchmarks = ["cpu-reference", "dep:cubek-quant", "cubecl/test-runtime"]
 
 [dependencies]
-cubek-std = { path = "../cubek-std", version = "=0.2.0-pre.3", default-features = false }
+cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.1", default-features = false, features = [
+    "kernels",
+], optional = true }
+cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.1", default-features = false }
+cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.1", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -82,6 +40,10 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.3", default-features = false }
+cubek-matmul = { path = ".", features = ["cpu-reference"] }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
+cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.1", features = [
+    "kernels",
+] }
 pretty_assertions = { workspace = true }
 trybuild = "1"

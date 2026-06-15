@@ -1,15 +1,15 @@
 use crate::{
+    args::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+    definition::{CubeMapping, CubeMappingLaunch},
+    {args::ConfigRuntimeArg, components::global::memory::GlobalLayoutConfig},
+    {args::RuntimeConfig, components::CubeDimResource},
+};
+use crate::{
     components::stage::NumStages,
     definition::{
         AccG, Blueprint, LhsG, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
         MatmulVectorSizes, RhsG,
     },
-};
-use crate::{
-    definition::{CubeMapping, CubeMappingLaunch},
-    launch::{InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
-    {components::CubeDimResource, launch::RuntimeConfig},
-    {components::global::memory::GlobalLayoutConfig, launch::ConfigRuntimeArg},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::{fmt::Debug, hash::Hash};
@@ -90,12 +90,12 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
 ///   It is therefore important to use an underlying global matmul that performs check bounds,
 /// - It is accepted to launch more Cube than necessary, providing a CubeCountInput that states
 ///   the max cube position
-pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
+pub trait BatchMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
     type Config: BatchConfig;
 
     /// Performs batchwise matrix multiplication over tensors.
     fn execute<Args: MatmulArgs<Config = RC>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );

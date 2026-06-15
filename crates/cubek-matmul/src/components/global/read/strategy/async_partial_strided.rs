@@ -3,30 +3,30 @@ use crate::components::global::{
     SharedGlobalMatmulConfig,
     read::{AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_copy::ASYNC_COPY_WIDTH},
 };
-use crate::components::{
-    global::{
-        multi_stage::LoadMaxRoundPlaneCount,
-        read::{async_barrier::AsyncCopy, validate_async_copy},
-    },
-    stage::StridedTilingLayout,
+use crate::components::global::{
+    multi_stage::LoadMaxRoundPlaneCount,
+    read::{async_barrier::AsyncCopy, validate_async_copy},
 };
 use crate::definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent};
 use crate::{
+    args::RuntimeConfig,
     components::global::read::{validate_async_barrier, validate_async_copy_with_problem},
-    launch::RuntimeConfig,
 };
 use crate::{
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::global::memory::GlobalIterator,
+    components::global::read::validate_swizzle_atom_size,
     components::{global::read::async_copy::async_copy_from, stage::StridedStageMemory},
     components::{global::read::stage::FullStageLayout, stage::StridedStageFamily},
-    components::{global::read::validate_swizzle_atom_size, stage::StageConfig},
 };
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{StridedTilingLayout, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -103,8 +103,6 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoadin
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialStridedJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] stage_index: u32,
@@ -133,6 +131,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialStridedLoadin
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct AsyncPartialStridedJob {
     unit_position_base: u32,
 
@@ -157,7 +156,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
-        _barrier: &mut Shared<Barrier>,
+        _barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut stage = stage.with_buffer_index(this.stage_index);
@@ -200,22 +199,22 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
 
 #[cube]
 impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialStridedLoading {
-    fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
+    fn arrival_count(#[comptime] config: SharedGlobalMatmulConfig) -> u32 {
         let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+    fn arrive<MP: MatmulTypes>(
+        barrier: &Shared<Barrier>,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();
         barrier.arrive();
     }
 
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool {
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }

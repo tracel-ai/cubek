@@ -1,0 +1,38 @@
+[package]
+authors = ["samuelbelanger <samuel.belanger.11@ulaval.ca>"]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeK: Interpolation"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-interpolate"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-interpolate"
+version.workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "thiserror/std"]
+
+heavy = []
+extended = ["heavy"]
+full = ["extended", "benchmarks"]
+
+cpu-reference = ["dep:cubek-test-utils"]
+# Enables `pub mod benchmarks` — catalogue of interpolate benchmark problems
+# and the bench harness. The seeded `InterpolateCorrectness` impl inside
+# that module is additionally gated on `cpu-reference`.
+benchmarks = ["cpu-reference", "cubecl/test-runtime"]
+
+[dependencies]
+cubecl = { workspace = true }
+cubecl-common = { workspace = true }
+half = { workspace = true }
+thiserror = { workspace = true }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.1", default-features = false, optional = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+cubecl = { workspace = true, features = ["test-runtime"] }
+cubek-interpolate = { path = ".", features = ["cpu-reference"] }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }

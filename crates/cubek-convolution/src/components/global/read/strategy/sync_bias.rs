@@ -1,21 +1,21 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::{
-    components::{
-        global::{
-            GlobalReaderConfig, PlaneFlowPartition,
-            memory::GlobalIterator,
-            multi_stage::LoadMaxRoundPlaneCount,
-            read::{
-                FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
-                validate_swizzle_atom_size,
-            },
+    args::RuntimeConfig,
+    components::global::{
+        GlobalReaderConfig, PlaneFlowPartition,
+        memory::GlobalIterator,
+        multi_stage::LoadMaxRoundPlaneCount,
+        read::{
+            FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
+            validate_swizzle_atom_size,
         },
-        stage::{NoTilingLayout, TilingValidation},
     },
-    definition::{MatmulElems, MatmulProblem, StageIdent},
-    launch::RuntimeConfig,
+    definition::{MatmulElems, MatmulProblem},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, StageIdent,
+    tile::{NoTilingLayout, TilingValidation},
+};
 
 use crate::components::stage::{
     bias_stage::{BiasStageFamily, BiasStageMemory},
@@ -67,8 +67,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncBiasLoading {
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncBiasJob;
     type Stage = BiasStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
@@ -99,6 +97,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncBiasLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct SyncBiasJob {
     unit_position_base: u32,
 
@@ -123,7 +122,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut BiasStageMemory<ES, NS>,
-        _barrier: &mut (),
+        _barrier: &(),
         #[comptime] _config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;
@@ -151,11 +150,12 @@ pub(crate) fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size
 ) {
     let view = global_iter.view();
 
-    let mut slice = stage.as_slice_mut();
+    let swizzle = stage.swizzle;
+    let slice = stage.as_slice_mut();
 
     let type_size = Vector::<ES, NS>::type_size();
     let vector_read = view.read_checked((0, unit_position));
-    let stage_offs = stage.swizzle.apply(unit_position, type_size);
+    let stage_offs = swizzle.apply(unit_position, type_size);
 
     slice[stage_offs as usize / NS::value()] = Vector::cast_from(vector_read);
 }

@@ -1,8 +1,11 @@
 use cubecl::{
-    std::tensor::{launch::BufferArg, layout::*},
-    {prelude::*, std::tensor::launch::ViewLayoutLaunchArg},
+    prelude::*,
+    std::tensor::{
+        launch::{MemoryArg, ViewLayoutLaunchArg},
+        layout::*,
+    },
 };
-use cubek_matmul::launch::BatchedCoords;
+use cubek_matmul::args::BatchedCoords;
 
 #[derive(CubeType)]
 pub struct BiasLayout {
@@ -39,7 +42,7 @@ impl ViewLayoutLaunchArg for BiasLayout {
     type RuntimeArg<R: Runtime> = ();
     type CompilationArg = ();
 
-    fn register<R: Runtime, B: BufferArg>(
+    fn register<R: Runtime, B: MemoryArg>(
         _: Self::RuntimeArg<R>,
         buffer: &B,
         _: Type,

@@ -14,12 +14,12 @@ use crate::{
         },
         global::GlobalAttentionFamily,
     },
-    definition::{
+    forward::definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
-        AttentionVectorSizes, CubeCountInputArgs, InputRuntimeArg, OutputRuntimeArg,
+        AttentionVectorSizes, CubeMappingLaunch, InputRuntimeArg, OutputRuntimeArg,
         launch_types::*,
     },
-    launch::AttentionArgs,
+    forward::launch::AttentionArgs,
 };
 
 pub struct SimpleBatchAttentionFamily<GA: GlobalAttentionFamily> {
@@ -31,14 +31,14 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
     type Config = SimpleBatchConfig<GA::Config>;
     type Blueprint = AttentionBlueprint;
 
-    unsafe fn launch_unchecked<'a, AA: AttentionArgs, R: cubecl::Runtime>(
+    unsafe fn launch_unchecked<AA: AttentionArgs, R: cubecl::Runtime>(
         client: &cubecl::prelude::ComputeClient<R>,
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
         address_type: AddressType,
         input: InputRuntimeArg<AA, R>,
         output: OutputRuntimeArg<AA, R>,
-        cube_count_input: CubeCountInputArgs<R>,
+        cube_mapping: CubeMappingLaunch<R>,
         dtypes: &AttentionElems,
         vector_sizes: &AttentionVectorSizes,
         blueprint: Self::Blueprint,
@@ -51,7 +51,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
                 address_type,
                 input,
                 output,
-                cube_count_input,
+                cube_mapping,
                 blueprint,
                 dtypes.clone(),
                 dtypes.into(),

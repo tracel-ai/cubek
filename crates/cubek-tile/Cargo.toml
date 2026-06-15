@@ -1,0 +1,31 @@
+[package]
+authors = ["louisfd <louisfd94@gmail.com>"]
+description = "CubeK: Tile"
+edition.workspace = true
+license.workspace = true
+name = "cubek-tile"
+readme.workspace = true
+rust-version.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-tile"
+version.workspace = true
+
+[features]
+default = ["cubecl/default"]
+std = ["cubecl/std"]
+
+heavy = []
+extended = ["heavy"]
+full = ["extended"]
+
+[dependencies]
+bytemuck = { workspace = true }
+cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
+cubecl-common = { workspace = true }
+cubek-layout = { path = "../cubek-layout", version = "=0.3.0-pre.1" }
+half = { workspace = true, features = ["bytemuck"] }
+serde = { workspace = true }
+
+[dev-dependencies]
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.1", default-features = false }
+pretty_assertions = { workspace = true }
+trybuild = "1"

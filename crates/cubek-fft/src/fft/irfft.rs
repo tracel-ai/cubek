@@ -1,17 +1,21 @@
+//! Inverse real-valued FFT with an intra-cube-parallel radix-2 kernel.
+
+use cubecl::prelude::*;
 use cubecl::std::tensor::{
     AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, TensorHandle,
 };
-use cubecl::{prelude::*, std::tensor::layout::plain::PlainLayout};
 
 use crate::{
-    fft::{FftMode, fft_inner_compute},
+    fft::{
+        FftMode,
+        fft_parallel::{bit_reverse, fft_butterfly_parallel},
+        limits::{max_shared_fft_n, max_units_per_cube},
+        rfft_large::irfft_large_launch,
+    },
     layout::BatchSignalLayout,
 };
 
-/// Inverse Real-valued Fast Fourier Transform kernel.
-///
-/// Creates signal tensor
-/// then launches the IRFFT kernel to fill it with the right values
+/// Inverse Real-valued Fast Fourier Transform.
 pub fn irfft<R: Runtime>(
     spectrum_re: TensorHandle<R>,
     spectrum_im: TensorHandle<R>,
@@ -49,7 +53,7 @@ pub fn irfft<R: Runtime>(
     signal
 }
 
-/// Launches the IRFFT with the specified Cube Count, Cube Dim and vectorization (line size)
+/// Launches the IRFFT kernel.
 pub fn irfft_launch<R: Runtime>(
     client: &ComputeClient<R>,
     spectrum_re: TensorBinding<R>,
@@ -58,6 +62,49 @@ pub fn irfft_launch<R: Runtime>(
     dim: usize,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
+    let spec_bins = spectrum_re.shape[dim];
+    irfft_launch_padded::<R>(
+        client,
+        spectrum_re,
+        spectrum_im,
+        signal,
+        dim,
+        spec_bins,
+        dtype,
+    )
+}
+
+/// Launches the IRFFT kernel while treating bins at `spec_bins..n_freq` as zero.
+pub fn irfft_launch_padded<R: Runtime>(
+    client: &ComputeClient<R>,
+    spectrum_re: TensorBinding<R>,
+    spectrum_im: TensorBinding<R>,
+    signal: TensorBinding<R>,
+    dim: usize,
+    spec_bins: usize,
+    dtype: StorageType,
+) -> Result<(), LaunchError> {
+    assert!(
+        spectrum_re.shape == spectrum_im.shape,
+        "spectrum real and imaginary shapes must match"
+    );
+    assert!(dim < signal.shape.len(), "dim must be in bounds");
+
+    let n_fft = signal.shape[dim];
+    assert!(n_fft.is_power_of_two(), "IRFFT requires power-of-2 length");
+    assert!(n_fft >= 2, "IRFFT requires n_fft >= 2");
+    let n_freq = n_fft / 2 + 1;
+    assert!(
+        spec_bins <= spectrum_re.shape[dim],
+        "spec_bins ({spec_bins}) must be <= spectrum dimension ({})",
+        spectrum_re.shape[dim]
+    );
+    assert!(spec_bins >= 1, "spec_bins must be >= 1");
+    assert!(
+        spec_bins <= n_freq,
+        "spec_bins ({spec_bins}) must be <= n_fft / 2 + 1 ({n_freq})"
+    );
+
     let count: usize = signal
         .shape
         .iter()
@@ -65,109 +112,102 @@ pub fn irfft_launch<R: Runtime>(
         .filter(|(i, _)| *i != dim)
         .map(|(_, e)| *e)
         .product();
+    if count == 0 {
+        return Ok(());
+    }
 
-    let cube_count = CubeCount::new_1d(count as u32);
-    let cube_dim = CubeDim::new_single();
-    let vectorization = 1;
-    let shape = signal.shape[dim];
+    if n_fft > max_shared_fft_n(client) {
+        return irfft_large_launch::<R>(
+            client,
+            spectrum_re,
+            spectrum_im,
+            signal,
+            dim,
+            spec_bins,
+            dtype,
+        );
+    }
 
-    irfft_kernel::launch::<R>(
+    let log2_n = n_fft.trailing_zeros() as usize;
+    let threads_per_cube = (n_fft / 2).clamp(1, max_units_per_cube(client));
+
+    let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
+    let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
+
+    irfft_kernel::launch::<f32, R>(
         client,
         cube_count,
         cube_dim,
         spectrum_re.into_tensor_arg(),
         spectrum_im.into_tensor_arg(),
         signal.into_tensor_arg(),
-        shape,
+        count as u32,
+        spec_bins as u32,
+        n_fft,
+        log2_n,
+        threads_per_cube,
         dim,
-        dtype,
-        vectorization,
     );
     Ok(())
 }
 
 #[cube(launch)]
-/// Kernel that loops over each window and applies the IRFFT on each
-pub(crate) fn irfft_kernel<F: Float, N: Size>(
-    spectrums_re: &Tensor<Vector<F, N>>,
-    spectrums_im: &Tensor<Vector<F, N>>,
-    signal: &mut Tensor<Vector<F, N>>,
-    #[comptime] num_samples: usize,
+fn irfft_kernel<F: Float>(
+    spectrum_re: &Tensor<F>,
+    spectrum_im: &Tensor<F>,
+    signal: &mut Tensor<F>,
+    num_windows: u32,
+    spec_bins: u32,
+    #[comptime] n_fft: usize,
+    #[comptime] log2_n: usize,
+    #[comptime] threads_per_cube: usize,
     #[comptime] dim: usize,
-    #[define(F)] _dtype: StorageType,
-    #[define(N)] _vector_size: usize,
 ) {
-    let batch_index = CUBE_POS;
-    irfft_kernel_one_batch(
-        spectrums_re,
-        spectrums_im,
-        signal,
-        batch_index,
-        num_samples,
-        dim,
+    let window_index = CUBE_POS;
+    if (window_index as u32) >= num_windows {
+        terminate!();
+    }
+
+    let spectrum_re_view = spectrum_re.view(BatchSignalLayout::new(spectrum_re, window_index, dim));
+    let spectrum_im_view = spectrum_im.view(BatchSignalLayout::new(spectrum_im, window_index, dim));
+    let mut signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window_index, dim));
+
+    let mut shared_re = Shared::new_slice(n_fft);
+    let mut shared_im = Shared::new_slice(n_fft);
+
+    let n_freq = comptime![n_fft / 2 + 1];
+
+    let mut k = UNIT_POS as usize;
+    while k < n_fft {
+        let dst = bit_reverse(k, log2_n);
+        let src_bin = select(k < n_freq, k, n_fft - k);
+        let active = src_bin < spec_bins as usize;
+        let src_bin = select(active, src_bin, 0);
+        let im_sign = select(k < n_freq, F::new(1.0), F::new(-1.0));
+        shared_re[dst] = select(active, spectrum_re_view.read_checked(src_bin), F::new(0.0));
+        shared_im[dst] = select(
+            active,
+            spectrum_im_view.read_checked(src_bin) * im_sign,
+            F::new(0.0),
+        );
+        k += threads_per_cube;
+    }
+    sync_cube();
+
+    fft_butterfly_parallel::<F>(
+        &mut shared_re,
+        &mut shared_im,
+        n_fft,
+        log2_n,
+        threads_per_cube,
+        FftMode::Inverse,
     );
-}
 
-#[cube]
-/// Applies the IRFFT on one window.
-/// Starts by putting all the window in shared memory, where the compute will occur
-/// Then stores back the content of the shared memory
-/// There are a few extra steps for normalization compared to forward RFFT
-pub(crate) fn irfft_kernel_one_batch<F: Float, N: Size>(
-    spectrums_re: &Tensor<Vector<F, N>>,
-    spectrums_im: &Tensor<Vector<F, N>>,
-    signal: &mut Tensor<Vector<F, N>>,
-    window_index: usize,
-    #[comptime] num_samples: usize,
-    #[comptime] dim: usize,
-) {
-    // The following code allow to ignore the batch index and assume only one window
-    // - spectrums have shape: [num_freq_bins]
-    // - signal has shape: [num_samples]
-    let spectrums_re_layout = BatchSignalLayout::new(spectrums_re, window_index, dim);
-    let spectrums_im_layout = BatchSignalLayout::new(spectrums_im, window_index, dim);
-
-    let signal_layout = BatchSignalLayout::new(signal, window_index, dim);
-    let spectrums_re_view = spectrums_re.view(spectrums_re_layout);
-    let spectrums_im_view = spectrums_im.view(spectrums_im_layout);
-    let signal_view = signal.view_mut(signal_layout);
-
-    let num_freq_bins = spectrums_re_view.shape();
-
-    // The shared memories are not vectorized because the inner FFT compute will need to work independently on each element
-    let mut spectrum_re =
-        SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
-    let mut spectrum_im =
-        SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
-
-    // Load all the frequency bins to shared memory
-    for i in 0..num_freq_bins {
-        // Warning: this assumes that spectrum views have lines of 1 element
-        // For larger lines, iterate over the line's content
-        // You can get the line_size of a tensor/view with .line_size()
-        spectrum_re[i] = spectrums_re_view.read(i)[0];
-        spectrum_im[i] = spectrums_im_view.read(i)[0];
+    let scale = F::new(1.0) / F::cast_from(n_fft);
+    let mut i = UNIT_POS as usize;
+    while i < n_fft {
+        signal_view.write_checked(i, shared_re[i] * scale);
+        i += threads_per_cube;
     }
-
-    // Fill the Hermitian-conjugate mirrored bins
-    for k in 1..num_freq_bins - 1 {
-        spectrum_re[num_samples - k] = spectrum_re[k];
-        spectrum_im[num_samples - k] = -spectrum_im[k]; // conjugate
-    }
-
-    // Run inverse FFT
-    fft_inner_compute(&mut spectrum_re, &mut spectrum_im, FftMode::Inverse);
-
-    // Normalize by number of samples
-    for i in 0..num_samples {
-        spectrum_re[i] = spectrum_re[i] / F::cast_from(num_samples);
-        spectrum_im[i] = spectrum_im[i] / F::cast_from(num_samples);
-    }
-
-    // Write full real output
-    for i in 0..num_samples {
-        // Warning: this assumes that output_view have lines of 1 element
-        // If lines had more elements, the ith element would be duplicated as it is
-        signal_view.write(i, Vector::cast_from(spectrum_re[i]));
-    }
+    sync_cube();
 }

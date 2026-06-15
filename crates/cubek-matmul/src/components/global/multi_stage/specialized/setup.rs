@@ -1,26 +1,26 @@
 use crate::components::CubeDimResource;
 use crate::components::global::{
-    GlobalReaderConfig, GlobalWriterConfig, PlaneFlowConfig, SharedGlobalMatmulConfig,
+    GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
 };
 use crate::components::global::{
     memory::{GlobalMemoryConfig, ViewDirection},
     read::AsyncPartialLoadingStrategy,
 };
 use crate::{
-    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
-    components::global::{InputLoadFlow, LoadFlows, WriteTiling},
-};
-use crate::{
+    args::RuntimeConfig,
+    components::global::GlobalMatmulFamily,
     components::global::{multi_stage::EventLoadingMode, read::FullLoadingStrategy},
-    components::stage::StageConfig,
-    components::{global::GlobalMatmulFamily, stage},
+    components::stage::StagePartitioner,
     components::{global::MaxGlobalReaderPlanes, stage::NumStages},
+    definition::BatchMatmulBlueprint,
     definition::MatmulVectorSizes,
     definition::StageIdent,
-    definition::TilingBlueprint,
     definition::{MatmulElems, MatmulSetupError},
     definition::{MatmulProblem, MatmulTypes},
-    launch::RuntimeConfig,
+};
+use crate::{
+    components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
+    components::global::{InputLoadFlow, LoadFlows},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
@@ -28,53 +28,41 @@ use std::marker::PhantomData;
 
 /// Double buffering matmul family for any precision
 pub struct SpecializedMatmulFamily<
-    SMM: stage::StageMatmulFamily,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 > {
-    _stage_matmul: PhantomData<SMM>,
+    _sp: PhantomData<SP>,
     _rc: PhantomData<RC>,
     _loading: PhantomData<L>,
     _acc_loading: PhantomData<AL>,
     _writer: PhantomData<GW>,
 }
 
-impl<SMM, RC, L, AL, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SMM, RC, L, AL, GW>
+impl<SP, RC, L, AL, GW> GlobalMatmulFamily<RC> for SpecializedMatmulFamily<SP, RC, L, AL, GW>
 where
-    SMM: stage::StageMatmulFamily<
-            LhsStage = L::Stage,
-            RhsStage = L::Stage,
-            AccStage = Option<AL::Stage>,
-            OutStage = GW::Stage,
-        >,
+    SP: StagePartitioner,
     RC: RuntimeConfig,
     L: AsyncPartialLoadingStrategy<RC>,
     AL: FullLoadingStrategy<RC>,
     GW: GlobalWriterFamily,
 {
-    type Matmul<MP: MatmulTypes> = SpecializedMatmul<
-        MP,
-        SMM::Matmul<MP, L::TilingLayout, L::TilingLayout, AL::TilingLayout, WriteTiling>,
-        RC,
-        L,
-        AL,
-        GW::Writer<MP::Acc>,
-    >;
-    type Config = SharedGlobalMatmulConfig<SMM::Config>;
+    type Matmul<MP: MatmulTypes> = SpecializedMatmul<MP, SP, RC, L, AL, GW>;
+    type Config = SharedGlobalMatmulConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError> {
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = Self::cubedim_resource(blueprint, dtypes, vector_sizes)?
-            .as_plane_flow_config(plane_dim)?;
+        let plane_flow_config =
+            Self::cubedim_resource(blueprint, dtypes, vector_sizes)?.as_specialized(plane_dim)?;
 
-        let stage_config = SMM::expand_config(
+        let stage_config = SP::KIND.expand_stage_matmul(
             device_props,
             blueprint,
             plane_flow_config,
@@ -173,7 +161,7 @@ where
     }
 
     fn cubedim_resource(
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError> {
@@ -191,10 +179,12 @@ where
         );
 
         let plane_dim = blueprint.plane_dim;
-        let plane_flow_config = PlaneFlowConfig::new(
+        let plane_flow_config = make_plane_flow_config(
             blueprint.load_flows,
             Some(max_global_readers),
-            SMM::cubedim_resource(&blueprint)?.num_planes(plane_dim)?,
+            SP::KIND
+                .cubedim_resource(&blueprint)?
+                .num_planes(plane_dim)?,
         )?;
 
         Ok(CubeDimResource::Specialized(plane_flow_config))
@@ -202,13 +192,13 @@ where
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         L::validate_with_problem(problem, dtypes, StageIdent::Lhs)?;
         L::validate_with_problem(problem, dtypes, StageIdent::Rhs)?;
-        SMM::validate_blueprint(client, blueprint, dtypes, vector_sizes)
+        SP::KIND.validate_blueprint(client, blueprint, dtypes, vector_sizes)
     }
 }

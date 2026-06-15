@@ -1,18 +1,19 @@
 use std::marker::PhantomData;
 
 use crate::{
+    components::global::memory::GlobalIterator,
     components::global::read::{PartialLoadingStrategy, tiled::TiledLayout},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::{ContiguousTilingLayout, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::read::validate_swizzle_atom_size},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -88,8 +89,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = Synchronous;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncPartialCyclicJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
@@ -132,6 +131,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncPartialCyclicJob {
     unit_position_base: u32,
 
@@ -162,7 +162,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
-        _barrier: &mut (),
+        _barrier: &(),
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;
@@ -171,7 +171,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
             load_and_store_vector::<EG, NG, ES, NS, TO>(
-                this,
+                &*this,
                 unit_position,
                 global_iter,
                 &mut stage,
@@ -180,7 +180,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         } else {
             if unit_position < this.num_stage_elements {
                 load_and_store_vector::<EG, NG, ES, NS, TO>(
-                    this,
+                    &*this,
                     unit_position,
                     global_iter,
                     &mut stage,
@@ -242,10 +242,11 @@ pub(crate) fn load_and_store_vector<
     let vector_read = view.read_checked((tile, pos_within_tile));
 
     let tile_start = tile_index * job.num_vectors_per_tile;
-    let mut tile_slice = stage.as_slice_mut::<NS>();
+    let swizzle = stage.swizzle;
+    let tile_slice = stage.as_slice_mut::<NS>();
     let offset = tile_start + pos_within_tile / vector_size as u32;
     let type_size = Vector::<ES, NS>::type_size();
-    let offset = stage.swizzle.apply(offset, type_size);
+    let offset = swizzle.apply(offset, type_size);
 
     tile_slice[offset as usize] = Vector::cast_from(vector_read);
 }

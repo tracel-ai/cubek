@@ -2,7 +2,6 @@ use cubecl::{
     Runtime,
     client::ComputeClient,
     prelude::*,
-    server::TensorMapMeta,
     std::tensor::{
         launch::ViewArg,
         layout::{
@@ -13,11 +12,12 @@ use cubecl::{
     zspace::{metadata::Metadata, shape, strides},
 };
 use cubek_matmul::{
+    args::*,
     components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
-    definition::{Blueprint, MatmulElems, TilingBlueprint},
-    launch::*,
-    routines::Routine,
+    definition::{BatchMatmulBlueprint, Blueprint, MatmulElems},
+    routines::BatchMatmulRoutine,
 };
+use cubek_std::launch::tma::{remap_storage_for_tma, tma_meta_tiled};
 use cubek_std::{InputBinding, stage::SwizzleMode};
 use enumset::EnumSet;
 
@@ -33,7 +33,7 @@ use crate::components::{
     },
 };
 
-pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
+pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
     MatmulArgs<
         Input<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>: ConcreteInputsFactory<A>,
         Output<Vector<Acc, AccSize>>: ConcreteOutputFactory<A>,
@@ -48,7 +48,7 @@ pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     ) -> ConvolutionProblem;
 }
 
-impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
+impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
@@ -67,13 +67,13 @@ impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     }
 }
 
-impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
+impl<A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>> ConcreteArgs<A>
     for TensorMapArgs<RuntimeArgs>
 {
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let channel_align = match blueprint.swizzle_modes.rhs {
@@ -92,7 +92,7 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
+pub trait ConcreteInputsFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
         input: InputBinding<R>,
@@ -105,7 +105,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
+pub trait ConcreteOutputFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     fn create<R: Runtime>(
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
@@ -113,7 +113,7 @@ pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     ) -> Self::RuntimeArg<R>;
 }
 
-impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<RuntimeArgs>>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
@@ -169,7 +169,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
     }
 }
 
-impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
+impl<EG: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>> ConcreteOutputFactory<A>
+    for TensorOutput<EG>
+{
     fn create<R: Runtime>(
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
@@ -196,13 +198,13 @@ impl<
     Lhs: CubePrimitive,
     Rhs: CubePrimitive,
     EO: CubePrimitive,
-    A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>,
+    A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>,
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
         input: InputBinding<R>,
         out_grad: InputBinding<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
@@ -222,18 +224,8 @@ impl<
             _ => shape![stage_k as usize, stage_m as usize],
         };
 
-        // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
-        // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.lhs_stage
-        };
-        let rhs_elem = if dtypes.rhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.rhs_stage
-        };
+        let lhs_elem = remap_storage_for_tma(dtypes.lhs_stage);
+        let rhs_elem = remap_storage_for_tma(dtypes.rhs_stage);
 
         let mut elem_stride = strides![1; 2 + problem.stride.len()];
 
@@ -247,18 +239,12 @@ impl<
             out_grad.data().strides[dim_c],
         ];
 
-        let lhs_meta = TensorMapMeta {
-            format: TensorMapFormat::Tiled(TiledArgs {
-                tile_size: stage_size_lhs,
-            }),
-            metadata: Metadata::new(lhs_shape, lhs_strides),
-            elem_stride: strides![1, 1],
-            interleave: TensorMapInterleave::None,
-            swizzle: blueprint.swizzle_modes.lhs.into(),
-            prefetch: TensorMapPrefetch::None,
-            oob_fill: OobFill::Zero,
-            storage_ty: lhs_elem,
-        };
+        let lhs_meta = tma_meta_tiled(
+            Metadata::new(lhs_shape, lhs_strides),
+            stage_size_lhs,
+            lhs_elem,
+            blueprint.swizzle_modes.lhs.into(),
+        );
 
         let lhs = TensorMapArg {
             tensor: out_grad.clone().into_data().into_tensor_arg(),

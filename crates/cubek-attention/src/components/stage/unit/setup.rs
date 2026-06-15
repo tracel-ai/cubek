@@ -6,60 +6,50 @@ use crate::{
             AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
             unit::{UnitPartitionAttention, UnitPartitionStageConfig},
         },
-        tile::TileAttentionFamily,
+        tile::TileAttentionKind,
     },
-    definition::{
+    forward::definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
         attention_types::*,
     },
 };
-use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
-use cubek_matmul::components::{CubeDimResource, stage::StageFamily};
+use cubecl::ir::DeviceProperties;
+use cubek_matmul::components::stage::StageFamily;
 use cubek_std::{
-    MatrixLayout,
+    CubeDimResource, MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},
-    tile::Strided,
 };
 
 use crate::components::stage::StageAttentionFamily;
 
-pub struct UnitPartitionStageAttentionFamily<
-    TA: TileAttentionFamily,
-    SK: StageFamily,
-    SV: StageFamily,
-    SO: StageFamily<ReadWrite>,
-> {
-    _phantom: PhantomData<(TA, SK, SV, SO)>,
+pub struct UnitPartitionStageAttentionFamily<SK: StageFamily, SV: StageFamily, SO: StageFamily> {
+    _phantom: PhantomData<(SK, SV, SO)>,
 }
 
-impl<
-    TA: TileAttentionFamily,
-    SK: StageFamily<TileKind = Strided>,
-    SV: StageFamily<TileKind = Strided>,
-    SO: StageFamily<ReadWrite, TileKind = Strided>,
-> StageAttentionFamily for UnitPartitionStageAttentionFamily<TA, SK, SV, SO>
+impl<SK: StageFamily, SV: StageFamily, SO: StageFamily> StageAttentionFamily
+    for UnitPartitionStageAttentionFamily<SK, SV, SO>
 {
     type Attention<AP: AttentionPrecision> = UnitPartitionAttention<
         AP,
         SK::Stage<KS<AP>, KSS<AP>, AttentionTilingLayout>,
         SV::Stage<VS<AP>, VSS<AP>, AttentionTilingLayout>,
         SO::Stage<OS<AP>, OSS<AP>, AttentionTilingLayout>,
-        TA::TileAttention<AP>,
     >;
 
     type KeyStage = SK;
     type ValueStage = SV;
     type OutStage = SO;
 
-    type Config = PartitionAttentionConfig<TA::Config>;
+    type Config = PartitionAttentionConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,
         blueprint: &AttentionBlueprint,
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
-        let tile_config = TA::expand_config(device_props, blueprint, dtypes)?;
-        let compute_resources = match TA::computation_resources()? {
+        let tile_attention =
+            TileAttentionKind::Unit.expand_tile_attention(device_props, blueprint, dtypes)?;
+        let compute_resources = match TileAttentionKind::Unit.computation_resources()? {
             CubeDimResource::Units(units) => {
                 CubeDimResource::Units(units * blueprint.tiling_scheme.stage_size.seq_q)
             }
@@ -125,7 +115,7 @@ impl<
                 key_smem_config,
                 value_smem_config,
                 out_smem_config,
-                tile_config,
+                tile_attention,
             },
         }))
     }

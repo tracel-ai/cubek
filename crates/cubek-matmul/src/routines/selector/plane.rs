@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+use std::cmp::min;
+
 use cubecl::{
     {Runtime, client::ComputeClient, ir::StorageType},
     {features::MmaConfig, ir::VectorSize},
@@ -9,21 +12,21 @@ use cubek_std::{
 };
 
 use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
-    MultiRowStrategy, SwizzleModes, TilingBlueprint, TilingScheme, adjust_dtypes,
+    BatchMatmulBlueprint, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+    MatmulVectorSizes, MultiRowStrategy, SwizzleModes, TilingScheme, adjust_dtypes,
 };
 use crate::routines::selector::is_tiny;
 use crate::{
     components::global::{InputLoadFlow, LoadFlows},
     components::stage::PartitionBuffering,
-    components::tile::TileMatmulFamily,
+    components::tile::TileMatmulKind,
 };
 
 pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;
 
 #[derive(Default, Debug)]
-/// Options to select the best plane matmul [selection](TilingBlueprint).
+/// Options to select the best plane matmul [selection](BatchMatmulBlueprint).
 pub struct PlaneTilingBlueprintOptions {
     pub partition_k: Option<u32>,
     pub specialized: bool,
@@ -35,15 +38,16 @@ pub struct PlaneTilingBlueprintOptions {
     pub tiny_selection_enabled: bool,
 }
 
-pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
+pub fn infer_blueprint_plane<R: Runtime>(
+    tile_matmul: TileMatmulKind,
     client: &ComputeClient<R>,
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
     vector_sizes: &MatmulVectorSizes,
     options: PlaneTilingBlueprintOptions,
-) -> Result<(TilingBlueprint, MatmulElems), MatmulSetupError> {
-    adjust_dtypes(client, &mut dtypes, TMM::requires_accelerator());
+) -> Result<(BatchMatmulBlueprint, MatmulElems), MatmulSetupError> {
+    adjust_dtypes(client, &mut dtypes, tile_matmul.requires_accelerator());
 
     if plane_dim == 1 {
         return Err(MatmulSetupError::Unavailable(
@@ -60,19 +64,25 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         ),
         (problem.m, problem.n, problem.k).into(),
         (None, None, None),
-        TMM::is_supported,
-        TMM::supported_sizes,
+        |c, cfg| tile_matmul.is_supported(c, cfg),
+        |c, l, r, a| tile_matmul.supported_sizes(c, l, r, a),
     )?;
 
     if options.tiny_selection_enabled && is_tiny(problem, &tile_size) {
         return Ok((
-            selection_tiny(client, problem, tile_size, plane_dim),
+            selection_tiny(client, problem, tile_size, plane_dim, tile_matmul),
             dtypes,
         ));
     }
 
     let row_count = options.row_count.unwrap_or_else(|| {
-        let max_plane_per_cube = client.properties().hardware.max_units_per_cube / plane_dim;
+        #[cfg(target_os = "macos")]
+        // If we allow too many units it will select a large plane_count and fail with Cube Dim too large
+        let max_units_per_cube = min(client.properties().hardware.max_units_per_cube, 256);
+        #[cfg(not(target_os = "macos"))]
+        let max_units_per_cube = client.properties().hardware.max_units_per_cube;
+
+        let max_plane_per_cube = max_units_per_cube / plane_dim;
         // Compensate for register use
         let precision_factor = match dtypes.lhs_stage.size() >= 4 {
             true => 2,
@@ -171,7 +181,7 @@ pub fn infer_blueprint_plane<TMM: TileMatmulFamily, R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let mut builder = TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+    let mut builder = BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
         .hypercube_blueprint(hypercube);
 
@@ -247,6 +257,13 @@ fn select_size(
             }
         }
     } as usize;
+
+    // The number of rows handled per plane cannot exceed the number of available
+    // planes: otherwise `plane_count / rows` underflows to 0, producing a degenerate
+    // tiling scheme with `stage_size.m == 0` that divides by zero in
+    // `BatchMatmulBlueprint::cube_launch_info`. Clamp so there is always at least one stage
+    // along `m` (e.g. a large `problem_m` requesting 2 rows when only 1 plane fits).
+    let rows = rows.min(plane_count).max(1);
 
     (rows, plane_count / rows, plane_count)
 }
@@ -331,7 +348,8 @@ fn selection_tiny<R: Runtime>(
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,
-) -> TilingBlueprint {
+    tile_matmul: TileMatmulKind,
+) -> BatchMatmulBlueprint {
     // If the K axis is big, we can leverage that.
     let pk = u32::min(problem.k as u32 / tile_size.k(), 8);
     let pk = u32::max(pk, 1);
@@ -356,8 +374,44 @@ fn selection_tiny<R: Runtime>(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    TilingBlueprint::builder(tiling_scheme, plane_dim, problem)
+    BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
         .hypercube_blueprint(hypercube)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test: when fewer planes are available than the requested
+    /// rows-per-plane (e.g. a large `problem_m` asks for 2 rows but only 1 plane
+    /// fits), `select_size` must not return `stage_size_m == 0`. The zero used to
+    /// propagate into a degenerate `TilingScheme` (`stage_size.m == 0`) and panic
+    /// with "attempt to divide by zero" in `BatchMatmulBlueprint::cube_launch_info`.
+    /// Reproduces the rf-detr crash on the `m=1024, n=4, k=256` matmul.
+    #[test]
+    fn select_size_never_yields_zero_stage_size_m() {
+        let plane_count = 1;
+        let instruction_m = 8;
+        let problem_m = 1024;
+
+        for strategy in [
+            MultiRowStrategy::Always(2),
+            MultiRowStrategy::Adaptive {
+                minimum_stage_count: 8,
+            },
+        ] {
+            let (rows_per_plane, stage_size_m, _partition_shape_n) =
+                select_size(strategy, plane_count, instruction_m, problem_m);
+
+            assert!(
+                stage_size_m >= 1,
+                "stage_size_m must be >= 1 (got {stage_size_m}) for {strategy:?} with plane_count={plane_count}"
+            );
+            assert!(rows_per_plane >= 1);
+            // With a single plane we can only fit a single row per plane.
+            assert!(rows_per_plane <= plane_count);
+        }
+    }
 }

@@ -1,21 +1,20 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
+use crate::args::MatmulArgs;
 use crate::components::batch::partitioned_matmul::partition::{
     GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
 };
 use crate::definition::{
-    AccG, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes, MatmulVectorSizes, RhsG,
-    TilingBlueprint,
+    AccG, BatchMatmulBlueprint, Blueprint as _, CubeMapping, LhsG, MatmulElems, MatmulTypes,
+    MatmulVectorSizes, RhsG, cube_pos_to_m_n_batch,
 };
-use crate::launch::MatmulArgs;
 use crate::{
-    components::batch::partitioned_matmul::config::PartitionedBatchConfig, launch::RuntimeConfig,
+    args::RuntimeConfig, components::batch::partitioned_matmul::config::PartitionedBatchConfig,
 };
 use crate::{
     components::batch::{BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily},
     components::global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily},
-    components::stage::StageConfig as _,
 };
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
@@ -40,24 +39,23 @@ pub(crate) fn matmul_entry<
     output: &mut <Args as MatmulArgs>::Output<Vector<Acc, AccSize>>,
     config: <Args as MatmulArgs>::Config,
     cube_mapping: CubeMapping,
-    #[comptime] blueprint: TilingBlueprint,
+    #[comptime] blueprint: BatchMatmulBlueprint,
     #[comptime] dtypes: MatmulElems,
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            config,
-            blueprint.lhs_global_layout_config(),
-            blueprint.rhs_global_layout_config(),
-            blueprint.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        config,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
 
     let vector_size_lhs = Args::view_lhs(&state).vector_size();
     let vector_size_rhs = Args::view_rhs(&state).vector_size();
-    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_size_out = Args::view_out(&state).vector_size();
     let vector_sizes = comptime!(MatmulVectorSizes {
         lhs: vector_size_lhs,
         rhs: vector_size_rhs,
@@ -107,17 +105,59 @@ pub(crate) fn matmul_entry<
     PartitionedBatchMatmul::<
         Args::Config,
         (
-            (Lhs, LhsSize, StageLhs, StageLhsSize, RegisterLhs),
-            (Rhs, RhsSize, StageRhs, StageRhsSize, RegisterRhs),
-            (Acc, AccSize, StageAcc, StageAccSize, RegisterAcc),
+            (
+                Lhs,
+                LhsSize,
+                StageLhs,
+                StageLhsSize,
+                RegisterLhs,
+                StageLhsSize,
+            ),
+            (
+                Rhs,
+                RhsSize,
+                StageRhs,
+                StageRhsSize,
+                RegisterRhs,
+                StageRhsSize,
+            ),
+            (
+                Acc,
+                AccSize,
+                StageAcc,
+                StageAccSize,
+                RegisterAcc,
+                StageAccSize,
+            ),
         ),
         GMMF::Matmul<(
-            (Lhs, LhsSize, StageLhs, StageLhsSize, RegisterLhs),
-            (Rhs, RhsSize, StageRhs, StageRhsSize, RegisterRhs),
-            (Acc, AccSize, StageAcc, StageAccSize, RegisterAcc),
+            (
+                Lhs,
+                LhsSize,
+                StageLhs,
+                StageLhsSize,
+                RegisterLhs,
+                StageLhsSize,
+            ),
+            (
+                Rhs,
+                RhsSize,
+                StageRhs,
+                StageRhsSize,
+                RegisterRhs,
+                StageRhsSize,
+            ),
+            (
+                Acc,
+                AccSize,
+                StageAcc,
+                StageAccSize,
+                RegisterAcc,
+                StageAccSize,
+            ),
         )>,
         GPM,
-    >::execute::<Args>(&mut state, cube_mapping, config);
+    >::execute::<Args>(&state, cube_mapping, config);
 }
 
 /// Executes matrix multiplication at the batch level,
@@ -144,14 +184,14 @@ impl<RC: RuntimeConfig, MP: MatmulTypes, GMM: GlobalMatmul<RC, MP>, GPMM: Global
     type Config = PartitionedBatchConfig<GMM::Config>;
 
     fn execute<Args: MatmulArgs<Config = RC>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
         let (_, _, problem_k) = Args::view_lhs(state).shape();
         let k_range = (0, problem_k);
 
-        let (m_index, n_index, batch_index) = cube_mapping.cube_pos_to_tensor_pos();
+        let (m_index, n_index, batch_index) = cube_pos_to_m_n_batch(&cube_mapping);
 
         let ranges = PartitionRanges::new(
             PartitionRangeDim::new(

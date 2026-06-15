@@ -28,7 +28,6 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         #[comptime] bound_checks: BoundChecks,
     ) -> ReaderBoundChecks<P> {
         #[comptime]
-        #[comptime]
         let pos_max = match idle {
             // When idle we set the pos_max to zero so that we always mask values.
             ComptimeOption::Some(idle) => pos_max * usize::cast_from(!idle),
@@ -40,6 +39,7 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
             true => BoundChecks::Mask,
             false => bound_checks,
         });
+
         match bound_checks {
             BoundChecks::None => ReaderBoundChecks::new_NotRequired(),
             BoundChecks::Mask | BoundChecks::Branch => {
@@ -59,17 +59,17 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
     ) -> Vector<P::EI, P::SI> {
         #[comptime]
         match self {
-            ReaderBoundChecks::NotRequired => view[offset],
+            ReaderBoundChecks::NotRequired => view.read(offset),
             ReaderBoundChecks::Required(checks) => match checks.bound_checks.comptime() {
-                BoundChecks::None => view[offset],
+                BoundChecks::None => view.read(offset),
                 BoundChecks::Mask => {
                     let mask = pos < checks.pos_max;
                     let index = offset * usize::cast_from(mask);
-                    select(mask, view[index], checks.null_input)
+                    select(mask, view.read(index), checks.null_input)
                 }
                 BoundChecks::Branch => {
                     if pos < checks.pos_max {
-                        view[offset]
+                        view.read(offset)
                     } else {
                         checks.null_input
                     }

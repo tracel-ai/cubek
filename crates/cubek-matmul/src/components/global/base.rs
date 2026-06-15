@@ -1,4 +1,4 @@
-use cubecl::{ir::DeviceProperties, prelude::*};
+use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::ViewMut};
 use cubek_std::stage::StageMemoryConfig;
 
 use crate::components::global::{
@@ -8,14 +8,14 @@ use crate::{
     components::global::multi_stage::EventLoadingMode, components::global::read::ReaderMode,
 };
 use crate::{
-    components::stage::StageConfig,
+    components::stage::StageMatmul as StageMatmulInstance,
     components::{global::memory::GlobalMemoryConfig, stage::NumStages},
+    definition::BatchMatmulBlueprint,
     definition::StageIdent,
-    definition::TilingBlueprint,
     definition::{AccG, MatmulSetupError},
     definition::{LhsG, MatmulElems, MatmulVectorSizes, RhsG},
     definition::{MatmulProblem, MatmulTypes},
-    {components::CubeDimResource, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::CubeDimResource},
 };
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::{fmt::Debug, hash::Hash};
@@ -33,7 +33,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     /// This function may return an error if the configuration cannot be supported on the current runtime.
     fn expand_config(
         device_props: &DeviceProperties,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<Self::Config, MatmulSetupError>;
@@ -42,14 +42,14 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 
     /// Returns the compute resources required to run this matmul.
     fn cubedim_resource(
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint<R: Runtime>(
         client: &ComputeClient<R>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
@@ -75,17 +75,17 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
 /// It is not assumed that the matmul's dimensions match its inputs dimensions perfectly.
 /// It is therefore important that Readers and Writers perform checks to avoid out-of-bounds
 /// before reading data.
-pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Sync {
+pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static {
     type Config: GlobalConfig;
 
     /// Global reader for matrix A (Lhs)
-    type LhsGlobalReader: CubeType;
+    type LhsGlobalReader<'a>: CubeType;
     /// Global reader for matrix B (Rhs)
-    type RhsGlobalReader: CubeType;
+    type RhsGlobalReader<'a>: CubeType;
     /// Global reader for matrix C (Accumulator/Bias)
-    type AccGlobalReader: CubeType;
+    type AccGlobalReader<'a>: CubeType;
     /// Writer to store the output stage into global memory
-    type GlobalWriter: CubeType;
+    type GlobalWriter<'a>: CubeType;
 
     /// The accumulator type for the tile matmul
     type Accumulators: CubeType;
@@ -97,48 +97,48 @@ pub trait GlobalMatmul<RC: RuntimeConfig, MP: MatmulTypes>: 'static + Send + Syn
     /// To compute the whole range of k values, use k_range=(0, K) where
     /// K is the K dimension of Lhs and Rhs.
     fn execute(
-        lhs_reader: Self::LhsGlobalReader,
-        rhs_reader: Self::RhsGlobalReader,
-        acc_reader: Self::AccGlobalReader,
-        writer: Self::GlobalWriter,
+        lhs_reader: Self::LhsGlobalReader<'_>,
+        rhs_reader: Self::RhsGlobalReader<'_>,
+        acc_reader: Self::AccGlobalReader<'_>,
+        writer: Self::GlobalWriter<'_>,
         k_range: (u32, u32),
         #[comptime] config: Self::Config,
     );
 
     /// Initialize the global reader for Lhs, starting at row m and column k
     fn init_lhs_global_reader(
-        lhs: View<LhsG<MP>, Coords2d>,
+        lhs: View<'_, LhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::LhsGlobalReader;
+    ) -> Self::LhsGlobalReader<'_>;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_rhs_global_reader(
-        rhs: View<RhsG<MP>, Coords2d>,
+        rhs: View<'_, RhsG<MP>, Coords2d>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::RhsGlobalReader;
+    ) -> Self::RhsGlobalReader<'_>;
 
     /// Initialize the global reader for Rhs, starting at row k and column n
     fn init_acc_global_reader(
-        acc: ComptimeOption<View<AccG<MP>, Coords2d>>,
+        acc: ComptimeOption<View<'_, AccG<MP>, Coords2d>>,
         runtime_config: RC,
         #[comptime] config: Self::Config,
-    ) -> Self::AccGlobalReader;
+    ) -> Self::AccGlobalReader<'_>;
 
     /// Initialize the accumulator without data
     fn init_accumulators(#[comptime] config: Self::Config) -> Self::Accumulators;
 
     /// Initialize the global writer at row m and column n
     fn init_global_writer(
-        out: View<AccG<MP>, Coords2d, ReadWrite>,
+        out: ViewMut<'_, AccG<MP>, Coords2d>,
         #[comptime] config: Self::Config,
-    ) -> Self::GlobalWriter;
+    ) -> Self::GlobalWriter<'_>;
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SharedGlobalMatmulConfig<S: StageConfig> {
-    pub stage_config: S,
+pub struct SharedGlobalMatmulConfig {
+    pub stage_config: StageMatmulInstance,
     pub num_planes: u32,
     pub lhs_reader_config: GlobalReaderConfig,
     pub rhs_reader_config: GlobalReaderConfig,
@@ -147,7 +147,7 @@ pub struct SharedGlobalMatmulConfig<S: StageConfig> {
     pub must_sync_plane_after_execution: bool,
 }
 
-impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
+impl SharedGlobalMatmulConfig {
     pub fn check_k_bounds(&self) -> bool {
         let from_lhs = self.lhs_reader_config.gmem_config.check_col_bounds;
         let from_rhs = self.rhs_reader_config.gmem_config.check_row_bounds;
@@ -172,10 +172,8 @@ impl<S: StageConfig> SharedGlobalMatmulConfig<S> {
     }
 }
 
-impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
-    type StageConfig = S;
-
-    fn stage_config(&self) -> Self::StageConfig {
+impl GlobalConfig for SharedGlobalMatmulConfig {
+    fn stage_config(&self) -> StageMatmulInstance {
         self.stage_config
     }
 
@@ -212,10 +210,8 @@ impl<S: StageConfig> GlobalConfig for SharedGlobalMatmulConfig<S> {
 pub trait GlobalConfig:
     Copy + Clone + Eq + PartialEq + Hash + Debug + Send + Sync + 'static
 {
-    type StageConfig: StageConfig;
-
     /// Convert itself to the underlying stage matmul config
-    fn stage_config(&self) -> Self::StageConfig;
+    fn stage_config(&self) -> StageMatmulInstance;
     fn lhs_reader_config(&self) -> GlobalReaderConfig;
     fn rhs_reader_config(&self) -> GlobalReaderConfig;
     fn writer_config(&self) -> GlobalWriterConfig;

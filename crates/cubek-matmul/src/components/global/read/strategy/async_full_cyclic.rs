@@ -4,29 +4,31 @@ use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount, read::async_copy::async_copy_from,
 };
 use crate::{
+    args::RuntimeConfig,
     components::global::read::{
         FullLoadingStrategy, async_barrier::AsyncCopy, async_copy::ASYNC_COPY_WIDTH,
         tiled::TiledLayout,
     },
-    launch::RuntimeConfig,
+};
+use crate::{
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
+    definition::{MatmulElems, MatmulProblem, StageIdent},
 };
 use crate::{
     components::global::read::{validate_async_barrier, validate_swizzle_atom_size},
     components::global::read::{validate_async_copy, validate_async_copy_with_problem},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
 };
-use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::{ContiguousTilingLayout, StridedStageMemory, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    definition::{MatmulElems, MatmulProblem, StageIdent},
-};
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -108,8 +110,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCy
     type SyncStrategy = AsyncCopy;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCyclicJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
@@ -145,6 +145,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCy
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct AsyncFullCyclicJob {
     unit_position_base: u32,
 
@@ -175,17 +176,23 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
-        _barrier: &mut Shared<Barrier>,
+        _barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_vector::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, stage, config);
+            copy_vector::<EG, NG, ES, NS, TO>(&*this, unit_position, global_iter, stage, config);
         } else {
             if unit_position < this.num_stage_elements {
-                copy_vector::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, stage, config);
+                copy_vector::<EG, NG, ES, NS, TO>(
+                    &*this,
+                    unit_position,
+                    global_iter,
+                    stage,
+                    config,
+                );
             }
         }
     }

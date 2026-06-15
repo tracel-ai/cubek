@@ -1,130 +1,76 @@
 use crate::{
-    AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
     backward_data::args::ConcreteArgs,
     components::{ConvolutionOperation, global::args::RuntimeArgs},
-    kernels::algorithm::simple::*,
+    launch::ConvolutionArgs,
 };
 use crate::{components::ConvSetupError, kernels::backward_data::selector::launch_kernel_concrete};
 use crate::{
     components::{ConvolutionProblem, Dimensionality},
-    kernels::algorithm::Algorithm,
+    routines::Routine,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
-    components::tile::{cmma::CmmaMatmul, mma::MmaMatmul},
     definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
     routines::BlueprintStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use derive_new::new;
 
-macro_rules! with_tile_kind {
-    ($kind: expr, $T: ident, $launch: expr) => {
-        match $kind {
-            AcceleratedTileKind::Cmma => {
-                type $T = CmmaMatmul;
-                ($launch)()
-            }
-            AcceleratedTileKind::Mma => {
-                type $T = MmaMatmul;
-                ($launch)()
-            }
-        }
-    };
-}
-
-/// Perform an n-dimensional convolution using the implicit GEMM (im2col) algorithm, using cubecl
-/// tiling matmul components, using the specified algorithm.
+/// Backward-data dispatch helper.
 ///
-/// * `input` - The input feature map, layout should be [batches, depth, height, width, in_channels]
-/// * `weight` - The weights (filter) applied to each kernel, layout should be [out_channels, kernel_d, kernel_h, kernel_w, in_channels]
-/// * `out` - The output feature map, layout should be [batches, out_depth, out_height, out_width, out_channels]
-/// * `bias` - The bias added to each out channel
-/// * `options` - The options to use for the convolution
+/// Called by `cubek_convolution::launch_ref` after the routine and
+/// blueprint-strategy have been resolved. Backward-data does not currently
+/// support the TMA reading strategy: requesting it here returns a setup error.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_ref<R: Runtime, const N_SPATIAL: usize>(
-    strategy: &Strategy,
+pub(crate) fn launch_internal<R: Runtime, const N_SPATIAL: usize, Rt: Routine>(
     client: &ComputeClient<R>,
     out_grad: InputBinding<R>,
     weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     args: ConvolutionArgs<N_SPATIAL>,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
-) -> Result<(), ConvSetupError> {
-    let backprop = BackwardsData::new(client, out_grad, weights, in_grad, args, dtypes);
+) -> Result<(), ConvSetupError>
+where
+    Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
+{
+    let ConvolutionArgs {
+        stride,
+        padding,
+        dilation,
+    } = args;
 
-    match strategy {
-        Strategy::Simple {
-            read_strategy,
-            tile_kind,
-        } => with_tile_kind!(tile_kind, Accelerated, || match read_strategy {
-            ReadingStrategy::Cyclic => backprop.launch::<SimpleSyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::Strided => backprop.launch::<SimpleSyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tilewise => backprop.launch::<SimpleSyncTilewiseConv<Accelerated>>(),
-            ReadingStrategy::AsyncCyclic => backprop.launch::<SimpleAsyncCyclicConv<Accelerated>>(),
-            ReadingStrategy::AsyncStrided =>
-                backprop.launch::<SimpleAsyncStridedConv<Accelerated>>(),
-            ReadingStrategy::Tma => Err(ConvSetupError::Matmul(MatmulSetupError::InvalidConfig(
-                Box::new("Data backprop doesn't yet work with current TMA tiling strategy")
-            ))),
-        }),
-    }
-}
+    let dimensionality = match N_SPATIAL {
+        1 => Dimensionality::Dim1,
+        2 => Dimensionality::Dim2,
+        3 => Dimensionality::Dim3,
+        other => unimplemented!("Unsupported dimensionality {other}"),
+    };
 
-#[derive(new)]
-struct BackwardsData<'a, R: Runtime, const N_SPATIAL: usize> {
-    client: &'a ComputeClient<R>,
-    out_grad: InputBinding<R>,
-    weights: InputBinding<R>,
-    in_grad: TensorBinding<R>,
-    args: ConvolutionArgs<N_SPATIAL>,
-    dtypes: MatmulElems,
-}
-
-impl<'a, R: Runtime, const N_SPATIAL: usize> BackwardsData<'a, R, N_SPATIAL> {
-    fn launch<Alg: Algorithm>(self) -> Result<(), ConvSetupError>
-    where
-        Alg::Args: ConcreteArgs<Alg::Routine>,
-    {
-        let ConvolutionArgs {
-            stride,
-            padding,
-            dilation,
-        } = self.args;
-
-        let dimensionality = match N_SPATIAL {
-            1 => Dimensionality::Dim1,
-            2 => Dimensionality::Dim2,
-            3 => Dimensionality::Dim3,
-            other => unimplemented!("Unsupported dimensionality {other}"),
-        };
-
-        launch_with_algorithm::<R, Alg>(
-            self.client,
-            self.out_grad,
-            self.weights,
-            self.in_grad,
-            (&stride, &padding, &dilation),
-            dimensionality,
-            &BlueprintStrategy::Inferred(Default::default()),
-            self.dtypes,
-        )
-    }
+    launch_with_routine::<R, Rt>(
+        client,
+        out_grad,
+        weights,
+        in_grad,
+        (&stride, &padding, &dilation),
+        dimensionality,
+        blueprint_strategy,
+        dtypes,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn launch_with_algorithm<R: Runtime, Alg: Algorithm>(
+fn launch_with_routine<R: Runtime, Rt: Routine>(
     client: &ComputeClient<R>,
     out_grad: InputBinding<R>,
     weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs<Alg::Routine>,
+    Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
 {
     let rank = in_grad.shape.len();
     let dim_c = rank - 1;
@@ -144,8 +90,8 @@ where
     let weights_tmp = weights.clone();
 
     let out_grad_data =
-        Alg::correct_layout(client, out_grad_tmp.into_data(), dtypes.lhs_global, op)?;
-    let weights_data = Alg::correct_layout(client, weights_tmp.into_data(), dtypes.rhs_global, op)?;
+        Rt::correct_layout(client, out_grad_tmp.into_data(), dtypes.lhs_global, op)?;
+    let weights_data = Rt::correct_layout(client, weights_tmp.into_data(), dtypes.rhs_global, op)?;
 
     let mut out_grad = out_grad.clone();
     let mut weights = weights.clone();
@@ -186,7 +132,7 @@ where
         address_type,
     };
 
-    launch_kernel::<R, Alg>(
+    launch_kernel::<R, Rt>(
         client,
         out_grad,
         weights,
@@ -198,17 +144,17 @@ where
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel<R: Runtime, Alg: Algorithm>(
+pub fn launch_kernel<R: Runtime, Rt: Routine>(
     client: &ComputeClient<R>,
     out_grad: InputBinding<R>,
     weights: InputBinding<R>,
     in_grad: TensorBinding<R>,
     problem: ConvolutionProblem,
-    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Alg::Routine>,
+    blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
 ) -> Result<(), ConvSetupError>
 where
-    Alg::Args: ConcreteArgs<Alg::Routine>,
+    Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
 {
     // Shape/strides are treated as k-major, with the last dim always being the contiguous one.
     // So for the sake of selecting a vector size, the shape/strides are always row-major.
@@ -230,9 +176,9 @@ where
     )
     .filter_out_with_tensor(&in_grad.strides, &in_grad.shape);
 
-    let vector_sizes = Alg::filter_vector_sizes(vector_sizes).pick_max()?;
+    let vector_sizes = Rt::filter_vector_sizes(vector_sizes).pick_max()?;
 
-    launch_kernel_concrete::<R, Alg::Args, Alg::Routine>(
+    launch_kernel_concrete::<R, Rt::Args, Rt::MatmulRoutine>(
         client,
         out_grad,
         weights,
@@ -242,4 +188,14 @@ where
         blueprint_strategy,
         &dtypes,
     )
+}
+
+/// Returned by the unified `launch_ref` when the requested routine is not
+/// supported for backward-data. Currently only the TMA reading strategy is
+/// rejected.
+#[allow(dead_code)]
+pub(crate) fn unsupported_tma_error() -> ConvSetupError {
+    ConvSetupError::Matmul(MatmulSetupError::InvalidConfig(Box::new(
+        "Data backprop doesn't yet work with current TMA tiling strategy",
+    )))
 }

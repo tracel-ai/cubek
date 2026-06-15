@@ -1,0 +1,19 @@
+#[macro_export]
+macro_rules! testgen_convolution_launch {
+    ($algorithm: expr, $dtypes: expr, $tiling_scheme: expr, $swizzle: expr, $partition_buffering: expr, $problem_size: expr) => {
+        use super::*;
+        use $crate::convolution::launcher_strategy::test_algo;
+
+        #[test]
+        pub fn test() {
+            test_algo(
+                $algorithm,
+                $dtypes,
+                $tiling_scheme,
+                $swizzle,
+                $partition_buffering,
+                $problem_size,
+            );
+        }
+    };
+}

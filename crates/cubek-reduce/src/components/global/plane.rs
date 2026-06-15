@@ -1,14 +1,16 @@
 use crate::{
     ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
-        args::NumericLine,
-        global::idle_check,
-        instructions::reduce_inplace,
+        args::NumericVector,
+        global::{idle_check, reduction_output_base},
+        instructions::{Accumulator, reduce_inplace},
         readers::{Reader, plane::PlaneReader},
-        writer::Writer,
+        writers::Writer,
     },
-    routines::PlaneReduceBlueprint,
+    routines::{PlaneMergeStrategy, PlaneReduceBlueprint},
 };
+
+use crate::components::instructions::ReduceStep;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(CubeType)]
@@ -16,25 +18,50 @@ pub struct GlobalFullPlaneReduce;
 
 #[cube]
 impl GlobalFullPlaneReduce {
-    pub fn execute<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+    pub fn execute<P: ReducePrecision, Out: NumericVector, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
+        out_vec_axis: usize,
         inst: &I,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
     ) {
-        let write_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
+        // TODO: need a better strategy for excess units
+        // The early exit below is required for invalid units on some integrated GPUs,
+        // but it's invalid non-uniform control flow on WebGPU (wasm).
+        // #[allow(clippy::collapsible_if)]
+        // if comptime!(blueprint.plane_dim_ceil) {
+        //     if UNIT_POS_X >= PLANE_DIM {
+        //         terminate!();
+        //     }
+        // }
+        let acc_format = I::accumulator_format(inst);
+        let reduction_index = CUBE_POS * CUBE_DIM_Y as usize + UNIT_POS_Y as usize;
+        let write_index = reduction_output_base::<Out::T, Out::N>(
+            reduction_index,
+            &*output,
+            reduce_axis,
+            comptime!(acc_format.len()),
+        );
 
-        let mut writer =
-            Writer::<Out>::new::<P>(input, output, reduce_axis, write_index, vectorization_mode);
+        let mut out = output.clone();
+        let mut writer = Writer::<Out>::new::<P>(
+            input,
+            &mut out,
+            reduce_axis,
+            out_vec_axis,
+            write_index,
+            vectorization_mode,
+            acc_format,
+        );
 
         let write_count = writer.write_count();
         let reduce_index_start = write_index * write_count;
 
         let idle = idle_check::<P, Out>(
             input,
-            output,
+            &*output,
             reduce_index_start,
             vectorization_mode,
             blueprint.plane_idle,
@@ -69,7 +96,7 @@ impl GlobalFullPlaneReduce {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn reduce_single<P: ReducePrecision, Out: NumericLine, I: ReduceInstruction<P>>(
+    fn reduce_single<P: ReducePrecision, Out: NumericVector, I: ReduceInstruction<P>>(
         input: &VirtualTensor<P::EI, P::SI>,
         output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
         reduce_axis: usize,
@@ -78,7 +105,7 @@ impl GlobalFullPlaneReduce {
         idle: ComptimeOption<bool>,
         #[comptime] vectorization_mode: VectorizationMode,
         #[comptime] blueprint: PlaneReduceBlueprint,
-    ) -> I::AccumulatorItem {
+    ) -> Accumulator<P> {
         let reader = Reader::<P>::new::<I, Out>(
             input,
             output,
@@ -88,30 +115,27 @@ impl GlobalFullPlaneReduce {
             idle,
             blueprint.bound_checks,
             vectorization_mode,
+            blueprint.plane_dim_ceil,
         );
         let reader = PlaneReader::<P>::new(reader);
 
         let mut accumulator = I::null_accumulator(inst);
 
+        let iteration_plane_reduce_mode = match blueprint.plane_merge_strategy {
+            PlaneMergeStrategy::Eager => ReduceStep::Plane,
+            PlaneMergeStrategy::Lazy => ReduceStep::Identity,
+        };
         for i in 0..reader.length() {
-            let (item, coordinate) = reader.read(i);
-            reduce_inplace::<P, I>(
-                inst,
-                &mut accumulator,
-                item,
-                coordinate,
-                !blueprint.independent,
-            );
+            let item = reader.read(i);
+            reduce_inplace::<P, I>(inst, &mut accumulator, item, iteration_plane_reduce_mode);
         }
 
-        match blueprint.independent {
-            true => {
-                let (item, coordinate) = I::read_accumulator(inst, &accumulator);
-                let mut result = I::null_accumulator(inst);
-                reduce_inplace::<P, I>(inst, &mut result, item, coordinate, true);
-                result
+        match blueprint.plane_merge_strategy {
+            PlaneMergeStrategy::Lazy => {
+                I::plane_reduce_inplace(inst, &mut accumulator);
+                accumulator
             }
-            false => accumulator,
+            PlaneMergeStrategy::Eager => accumulator,
         }
     }
 }

@@ -6,7 +6,7 @@ use cubecl::{
 define_size!(pub S);
 
 /// Precision used for the reduction.
-pub trait ReducePrecision {
+pub trait ReducePrecision: 'static {
     /// Precision used for the input tensor.
     type EI: Numeric;
     /// Size used for the input tensor.

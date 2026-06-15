@@ -1,34 +1,33 @@
 use cubecl;
 use cubecl::prelude::*;
+use cubek_std::tile::{Plane, RowWise, Tile};
 
-use crate::{components::tile::output::AttentionOutput, definition::AttentionPartitionSize};
+use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
+use crate::forward::definition::AttentionPartitionSize;
 
 #[derive(CubeType)]
-/// Contains all seq_q·val_dim materialized tiles at once because they're accumulators
-pub struct OutputPartition<AC: AttentionOutput> {
-    workspace: AC::Workspace,
-    sequence: Sequence<AC::Tile>,
+/// Holds the per-partition output accumulator tiles. For the cmma path each
+/// tile is a `Tile::Bounce`, which carries its own smem + WhiteboxFragment internally.
+pub struct OutputPartition<Acc: Float> {
+    sequence: Sequence<Tile<Acc, Plane>>,
 }
 
 #[cube]
-impl<AC: AttentionOutput> OutputPartition<AC> {
+impl<Acc: Float> OutputPartition<Acc> {
     pub fn new(
         #[comptime] partition_size: AttentionPartitionSize,
-        #[comptime] config: AC::Config,
-    ) -> OutputPartition<AC> {
+        #[comptime] value_matmul: AttentionTileMatmul,
+    ) -> OutputPartition<Acc> {
         let mut sequence = Sequence::new();
-
-        let workspace = AC::init_workspace(config);
 
         #[unroll]
         for _ in 0..partition_size.seq_q * partition_size.val_dim {
-            sequence.push(AC::init_tile(config));
+            let mut tile = attn_matmul::allocate_rowwise_acc::<Acc>(value_matmul);
+            tile.fill_zero();
+            sequence.push(tile);
         }
 
-        OutputPartition::<AC> {
-            workspace,
-            sequence,
-        }
+        OutputPartition::<Acc> { sequence }
     }
 
     pub fn get_at(
@@ -36,7 +35,7 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-    ) -> &AC::Tile {
+    ) -> &Tile<Acc, Plane> {
         &self.sequence[i * partition_val_dim + j]
     }
 
@@ -45,39 +44,31 @@ impl<AC: AttentionOutput> OutputPartition<AC> {
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-    ) -> &mut AC::Tile {
-        self.sequence.index_mut(i * partition_val_dim + j)
+    ) -> &mut Tile<Acc, Plane> {
+        &mut self.sequence[i * partition_val_dim + j]
     }
 
-    pub fn scale_mul_at(
+    pub fn scale_mul_at<SM: Float>(
         &mut self,
-        scale: &AC::ScaleColumn,
+        scale: &RowWise<SM>,
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-        #[comptime] config: AC::Config,
     ) {
-        AC::scale_mul(
-            self.sequence.index_mut(i * partition_val_dim + j),
-            scale,
-            &mut self.workspace,
-            config,
-        );
+        self.sequence
+            .index_mut(i * partition_val_dim + j)
+            .scale_mul::<SM>(scale);
     }
 
-    pub fn scale_div_at(
+    pub fn scale_div_at<SM: Float>(
         &mut self,
-        running_state: &AC::RunningState,
+        running_state_l: &RowWise<SM>,
         #[comptime] i: usize,
         #[comptime] j: usize,
         #[comptime] partition_val_dim: usize,
-        #[comptime] config: AC::Config,
     ) {
-        AC::scale_div(
-            self.sequence.index_mut(i * partition_val_dim + j),
-            running_state,
-            &mut self.workspace,
-            config,
-        );
+        self.sequence
+            .index_mut(i * partition_val_dim + j)
+            .scale_div::<SM>(running_state_l);
     }
 }

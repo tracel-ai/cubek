@@ -1,2 +1,1 @@
-// Integration tests
-pub mod it;
+mod reduce;

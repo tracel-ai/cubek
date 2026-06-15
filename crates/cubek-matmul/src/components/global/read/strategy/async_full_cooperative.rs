@@ -1,4 +1,5 @@
 use crate::{
+    args::RuntimeConfig,
     components::{
         global::{
             GlobalReaderConfig,
@@ -9,16 +10,18 @@ use crate::{
                 validate_async_barrier, validate_noswizzle,
             },
         },
-        stage::{StridedStageFamily, StridedStageMemory, StridedTilingLayout, TilingValidation},
+        stage::{StridedStageFamily, StridedStageMemory},
     },
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    launch::RuntimeConfig,
 };
 use cubecl::{
     ir::DeviceProperties,
     prelude::{barrier::Barrier, *},
 };
-use cubek_std::{InvalidConfigError, MatrixLayout, tile::Strided};
+use cubek_std::{
+    InvalidConfigError, MatrixLayout,
+    tile::{StridedTilingLayout, TilingValidation},
+};
 
 use super::LoadingValidation;
 
@@ -70,8 +73,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
     type SyncStrategy = AsyncBarrier;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullCooperativeJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     const SHOULD_CLEAR: bool = true;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
@@ -90,6 +91,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCooperativeLoading 
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct AsyncFullCooperativeJob {
     #[cube(comptime)]
     num_slices: u32,
@@ -106,20 +108,20 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let window = load_window_in_stage(
-            &global_iter.view(),
+            global_iter.view(),
             task_id,
             config.smem_config,
             config.gmem_config,
         );
 
-        let mut destination: SliceMut<Vector<ES, NS>> =
+        let destination: &mut [Vector<ES, NS>] =
             StridedTilingLayout::nth_slice::<ES, NS>(stage, task_id, config.smem_config);
 
-        barrier.memcpy_async_cooperative(&window.downcast(), &mut destination);
+        barrier.memcpy_async_cooperative(window.downcast(), destination);
     }
 
     fn task_count(this: &Self) -> comptime_type!(u32) {

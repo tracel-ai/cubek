@@ -7,9 +7,9 @@ use crate::{
 };
 
 use crate::{
+    args::MatmulArgs,
     components::batch::{BatchMatmul, naive::NaiveMatmulConfig},
     definition::*,
-    launch::MatmulArgs,
 };
 use cubecl::{
     prelude::*,
@@ -43,19 +43,18 @@ pub(crate) fn matmul_entry<
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            runtime_config,
-            blueprint.lhs_global_layout_config(),
-            blueprint.rhs_global_layout_config(),
-            blueprint.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        runtime_config,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
 
     let vector_size_lhs = Args::view_lhs(&state).vector_size();
     let vector_size_rhs = Args::view_rhs(&state).vector_size();
-    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_size_out = Args::view_out(&state).vector_size();
     let vector_sizes = comptime!(MatmulVectorSizes {
         lhs: vector_size_lhs,
         rhs: vector_size_rhs,
@@ -76,25 +75,24 @@ pub(crate) fn matmul_entry<
     }
     let config = comptime!(config.unwrap());
 
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            runtime_config,
-            config.lhs_global_layout_config(),
-            config.rhs_global_layout_config(),
-            config.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        runtime_config,
+        config.lhs_global_layout_config(),
+        config.rhs_global_layout_config(),
+        config.out_global_layout_config(),
+    );
 
     let define!(RegisterLhs) = blueprint.dtypes.lhs_register;
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
     let define!(RegisterAcc) = blueprint.dtypes.acc_register;
 
     NaiveMatmul::<(
-        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
-        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
-        (Acc, AccSize, Acc, AccSize, RegisterAcc),
-    )>::execute::<Args>(&mut state, cube_mapping, config);
+        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs, LhsSize),
+        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs, RhsSize),
+        (Acc, AccSize, Acc, AccSize, RegisterAcc, AccSize),
+    )>::execute::<Args>(&state, cube_mapping, config);
 }
 
 pub struct NaiveMatmul<MP: MatmulTypes> {
@@ -102,11 +100,11 @@ pub struct NaiveMatmul<MP: MatmulTypes> {
 }
 
 #[cube]
-impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
+impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
     type Config = NaiveMatmulConfig;
 
     fn execute<Args: MatmulArgs>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MT>, RhsG<MT>, AccG<MT>>,
         _cube_mapping: CubeMapping,
         #[comptime] _config: Self::Config,
     ) {
@@ -134,30 +132,30 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for NaiveMatmul<MP> {
 
         let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let size!(NA) = vector_size;
-        let mut sum = Vector::<AccR<MP>, NA>::zero();
+        let mut sum = Vector::<AccRE<MT>, NA>::zero();
 
         for k in range_stepped(0u32, k, vector_size as u32) {
             let lhs = load_unrolled::<_, _, NA>(&lhs, (m, k), MatrixLayout::RowMajor);
             let rhs = load_unrolled::<_, _, NA>(&rhs, (k, n), MatrixLayout::ColMajor);
 
             sum += Vector::cast_from(
-                Vector::<AccR<MP>, NA>::cast_from(lhs) * Vector::<AccR<MP>, NA>::cast_from(rhs),
+                Vector::<AccRE<MT>, NA>::cast_from(lhs) * Vector::<AccRE<MT>, NA>::cast_from(rhs),
             );
         }
 
         let unroll_sum = vector_size != 1usize;
         if unroll_sum {
-            let mut accum = AccR::<MP>::zero();
+            let mut accum = AccRE::<MT>::zero();
             // we unroll the loop to sum `vectorization_factor` elements at once, which lets us
             // use SIMD instructions to speed up the computation
             #[unroll]
             for v in 0..vector_size {
-                accum += sum[v];
+                accum += sum.extract(v);
             }
 
-            out[(m, n)] = Vector::cast_from(accum);
+            out.write((m, n), Vector::cast_from(accum));
         } else {
-            out[(m, n)] = Vector::cast_from(sum[0]);
+            out.write((m, n), Vector::cast_from(sum.extract(0)));
         }
     }
 }
@@ -171,8 +169,8 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
     let vector_size = N2::value();
     comptime![assert!(vector_size >= view.vector_size())];
     let view_vector_size = view.vector_size();
-    if view.vector_size().comptime() == vector_size {
-        Vector::cast_from(view[pos])
+    if comptime![view.vector_size() == vector_size] {
+        Vector::cast_from(view.read(pos))
     } else {
         let (row, col) = pos;
         let mut out = Vector::empty();
@@ -182,10 +180,10 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),
             };
-            let value = view[pos];
+            let value = view.read(pos);
             #[unroll]
             for n in 0..view_vector_size {
-                out[i as usize + n] = value[n];
+                out.insert(i as usize + n, value.extract(n));
             }
         }
         out

@@ -6,52 +6,41 @@ use crate::{
             AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
             plane::{PlanePartitionAttention, PlanePartitionStageConfig},
         },
-        tile::TileAttentionFamily,
+        tile::TileAttentionKind,
     },
-    definition::{
+    forward::definition::{
         AttentionBlueprint, AttentionElems, AttentionPrecision, AttentionSetupError,
         attention_types::*,
     },
 };
-use cubecl::{ir::DeviceProperties, prelude::ReadWrite};
+use cubecl::ir::DeviceProperties;
 use cubek_matmul::components::stage::StageFamily;
 use cubek_std::{
     MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},
-    tile::Strided,
 };
 
 use crate::components::stage::StageAttentionFamily;
 
-pub struct PlanePartitionStageAttentionFamily<
-    TA: TileAttentionFamily,
-    SK: StageFamily,
-    SV: StageFamily,
-    SO: StageFamily<ReadWrite>,
-> {
-    _phantom: PhantomData<(TA, SK, SV, SO)>,
+pub struct PlanePartitionStageAttentionFamily<SK: StageFamily, SV: StageFamily, SO: StageFamily> {
+    _phantom: PhantomData<(SK, SV, SO)>,
 }
 
-impl<
-    TA: TileAttentionFamily,
-    SK: StageFamily<TileKind = Strided>,
-    SV: StageFamily<TileKind = Strided>,
-    SO: StageFamily<ReadWrite, TileKind = Strided>,
-> StageAttentionFamily for PlanePartitionStageAttentionFamily<TA, SK, SV, SO>
+impl<SK: StageFamily, SV: StageFamily, SO: StageFamily> StageAttentionFamily
+    for PlanePartitionStageAttentionFamily<SK, SV, SO>
 {
     type Attention<AP: AttentionPrecision> = PlanePartitionAttention<
         AP,
         SK::Stage<KS<AP>, KSS<AP>, AttentionTilingLayout>,
         SV::Stage<VS<AP>, VSS<AP>, AttentionTilingLayout>,
         SO::Stage<OS<AP>, OSS<AP>, AttentionTilingLayout>,
-        TA::TileAttention<AP>,
     >;
 
     type KeyStage = SK;
     type ValueStage = SV;
     type OutStage = SO;
 
-    type Config = PartitionAttentionConfig<TA::Config>;
+    type Config = PartitionAttentionConfig;
 
     fn expand_config(
         device_props: &DeviceProperties,
@@ -59,9 +48,15 @@ impl<
         dtypes: &AttentionElems,
     ) -> Result<Self::Config, AttentionSetupError> {
         let num_planes = blueprint.tiling_scheme.stage_size.seq_q
-            * TA::computation_resources()?.num_planes(blueprint.plane_dim)?;
+            * TileAttentionKind::BlackboxAccelerated
+                .computation_resources()?
+                .num_planes(blueprint.plane_dim)?;
 
-        let tile_config = TA::expand_config(device_props, blueprint, dtypes)?;
+        let tile_attention = TileAttentionKind::BlackboxAccelerated.expand_tile_attention(
+            device_props,
+            blueprint,
+            dtypes,
+        )?;
 
         let key_smem_config = StageMemoryConfig {
             num_planes,
@@ -117,7 +112,7 @@ impl<
                 key_smem_config,
                 value_smem_config,
                 out_smem_config,
-                tile_config,
+                tile_attention,
             },
         }))
     }

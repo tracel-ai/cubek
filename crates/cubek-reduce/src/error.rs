@@ -25,15 +25,27 @@ pub enum ReduceError {
     /// Indicate the axis is too large.
     #[error("The provided axis ({axis}) must be smaller than the input tensor rank ({rank}).")]
     InvalidAxis { axis: usize, rank: usize },
+    /// Indicate that the shape of the input tensor is too small for the given input and axis.
+    #[error(
+        "The input reduce axis length (currently {axis_length:?}) should be at least k ({k:?})."
+    )]
+    ReduceAxisTooSmall { axis_length: usize, k: usize },
     /// Indicate that the shape of the output tensor is invalid for the given input and axis.
     #[error("The output shape (currently {output_shape:?}) should be {expected_shape:?}.")]
-    MismatchShape {
+    MismatchOutputShape {
         expected_shape: Vec<usize>,
         output_shape: Vec<usize>,
     },
     /// Indicate that we can't launch a shared sum because the atomic addition is not supported.
     #[error("Atomic add not supported by the client for {0}")]
     MissingAtomicAdd(StorageType),
+
+    /// The selected blueprint stages more accumulators in shared memory than the
+    /// device allows.
+    #[error(
+        "Reduce blueprint requires {requested} bytes of shared memory, but only {available} bytes are available on the device."
+    )]
+    SharedMemoryOverflow { requested: usize, available: usize },
 
     /// An error happened during launch.
     #[error("An error happened during launch\nCaused by:\n  {0}")]

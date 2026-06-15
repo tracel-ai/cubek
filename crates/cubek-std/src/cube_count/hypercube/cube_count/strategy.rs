@@ -1,7 +1,7 @@
 use crate::cube_count::SmAllocation;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
-/// Front-facing configuration when crafting a TilingBlueprint
+/// Front-facing configuration when crafting a BatchMatmulBlueprint
 /// Allows choosing a strategy before knowing actual values
 pub enum CubeCountStrategy {
     #[default]

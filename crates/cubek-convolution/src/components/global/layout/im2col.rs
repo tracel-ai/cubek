@@ -4,8 +4,8 @@ use cubecl::std::{
     tensor::layout::{Layout, LayoutExpand},
 };
 use cubek_matmul::{
+    args::BatchedCoords,
     components::global::{GlobalConfig, memory::GlobalLayoutConfig},
-    launch::BatchedCoords,
 };
 
 use crate::components::{
@@ -96,7 +96,7 @@ impl Layout for Im2colLayout {
             in_pos.push(pos);
         }
 
-        let in_pos = in_pos.rev();
+        let in_pos = in_pos.reversed();
 
         NhwcCoords {
             batch,

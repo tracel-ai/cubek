@@ -96,6 +96,23 @@ impl MatrixLayout {
     }
 }
 
+#[cfg(feature = "testing")]
+impl From<MatrixLayout> for cubek_test_utils::StridedLayout {
+    fn from(layout: MatrixLayout) -> Self {
+        match layout {
+            MatrixLayout::RowMajor => Self::RowMajor,
+            MatrixLayout::ColMajor => Self::ColMajor,
+        }
+    }
+}
+
+#[cfg(feature = "testing")]
+impl From<MatrixLayout> for cubek_test_utils::LayoutSpec {
+    fn from(layout: MatrixLayout) -> Self {
+        cubek_test_utils::StridedLayout::from(layout).into()
+    }
+}
+
 #[cube]
 /// Maps the matmul MatrixLayout to cmma's MatrixLayout, for use in Cmma API.
 pub fn as_cmma_layout(#[comptime] layout: MatrixLayout) -> cmma::MatrixLayout {

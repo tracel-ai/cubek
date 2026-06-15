@@ -1,8 +1,4 @@
-use cubecl::{
-    prelude::*,
-    std::tensor::View,
-    {CubeType, Runtime},
-};
+use cubecl::{CubeType, Runtime, prelude::*, std::tensor::ViewMut};
 
 use crate::RandomFamily;
 
@@ -34,7 +30,7 @@ impl PrngRuntime for Bernoulli {
         state_1: &mut u32,
         state_2: &mut u32,
         state_3: &mut u32,
-        output: &mut View<Vector<E, N>, usize, ReadWrite>,
+        output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
         let prob = args.probability;
 
@@ -53,11 +49,11 @@ impl PrngRuntime for Bernoulli {
 
                 let int_random = *state_0 ^ *state_1 ^ *state_2 ^ *state_3;
                 let float_random = to_unit_interval_closed_open(int_random);
-                output_vector[i] = E::cast_from(float_random < prob);
+                output_vector.insert(i, E::cast_from(float_random < prob));
             }
             let write_index = vector_index * n_invocations as usize + write_index_base;
 
-            output[write_index] = output_vector;
+            output.write_checked(write_index, output_vector);
         }
     }
 }

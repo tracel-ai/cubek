@@ -1,15 +1,17 @@
 use crate::{
+    components::global::memory::GlobalIterator,
     components::global::read::{FullLoadingStrategy, stage::FullStageLayout},
     components::global::{GlobalReaderConfig, PlaneFlowPartition},
     components::global::{multi_stage::LoadMaxRoundPlaneCount, read::sync::Synchronous},
-    components::stage::StridedStageFamily,
-    components::stage::{StridedStageMemory, StridedTilingLayout},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::read::validate_swizzle_atom_size, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::read::validate_swizzle_atom_size},
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{StridedTilingLayout, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation};
 
@@ -70,8 +72,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullStridedJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
@@ -95,6 +95,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullStridedLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncFullStridedJob {
     unit_position_base: u32,
 
@@ -115,7 +116,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, StridedTilingLayout>,
-        _barrier: &mut (),
+        _barrier: &(),
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.unit_count;

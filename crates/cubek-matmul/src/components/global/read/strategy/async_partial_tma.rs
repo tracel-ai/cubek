@@ -1,10 +1,11 @@
-use crate::components::{
-    global::SharedGlobalMatmulConfig,
-    stage::{StageConfig, StridedStageFamily},
+use crate::components::{global::SharedGlobalMatmulConfig, stage::StridedStageFamily};
+use crate::{
+    args::RuntimeConfig,
+    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
 };
 use crate::{
-    components::global::read::{AsyncPartialLoadingStrategy, validate_tma_with_problem},
-    launch::RuntimeConfig,
+    components::global::memory::GlobalIterator,
+    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
 use crate::{
     components::global::read::{PartialLoadingStrategy, async_tma::AsyncTma},
@@ -12,11 +13,6 @@ use crate::{
     components::global::{GlobalConfig, GlobalReaderConfig},
     components::global::{PlaneFlowPartition, multi_stage::LoadMaxRoundPlaneCount},
     components::stage::StridedStageMemory,
-    components::stage::TmaTilingLayout,
-};
-use crate::{
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    definition::{LhsS, MatmulElems, MatmulProblem, MatmulTypes, RhsS, StageIdent},
 };
 use cubecl::{
     prelude::*,
@@ -24,7 +20,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::Strided,
+    tile::{TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -74,8 +70,6 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
     type TilingLayout = TmaTilingLayout;
     type SyncStrategy = AsyncTma;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialTmaJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
@@ -107,6 +101,7 @@ impl<RC: RuntimeConfig> PartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct AsyncPartialTmaJob {
     is_elected: bool,
 
@@ -127,7 +122,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let mut stage = stage.with_buffer_index(this.stage_index);
@@ -155,11 +150,11 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             .runtime();
 
             let global_view = global_iter.view();
-            let mut stage = stage.as_slice_mut::<Const<1>>();
+            let stage = stage.as_slice_mut::<Const<1>>();
             let slice_size = size_row * size_col;
 
             let slice_start = task_id * slice_size;
-            let slice = stage.slice_mut(slice_start as usize, (slice_start + slice_size) as usize);
+            let slice = &mut stage[slice_start as usize..(slice_start + slice_size) as usize];
             // "column" to be loaded, may be a row for col-major (can't think of a better name)
             let load_col = task_id * size_col;
 
@@ -168,7 +163,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (load_col + offs_row, offs_col),
             };
 
-            global_view.tensor_map_load(barrier, &mut slice.downcast(), pos);
+            global_view.tensor_map_load(barrier, slice.downcast_mut(), pos);
         }
     }
 
@@ -179,7 +174,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
 
 #[cube]
 impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoading {
-    fn arrival_count<S: StageConfig>(#[comptime] _config: SharedGlobalMatmulConfig<S>) -> u32 {
+    fn arrival_count(#[comptime] _config: SharedGlobalMatmulConfig) -> u32 {
         1u32.runtime()
     }
 
@@ -187,9 +182,9 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         sync_async_proxy_shared();
     }
 
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
+    fn arrive<MP: MatmulTypes>(
+        barrier: &Shared<Barrier>,
+        #[comptime] config: SharedGlobalMatmulConfig,
     ) {
         let lhs_elem_size = LhsS::<MP>::type_size().comptime();
         let rhs_elem_size = RhsS::<MP>::type_size().comptime();
@@ -201,7 +196,7 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         barrier.arrive_and_expect_tx(1, stage_bytes);
     }
 
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool {
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.elect_load_leader()
     }

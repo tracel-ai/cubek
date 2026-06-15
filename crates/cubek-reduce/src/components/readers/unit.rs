@@ -1,25 +1,25 @@
 use crate::{
     ReducePrecision,
     components::{
-        instructions::ReduceCoordinate,
+        instructions::Item,
         readers::{Reader, ReaderExpand},
     },
 };
 use cubecl::prelude::*;
 
 #[derive(CubeType)]
-pub struct UnitReader<P: ReducePrecision> {
-    reader: Reader<P>,
+pub struct UnitReader<'a, P: ReducePrecision> {
+    reader: Reader<'a, P>,
 }
 
 #[cube]
 #[allow(clippy::len_without_is_empty)]
-impl<P: ReducePrecision> UnitReader<P> {
-    pub fn new(reader: Reader<P>) -> UnitReader<P> {
-        UnitReader::<P> { reader }
+impl<'a, P: ReducePrecision> UnitReader<'a, P> {
+    pub fn new(reader: Reader<'a, P>) -> UnitReader<'a, P> {
+        UnitReader::<'a, P> { reader }
     }
 
-    pub fn read(&self, vector_index: usize) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
+    pub fn read(&self, vector_index: usize) -> Item<P> {
         match &self.reader {
             Reader::Parallel(reader) => reader.read_unit(vector_index),
             Reader::Perpendicular(reader) => reader.read_unit(vector_index),

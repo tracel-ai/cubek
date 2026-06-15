@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::{
+    args::MatmulArgs,
     components::batch::{
         BatchConfig as _, BatchMatmul, CheckBounds, SliceIndex,
         base::BatchMatmulFamily,
@@ -9,8 +10,7 @@ use crate::{
             VecMatUnitPerpendicularFamily,
         },
     },
-    definition::*,
-    launch::MatmulArgs,
+    definition::{cube_pos_to_matrix_batch, *},
 };
 
 use cubecl::{
@@ -42,19 +42,18 @@ pub(crate) fn matmul_entry<
     #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            runtime_config,
-            blueprint.lhs_global_layout_config(),
-            blueprint.rhs_global_layout_config(),
-            blueprint.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        runtime_config,
+        blueprint.lhs_global_layout_config(),
+        blueprint.rhs_global_layout_config(),
+        blueprint.out_global_layout_config(),
+    );
 
     let vector_size_lhs = Args::view_lhs(&state).vector_size();
     let vector_size_rhs = Args::view_rhs(&state).vector_size();
-    let vector_size_out = Args::view_out(&mut state).vector_size();
+    let vector_size_out = Args::view_out(&state).vector_size();
     let vector_sizes = comptime!(MatmulVectorSizes {
         lhs: vector_size_lhs,
         rhs: vector_size_rhs,
@@ -75,25 +74,24 @@ pub(crate) fn matmul_entry<
     }
     let config = comptime!(config.unwrap());
 
-    let mut state =
-        Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
-            inputs,
-            output,
-            runtime_config,
-            config.lhs_global_layout_config(),
-            config.rhs_global_layout_config(),
-            config.out_global_layout_config(),
-        );
+    let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
+        inputs,
+        output,
+        runtime_config,
+        config.lhs_global_layout_config(),
+        config.rhs_global_layout_config(),
+        config.out_global_layout_config(),
+    );
 
     let define!(RegisterLhs) = blueprint.dtypes.lhs_register;
     let define!(RegisterRhs) = blueprint.dtypes.rhs_register;
     let define!(RegisterAcc) = blueprint.dtypes.acc_register;
 
     VecMatUnitPerpendicular::<(
-        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs),
-        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs),
-        (Acc, AccSize, Acc, AccSize, RegisterAcc),
-    )>::execute::<Args>(&mut state, cube_mapping, config);
+        (Lhs, LhsSize, Lhs, LhsSize, RegisterLhs, LhsSize),
+        (Rhs, RhsSize, Rhs, RhsSize, RegisterRhs, RhsSize),
+        (Acc, AccSize, Acc, AccSize, RegisterAcc, AccSize),
+    )>::execute::<Args>(&state, cube_mapping, config);
 }
 
 pub struct VecMatUnitPerpendicular<MP: MatmulTypes> {
@@ -105,7 +103,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
     type Config = VecMatUnitPerpendicularConfig;
 
     fn execute<Args: MatmulArgs>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     ) {
@@ -119,7 +117,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
 
         let (_, _, k) = lhs.shape();
         let (_, _, n) = out.shape();
-        let (_, n_cube_id, batch_cube_id) = cube_mapping.cube_pos_to_tensor_pos();
+        let (n_cube_id, batch_cube_id) = cube_pos_to_matrix_batch(&cube_mapping);
 
         let lhs_batch = Args::batch_lhs(state, batch_cube_id as usize);
         let rhs_batch = Args::batch_rhs(state, batch_cube_id as usize);
@@ -127,7 +125,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
 
         let lhs = lhs.view(SliceIndex::new(lhs_batch, lhs.shape()));
         let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
-        let out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
+        let mut out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
         let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
         let vector_size = NA::value() as u32;
@@ -155,7 +153,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
             k / tile_size
         };
 
-        let mut acc = Vector::<AccR<MP>, NA>::zero();
+        let mut acc = Vector::<AccRE<MP>, NA>::zero();
 
         for tile_index in 0..num_tiles {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
@@ -172,7 +170,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
                 let rhs_k_vec_base = (k_base + plane_iter) * vector_size;
 
                 for vec_iter in 0..NA::value() as u32 {
-                    let lhs_scalar = lhs_vec[vec_iter as usize];
+                    let lhs_scalar = lhs_vec.extract(vec_iter as usize);
                     let rhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
                         rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
                     } else {

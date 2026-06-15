@@ -7,6 +7,7 @@ use cubecl::{
 use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
 
 use crate::{
+    args::*,
     components::{
         CubeDimResource,
         batch::{
@@ -22,7 +23,6 @@ use crate::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
         MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
-    launch::*,
 };
 
 /// Simple partitioned batch matmul family for any precision
@@ -98,7 +98,7 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         (1, 1).into()
     }
 
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = ()>, R: Runtime>(
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = ()>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,
@@ -145,6 +145,12 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         _dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
+        if !matches!(problem.rhs_layout, MatrixLayout::RowMajor) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Vecmat unit perpendicular only supports row major rhs",
+            )));
+        }
+
         let vector_size = vector_sizes.lhs;
         if !(vector_size == vector_sizes.rhs && vector_size == vector_sizes.out) {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(

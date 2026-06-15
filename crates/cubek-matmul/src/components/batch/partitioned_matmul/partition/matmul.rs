@@ -2,12 +2,11 @@ use cubecl::prelude::*;
 
 use crate::definition::{AccG, LhsG, MatmulTypes, RhsG};
 use crate::{
+    args::MatmulArgs,
     components::{
         batch::SliceIndex,
         global::{self, GlobalConfig},
-        stage::StageConfig,
     },
-    launch::MatmulArgs,
 };
 
 #[derive(CubeType)]
@@ -31,7 +30,7 @@ pub struct PartitionRangeDim {
 /// Iterates on several global matmul across a global partition
 pub trait GlobalPartitionMatmul: 'static + Send + Sync {
     fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         partition_ranges: PartitionRanges,
         k_range: (u32, u32),
         #[comptime] config: GMM::Config,
@@ -77,7 +76,7 @@ impl PartitionRangeDim {
 #[cube]
 impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
     fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
         #[comptime] config: GMM::Config,
@@ -111,7 +110,7 @@ impl GlobalPartitionMatmul for RowMajorGlobalPartitionMatmul {
 #[cube]
 impl GlobalPartitionMatmul for ColMajorGlobalPartitionMatmul {
     fn execute<Args: MatmulArgs, MP: MatmulTypes, GMM: global::GlobalMatmul<Args::Config, MP>>(
-        state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+        state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
         ranges: PartitionRanges,
         k_range: (u32, u32),
         #[comptime] config: GMM::Config,
@@ -150,7 +149,7 @@ pub(crate) fn execute_global_matmul<
     MP: MatmulTypes,
     GMM: global::GlobalMatmul<Args::Config, MP>,
 >(
-    state: &mut Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
+    state: &Args::State<LhsG<MP>, RhsG<MP>, AccG<MP>>,
     nth_batch: u32,
     m_offset: u32,
     n_offset: u32,

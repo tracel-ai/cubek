@@ -4,42 +4,40 @@ use crate::components::global::{
     GlobalReaderConfig, PlaneFlowPartition, read::async_copy::ASYNC_COPY_WIDTH,
 };
 use crate::components::global::{
+    SharedGlobalMatmulConfig,
+    read::{PartialLoadingStrategy, tiled::TiledLayout},
+};
+use crate::components::global::{
     multi_stage::LoadMaxRoundPlaneCount,
     read::{
         AsyncPartialLoadingStrategy, async_barrier::AsyncCopy, async_copy::async_copy_from,
         validate_async_copy,
     },
 };
-use crate::components::{
-    global::{
-        SharedGlobalMatmulConfig,
-        read::{PartialLoadingStrategy, tiled::TiledLayout},
-    },
-    stage::StageConfig,
+use crate::{
+    components::global::memory::GlobalIterator,
+    components::stage::{StridedStageFamily, StridedStageMemory},
 };
 use crate::{
     components::global::read::validate_async_copy_with_problem,
     components::global::read::validate_swizzle_atom_size,
 };
 use crate::{
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::stage::{ContiguousTilingLayout, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-};
-use crate::{
     definition::MatmulElems,
     definition::MatmulProblem,
     definition::MatmulTypes,
     definition::StageIdent,
-    {components::global::read::validate_async_barrier, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::read::validate_async_barrier},
 };
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{InvalidConfigError, tile::Strided};
+use cubek_std::{
+    InvalidConfigError,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
+};
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 
@@ -131,8 +129,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
     type TilingLayout = ContiguousTilingLayout<TO>;
     type SyncStrategy = AsyncCopy;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncPartialCyclicJob;
 
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
@@ -177,6 +173,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone))]
 pub struct AsyncPartialCyclicJob {
     unit_position_base: u32,
 
@@ -209,7 +206,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
-        _barrier: &mut Shared<Barrier>,
+        _barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         let unit_position = this.unit_position_base + task_id * this.jump_length;
@@ -217,11 +214,17 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
 
         #[allow(clippy::collapsible_else_if)]
         if comptime!(this.reader_mode == ReaderMode::Strict || this.balanced_workload) {
-            copy_vector::<EG, NG, ES, NS, TO>(this, unit_position, global_iter, &mut stage, config);
+            copy_vector::<EG, NG, ES, NS, TO>(
+                &*this,
+                unit_position,
+                global_iter,
+                &mut stage,
+                config,
+            );
         } else {
             if unit_position < this.num_stage_elements {
                 copy_vector::<EG, NG, ES, NS, TO>(
-                    this,
+                    &*this,
                     unit_position,
                     global_iter,
                     &mut stage,
@@ -285,22 +288,22 @@ pub(crate) fn copy_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: Tili
 impl<TO: TilingOrder, RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC>
     for AsyncPartialCyclicLoading<TO>
 {
-    fn arrival_count<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> u32 {
+    fn arrival_count(#[comptime] config: SharedGlobalMatmulConfig) -> u32 {
         let total_load_units = config.plane_flow_config().counts.load_only * config.plane_dim();
         total_load_units.runtime()
     }
 
     fn barrier_post_init() {}
 
-    fn arrive<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Barrier,
-        #[comptime] _config: SharedGlobalMatmulConfig<S>,
+    fn arrive<MP: MatmulTypes>(
+        barrier: &Shared<Barrier>,
+        #[comptime] _config: SharedGlobalMatmulConfig,
     ) {
         barrier.commit_copy_async();
         barrier.arrive();
     }
 
-    fn is_elected<S: StageConfig>(#[comptime] config: SharedGlobalMatmulConfig<S>) -> bool {
+    fn is_elected(#[comptime] config: SharedGlobalMatmulConfig) -> bool {
         let role_rule = PlaneFlowPartition::new(config.plane_flow_config().partition_rule);
         role_rule.is_load_plane()
     }

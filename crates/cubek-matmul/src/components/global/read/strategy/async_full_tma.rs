@@ -1,13 +1,12 @@
 use crate::{
+    components::global::memory::GlobalIterator,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     components::global::read::{FullLoadingStrategy, validate_tma_with_problem},
     components::global::read::{validate_async_barrier, validate_tma},
     components::global::{PlaneFlowPartition, read::async_tma::AsyncTma},
-    components::stage::StridedStageFamily,
-    components::stage::StridedStageMemory,
-    components::{global::memory::GlobalIterator, stage::TilingValidation},
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TmaTilingLayout},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use cubecl::{
     prelude::*,
@@ -15,7 +14,7 @@ use cubecl::{
 };
 use cubek_std::{
     stage::SwizzleMode,
-    tile::Strided,
+    tile::{TilingValidation, TmaTilingLayout},
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -68,8 +67,6 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullTmaLoading {
     type SyncStrategy = AsyncTma;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = AsyncFullTmaJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
@@ -97,6 +94,7 @@ impl<RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullTmaLoading {
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct AsyncFullTmaJob {
     is_elected: bool,
 
@@ -115,7 +113,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, TmaTilingLayout>,
-        barrier: &mut Shared<Barrier>,
+        barrier: &Shared<Barrier>,
         #[comptime] config: GlobalReaderConfig,
     ) {
         if this.is_elected {
@@ -131,11 +129,11 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
             };
 
             let global_view = global_iter.view();
-            let mut stage = stage.as_slice_mut::<NS>();
+            let stage = stage.as_slice_mut::<NS>();
             let slice_size = size_row * size_col / stage.vector_size() as u32;
 
             let slice_start = task_id * slice_size;
-            let slice = stage.slice_mut(slice_start as usize, (slice_start + slice_size) as usize);
+            let slice = &mut stage[slice_start as usize..(slice_start + slice_size) as usize];
             let col = task_id * size_col;
 
             let pos = match config.matrix_layout {
@@ -143,7 +141,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
                 MatrixLayout::ColMajor => (col, 0u32).runtime(),
             };
 
-            global_view.tensor_map_load(barrier, &mut slice.downcast(), pos);
+            global_view.tensor_map_load(barrier, slice.downcast_mut(), pos);
         }
     }
 

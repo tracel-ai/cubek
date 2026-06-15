@@ -1,16 +1,17 @@
 use crate::{
-    components::global::memory::GlobalIterator,
-    components::stage::TilingLayout,
-    components::{global::GlobalReaderConfig, stage::StageConfig},
-    components::{global::SharedGlobalMatmulConfig, stage::StageFamily},
+    components::{
+        global::{GlobalReaderConfig, SharedGlobalMatmulConfig, memory::GlobalIterator},
+        stage::StageFamily,
+    },
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
 use cubecl::{
-    ir::{BarrierLevel, DeviceProperties, OpaqueType, SemanticType},
+    ir::{BarrierLevel, DeviceProperties, OpaqueType},
     prelude::*,
 };
 use cubek_std::{
     stage::{StageMemoryConfig, SwizzleMode},
+    tile::TilingLayout,
     {InvalidConfigError, MatrixLayout},
 };
 
@@ -27,7 +28,7 @@ pub trait LoadingJob<
     NS: Size,
     TL: TilingLayout,
     S: SyncStrategy,
->: CubeType + Clone
+>: CubeType<ExpandType: Clone> + Clone
 {
     type Stage: StageFamily;
 
@@ -37,7 +38,7 @@ pub trait LoadingJob<
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut <Self::Stage as StageFamily>::Stage<ES, NS, TL>,
-        barrier: &mut S::Barrier,
+        barrier: &S::Barrier,
         #[comptime] config: GlobalReaderConfig,
     );
 
@@ -50,12 +51,9 @@ pub trait LoadingJob<
 /// The sync strategy must match the one on both the LHS and RHS loading strategy.
 #[cube]
 pub trait SyncStrategy {
-    type Barrier: CubeType + Clone;
+    type Barrier: CubeType<ExpandType: Clone> + Clone;
     fn create_barrier() -> Self::Barrier;
-    fn sync<MP: MatmulTypes, S: StageConfig>(
-        barrier: &mut Self::Barrier,
-        #[comptime] config: SharedGlobalMatmulConfig<S>,
-    );
+    fn sync<MP: MatmulTypes>(barrier: &Self::Barrier, #[comptime] config: SharedGlobalMatmulConfig);
 }
 
 /// Allows to verify configs are valid for a reader
@@ -140,14 +138,14 @@ pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), Inval
     Ok(())
 }
 
-/// Validates if [tensor memory accelerator features](SemanticType::TensorMap) are available on the current
+/// Validates if [tensor memory accelerator features](OpaqueType::TensorMap) are available on the current
 /// device.
 pub fn validate_tma(
     device_props: &DeviceProperties,
     smem_config: &StageMemoryConfig,
     global_dtype: &StorageType,
 ) -> Result<(), InvalidConfigError> {
-    if !device_props.features.supports_type(SemanticType::TensorMap) {
+    if !device_props.features.supports_type(OpaqueType::TensorMap) {
         return Err(Box::new(
             "Tensor memory accelerator features are not available on the current device",
         ));

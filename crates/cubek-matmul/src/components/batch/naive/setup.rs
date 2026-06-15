@@ -8,6 +8,7 @@ use cubecl::{
 use cubek_std::MatrixLayout;
 
 use crate::{
+    args::*,
     components::{
         CubeDimResource,
         batch::{
@@ -21,7 +22,6 @@ use crate::{
         Blueprint, CubeMappingLaunch, MatmulElems, MatmulProblem, MatmulSetupError, MatmulTypes,
         MatmulVectorSizes, SwizzleModes, TilingScheme,
     },
-    launch::*,
 };
 
 /// Simple partitioned batch matmul family for any precision
@@ -84,7 +84,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         (1, 1).into()
     }
 
-    unsafe fn launch_unchecked<'a, MA: MatmulArgs<Config = ()>, R: Runtime>(
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = ()>, R: Runtime>(
         client: &ComputeClient<R>,
         cube_dim: CubeDim,
         cube_count: CubeCount,

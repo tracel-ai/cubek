@@ -1,6 +1,6 @@
 use crate::{
-    definition::attention_types::{MSK, MSKS},
-    definition::{AttentionPrecision, AttentionTileSize},
+    forward::definition::attention_types::{MSK, MSKS},
+    forward::definition::{AttentionPrecision, AttentionTileSize},
 };
 use cubecl;
 use cubecl::{
@@ -40,8 +40,8 @@ impl LogicalIterator {
 }
 
 #[derive(CubeType)]
-pub struct MaterializedMaskReader<M: Numeric, N: Size> {
-    global_iter: GlobalIterator<Vector<M, N>>,
+pub struct MaterializedMaskReader<'a, M: Numeric, N: Size> {
+    global_iter: GlobalIterator<'a, Vector<M, N>>,
     logical_iter: LogicalIterator,
     // TODO not sure if mandatory, but i need for the stride when reading in global memory
     seq_kv_shape: u32,
@@ -50,13 +50,13 @@ pub struct MaterializedMaskReader<M: Numeric, N: Size> {
 }
 
 #[derive(CubeType)]
-pub enum MaskReader<AP: AttentionPrecision> {
-    Materialized(MaterializedMaskReader<MSK<AP>, MSKS<AP>>),
+pub enum MaskReader<'a, AP: AttentionPrecision> {
+    Materialized(MaterializedMaskReader<'a, MSK<AP>, MSKS<AP>>),
     Logical(LogicalIterator),
 }
 
 #[cube]
-impl<AP: AttentionPrecision> MaskReader<AP> {
+impl<'a, AP: AttentionPrecision> MaskReader<'a, AP> {
     pub fn new_logical(partition_q_offset: u32, step: u32) -> Self {
         MaskReader::<AP>::new_Logical(LogicalIterator::init(partition_q_offset, step))
     }
@@ -64,7 +64,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
     pub fn new_materialized(
         stage_q_offset: u32,
         partition_q_offset: u32,
-        mask: View<Vector<MSK<AP>, MSKS<AP>>, Coords2d>,
+        mask: View<'a, Vector<MSK<AP>, MSKS<AP>>, Coords2d>,
         step: u32,
         seq_kv_shape: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
@@ -74,7 +74,7 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
 
         MaskReader::<AP>::new_Materialized(MaterializedMaskReader::new(
             global_iter,
-            LogicalIterator::init(partition_q_offset, step),
+            LogicalIterator::init(stage_q_offset + partition_q_offset, step),
             seq_kv_shape,
             gmem_config,
         ))
@@ -118,14 +118,14 @@ impl<AP: AttentionPrecision> MaskReader<AP> {
 }
 
 #[cube]
-impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
+impl<'a, M: Numeric, N: Size> MaterializedMaskReader<'a, M, N> {
     fn new(
-        global_iter: GlobalIterator<Vector<M, N>>,
+        global_iter: GlobalIterator<'a, Vector<M, N>>,
         logical_iter: LogicalIterator,
         seq_kv_shape: u32,
         #[comptime] gmem_config: GlobalMemoryConfig,
     ) -> Self {
-        MaterializedMaskReader::<M, N> {
+        MaterializedMaskReader::<'a, M, N> {
             global_iter,
             logical_iter,
             seq_kv_shape,
@@ -143,14 +143,11 @@ impl<M: Numeric, N: Size> MaterializedMaskReader<M, N> {
 
         let row = row_offset + P::seq_q_index() * elements_in_partition_seq_q;
 
-        let slice = self
-            .global_iter
-            .view()
-            .slice(
-                (row, col.runtime()),
-                (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
-            )
-            .to_linear_slice();
+        let view = self.global_iter.view().slice(
+            (row, col.runtime()),
+            (attention_tile_size.seq_q, attention_tile_size.seq_kv).runtime(),
+        );
+        let slice = view.as_linear_slice();
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
         let start = 0;

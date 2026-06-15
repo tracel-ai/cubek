@@ -12,11 +12,12 @@ use cubecl::{
     zspace::{shape, strides},
 };
 use cubek_matmul::{
+    args::*,
     components::global::memory::{GlobalLayoutConfig, NoopLayout, NoopLayoutLaunch},
-    definition::{Blueprint, MatmulElems, TilingBlueprint},
-    launch::*,
-    routines::Routine,
+    definition::{BatchMatmulBlueprint, Blueprint, MatmulElems},
+    routines::BatchMatmulRoutine,
 };
+use cubek_std::launch::tma::remap_storage_for_tma;
 use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 use enumset::EnumSet;
 
@@ -32,7 +33,7 @@ use crate::components::{
     },
 };
 
-pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
+pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
     MatmulArgs<
         Input<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>: ConcreteInputsFactory<A>,
         Output<Vector<Acc, AccSize>>: ConcreteOutputFactory<A>,
@@ -47,7 +48,7 @@ pub trait ConcreteArgs<A: Routine<RuntimeArgs>>:
     ) -> ConvolutionProblem;
 }
 
-impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
+impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     fn adjust_problem<R: Runtime>(
         client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
@@ -66,13 +67,13 @@ impl<A: Routine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     }
 }
 
-impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
+impl<A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>> ConcreteArgs<A>
     for TensorMapArgs<RuntimeArgs>
 {
     fn adjust_problem<R: Runtime>(
         _client: &ComputeClient<R>,
         mut problem: ConvolutionProblem,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
         let channel_align = match blueprint.swizzle_modes.lhs {
@@ -91,7 +92,7 @@ impl<A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>> ConcreteArgs<A>
 
 /// Create the input runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
+pub trait ConcreteInputsFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
     fn create<R: Runtime>(
         lhs: InputBinding<R>,
@@ -105,7 +106,7 @@ pub trait ConcreteInputsFactory<A: Routine<RuntimeArgs>>: LaunchArg {
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
-pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
+pub trait ConcreteOutputFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     fn create<R: Runtime>(
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
@@ -114,7 +115,7 @@ pub trait ConcreteOutputFactory<A: Routine<RuntimeArgs>>: LaunchArg {
     ) -> Self::RuntimeArg<R>;
 }
 
-impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<RuntimeArgs>>
+impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
@@ -184,7 +185,9 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: Routine<Runti
     }
 }
 
-impl<EG: CubePrimitive, A: Routine<RuntimeArgs>> ConcreteOutputFactory<A> for TensorOutput<EG> {
+impl<EG: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>> ConcreteOutputFactory<A>
+    for TensorOutput<EG>
+{
     fn create<R: Runtime>(
         out: TensorBinding<R>,
         blueprint: &A::Blueprint,
@@ -206,14 +209,14 @@ impl<
     Lhs: CubePrimitive,
     Rhs: CubePrimitive,
     EO: CubePrimitive,
-    A: Routine<RuntimeArgs, Blueprint = TilingBlueprint>,
+    A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>,
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
     fn create<R: Runtime>(
         lhs: InputBinding<R>,
         rhs: InputBinding<R>,
         bias: Option<InputBinding<R>>,
-        blueprint: &TilingBlueprint,
+        blueprint: &BatchMatmulBlueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,
     ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
@@ -230,13 +233,7 @@ impl<
         stage_size_rhs.insert(0, stage_n as usize);
         stage_size_rhs.push(tile_size_k as usize);
 
-        // f32 gets remapped to tf32 for the tensor map just to ensure CUDA loads them correctly.
-        // It shouldn't matter, but it's better to be safe.
-        let lhs_elem = if dtypes.lhs_stage == f32::as_type_native_unchecked().storage_type() {
-            tf32::as_type_native_unchecked().storage_type()
-        } else {
-            dtypes.lhs_stage
-        };
+        let lhs_elem = remap_storage_for_tma(dtypes.lhs_stage);
 
         let mut elem_stride = strides![1; 2 + problem.stride.len()];
 

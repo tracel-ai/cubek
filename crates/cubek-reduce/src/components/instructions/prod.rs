@@ -1,5 +1,8 @@
-use super::{ReduceCoordinate, ReduceFamily, ReduceInstruction};
-use crate::{components::instructions::ReduceRequirements, components::precision::ReducePrecision};
+use super::{ReduceFamily, ReduceInstruction};
+use crate::components::{
+    instructions::{Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 
 #[derive(Debug, CubeType, Clone)]
@@ -12,12 +15,15 @@ impl ReduceFamily for Prod {
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
-    type AccumulatorItem = Vector<P::EA, P::SI>;
-    type SharedAccumulator = SharedMemory<Vector<P::EA, P::SI>>;
+    type SharedAccumulator = Shared<[Vector<P::EA, P::SI>]>;
     type Config = ();
 
     fn requirements(_this: &Self) -> ReduceRequirements {
         ReduceRequirements { coordinates: false }
+    }
+
+    fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
+        AccumulatorFormat::Single
     }
 
     fn from_config(_config: Self::Config) -> Self {
@@ -27,68 +33,62 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         Vector::empty().fill(P::EI::from_int(1))
     }
 
-    fn null_accumulator(_this: &Self) -> Self::AccumulatorItem {
-        Vector::empty().fill(P::EA::from_int(1))
-    }
-
-    fn assign_accumulator(
-        _this: &Self,
-        destination: &mut Self::AccumulatorItem,
-        source: &Self::AccumulatorItem,
-    ) {
-        *destination = *source;
-    }
-
-    fn read_accumulator(
-        _this: &Self,
-        accumulator: &Vector<P::EA, P::SI>,
-    ) -> (Vector<P::EI, P::SI>, ReduceCoordinate<P::SI>) {
-        (
-            Vector::cast_from(*accumulator),
-            ReduceCoordinate::new_NotRequired(),
-        )
-    }
-    fn reduce(
-        _this: &Self,
-        accumulator: &Self::AccumulatorItem,
-        item: Vector<P::EI, P::SI>,
-        _coordinate: ReduceCoordinate<P::SI>,
-        #[comptime] use_planes: bool,
-    ) -> Self::AccumulatorItem {
-        let item = Vector::cast_from(item);
-        if use_planes {
-            *accumulator * plane_prod(item)
-        } else {
-            *accumulator * item
+    fn null_accumulator(_this: &Self) -> Accumulator<P> {
+        Accumulator::<P> {
+            elements: Value::new_single(Vector::empty().fill(P::EA::from_int(1))),
+            args: Value::new_None(),
         }
     }
 
-    fn fuse_accumulators(
+    fn reduce(
         _this: &Self,
-        lhs: Self::AccumulatorItem,
-        rhs: Self::AccumulatorItem,
-    ) -> Self::AccumulatorItem {
-        lhs * rhs
+        accumulator: &mut Accumulator<P>,
+        item: Item<P>,
+        #[comptime] reduce_step: ReduceStep,
+    ) {
+        let item = Vector::cast_from(item.elements);
+        let accumulator_item = accumulator.elements.item();
+        let elements = match reduce_step {
+            ReduceStep::Plane => accumulator_item * plane_prod(item),
+            ReduceStep::Identity => accumulator_item * item,
+        };
+
+        accumulator.elements.assign(&Value::new_single(elements));
     }
 
-    fn merge_vector<Out: Numeric>(
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let prod = plane_prod(Vector::cast_from(accumulator.elements.item()));
+        accumulator.elements.assign(&Value::new_single(prod));
+    }
+
+    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+        let accumulator_item = accumulator.elements.item();
+        let other_item = other.elements.item();
+
+        accumulator
+            .elements
+            .assign(&Value::new_single(accumulator_item * other_item));
+    }
+
+    fn to_output_parallel<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Out {
+    ) -> Value<Out> {
+        let accumulator = accumulator.elements.item();
         let mut prod = P::EA::from_int(1);
         #[unroll]
         for k in 0..accumulator.size() {
-            prod *= accumulator[k];
+            prod *= accumulator.extract(k);
         }
-        Out::cast_from(prod)
+        Value::new_single(Out::cast_from(prod))
     }
 
     fn to_output_perpendicular<Out: Numeric>(
         _this: &Self,
-        accumulator: Self::AccumulatorItem,
+        accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Vector<Out, P::SI> {
-        Vector::cast_from(accumulator)
+    ) -> Value<Vector<Out, P::SI>> {
+        Value::new_single(Vector::cast_from(accumulator.elements.item()))
     }
 }

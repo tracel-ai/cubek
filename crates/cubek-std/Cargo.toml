@@ -13,13 +13,24 @@ version.workspace = true
 default = ["cubecl/default"]
 std = ["cubecl/std"]
 
+heavy = []
+extended = ["heavy"]
 full = ["extended"]
-extended = []
+
+# Pulls in `cubek-test-utils` for test/bench-only conversions (e.g.
+# `MatrixLayout` → `LayoutSpec`). Off by default.
+testing = ["dep:cubek-test-utils", "cubecl/test-runtime"]
+
+# Enables `pub mod benchmarks` — catalogues for the contiguous, unary, and
+# memcpy_async subcategories. Off by default; the top-level `benchmarks`
+# crate turns it on.
+benchmarks = ["testing"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 half = { workspace = true, features = ["bytemuck"] }
 
 [dev-dependencies]
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.2.0-pre.3", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }

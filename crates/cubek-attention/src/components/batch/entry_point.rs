@@ -4,9 +4,10 @@ use crate::components::{
     stage::StageAttentionConfig,
 };
 use crate::{
-    definition::AttentionBlueprint, definition::AttentionElems, definition::CubeCountInput,
-    launch::AttentionArgs, launch::TensorKey, launch::TensorMask, launch::TensorOutput,
-    launch::TensorQuery, launch::TensorValue,
+    forward::definition::AttentionBlueprint, forward::definition::AttentionElems,
+    forward::definition::CubeMapping, forward::launch::AttentionArgs, forward::launch::TensorKey,
+    forward::launch::TensorMask, forward::launch::TensorOutput, forward::launch::TensorQuery,
+    forward::launch::TensorValue,
 };
 use cubecl;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
@@ -32,7 +33,7 @@ pub(crate) fn attention<
 >(
     inputs: &Input<Args, (QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS)>,
     output: &mut Output<Args, (OG, OGS)>,
-    cube_count_args: CubeCountInput,
+    cube_mapping: CubeMapping,
     #[comptime] blueprint: AttentionBlueprint,
     #[comptime] dtypes: AttentionElems,
     #[define(QG, KG, VG, MSK, OG)] _elem_types: [StorageType; 5],
@@ -52,19 +53,19 @@ pub(crate) fn attention<
         TensorQuery::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(&state);
     let query = VirtualTensor::<QG, QGS>::new::<
         TensorQuery<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&query);
+    >(query);
 
     let key =
         TensorKey::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(&state);
     let key = VirtualTensor::<KG, KGS>::new::<
         TensorKey<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&key);
+    >(key);
 
     let value =
         TensorValue::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(&state);
     let value = VirtualTensor::<VG, VGS>::new::<
         TensorValue<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&value);
+    >(value);
 
     let has_mask = Args::has_mask(&state);
     let mask = has_mask.map(|_| {
@@ -73,16 +74,15 @@ pub(crate) fn attention<
         );
         VirtualTensor::<MSK, MSKS>::new::<
             TensorMask<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-        >(&mask)
+        >(mask)
     });
 
-    let mut out =
-        TensorOutput::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(
-            &mut state,
-        );
+    let out = TensorOutput::<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>::new(
+        &mut state,
+    );
     let out = VirtualTensor::<OG, OGS, ReadWrite>::new::<
         TensorOutput<(QG, QGS), (KG, KGS), (VG, VGS), (MSK, MSKS), (OG, OGS), Args>,
-    >(&mut out);
+    >(out);
 
     let stage_config = config.global_config().stage_config();
     let key_stage = stage_config.key_smem_config();
@@ -112,5 +112,5 @@ pub(crate) fn attention<
         MSK,
         MSKS,
         (OG, OGS, OS, OSS),
-    )>::execute(query, key, value, mask, out, cube_count_args, config);
+    )>::execute(query, key, value, mask, out, cube_mapping, config);
 }

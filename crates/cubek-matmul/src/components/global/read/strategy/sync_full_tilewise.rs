@@ -1,22 +1,21 @@
 use std::marker::PhantomData;
 
 use crate::{
+    components::global::memory::GlobalIterator,
+    components::global::multi_stage::LoadMaxRoundPlaneCount,
     components::global::read::validate_swizzle_atom_size,
     components::global::read::{FullLoadingStrategy, sync::Synchronous},
     components::global::{PlaneFlowPartition, read::tiled::TiledLayout},
-    components::stage::StridedStageFamily,
-    components::stage::{StridedStageMemory, TilingOrder},
-    components::{global::memory::GlobalIterator, stage::ContiguousTilingLayout},
-    components::{global::multi_stage::LoadMaxRoundPlaneCount, stage::TilingValidation},
+    components::stage::{StridedStageFamily, StridedStageMemory},
     definition::{MatmulElems, MatmulProblem, StageIdent},
-    {components::global::GlobalReaderConfig, launch::RuntimeConfig},
+    {args::RuntimeConfig, components::global::GlobalReaderConfig},
 };
 use cubecl::{
     std::tensor::layout::Coords2d,
     {ir::DeviceProperties, prelude::*},
 };
 use cubek_std::{
-    tile::Strided,
+    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
     {FormattedConfigError, InvalidConfigError},
 };
 
@@ -99,8 +98,6 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTil
     type SyncStrategy = Synchronous;
     type Job<EG: Numeric, NG: Size, ES: Numeric, NS: Size> = SyncFullTilewiseJob;
     type Stage = StridedStageFamily;
-    type TileKind = Strided;
-
     fn new_job<EG: Numeric, NG: Size, ES: Numeric, NS: Size>(
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
@@ -130,6 +127,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for SyncFullTil
 }
 
 #[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
 pub struct SyncFullTilewiseJob {
     pub num_tiles_to_skip: u32,
     pub num_vectors_to_skip: u32,
@@ -153,7 +151,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         #[comptime] task_id: u32,
         global_iter: &GlobalIterator<Vector<EG, NG>>,
         stage: &mut StridedStageMemory<ES, NS, ContiguousTilingLayout<TO>>,
-        _barrier: &mut (),
+        _barrier: &(),
         #[comptime] config: GlobalReaderConfig,
     ) {
         let pos_across_tiles = task_id * this.plane_dim + UNIT_POS_X;
@@ -164,7 +162,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size, TO: TilingOrder>
         let tile = ContiguousTilingLayout::<TO>::to_x_y(nth_tile_global, config.smem_config);
 
         SyncFullTilewiseJob::load_and_store_vector::<EG, NG, ES, NS, TO>(
-            this,
+            &*this,
             tile,
             vector_index_within_tile,
             nth_tile_for_this_plane * this.num_vectors_per_tile,

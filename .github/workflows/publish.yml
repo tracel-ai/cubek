@@ -24,6 +24,7 @@ jobs:
   publish-cubek-test-utils:
     needs:
       - publish-cubek-random
+      - publish-cubek-quant
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
     with:
       crate: cubek-test-utils
@@ -32,9 +33,6 @@ jobs:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
   publish-cubek-quant:
-    needs:
-      - publish-cubek-random
-      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
     with:
       crate: cubek-quant
@@ -107,6 +105,16 @@ jobs:
     secrets:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
   
+  publish-cubek-interpolate:
+    needs:
+      - publish-cubek-test-utils
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    with:
+      crate: cubek-interpolate
+      dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
+    secrets:
+      CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+  
 
   publish-cubek-std:
     needs:
@@ -127,6 +135,7 @@ jobs:
       - publish-cubek-attention
       - publish-cubek-convolution
       - publish-cubek-fft
+      - publish-cubek-interpolate
       - publish-cubek-test-utils
       - publish-cubek-std
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8

@@ -1,0 +1,36 @@
+#[macro_export]
+macro_rules! testgen_convolution_accelerated_partition {
+    ($algorithm: expr, $dtypes: expr, $tiling_scheme_builder: expr) => {
+        use cubek_std::PartitionSize;
+
+        mod p1x1x1 {
+            use super::*;
+
+            $crate::testgen_convolution_accelerated_stage!(
+                $algorithm,
+                $dtypes,
+                $tiling_scheme_builder.with_partition_size(PartitionSize { m: 1, n: 1, k: 1 })
+            );
+        }
+
+        mod p1x1x4 {
+            use super::*;
+
+            $crate::testgen_convolution_accelerated_stage!(
+                $algorithm,
+                $dtypes,
+                $tiling_scheme_builder.with_partition_size(PartitionSize { m: 1, n: 1, k: 4 })
+            );
+        }
+
+        mod p2x1x4 {
+            use super::*;
+
+            $crate::testgen_convolution_accelerated_stage!(
+                $algorithm,
+                $dtypes,
+                $tiling_scheme_builder.with_partition_size(PartitionSize { m: 2, n: 1, k: 4 })
+            );
+        }
+    };
+}

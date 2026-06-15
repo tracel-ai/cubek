@@ -1,14 +1,14 @@
 use cubecl;
 use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::r#virtual::VirtualTensor};
 
-use crate::definition::{
-    AttentionElems, AttentionPrecision, AttentionSetupError, CubeCountInput, InputRuntimeArg,
-    OutputRuntimeArg,
+use crate::forward::definition::{
+    AttentionElems, AttentionPrecision, AttentionSetupError, CubeMapping, CubeMappingLaunch,
+    InputRuntimeArg, OutputRuntimeArg,
 };
 use crate::{
-    definition::{CubeCountInputArgs, attention_types::*},
-    launch::AttentionArgs,
-    {components::global::GlobalAttentionConfig, definition::AttentionVectorSizes},
+    forward::definition::attention_types::*,
+    forward::launch::AttentionArgs,
+    {components::global::GlobalAttentionConfig, forward::definition::AttentionVectorSizes},
 };
 use std::{fmt::Debug, hash::Hash};
 
@@ -34,7 +34,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
         address_type: AddressType,
         input: InputRuntimeArg<AA, R>,
         output: OutputRuntimeArg<AA, R>,
-        cube_count_input: CubeCountInputArgs<R>,
+        cube_mapping: CubeMappingLaunch<R>,
         dtypes: &AttentionElems,
         vector_sizes: &AttentionVectorSizes,
         attention_blueprint: Self::Blueprint,
@@ -51,7 +51,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
 }
 
 #[cube]
-pub trait BatchAttention<AP: AttentionPrecision>: 'static + Send + Sync {
+pub trait BatchAttention<AP: AttentionPrecision>: 'static {
     /// The configuration type associated with this Attention.
     type Config: BatchAttentionConfig;
 
@@ -61,7 +61,7 @@ pub trait BatchAttention<AP: AttentionPrecision>: 'static + Send + Sync {
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
-        cube_count_args: CubeCountInput,
+        cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );
 }

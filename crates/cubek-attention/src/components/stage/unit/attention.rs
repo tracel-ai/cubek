@@ -1,27 +1,26 @@
 use cubecl;
 use cubecl::prelude::*;
 
+use crate::components::stage::SharedPartitionAttentionConfig;
 use crate::components::{
     global::simple::UnitAttentionWriter,
     stage::{partition_attention::PartitionAttention, partitioner::AttentionPartitioner},
-    tile::TileAttentionConfig,
 };
 
-use crate::components::stage::SharedPartitionAttentionConfig;
-
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct UnitPartitionStageConfig<TC: TileAttentionConfig> {
-    pub shared: SharedPartitionAttentionConfig<TC>,
+pub struct UnitPartitionStageConfig {
+    pub shared: SharedPartitionAttentionConfig,
 }
 
-pub type UnitPartitionAttention<AP, SK, SV, SO, TA> =
-    PartitionAttention<AP, SK, SV, SO, TA, UnitPartitioner>;
+pub type UnitPartitionAttention<AP, SK, SV, SO> =
+    PartitionAttention<AP, SK, SV, SO, UnitPartitioner>;
 
 pub struct UnitPartitioner {}
 
 #[cube]
 impl AttentionPartitioner for UnitPartitioner {
-    type Writer<ES: Float, ESS: Size, EG: Float, EGS: Size> = UnitAttentionWriter<ES, ESS, EG, EGS>;
+    type Writer<'a, ES: Float, ESS: Size, EG: Float, EGS: Size> =
+        UnitAttentionWriter<'a, ES, ESS, EG, EGS>;
 
     fn seq_q_index() -> u32 {
         UNIT_POS
