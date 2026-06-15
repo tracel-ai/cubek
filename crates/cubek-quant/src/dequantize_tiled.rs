@@ -2,8 +2,11 @@ use cubecl::prelude::*;
 use cubek_tile::TileArg;
 
 #[cube(launch)]
+/// input: the quantized input tensor
+/// scales: the scale grid
+/// output: the dequantized output tensor
 pub fn dequantize<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>(
-    values: &TileArg<'_, I, IN>,
+    input: &TileArg<'_, I, IN>,
     scales: &TileArg<'_, S, SN>,
     output: &TileArg<'_, O, ON>,
     #[define(I)] _input_dtype: StorageType,
@@ -13,8 +16,8 @@ pub fn dequantize<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Si
     #[define(SN)] _scale_size: usize,
     #[define(ON)] _output_size: usize,
 ) {
-    let values = values.tile();
+    let input = input.tile();
     let scales = scales.tile();
     let mut output = output.tile();
-    output.dequantize3(&values, &scales);
+    output.dequantize3(&input, &scales);
 }

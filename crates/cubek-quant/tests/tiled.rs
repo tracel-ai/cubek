@@ -1,41 +1,43 @@
 //! Correctness harness for the tiled dequantization kernel
-//! (`Tile::dequantize2`, launched via `cubek_quant::dequantize_tiled::dequantize`).
+//! (`Tile::dequantize3`, launched via `cubek_quant::dequantize_tiled::dequantize`).
 //!
 //! Native (unpacked) storage: quantized values stand in as plain `f32`, so the tests
 //! exercise the tile plumbing (walk → per-tile access → block→scale lookup) rather than
 //! integer unpacking. [`check_output`] runs the kernel for a given tensor shape, tile
 //! edge and block shape, and diffs against a CPU reference; per-tensor / 1-D / 2-D / 3-D
-//! blocks are just different arguments.
+//! blocks are just different arguments. Operand data and the comparison come from
+//! `cubek-test-utils`; only the cubek-tile `Space`/`Partitioner` wiring is built here.
 
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape,
 };
-use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArgLaunch};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
+use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, TileArgLaunch};
 
 const SEED: u64 = 0xC0FF_EE00;
 
 #[test]
 fn dequantize_tiled_native_per_tensor_matches_reference() {
     // `&[]` -> one block covering the whole tensor.
-    check_output(&[8, 8], 4, &[]);
+    dequantize_tiled_native(&[8, 8], 4, &[]);
 }
 
 #[test]
 fn dequantize_tiled_native_per_block_1d_matches_reference() {
     // `&[4]` -> a 1-D block over the last axis ([1,4] in 2-D terms).
-    check_output(&[8, 8], 4, &[4]);
+    dequantize_tiled_native(&[8, 8], 4, &[4]);
 }
 
 #[test]
 fn dequantize_tiled_native_per_block_2d_matches_reference() {
     // `&[4,4]` -> a 2-D block.
-    check_output(&[8, 8], 4, &[4, 4]);
+    dequantize_tiled_native(&[8, 8], 4, &[4, 4]);
 }
 
 #[test]
 fn dequantize_tiled_native_per_block_3d_matches_reference() {
     // `&[2,2,2]` -> a 3-D block over a rank-3 tensor, tiled 2×2×2.
-    check_output(&[4, 4, 4], 2, &[2, 2, 2]);
+    dequantize_tiled_native(&[4, 4, 4], 2, &[2, 2, 2]);
 }
 
 /// Launch the tiled dequantize and assert it matches the CPU reference
@@ -46,10 +48,9 @@ fn dequantize_tiled_native_per_block_3d_matches_reference() {
 /// - `block`: per-axis block shape, trailing-aligned like `BlockSize`. `&[]` is
 ///   per-tensor (one block); a shorter slice left-pads with `1` (each leading axis is its
 ///   own block). The scale grid is one scale per block: `tensor[a] / block[a]` per axis.
-fn check_output(tensor: &[usize], tile_edge: usize, block: &[usize]) {
+fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) {
     let client = TestRuntime::client(&Default::default());
     let rank = tensor.len();
-    let n_elems: usize = tensor.iter().product();
 
     let block_dims = block_dims(tensor, block);
     let grid: Vec<usize> = tensor
@@ -57,44 +58,30 @@ fn check_output(tensor: &[usize], tile_edge: usize, block: &[usize]) {
         .zip(&block_dims)
         .map(|(&t, &b)| t / b)
         .collect();
-    let n_scales: usize = grid.iter().product();
 
-    // Values: arange. Scales: distinct per block, so the mapping is actually tested.
-    let values: Vec<f32> = (0..n_elems).map(|i| i as f32).collect();
-    let scales = random_scales(SEED, n_scales, 0.25, 2.0);
-
+    // cubek-tile wiring: tile values/output into `tile_edge` squares; scales are the
+    // block grid itself (its partitioner is unused — dequantize3 reads scales by
+    // absolute cell coord). Plain row-major buffers, so 0 tile levels.
     let ax = axes(rank);
     let tile_edges = vec![tile_edge; rank];
-
-    let values_h = tensor_nd(&client, &values, tensor);
-    let scales_h = tensor_nd(&client, &scales, &grid);
-    let output_h = TensorHandle::<TestRuntime>::zeros(
-        &client,
-        Shape::from(tensor.to_vec()),
-        f32::as_type_native_unchecked(),
-    );
-
-    // Values/output tile into `tile_edge` squares; scales are the block grid itself
-    // (its partitioner is unused — dequantize2 reads scales by absolute cell coord).
-    let values_space = space_nd(&ax, tensor, &tile_edges);
-    let output_space = space_nd(&ax, tensor, &tile_edges);
-    let scales_space = space_nd(&ax, &grid, &grid);
-    // Plain row-major buffers: physical rank == logical rank, so 0 tile levels.
-    let storage = Storage::of(rank, rank);
+    let values = TileInput::builder(&client, space_nd(&ax, tensor, &tile_edges))
+        .untiled()
+        .arange();
+    let scales = TileInput::builder(&client, space_nd(&ax, &grid, &grid))
+        .untiled()
+        .uniform(SEED, 0.25, 2.0);
+    let output = TileInput::builder(&client, space_nd(&ax, tensor, &tile_edges))
+        .untiled()
+        .zeros();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
-
     cubek_quant::dequantize_tiled::dequantize::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::new(values_h.binding().into_tensor_arg(), values_space, storage),
-        TileArgLaunch::new(scales_h.binding().into_tensor_arg(), scales_space, storage),
-        TileArgLaunch::new(
-            output_h.clone().binding().into_tensor_arg(),
-            output_space,
-            storage,
-        ),
+        TileArgLaunch::new(values.tensor_arg(1), values.space(), values.storage()),
+        TileArgLaunch::new(scales.tensor_arg(1), scales.space(), scales.storage()),
+        TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
         dtype,
         dtype,
         dtype,
@@ -103,27 +90,44 @@ fn check_output(tensor: &[usize], tile_edge: usize, block: &[usize]) {
         1usize,
     );
 
-    let bytes = client.read_one(output_h.handle).unwrap();
-    let got = f32::from_bytes(&bytes);
+    // Reference: values are arange, so element i's value is `i`; its block cell is
+    // coord[a] / block[a] per axis, raveled row-major into the scale grid.
+    check_output(
+        &client,
+        scales.handle(),
+        output.handle(),
+        tensor,
+        &grid,
+        &block_dims,
+    );
+}
 
-    // Reference: element i's grid cell is coord[a] / block[a] per axis, raveled row-major.
+fn check_output(
+    client: &ComputeClient<TestRuntime>,
+    scales_h: TensorHandle<TestRuntime>,
+    output_h: TensorHandle<TestRuntime>,
+    tensor: &[usize],
+    grid: &[usize],
+    block_dims: &[usize],
+) {
+    let scales_host = HostData::from_tensor_handle(&client, scales_h.clone(), HostDataType::F32);
+    let n_elems: usize = tensor.iter().product();
+
     let expected: Vec<f32> = (0..n_elems)
         .map(|i| {
             let coord = unravel(i, tensor);
-            let cell: Vec<usize> = coord
-                .iter()
-                .zip(&block_dims)
-                .map(|(&c, &b)| c / b)
-                .collect();
-            values[i] * scales[ravel(&cell, &grid)]
+            let cell: Vec<usize> = coord.iter().zip(block_dims).map(|(&c, &b)| c / b).collect();
+            i as f32 * scales_host.data.get_f32(ravel(&cell, grid))
         })
         .collect();
-    for (i, (g, e)) in got.iter().zip(expected.iter()).enumerate() {
-        assert!(
-            (g - e).abs() < 1e-6,
-            "mismatch at {i}: got {g}, expected {e}"
-        );
-    }
+
+    let got = HostData::from_tensor_handle(&client, output_h, HostDataType::F32);
+    let (_, expected) = TestInput::builder(client.clone(), Shape::from(tensor.to_vec()))
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
 }
 
 /// Per-axis block shape: `&[]` -> the whole tensor (per-tensor); otherwise the block is
@@ -162,22 +166,6 @@ fn space_nd(axes: &[Axis], extents: &[usize], edges: &[usize]) -> Space {
     Space::new(&entries).with_partitioner(row_major_seq_nd(axes, edges))
 }
 
-fn tensor_nd(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
-    data: &[f32],
-    shape: &[usize],
-) -> TensorHandle<TestRuntime> {
-    let shape = Shape::from(shape.to_vec());
-    let alloc =
-        client.create_tensor_from_slice(f32::as_bytes(data), shape.clone(), f32::type_size());
-    TensorHandle::new(
-        alloc.memory,
-        shape,
-        alloc.strides,
-        f32::as_type_native_unchecked(),
-    )
-}
-
 /// Row-major unravel of a flat index into per-axis coordinates.
 fn unravel(mut i: usize, shape: &[usize]) -> Vec<usize> {
     let mut coord = vec![0usize; shape.len()];
@@ -191,22 +179,4 @@ fn unravel(mut i: usize, shape: &[usize]) -> Vec<usize> {
 /// Row-major ravel of per-axis coordinates back into a flat index.
 fn ravel(coord: &[usize], shape: &[usize]) -> usize {
     coord.iter().zip(shape).fold(0, |idx, (&c, &s)| idx * s + c)
-}
-
-/// Deterministic pseudo-random `f32`s in `[lo, hi)` via SplitMix64 — no `rand` dep, and
-/// reproducible so a failing case always reproduces.
-fn random_scales(seed: u64, count: usize, lo: f32, hi: f32) -> Vec<f32> {
-    let mut state = seed;
-    (0..count)
-        .map(|_| {
-            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut z = state;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^= z >> 31;
-            // Top 24 bits -> a uniform float in [0, 1).
-            let unit = (z >> 40) as f32 / (1u64 << 24) as f32;
-            lo + unit * (hi - lo)
-        })
-        .collect()
 }
