@@ -16,5 +16,5 @@ pub fn dequantize<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Si
     let values = values.tile();
     let scales = scales.tile();
     let mut output = output.tile();
-    output.dequantize(&values, &scales);
+    output.dequantize2(&values, &scales);
 }
