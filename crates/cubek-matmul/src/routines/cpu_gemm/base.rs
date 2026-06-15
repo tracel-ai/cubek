@@ -235,7 +235,9 @@ impl CpuGemmRoutine {
         // planes on the overhang. Snap the aspect-ratio target to grid divisors.
         let grid_m = m.div_ceil(tile_m).max(1);
         let grid_n = n.div_ceil(tile_n).max(1);
-        let target_m = (cores as f64 * grid_m as f64 / grid_n as f64).sqrt().round() as usize;
+        let target_m = (cores as f64 * grid_m as f64 / grid_n as f64)
+            .sqrt()
+            .round() as usize;
         let plane_m = nearest_divisor(grid_m, target_m);
         let plane_n = nearest_divisor(grid_n, (cores / plane_m).max(1));
 

@@ -227,11 +227,17 @@ fn launch_vectorized<R: Runtime>(
     // L1: split the stage tile spatially across planes (`plane_m × plane_n` worker threads);
     // each plane runs its `tile_m × tile_n` leaf sequentially over K.
     let l1_edges: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), 1)))
-        .chain([(M, blueprint.tile_m), (N, tile_n_lines), (K, blueprint.tile_k)])
+        .chain([
+            (M, blueprint.tile_m),
+            (N, tile_n_lines),
+            (K, blueprint.tile_k),
+        ])
         .collect();
-    let l1_dists: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), Distribution::Sequential)))
-        .chain([(M, plane()), (N, plane()), (K, Distribution::Sequential)])
-        .collect();
+    let l1_dists: Vec<_> = (batch
+        .iter()
+        .map(|&p| (batch_axis(p), Distribution::Sequential)))
+    .chain([(M, plane()), (N, plane()), (K, Distribution::Sequential)])
+    .collect();
     let l1 = Partitioner::row_major(ByAxis::new(&l1_edges), ByAxis::new(&l1_dists)).direct();
 
     let space = Space::new(&extents)
