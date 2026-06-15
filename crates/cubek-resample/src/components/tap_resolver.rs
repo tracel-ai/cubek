@@ -112,8 +112,11 @@ fn resolve_vectorized_tap<F: Float, N: Size>(
         let lane_weight =
             Kernel::weight::<F, N>(in_coord, out_coord, config, vectorized_axis, lane);
 
-        let lane_values = input.read(clamp_to_coords_dyn(input_shape, in_coord));
-        let extract_idx = in_coord[vectorized_axis] as usize % vector_size;
+        let clamped_coord = clamp_to_coords_dyn(input_shape, in_coord);
+
+        let lane_values = input.read(clamped_coord.clone());
+
+        let extract_idx = clamped_coord[vectorized_axis] as usize % vector_size;
         let lane_value = lane_values.extract(extract_idx);
 
         weight.insert(lane, lane_weight);
