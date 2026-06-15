@@ -5,6 +5,36 @@ use cubecl::prelude::*;
 
 use crate::{matmul::lower::Mma, *};
 
+/// The per-axis runtime problem size for `Walk::over`, aligned to `space`'s axis order. A
+/// `Static` axis contributes a placeholder (its count stays comptime); a `Dynamic` axis reads
+/// its runtime extent off whichever input carries it. The two inputs span the whole merge
+/// (`lhs ∈ {M,K,batch}`, `rhs ∈ {K,N,batch}`), so `out` is never needed. Only the top-level
+/// merge is dynamic — `divide` yields `Static` children — so at inner levels every axis takes
+/// the placeholder and the whole walk stays comptime.
+#[cube]
+fn merged_extents<Lhs: CubePrimitive, Rhs: CubePrimitive>(
+    #[comptime] space: Space,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+) -> Sequence<usize> {
+    let mut extents = Sequence::<usize>::new();
+    #[unroll]
+    for p in 0..space.rank() {
+        let axis = comptime!(space.axis_at(p));
+        let extent = if comptime!(space.is_dynamic(axis)) {
+            if comptime!(lhs.space.contains(axis)) {
+                lhs.runtime_extent(axis)
+            } else {
+                rhs.runtime_extent(axis)
+            }
+        } else {
+            0usize.runtime()
+        };
+        extents.push(extent);
+    }
+    extents
+}
+
 /// `Direct`: no staging
 #[cube]
 pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
@@ -15,7 +45,7 @@ pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     Acc: CubePrimitive + Mma<Lhs, Rhs>,
 {
     let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = Walk::over(space);
+    let walk = Walk::over(comptime!(space.clone()), merged_extents(space, lhs, rhs));
     for i in 0..walk.total() {
         out.mma_at(lhs, rhs, &walk.region(i));
     }
@@ -40,9 +70,8 @@ pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut a_tile = Tile::smem(&a_smem, a_sub);
     let mut b_tile = Tile::smem(&b_smem, b_sub);
 
-    let walk = Walk::over(comptime!(Space::merge(&[
-        &lhs.space, &rhs.space, &out.space
-    ])));
+    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
+    let walk = Walk::over(comptime!(space.clone()), merged_extents(space, lhs, rhs));
     for i in 0..walk.total() {
         let region = walk.region(i);
         a_tile.stage(&lhs.at(&region));
@@ -77,9 +106,8 @@ pub(crate) fn mma_double<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut a = Ring::new(a_buf);
     let mut b = Ring::new(b_buf);
 
-    let walk = Walk::over(comptime!(Space::merge(&[
-        &lhs.space, &rhs.space, &out.space
-    ])));
+    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
+    let walk = Walk::over(comptime!(space.clone()), merged_extents(space, lhs, rhs));
 
     // prologue: prime slot 0 with region 0.
     let r0 = walk.region(0);

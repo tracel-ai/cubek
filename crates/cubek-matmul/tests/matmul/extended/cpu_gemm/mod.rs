@@ -73,6 +73,8 @@ fn mixed_precision_f16_inputs_f32_acc() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -116,6 +118,8 @@ fn very_small_square() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -159,6 +163,8 @@ fn small_square() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -202,6 +208,8 @@ fn rectangular() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -245,6 +253,8 @@ fn single_tile() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -316,6 +326,8 @@ fn batched_small() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -359,6 +371,8 @@ fn batched_rectangular() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -390,6 +404,8 @@ fn indivisible_all_axes() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -421,6 +437,8 @@ fn indivisible_rectangular_batched() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -535,6 +553,8 @@ fn broadcast_rhs_unbatched() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -566,6 +586,8 @@ fn broadcast_lhs_unbatched() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -599,6 +621,8 @@ fn broadcast_two_axes() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -631,6 +655,8 @@ fn batched_two_axes() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }
@@ -662,6 +688,8 @@ fn broadcast_indivisible() {
             tile_m: tile_size,
             tile_n: tile_size,
             tile_k: tile_size,
+            plane_m: 2,
+            plane_n: 2,
         })),
     );
 }

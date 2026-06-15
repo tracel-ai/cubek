@@ -12,9 +12,16 @@ use crate::routines::{
 };
 use crate::strategy::Strategy;
 
-/// Forced CpuGemm blueprint probe (diagnostic): a fixed cuboid so a masked vs maskless
-/// comparison can be isolated. `t64` divides 512 (no edge masking); `t48` does not.
-fn cpu_gemm_forced(tag: &'static str, label: &'static str, tile: usize) -> CatalogEntry<Strategy> {
+/// Forced CpuGemm blueprint probe (diagnostic): a fixed leaf cuboid and plane grid so a
+/// masked-vs-maskless or plane-scaling comparison can be isolated. `t64` divides 512 (no edge
+/// masking); `t48` does not. `plane_m × plane_n` is the per-cube worker-thread split.
+fn cpu_gemm_forced(
+    tag: &'static str,
+    label: &'static str,
+    tile: usize,
+    plane_m: usize,
+    plane_n: usize,
+) -> CatalogEntry<Strategy> {
     CatalogEntry::new(
         tag,
         label,
@@ -22,6 +29,8 @@ fn cpu_gemm_forced(tag: &'static str, label: &'static str, tile: usize) -> Catal
             tile_m: tile,
             tile_n: tile,
             tile_k: tile,
+            plane_m,
+            plane_n,
         })),
     )
 }
@@ -125,8 +134,13 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "CpuGemm (tile-DSL CPU)",
             Strategy::CpuGemm(BlueprintStrategy::default()),
         ),
-        cpu_gemm_forced("cpu_gemm_t64", "CpuGemm (forced 64³, maskless on 512)", 64),
-        cpu_gemm_forced("cpu_gemm_t48", "CpuGemm (forced 48³, masked on 512)", 48),
-        cpu_gemm_forced("cpu_gemm_t32", "CpuGemm (forced 32³, maskless on 512)", 32),
+        cpu_gemm_forced("cpu_gemm_t64", "CpuGemm (forced 64³, maskless on 512)", 64, 2, 2),
+        cpu_gemm_forced("cpu_gemm_t48", "CpuGemm (forced 48³, masked on 512)", 48, 2, 2),
+        cpu_gemm_forced("cpu_gemm_t32", "CpuGemm (forced 32³, maskless on 512)", 32, 2, 2),
+        // Plane-scaling study at a fixed 64³ leaf: 1 → 2 → 4 → 8 worker threads per cube.
+        cpu_gemm_forced("cpu_gemm_p1", "CpuGemm (64³, 1 plane)", 64, 1, 1),
+        cpu_gemm_forced("cpu_gemm_p2", "CpuGemm (64³, 2 planes)", 64, 2, 1),
+        cpu_gemm_forced("cpu_gemm_p4", "CpuGemm (64³, 4 planes)", 64, 2, 2),
+        cpu_gemm_forced("cpu_gemm_p8", "CpuGemm (64³, 8 planes)", 64, 4, 2),
     ]
 }

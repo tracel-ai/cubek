@@ -222,6 +222,8 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
             tile_m: tile,
             tile_n: tile,
             tile_k: tile,
+            plane_m: 2,
+            plane_n: 2,
         }),
         &dtypes,
     )

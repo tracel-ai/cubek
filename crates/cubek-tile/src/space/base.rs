@@ -7,21 +7,85 @@ use crate::{Axis, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
+/// One axis's size. `Static` is a comptime constant (a tile edge, or a problem dim we
+/// deliberately specialize on); `Dynamic` is a runtime scalar resolved in-kernel from the
+/// tensor shape. A `Dynamic` axis carries no value, so two problem shapes that differ only
+/// in their dynamic dims produce the *same* `Space` — hence one compiled kernel rather than
+/// one per shape. [`divide`](Space::divide) always yields `Static` children (a sub-tile edge
+/// is comptime), so dynamism only ever lives at the top level.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Extent {
+    Static(usize),
+    Dynamic,
+}
+
+impl Extent {
+    /// The comptime size; panics on `Dynamic` (a runtime extent has no comptime value —
+    /// resolve it from the tensor shape).
+    pub fn get(self) -> usize {
+        match self {
+            Extent::Static(n) => n,
+            Extent::Dynamic => {
+                panic!("Extent::get: this axis is Dynamic; its size is only known at runtime")
+            }
+        }
+    }
+
+    pub fn is_dynamic(self) -> bool {
+        matches!(self, Extent::Dynamic)
+    }
+}
+
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Space {
-    extents: ByAxis<usize>,
+    extents: ByAxis<Extent>,
     partitioner: Partitioner,
 }
 
 impl Space {
     pub fn new(extents: &[(Axis, usize)]) -> Self {
+        let extents: Vec<_> = extents
+            .iter()
+            .map(|&(a, n)| (a, Extent::Static(n)))
+            .collect();
+        Space::from_extents(&extents)
+    }
+
+    /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
+    pub fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
             extents: ByAxis::new(extents),
             partitioner: Partitioner::Final,
         }
+    }
+
+    /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), keeping the partitioner. The
+    /// launch side computes geometry from the concrete (real-extent) space, then derives the
+    /// kernel's space with this so distinct input shapes hit one compiled kernel.
+    pub fn with_dynamic(mut self, axes: &[Axis]) -> Self {
+        let entries: Vec<_> = self
+            .axes()
+            .map(|a| {
+                let extent = if axes.contains(&a) {
+                    Extent::Dynamic
+                } else {
+                    self.extents.get(a)
+                };
+                (a, extent)
+            })
+            .collect();
+        self.extents = ByAxis::new(&entries);
+        self
+    }
+
+    /// Every axis [`Dynamic`]: the kernel form for an operation whose problem dims are all
+    /// runtime (the common case — see [`with_dynamic`](Space::with_dynamic)).
+    pub fn all_dynamic(self) -> Self {
+        let axes: Vec<_> = self.axes().collect();
+        self.with_dynamic(&axes)
     }
 
     /// Chain coarse-to-fine for multi-level tiling; each call appends to the end of
@@ -39,8 +103,18 @@ impl Space {
         self.partitioner.is_final()
     }
 
+    /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
+    /// smem consumers all run on fully-divided (`Static`) spaces, so this is what they call.
     pub fn extent(&self, axis: Axis) -> usize {
+        self.extents.get(axis).get()
+    }
+
+    pub fn extent_raw(&self, axis: Axis) -> Extent {
         self.extents.get(axis)
+    }
+
+    pub fn is_dynamic(&self, axis: Axis) -> bool {
+        self.extents.get(axis).is_dynamic()
     }
 
     pub fn extent_at(&self, i: usize) -> usize {
@@ -68,11 +142,11 @@ impl Space {
     /// conflict); an omitted axis broadcasts along all of it. E.g.
     /// `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
     pub fn merge(parts: &[&Space]) -> Space {
-        let mut entries: SmallVec<[(Axis, usize); MAX_AXES]> = SmallVec::new();
+        let mut entries: SmallVec<[(Axis, Extent); MAX_AXES]> = SmallVec::new();
 
         for part in parts {
             for axis in part.axes() {
-                let extent = part.extent(axis);
+                let extent = part.extent_raw(axis);
                 match entries.iter_mut().find(|(a, _)| *a == axis) {
                     Some(slot) => slot.1 = merge_level(slot.1, extent),
                     None => entries.push((axis, extent)),
@@ -97,7 +171,7 @@ impl Space {
     pub fn project(&self, axes: &[Axis]) -> Space {
         let entries = axes
             .iter()
-            .map(|&a| (a, self.extent(a)))
+            .map(|&a| (a, self.extent_raw(a)))
             .collect::<Vec<_>>();
         Space {
             extents: ByAxis::new(&entries),
@@ -109,29 +183,6 @@ impl Space {
     /// trailing partial tile (its overhang is masked at read/write).
     pub fn count(&self, axis: Axis) -> usize {
         self.extent(axis).div_ceil(self.partitioner().edge(axis))
-    }
-
-    /// For a `Spatial` axis, the product of the instance counts of the
-    /// later-declared axes sharing its [`ComputeScope`] — so several axes can ride one
-    /// hardware dimension as a mixed-radix index, earlier axis most significant. `1`
-    /// for a `Sequential` axis or one that owns its scope. Decodes the shared hardware
-    /// position in [`Walk`](crate::Walk); any bijection covers the same tiles, so the
-    /// per-axis assignment need not match the launch-side declaration order.
-    pub fn spatial_inner_weight(&self, axis: Axis) -> usize {
-        let scope = match self.partitioner().distribution(axis).scope() {
-            Some(scope) => scope,
-            None => return 1,
-        };
-        let pos = self.position(axis);
-        let mut weight = 1;
-        for q in (pos + 1)..self.rank() {
-            let other = self.axis_at(q);
-            let dist = self.partitioner().distribution(other);
-            if dist.scope() == Some(scope) {
-                weight *= dist.coverage().instances(self.count(other));
-            }
-        }
-        weight
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
@@ -146,9 +197,11 @@ impl Space {
     /// The child space one level down: every axis shrunk to its partitioner's sub-tile
     /// edge, that level consumed. Position-free shape; the positions are the [`Walk`].
     pub fn divide(&self) -> Space {
+        // A sub-tile edge is always comptime, so a child is fully `Static` whatever the
+        // parent was: dynamism lives only at the top level.
         let entries = self
             .axes()
-            .map(|axis| (axis, self.partitioner.edge(axis)))
+            .map(|axis| (axis, Extent::Static(self.partitioner.edge(axis))))
             .collect::<Vec<_>>();
         Space {
             extents: ByAxis::new(&entries),
@@ -171,13 +224,15 @@ impl Space {
     }
 }
 
-/// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal
-/// sizes agree, a `1` yields to the other, anything else conflicts.
-fn merge_level(a: usize, b: usize) -> usize {
+/// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal sizes agree, a
+/// static `1` yields to the other, anything else conflicts. A `Dynamic` axis subsumes any
+/// non-broadcast operand — its runtime size is the merged one — so the merge stays dynamic.
+fn merge_level(a: Extent, b: Extent) -> Extent {
     match (a, b) {
-        (1, b) => b,
-        (a, 1) => a,
-        (a, b) if a == b => a,
+        (Extent::Static(1), b) => b,
+        (a, Extent::Static(1)) => a,
+        (Extent::Dynamic, _) | (_, Extent::Dynamic) => Extent::Dynamic,
+        (Extent::Static(a), Extent::Static(b)) if a == b => Extent::Static(a),
         _ => panic!("Space::merge: axis appears with conflicting extents"),
     }
 }

@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Region, Space, instance_count, tiles_per_instance};
+use crate::{Extent, Region, Space, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -22,11 +22,24 @@ pub struct Walk {
 #[cube]
 impl Walk {
     /// To subdivide an operation, merge the operands' spaces then `Walk::over` the result.
-    pub fn over(#[comptime] space: Space) -> Walk {
+    /// `runtime_extents` supplies the per-axis problem size for every [`Dynamic`](Extent::Dynamic)
+    /// axis (unused for `Static` axes, whose count stays comptime), aligned to the space's axis
+    /// order; the caller reads it off the operand tiles' runtime bounds.
+    pub fn over(#[comptime] space: Space, runtime_extents: Sequence<usize>) -> Walk {
         let mut counts = Sequence::<usize>::new();
         #[unroll]
         for p in 0..space.rank() {
-            counts.push(space.count(space.axis_at(p)))
+            let axis = comptime!(space.axis_at(p));
+            // A `Static` axis keeps its comptime tile count; a `Dynamic` one ceil-divides its
+            // runtime size by the (comptime) sub-tile edge, so the trip count never bakes in.
+            let count = match comptime!(space.extent_raw(axis)) {
+                Extent::Static(_) => comptime!(space.count(axis)).runtime(),
+                Extent::Dynamic => {
+                    let edge = comptime!(space.partitioner().edge(axis));
+                    (*runtime_extents.index(p)).div_ceil(edge)
+                }
+            };
+            counts.push(count);
         }
 
         let mut steps = 1usize;
@@ -79,7 +92,20 @@ impl Walk {
             let local = (idx / weight) % *counts.index(p);
             let axis = comptime!(self.space.axis_at(p));
             let dist = comptime!(self.space.partitioner().distribution(axis));
-            let inner_weight = comptime!(self.space.spatial_inner_weight(axis));
+            // Mixed-radix stride for axes sharing one hardware dim: the product of the later
+            // same-scope axes' instance counts (the earlier axis is the more significant
+            // digit). Computed from the runtime grid counts, so dynamic extents work; `1` when
+            // this axis owns its scope or is sequential.
+            let mut inner_weight = 1usize;
+            #[unroll]
+            for q in comptime!(p + 1)..rank {
+                let other = comptime!(self.space.axis_at(q));
+                let other_dist = comptime!(self.space.partitioner().distribution(other));
+                if comptime!(dist.scope().is_some() && other_dist.scope() == dist.scope()) {
+                    inner_weight *=
+                        instance_count(*self.counts.index(q), comptime!(other_dist.coverage()));
+                }
+            }
             coords.push(coord_of(local, *self.counts.index(p), inner_weight, dist) as u32);
         }
         coords
@@ -106,7 +132,7 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 fn coord_of(
     step: usize,
     grid: usize,
-    #[comptime] inner_weight: usize,
+    inner_weight: usize,
     #[comptime] dist: Distribution,
 ) -> usize {
     let mut coord = step;

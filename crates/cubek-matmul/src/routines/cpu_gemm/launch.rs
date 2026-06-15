@@ -1,6 +1,6 @@
 //! Launch wiring for the CpuGemm routine.
 
-use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::*};
+use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
     Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
@@ -189,54 +189,68 @@ fn launch_vectorized<R: Runtime>(
         .filter(|&p| out_batches[p] > 1)
         .collect();
 
+    // The N axis is measured in `v`-wide lines; M/K in elements. A cube owns a stage tile
+    // of `plane_m × plane_n` leaves; each plane (a CPU worker thread) owns one leaf.
+    let tile_n_lines = blueprint.tile_n / v;
+    let cube_m = blueprint.plane_m * blueprint.tile_m;
+    let cube_n_lines = blueprint.plane_n * tile_n_lines;
+
+    let cube = |axis| Distribution::Spatial {
+        scope: ComputeScope::Cube(axis),
+        spread: Spread::Contiguous,
+        coverage: Coverage::TilesEach(1),
+    };
+    let plane = || Distribution::Spatial {
+        scope: ComputeScope::Plane,
+        spread: Spread::Contiguous,
+        coverage: Coverage::TilesEach(1),
+    };
+
     let extents: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), out_batches[p])))
         .chain([(M, m), (N, n / v), (K, k)])
         .collect();
-    let edges: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), 1)))
+
+    // L0: one cube per stage tile — batches and global M/N ride the cube grid, K whole.
+    // Cubes are a serial loop on CPU; the grid ceil-covers the matrix, the last tile masked.
+    let l0_edges: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), 1)))
+        .chain([(M, cube_m), (N, cube_n_lines), (K, k)])
+        .collect();
+    let l0_dists: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), cube(CubeAxis::Z))))
         .chain([
-            (M, blueprint.tile_m),
-            (N, blueprint.tile_n / v),
-            (K, blueprint.tile_k),
+            (M, cube(CubeAxis::X)),
+            (N, cube(CubeAxis::Y)),
+            (K, Distribution::Sequential),
         ])
         .collect();
-    let dists: Vec<_> = (batch.iter().map(|&p| {
-        (
-            batch_axis(p),
-            Distribution::Spatial {
-                scope: ComputeScope::Cube(CubeAxis::Z),
-                spread: Spread::Contiguous,
-                coverage: Coverage::TilesEach(1),
-            },
-        )
-    }))
-    .chain([
-        (
-            M,
-            Distribution::Spatial {
-                scope: ComputeScope::Cube(CubeAxis::X),
-                spread: Spread::Contiguous,
-                coverage: Coverage::TilesEach(1),
-            },
-        ),
-        (
-            N,
-            Distribution::Spatial {
-                scope: ComputeScope::Cube(CubeAxis::Y),
-                spread: Spread::Contiguous,
-                coverage: Coverage::TilesEach(1),
-            },
-        ),
-        (K, Distribution::Sequential),
-    ])
-    .collect();
+    let l0 = Partitioner::row_major(ByAxis::new(&l0_edges), ByAxis::new(&l0_dists)).direct();
 
-    let partitioner = Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists)).staged();
-    let space = Space::new(&extents).with_partitioner(partitioner.clone());
+    // L1: split the stage tile spatially across planes (`plane_m × plane_n` worker threads);
+    // each plane runs its `tile_m × tile_n` leaf sequentially over K.
+    let l1_edges: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), 1)))
+        .chain([(M, blueprint.tile_m), (N, tile_n_lines), (K, blueprint.tile_k)])
+        .collect();
+    let l1_dists: Vec<_> = (batch.iter().map(|&p| (batch_axis(p), Distribution::Sequential)))
+        .chain([(M, plane()), (N, plane()), (K, Distribution::Sequential)])
+        .collect();
+    let l1 = Partitioner::row_major(ByAxis::new(&l1_edges), ByAxis::new(&l1_dists)).direct();
+
+    let space = Space::new(&extents)
+        .with_partitioner(l0)
+        .with_partitioner(l1);
+    let partitioner = space.partitioner().clone();
+    // Launch geometry needs the concrete problem extents.
     let cube_count = partitioner.cube_count(&space);
-    let cube_dim = CubeDim::new_single();
+    let cube_dim = partitioner.cube_dim(client, &space);
 
-    let check_m = !m.is_multiple_of(blueprint.tile_m);
-    let check_n = !n.is_multiple_of(blueprint.tile_n);
+    // The kernel keys on a fully-dynamic space: the top-level M/N/K/batch extents become
+    // runtime scalars (resolved in-kernel from the tensor shapes), so distinct input shapes
+    // reuse one compiled kernel instead of recompiling per shape. Tile edges stay comptime.
+    let space = space.all_dynamic();
+
+    // The stage tile (`cube_m`/`cube_n`) is the overhang granularity for M/N — within a
+    // cube the plane split is exact — and the leaf `tile_k` for K.
+    let check_m = !m.is_multiple_of(cube_m);
+    let check_n = !n.is_multiple_of(blueprint.plane_n * blueprint.tile_n);
     let check_k = !k.is_multiple_of(blueprint.tile_k);
 
     // `lhs` always staged scalar (`v = 1`); `rhs`/`out` carry the line size. The output
