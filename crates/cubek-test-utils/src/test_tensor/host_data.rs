@@ -1,6 +1,7 @@
 use cubecl::{
     CubeElement, TestRuntime,
     client::ComputeClient,
+    ir::{ElemType, FloatKind, StorageType},
     prelude::CubePrimitive,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -21,6 +22,31 @@ pub enum HostDataType {
     F64,
     I32,
     Bool,
+}
+
+/// Convert a `Vec<f64>` accumulation buffer into a `HostDataVec` at the
+/// precision dictated by `dtype`: kept as `F64` for f64 tensors, downcast to
+/// `F32` for everything else (matching `HostDataType::from`).
+impl From<(Vec<f64>, StorageType)> for HostDataVec {
+    fn from((data, dtype): (Vec<f64>, StorageType)) -> Self {
+        match HostDataType::from(dtype) {
+            HostDataType::F64 => HostDataVec::F64(data),
+            _ => HostDataVec::F32(data.into_iter().map(|x| x as f32).collect()),
+        }
+    }
+}
+
+impl From<StorageType> for HostDataType {
+    /// Map a tensor storage type to the host representation used in tests.
+    /// `f64` tensors get `F64` so comparisons happen at full precision; all
+    /// other numeric types collapse to `F32`.
+    fn from(dtype: StorageType) -> Self {
+        if matches!(dtype.elem_type(), ElemType::Float(FloatKind::F64)) {
+            HostDataType::F64
+        } else {
+            HostDataType::F32
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

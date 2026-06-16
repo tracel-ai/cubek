@@ -5,33 +5,17 @@
 //! - [`cpu_reference_result`] runs the naive triple-loop on the same seeded
 //!   inputs and returns its output as a [`HostData`].
 
-use cubecl::{
-    TestRuntime,
-    ir::{ElemType, FloatKind},
-    prelude::*,
-    std::tensor::TensorHandle,
-};
+use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
-    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput, ValidationResult,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     {launch::launch_ref, strategy::Strategy},
 };
-
-/// Host data type to use for a tensor with this storage type: `F64` for f64
-/// tensors (so both the reference computation and the GPU readback retain
-/// full precision), `F32` otherwise.
-fn host_data_type_for(dtype: StorageType) -> HostDataType {
-    if matches!(dtype.elem_type(), ElemType::Float(FloatKind::F64)) {
-        HostDataType::F64
-    } else {
-        HostDataType::F32
-    }
-}
 
 /// Run `strategy` against `problem` with seeded inputs and return its output as
 /// a [`HostData`].
@@ -112,7 +96,7 @@ where
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             &client,
             out,
-            host_data_type_for(problem.global_dtypes.out),
+            problem.global_dtypes.out.into(),
         )),
     }
 }
@@ -129,13 +113,13 @@ fn seed_inputs(
         .dtype(problem.global_dtypes.lhs)
         .layout(problem.lhs_layout)
         .uniform(seed_lhs, -1., 1.)
-        .generate_with_host_data(host_data_type_for(problem.global_dtypes.lhs));
+        .generate_with_host_data(problem.global_dtypes.lhs.into());
 
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
         .layout(problem.rhs_layout)
         .uniform(seed_rhs, -1., 1.)
-        .generate_with_host_data(host_data_type_for(problem.global_dtypes.rhs));
+        .generate_with_host_data(problem.global_dtypes.rhs.into());
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
         .layout(MatrixLayout::RowMajor)
@@ -173,8 +157,7 @@ pub fn assert_result_with_epsilon(
     epsilon: f32,
 ) -> ValidationResult {
     let expected = matmul_cpu_reference(lhs, rhs, problem, None);
-    let actual =
-        HostData::from_tensor_handle(client, out, host_data_type_for(problem.global_dtypes.out));
+    let actual = HostData::from_tensor_handle(client, out, problem.global_dtypes.out.into());
     assert_equals_approx(&actual, &expected, epsilon)
 }
 
@@ -273,11 +256,7 @@ pub fn matmul_cpu_reference(
 
     let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
-    let data = if host_data_type_for(problem.global_dtypes.out) == HostDataType::F64 {
-        HostDataVec::F64(out)
-    } else {
-        HostDataVec::F32(out.into_iter().map(|x| x as f32).collect())
-    };
+    let data = HostDataVec::from((out, problem.global_dtypes.out));
 
     HostData {
         data,
