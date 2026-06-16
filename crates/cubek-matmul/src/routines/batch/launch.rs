@@ -2,7 +2,7 @@ use crate::args::{
     ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
     TensorMapArgs,
 };
-use crate::routines::{BatchMatmulRoutine, BlueprintStrategy};
+use crate::routines::{BatchMatmulRoutine, BlueprintStrategy, into_contiguous_if_highly_permuted};
 use crate::{
     definition::MatmulProblem,
     definition::{AvailableVectorSizes, BatchMatmulBlueprint, MatmulElems},
@@ -29,21 +29,8 @@ pub fn launch_ref<R: Runtime, A: BatchMatmulRoutine<()>>(
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let lhs = if matrix_batch_layout(&lhs.data().strides, lhs.scheme())
-        == MatrixBatchLayout::HighlyPermuted
-    {
-        lhs.into_contiguous(client)?
-    } else {
-        lhs
-    };
-
-    let rhs = if matrix_batch_layout(&rhs.data().strides, rhs.scheme())
-        == MatrixBatchLayout::HighlyPermuted
-    {
-        rhs.into_contiguous(client)?
-    } else {
-        rhs
-    };
+    let lhs = into_contiguous_if_highly_permuted(client, lhs)?;
+    let rhs = into_contiguous_if_highly_permuted(client, rhs)?;
 
     let vector_sizes = AvailableVectorSizes::from_type_sizes(
         client,

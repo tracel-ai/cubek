@@ -67,16 +67,7 @@ pub fn resample_coord<F: Float, N: Size>(
 ) {
     let mut accumulator = ResampleInstruction::initialize(config);
 
-    let vector_size = N::value();
-
-    accumulate_taps::<F, N>(
-        input,
-        out_coord,
-        &mut accumulator,
-        config,
-        vectorized_axis,
-        vector_size,
-    );
+    accumulate_taps::<F, N>(input, out_coord, &mut accumulator, config, vectorized_axis);
 
     ResampleInstruction::store(out_coord.clone(), output, accumulator, config);
 }
@@ -89,7 +80,6 @@ fn accumulate_taps<F: Float, N: Size>(
     accumulator: &mut Accumulator<F, N>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] vector_size: usize,
 ) {
     let num_taps = comptime! {
         let mut num_taps = 1;
@@ -100,7 +90,7 @@ fn accumulate_taps<F: Float, N: Size>(
         num_taps
     };
 
-    let mut in_coord = out_coord.clone();
+    let mut in_coord = from_coords_dyn(out_coord);
 
     #[unroll]
     for tap_idx in 0..num_taps {
@@ -112,9 +102,21 @@ fn accumulate_taps<F: Float, N: Size>(
             accumulator,
             config,
             vectorized_axis,
-            vector_size,
         );
     }
+}
+
+/// Convert CoordsDyn to Sequence<i32>.
+#[cube]
+fn from_coords_dyn(coords: &CoordsDyn) -> Sequence<i32> {
+    let mut coords_i32 = Sequence::new();
+
+    #[unroll]
+    for i in 0..coords.len() {
+        coords_i32.push(coords[i] as i32);
+    }
+
+    coords_i32
 }
 
 /// Map output coordinate to input coordinate for a given tap index and lane.
@@ -122,12 +124,12 @@ fn accumulate_taps<F: Float, N: Size>(
 pub fn map_coord<F: Float>(
     tap_idx: usize,
     out_coord: &CoordsDyn,
-    in_coord: &mut CoordsDyn,
+    in_coord: &mut Sequence<i32>,
     lane: usize,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
 ) {
-    in_coord[vectorized_axis] = out_coord[vectorized_axis] + lane as u32;
+    in_coord[vectorized_axis] = out_coord[vectorized_axis] as i32 + lane as i32;
 
     let mut current_flat_idx = tap_idx;
 
@@ -155,7 +157,7 @@ pub fn map_coord<F: Float>(
         current_flat_idx /= num_taps;
 
         let tap_pos = start_tap + tap_1d_idx as isize;
-        in_coord[resample_axis.axis] = tap_pos as u32;
+        in_coord[resample_axis.axis] = tap_pos as i32;
     }
 }
 
@@ -165,29 +167,19 @@ fn accumulate_tap<F: Float, N: Size>(
     tap_idx: usize,
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     out_coord: &CoordsDyn,
-    in_coord: &mut CoordsDyn,
+    in_coord: &mut Sequence<i32>,
     accumulator: &mut Accumulator<F, N>,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] vector_size: usize,
 ) {
     map_coord::<F>(tap_idx, out_coord, in_coord, 0, config, vectorized_axis);
 
     ResampleInstruction::count_position(accumulator, out_coord, config);
 
-    if input.is_in_bounds(in_coord.clone()) {
-        let (mut value, weight) = TapResolver::resolve(
-            tap_idx,
-            input,
-            out_coord,
-            in_coord,
-            config,
-            vectorized_axis,
-            vector_size,
-        );
+    let (mut value, weight) =
+        TapResolver::resolve(tap_idx, input, out_coord, in_coord, config, vectorized_axis);
 
-        ResampleInstruction::combine(&mut value, weight, tap_idx, config);
+    ResampleInstruction::combine(&mut value, weight, tap_idx, config);
 
-        ResampleInstruction::accumulate(accumulator, value, tap_idx, config);
-    }
+    ResampleInstruction::accumulate(accumulator, value, weight, tap_idx, config);
 }

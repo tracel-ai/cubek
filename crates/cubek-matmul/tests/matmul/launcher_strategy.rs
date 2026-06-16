@@ -6,7 +6,9 @@ use cubek_matmul::{
     strategy::Strategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+use cubek_test_utils::{
+    ExecutionOutcome, LayoutSpec, StridedLayout, TestInput, TestOutcome, launch_and_capture_outcome,
+};
 
 use crate::matmul::assert_result;
 
@@ -22,7 +24,54 @@ pub fn test_matmul_strategy(
     });
 }
 
-pub(crate) fn run<F>(client: ComputeClient<TestRuntime>, mut problem: MatmulProblem, launch: F)
+pub(crate) fn run<F>(client: ComputeClient<TestRuntime>, problem: MatmulProblem, launch: F)
+where
+    F: FnOnce(
+        &ComputeClient<TestRuntime>,
+        InputBinding<TestRuntime>,
+        InputBinding<TestRuntime>,
+        TensorBinding<TestRuntime>,
+        &mut MatmulElems,
+    ) -> Result<(), MatmulSetupError>,
+{
+    let lhs_layout = problem.lhs_layout.into();
+    let rhs_layout = problem.rhs_layout.into();
+    run_outcome(client, problem, lhs_layout, rhs_layout, launch).enforce()
+}
+
+/// Like [`run`], but feeds the kernel the explicit strides already on `problem`
+/// (via [`StridedLayout::Explicit`]) instead of deriving them from the layouts,
+/// and returns the [`TestOutcome`] rather than enforcing it. Stride-0 broadcast
+/// dims thus reach the kernel intact, and callers can interpret the outcome
+/// themselves (e.g. compare a broadcast run against its contiguous baseline).
+#[allow(unused)]
+pub(crate) fn run_with_strides(
+    client: ComputeClient<TestRuntime>,
+    problem: MatmulProblem,
+    strategy: Strategy,
+) -> TestOutcome {
+    let lhs_layout = StridedLayout::Explicit(problem.lhs_strides.to_vec()).into();
+    let rhs_layout = StridedLayout::Explicit(problem.rhs_strides.to_vec()).into();
+    run_outcome(
+        client,
+        problem,
+        lhs_layout,
+        rhs_layout,
+        move |c, lhs, rhs, out, dtypes| launch_ref(&strategy, c, lhs, rhs, out, dtypes),
+    )
+}
+
+/// Build the lhs/rhs inputs under the given layouts, launch via `launch`, and
+/// return the [`TestOutcome`]. The built strides are written back onto `problem`
+/// so the CPU reference sees the same memory layout the kernel did (a no-op when
+/// the layouts already pin explicit strides).
+fn run_outcome<F>(
+    client: ComputeClient<TestRuntime>,
+    mut problem: MatmulProblem,
+    lhs_layout: LayoutSpec,
+    rhs_layout: LayoutSpec,
+    launch: F,
+) -> TestOutcome
 where
     F: FnOnce(
         &ComputeClient<TestRuntime>,
@@ -34,13 +83,13 @@ where
 {
     let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
-        .layout(problem.lhs_layout)
+        .layout(lhs_layout)
         .uniform(1234, -1., 1.)
         .generate_with_f32_host_data();
 
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
-        .layout(problem.rhs_layout)
+        .layout(rhs_layout)
         .uniform(5678, -1., 1.)
         .generate_with_f32_host_data();
 
@@ -69,5 +118,4 @@ where
         }
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
-    .enforce()
 }
