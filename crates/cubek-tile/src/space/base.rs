@@ -123,15 +123,19 @@ impl SpaceExpand {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn clone(&self) -> Space {
         self.comptime()
     }
+
     pub fn rank(&self) -> usize {
         self.extents.kinds.len()
     }
+
     pub fn axis_at(&self, i: usize) -> Axis {
         self.extents.kinds.axis_at(i)
     }
+
     pub fn partitioner(&self) -> Partitioner {
         self.partitioner.clone()
     }
