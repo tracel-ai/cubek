@@ -15,9 +15,8 @@ pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     Acc: CubePrimitive + Mma<Lhs, Rhs>,
 {
     let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = Walk::over(space);
-    for i in 0..walk.total() {
-        out.mma_at(lhs, rhs, &walk.region(i));
+    for region in Walk::over(space) {
+        out.mma_at(lhs, rhs, &region);
     }
 }
 
@@ -40,11 +39,9 @@ pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut a_tile = Tile::smem(&a_smem, a_sub);
     let mut b_tile = Tile::smem(&b_smem, b_sub);
 
-    let walk = Walk::over(comptime!(Space::merge(&[
+    for region in Walk::over(comptime!(Space::merge(&[
         &lhs.space, &rhs.space, &out.space
-    ])));
-    for i in 0..walk.total() {
-        let region = walk.region(i);
+    ]))) {
         a_tile.stage(&lhs.at(&region));
         b_tile.stage(&rhs.at(&region));
         out.at(&region).mma(&a_tile, &b_tile);
