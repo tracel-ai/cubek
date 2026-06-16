@@ -36,21 +36,28 @@ fn dequantize_tiled_native_per_tensor_matches_reference() {
 fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) {
     let client = TestRuntime::client(&Default::default());
     let rank = tensor.len();
+    let per_tensor = block.is_empty();
     let block_dims = block_dims(tensor, block);
     let grid: Vec<usize> = tensor
         .iter()
         .zip(&block_dims)
         .map(|(&t, &b)| t / b)
         .collect();
+    let scale_shape = if per_tensor {
+        vec![1usize]
+    } else {
+        grid.clone()
+    };
 
     // cubek-tile wiring: tile values/output into `tile_edge` squares; scales are the
     // block grid itself (its partitioner is unused — dequantize3 reads scales by
-    // absolute cell coord). Plain row-major buffers, so 0 tile levels.
+    // absolute cell coord). For per-tensor, use a rank-1 `[1]` scale tensor so the
+    // test matches the tiled dequantize launch path.
     let tile_edges = vec![tile_edge; rank];
     let values = TileInput::builder(&client, spatial_space(tensor, &tile_edges))
         .untiled()
         .arange();
-    let scales = TileInput::builder(&client, spatial_space(&grid, &grid))
+    let scales = TileInput::builder(&client, spatial_space(&scale_shape, &scale_shape))
         .untiled()
         .uniform(SEED, 0.25, 2.0);
     let output = TileInput::builder(&client, spatial_space(tensor, &tile_edges))
@@ -83,6 +90,7 @@ fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) 
         output.handle(),
         tensor,
         &block_dims,
+        per_tensor,
     );
 }
 
@@ -92,6 +100,7 @@ fn check_output(
     output_h: TensorHandle<TestRuntime>,
     tensor: &[usize],
     block_dims: &[usize],
+    per_tensor: bool,
 ) {
     let scales = HostData::from_tensor_handle(client, scales_h, HostDataType::F32);
     let got = HostData::from_tensor_handle(client, output_h, HostDataType::F32);
@@ -102,9 +111,12 @@ fn check_output(
             got.iter_indices()
                 .enumerate()
                 .map(|(i, coord)| {
-                    let cell: Vec<usize> =
-                        coord.iter().zip(block_dims).map(|(&c, &b)| c / b).collect();
-                    i as f32 * scales.get_f32(&cell)
+                    let scale_coord = if per_tensor {
+                        vec![0usize]
+                    } else {
+                        coord.iter().zip(block_dims).map(|(&c, &b)| c / b).collect()
+                    };
+                    i as f32 * scales.get_f32(&scale_coord)
                 })
                 .collect(),
         ),

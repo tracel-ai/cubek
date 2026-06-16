@@ -14,10 +14,7 @@ impl<O: CubeMul + Cast> Tile<O> {
         let scale = scales.view().read(seq![0u32]);
         let scale = O::cast_from(scale);
 
-        let walk = Walk::over(values.space.clone());
-        for i in 0..walk.total() {
-            let region = walk.region(i);
-
+        for region in Walk::over(values.space.clone()) {
             let lhs = values.at(&region);
             let mut out = self.at(&region);
 
