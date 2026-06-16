@@ -3,7 +3,7 @@ pub mod schedule;
 use cubecl::prelude::*;
 
 use crate::{
-    MemData, Partitioner, Payload, PayloadExpand, Region, Schedule, Space, Tile, TileExpand, Walk,
+    Partitioner, Region, Schedule, Tile, TileExpand,
     quantization::dequantize::schedule::dequantize_direct,
 };
 
@@ -59,41 +59,34 @@ impl<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>
         output: &mut Tile<Vector<O, ON>>,
     ) {
         // per-tensor: one scale at flat position 0
-        let space = comptime![input.space.clone()];
-        let payload = &mut output.payload;
-        match payload {
-            Payload::Cmma(_) => {
-                panic!("Dequantize: cmma fragment has no memory view")
-            }
-            Payload::Gmem(_) | Payload::Smem(_) => {
-                dequantize_register_memory::<I, S, O, IN, SN, ON>(output, input, scales, space)
-            }
-        };
-    }
-}
+        let scale = Vector::cast_from(scales.view().read(seq![0]));
 
-#[cube]
-fn dequantize_register_memory<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>(
-    output: &mut Tile<Vector<O, ON>>,
-    input: &Tile<Vector<I, IN>>,
-    scales: &Tile<Vector<S, SN>>,
-    #[comptime] space: Space,
-) {
-    // per-tensor: one scale at flat position 0
-    let scale = scales.view().read(seq![0]);
-    let scale = Vector::<O, ON>::cast_from(scale);
+        let rank = comptime!(output.space.rank());
+        let inp = input.view(); // View<Vector<I, IN>, CoordsDyn>
+        let mut out = output.view_mut(); // ViewMut<Vector<O, ON>, CoordsDyn>
+        let shape = out.shape(); // CoordsDyn (Sequence<u32>)
 
-    let matrices = output.matrix_count();
-    for m in 0..matrices {
-        let v = input.matrix(m);
-        let mut o = output.matrix_mut(m);
+        // total element count over the window extent
+        let mut total = 1u32;
+        #[unroll]
+        for i in 0..rank {
+            total *= shape[i];
+        }
 
-        let (h, w) = o.shape();
-        for r in 0..h {
-            for c in 0..w {
-                let q = v.read((r, c));
-                o.write((r, c), Vector::cast_from(q) * scale);
+        // flat scan + row-major unravel into an N-D position (same stride idiom as `row_major`)
+        for f in 0..total {
+            let mut pos = Sequence::<u32>::new();
+            #[unroll]
+            for p in 0..rank {
+                let mut stride = 1u32;
+                #[unroll]
+                for q in p + 1..rank {
+                    stride *= shape[q];
+                }
+                pos.push((f / stride) % shape[p]);
             }
+            let q = inp.read(pos.clone());
+            out.write(pos, Vector::cast_from(q) * scale);
         }
     }
 }

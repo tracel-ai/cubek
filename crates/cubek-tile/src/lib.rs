@@ -16,6 +16,7 @@ pub use cubek_layout::*;
 pub use matrix::*;
 pub use partitioner::*;
 pub use payload::*;
+pub use quantization::*;
 pub use ring::*;
 pub use space::*;
 pub use tile::*;
