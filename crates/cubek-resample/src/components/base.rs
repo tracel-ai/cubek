@@ -1,5 +1,5 @@
 use crate::components::resample_instruction::Accumulator;
-use crate::definition::{Resample, ResampleArgs, ResampleAxis};
+use crate::definition::{Resample, ResampleArgs};
 use crate::{
     components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver},
     definition::Kernel,
@@ -108,7 +108,7 @@ fn accumulate_taps<F: Float, N: Size>(
         vector_size,
     ));
 
-    let start_coords = compute_start_coords::<F, N>(
+    let (start_coords, centers) = compute_anchors::<F, N>(
         out_coord,
         args,
         config,
@@ -126,7 +126,7 @@ fn accumulate_taps<F: Float, N: Size>(
             input,
             out_coord,
             &start_coords,
-            args,
+            &centers,
             config,
             vectorized_axis,
             resampling_vectorized_axis,
@@ -154,17 +154,18 @@ fn is_resampling_vectorized_axis(
     is_vectorized && vector_size > 1
 }
 
-/// Precompute the starting input coordinates for all resampling axes and all lanes.
+/// Precompute the starting input coordinates and continuous centers.
 #[cube]
-pub fn compute_start_coords<F: Float, N: Size>(
+pub fn compute_anchors<F: Float, N: Size>(
     out_coord: &CoordsDyn,
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] resampling_vectorized_axis: bool,
     #[comptime] vector_size: usize,
-) -> Sequence<i32> {
+) -> (Sequence<i32>, Sequence<F>) {
     let mut start_coords = Sequence::new();
+    let mut centers = Sequence::<F>::new();
 
     let compute_lanes = comptime! {if resampling_vectorized_axis {vector_size} else {1}};
 
@@ -178,35 +179,26 @@ pub fn compute_start_coords<F: Float, N: Size>(
             let num_taps = Kernel::num_taps(&resample_axis.kernel);
             let radius = num_taps.div_ceil(2);
 
-            let lane_out_pos =
-                compute_lane_pos::<F>(out_coord, resample_axis, vectorized_axis, lane);
+            let out_pos = out_coord[resample_axis.axis] as usize;
+
+            let lane_out_pos = if resample_axis.axis == vectorized_axis {
+                out_pos + lane
+            } else {
+                out_pos
+            };
 
             let center = resample_axis_args
                 .placement_args
                 .map::<F>(lane_out_pos, &resample_axis.placement);
+
             let center_floored = center.floor();
 
             let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
+
             start_coords.push(start_tap as i32);
+            centers.push(center);
         }
     }
 
-    start_coords
-}
-
-/// Computes the lane position.
-#[cube]
-pub fn compute_lane_pos<F: Float>(
-    out_coord: &CoordsDyn,
-    #[comptime] resample_axis: &ResampleAxis,
-    #[comptime] vectorized_axis: usize,
-    #[comptime] lane: usize,
-) -> usize {
-    let out_pos = out_coord[resample_axis.axis] as usize;
-
-    if resample_axis.axis == vectorized_axis {
-        out_pos + lane
-    } else {
-        out_pos
-    }
+    (start_coords, centers)
 }
