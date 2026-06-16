@@ -1,6 +1,7 @@
 //! The coordinate space a tile lives in. An operation's space is the merge of
 //! its operands' spaces; the axes the output drops are contracted.
 
+use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{Axis, MAX_AXES, Partitioner};
@@ -36,13 +37,120 @@ impl Extent {
     }
 }
 
+/// Every axis's extent: the comptime `kinds` (`Static(n)` | `Dynamic`) plus, for the `Dynamic` ones,
+/// their runtime `sizes`. The kinds stay comptime so static tile counts fold and the walk unrolls;
+/// the sizes are the runtime half a `Dynamic` axis needs, which a comptime `Extent` can't hold. Only
+/// the top operation space carries any sizes (filled from the operands); `divide` yields `Static`
+/// children, so the whole interior has none.
+#[derive(CubeType, Clone, Debug)]
+pub struct Extents {
+    #[cube(comptime)]
+    kinds: ByAxis<Extent>,
+    sizes: Sequence<usize>,
+}
+
+impl Extents {
+    /// A fully-`Static` (or yet-unresolved) extents — no runtime sizes.
+    fn fixed(kinds: ByAxis<Extent>) -> Self {
+        Extents {
+            kinds,
+            sizes: Sequence::new(),
+        }
+    }
+
+    fn get(&self, axis: Axis) -> Extent {
+        self.kinds.get(axis)
+    }
+    fn axis_at(&self, i: usize) -> Axis {
+        self.kinds.axis_at(i)
+    }
+    fn position(&self, axis: Axis) -> usize {
+        self.kinds.position(axis)
+    }
+    fn contains(&self, axis: Axis) -> bool {
+        self.kinds.contains(axis)
+    }
+    fn len(&self) -> usize {
+        self.kinds.len()
+    }
+}
+
+#[cube]
+impl Extents {
+    /// Axis `p`'s tile count for a sub-tile `edge`: a `Static` axis folds to a comptime constant (so
+    /// the walk loop unrolls), a `Dynamic` axis ceil-divides its runtime size. The `Static`/`Dynamic`
+    /// match is comptime, so an all-`Static` extents never touches `sizes`.
+    pub fn count(&self, #[comptime] p: usize, #[comptime] edge: usize) -> usize {
+        match comptime!(self.kinds.get(self.kinds.axis_at(p))) {
+            Extent::Static(n) => comptime!(n.div_ceil(edge)).runtime(),
+            Extent::Dynamic => (*self.sizes.index(p)).div_ceil(edge),
+        }
+    }
+}
+
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(CubeType, Clone, Debug)]
 pub struct Space {
-    extents: ByAxis<Extent>,
+    pub(crate) extents: Extents,
+    #[cube(comptime)]
     partitioner: Partitioner,
+}
+
+// Identity is the comptime tiling spec only — the `Extents` sizes are runtime, never a key.
+impl PartialEq for Space {
+    fn eq(&self, other: &Self) -> bool {
+        self.extents.kinds == other.extents.kinds && self.partitioner == other.partitioner
+    }
+}
+impl Eq for Space {}
+impl std::hash::Hash for Space {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.extents.kinds.hash(state);
+        self.partitioner.hash(state);
+    }
+}
+
+/// Comptime tiling spec read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
+/// `Space`, so only [`Walk::over`](crate::Walk) — which takes the runtime operation space built by
+/// `merged_space` — needs these; everything else calls the host methods directly.
+impl SpaceExpand {
+    fn comptime(&self) -> Space {
+        Space {
+            extents: Extents::fixed(self.extents.kinds.clone()),
+            partitioner: self.partitioner.clone(),
+        }
+    }
+
+    pub fn clone(&self) -> Space {
+        self.comptime()
+    }
+    pub fn rank(&self) -> usize {
+        self.extents.kinds.len()
+    }
+    pub fn axis_at(&self, i: usize) -> Axis {
+        self.extents.kinds.axis_at(i)
+    }
+    pub fn partitioner(&self) -> Partitioner {
+        self.partitioner.clone()
+    }
+}
+
+#[cube]
+impl Space {
+    /// The runtime operation space for a tiling level: the comptime tiling spec plus the runtime
+    /// `sizes` of its `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
+    /// [`Walk::over`](crate::Walk) reads them through [`Extents::count`].
+    pub fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
+        Space {
+            extents: Extents {
+                kinds: comptime!(space.extents.kinds.clone()),
+                sizes,
+            },
+            partitioner: comptime!(space.partitioner.clone()),
+        }
+    }
 }
 
 impl Space {
@@ -57,7 +165,7 @@ impl Space {
     /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
     pub fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
-            extents: ByAxis::new(extents),
+            extents: Extents::fixed(ByAxis::new(extents)),
             partitioner: Partitioner::Final,
         }
     }
@@ -77,7 +185,7 @@ impl Space {
                 (a, extent)
             })
             .collect();
-        self.extents = ByAxis::new(&entries);
+        self.extents = Extents::fixed(ByAxis::new(&entries));
         self
     }
 
@@ -117,8 +225,9 @@ impl Space {
         self.extents.get(axis).is_dynamic()
     }
 
-    /// Every axis is [`Static`](Extent::Static): the walk is fully comptime. True at every level
-    /// below the top, since [`divide`](Space::divide) yields `Static` children.
+    /// Every axis is [`Static`](Extent::Static), so the walk is fully comptime. True at every
+    /// interior tiling level, since [`divide`](Space::divide) yields `Static` children; only the top
+    /// merge can be dynamic.
     pub fn is_static(&self) -> bool {
         self.axes().all(|axis| !self.is_dynamic(axis))
     }
@@ -169,7 +278,7 @@ impl Space {
             .unwrap_or(Partitioner::Final);
 
         Space {
-            extents: ByAxis::new(&entries),
+            extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner,
         }
     }
@@ -180,7 +289,7 @@ impl Space {
             .map(|&a| (a, self.extent_raw(a)))
             .collect::<Vec<_>>();
         Space {
-            extents: ByAxis::new(&entries),
+            extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
         }
     }
@@ -210,7 +319,7 @@ impl Space {
             .map(|axis| (axis, Extent::Static(self.partitioner.edge(axis))))
             .collect::<Vec<_>>();
         Space {
-            extents: ByAxis::new(&entries),
+            extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.next().clone(),
         }
     }

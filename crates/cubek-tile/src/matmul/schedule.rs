@@ -1,39 +1,11 @@
 //! The three lowering schedules behind [`Tile::mma`](super::Tile): [`Direct`](Schedule::Direct)
 //! (no staging), [`Staged`](Schedule::Staged), and [`DoubleBuffered`](Schedule::DoubleBuffered).
+//! Each receives the level's [`Walk`] from `Tile::mma`, so the schedules themselves carry no
+//! extent or merge logic.
 
 use cubecl::prelude::*;
 
 use crate::{matmul::lower::Mma, *};
-
-/// The per-axis runtime problem size for [`Walk::dynamic`], aligned to `space`'s axis order. A
-/// `Static` axis contributes a placeholder (`Walk::dynamic` ignores it); a `Dynamic` axis reads
-/// its runtime extent off whichever input carries it. The two inputs span the whole merge
-/// (`lhs ∈ {M,K,batch}`, `rhs ∈ {K,N,batch}`), so `out` is never needed. Only the top-level
-/// merge is dynamic — `divide` yields `Static` children — so inner levels skip this entirely and
-/// take [`Walk::over`].
-#[cube]
-fn merged_extents<Lhs: CubePrimitive, Rhs: CubePrimitive>(
-    #[comptime] space: Space,
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-) -> Sequence<usize> {
-    let mut extents = Sequence::<usize>::new();
-    #[unroll]
-    for p in 0..space.rank() {
-        let axis = comptime!(space.axis_at(p));
-        let extent = if comptime!(space.is_dynamic(axis)) {
-            if comptime!(lhs.space.contains(axis)) {
-                lhs.runtime_extent(axis)
-            } else {
-                rhs.runtime_extent(axis)
-            }
-        } else {
-            0usize.runtime()
-        };
-        extents.push(extent);
-    }
-    extents
-}
 
 /// `Direct`: no staging
 #[cube]
@@ -41,17 +13,12 @@ pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
+    space: Space,
 ) where
     Acc: CubePrimitive + Mma<Lhs, Rhs>,
 {
-    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = if comptime!(space.is_static()) {
-        Walk::over(space)
-    } else {
-        Walk::dynamic(comptime!(space.clone()), merged_extents(space, lhs, rhs))
-    };
-    for i in 0..walk.total() {
-        out.mma_at(lhs, rhs, &walk.region(i));
+    for region in Walk::over(space) {
+        out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
     }
 }
 
@@ -62,6 +29,7 @@ pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
+    space: Space,
 ) where
     Acc: CubePrimitive + Mma<Lhs, Rhs>,
 {
@@ -74,14 +42,7 @@ pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut a_tile = Tile::smem(&a_smem, a_sub);
     let mut b_tile = Tile::smem(&b_smem, b_sub);
 
-    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = if comptime!(space.is_static()) {
-        Walk::over(space)
-    } else {
-        Walk::dynamic(comptime!(space.clone()), merged_extents(space, lhs, rhs))
-    };
-    for i in 0..walk.total() {
-        let region = walk.region(i);
+    for region in Walk::over(space) {
         a_tile.stage(&lhs.at(&region));
         b_tile.stage(&rhs.at(&region));
         out.at(&region).mma(&a_tile, &b_tile);
@@ -95,6 +56,7 @@ pub(crate) fn mma_double<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
+    space: Space,
 ) where
     Acc: CubePrimitive + Mma<Lhs, Rhs>,
 {
@@ -114,12 +76,9 @@ pub(crate) fn mma_double<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut a = Ring::new(a_buf);
     let mut b = Ring::new(b_buf);
 
-    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = if comptime!(space.is_static()) {
-        Walk::over(space)
-    } else {
-        Walk::dynamic(comptime!(space.clone()), merged_extents(space, lhs, rhs))
-    };
+    // Double-buffering needs random access (prefetch the next region), so it indexes the `walk`
+    // by hand rather than iterating.
+    let walk = Walk::over(space);
 
     // prologue: prime slot 0 with region 0.
     let r0 = walk.region(0);

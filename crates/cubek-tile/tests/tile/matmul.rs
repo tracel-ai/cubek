@@ -196,6 +196,57 @@ fn matmul_cpu_big_k() {
     );
 }
 
+/// The "global matmul" shape: M and N stay comptime (`Static`), only K is `Dynamic`, so its tile
+/// count is resolved from the tensor at runtime while M/N fold and unroll. Exercises the mixed
+/// `Static`/`Dynamic` path through `merged_space`/`Extents` that every `all_dynamic` caller skips.
+/// Geometry and allocation use the concrete space; the kernel keys on the K-dynamic one.
+#[test]
+fn matmul_cpu_dynamic_k() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, edge) = (8usize, 8usize, 16usize, 4usize);
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .direct();
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .tile(&[edge, edge])
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .tile(&[edge, edge])
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .tile(&[edge, edge])
+        .zeros();
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    launch_cpu_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(a.tensor_arg(1), a.space().with_dynamic(&[K]), a.storage()),
+        TileArgLaunch::new(b.tensor_arg(1), b.space().with_dynamic(&[K]), b.storage()),
+        TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = references::tiled_matmul(m, n, k, edge);
+    let (_, expected) = TestInput::builder(client, shape![m / edge, n / edge, edge, edge])
+        .custom(expected)
+        .generate_with_f32_host_data();
+
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 #[test]
 fn matmul_cpu_cores_split_m() {
     check_matmul_cpu(

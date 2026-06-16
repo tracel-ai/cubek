@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Extent, Region, Space, instance_count, tiles_per_instance};
+use crate::{Region, RegionExpand, Space, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -21,38 +21,18 @@ pub struct Walk {
 
 #[cube]
 impl Walk {
-    /// Walk a fully-[`Static`](Extent::Static) space: every tile count is comptime, so `total()`
-    /// stays comptime and the schedule loops unroll. Every level below the dynamic top takes this
-    /// (`divide` yields `Static`), so it's the common case and carries no runtime input.
-    pub fn over(#[comptime] space: Space) -> Walk {
+    /// The [`Walk`] over `space`'s tiles: one trip count per axis, from [`Extents::count`] — comptime
+    /// for `Static` axes (so the loop unrolls), runtime for `Dynamic`. An all-`Static` space (the
+    /// whole interior — `divide` yields `Static` children) stays fully comptime; only the top reads
+    /// runtime sizes.
+    pub fn over(space: Space) -> Walk {
         let mut counts = Sequence::<usize>::new();
         #[unroll]
-        for p in 0..space.rank() {
-            let axis = comptime!(space.axis_at(p));
-            counts.push(comptime!(space.count(axis)).runtime());
+        for p in 0..comptime!(space.rank()) {
+            let edge = comptime!(space.partitioner().edge(space.axis_at(p)));
+            counts.push(space.extents.count(p, edge));
         }
-        Walk::from_counts(space, counts)
-    }
-
-    /// Walk a space carrying [`Dynamic`](Extent::Dynamic) axes (only the top level). A dynamic
-    /// axis ceil-divides its runtime size by the (comptime) sub-tile edge, so its trip count never
-    /// bakes in; static axes keep their comptime count. `extents` is aligned to the space's axis
-    /// order (read off the operand tiles' runtime bounds); its static slots are ignored.
-    pub fn dynamic(#[comptime] space: Space, extents: Sequence<usize>) -> Walk {
-        let mut counts = Sequence::<usize>::new();
-        #[unroll]
-        for p in 0..space.rank() {
-            let axis = comptime!(space.axis_at(p));
-            let count = match comptime!(space.extent_raw(axis)) {
-                Extent::Static(_) => comptime!(space.count(axis)).runtime(),
-                Extent::Dynamic => {
-                    let edge = comptime!(space.partitioner().edge(axis));
-                    (*extents.index(p)).div_ceil(edge)
-                }
-            };
-            counts.push(count);
-        }
-        Walk::from_counts(space, counts)
+        Walk::from_counts(comptime!(space.clone()), counts)
     }
 
     /// Total step count from the per-axis grid `counts`, shared by both constructors.
@@ -123,6 +103,43 @@ impl Walk {
             coords.push(coord_of(local, *self.counts.index(p), inner_weight, dist) as u32);
         }
         coords
+    }
+}
+
+/// Iterating a `Walk` visits its regions in order, so `for region in walk` lowers to the same
+/// `0..total()` / `region(i)` odometer the index API exposes. Schedules that need random access
+/// (prefetch, double-buffering) still index by hand. `IntoIterator` covers the runtime view a
+/// `#[cube]` body is type-checked against; `Iterable` drives the expansion.
+impl IntoIterator for Walk {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut regions = Vec::new();
+        for i in 0..self.total() {
+            regions.push(self.region(i));
+        }
+        regions.into_iter()
+    }
+}
+
+impl Iterable for WalkExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
+        let start = 0usize.into_expand(scope);
+        let total = self.__expand_total_method(scope);
+        RangeExpand::new(start, total).expand(scope, |scope, i| {
+            body(scope, self.__expand_region_method(scope, i));
+        });
+    }
+
+    fn expand_unroll(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
+        let start = 0usize.into_expand(scope);
+        let total = self.__expand_total_method(scope);
+        RangeExpand::new(start, total).expand_unroll(scope, |scope, i| {
+            body(scope, self.__expand_region_method(scope, i));
+        });
     }
 }
 

@@ -17,25 +17,49 @@ impl<Acc: CubePrimitive> Tile<Acc> {
     {
         match comptime!(self.space.partitioner()) {
             Partitioner::Final => Acc::mma(self, lhs, rhs),
-            Partitioner::Level(level) => match level.schedule() {
-                Schedule::Direct => mma_direct(lhs, rhs, self),
-                Schedule::Staged => mma_staged(lhs, rhs, self),
-                Schedule::DoubleBuffered => mma_double(lhs, rhs, self),
-            },
+            Partitioner::Level(level) => {
+                let space = merged_space(comptime!(self.space.clone()), lhs, rhs);
+                match level.schedule() {
+                    Schedule::Direct => mma_direct(lhs, rhs, self, space),
+                    Schedule::Staged => mma_staged(lhs, rhs, self, space),
+                    Schedule::DoubleBuffered => mma_double(lhs, rhs, self, space),
+                }
+            }
         }
     }
+}
 
-    /// The [`Direct`](Schedule::Direct) lowering's per-region step.
-    pub fn mma_at<Lhs: CubePrimitive, Rhs: CubePrimitive>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        region: &Region,
-    ) where
-        Acc: Mma<Lhs, Rhs>,
-    {
-        self.at(region).mma(&lhs.at(region), &rhs.at(region));
+/// The operation's space for a tiling level: the merge of the operand spaces, carrying the runtime
+/// [`sizes`](Space) of its `Dynamic` axes so the schedules can just `Walk::over(space)`. A
+/// fully-`Static` level — the whole interior, since [`divide`](Space::divide) yields `Static`
+/// children — materializes with no sizes. Only the dynamic top gathers, reading each `Dynamic`
+/// axis's size off whichever input carries it (`lhs ∈ {M,K,batch}`, `rhs ∈ {K,N,batch}` span the
+/// merge, so `out` is never queried). New tile operations build their space the same way.
+#[cube]
+pub(crate) fn merged_space<Lhs: CubePrimitive, Rhs: CubePrimitive>(
+    #[comptime] out_space: Space,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+) -> Space {
+    let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out_space]));
+    let mut sizes = Sequence::<usize>::new();
+    if comptime!(!space.is_static()) {
+        #[unroll]
+        for p in 0..comptime!(space.rank()) {
+            let axis = comptime!(space.axis_at(p));
+            let size = if comptime!(space.is_dynamic(axis)) {
+                if comptime!(lhs.space.contains(axis)) {
+                    lhs.runtime_extent(axis)
+                } else {
+                    rhs.runtime_extent(axis)
+                }
+            } else {
+                0usize.runtime()
+            };
+            sizes.push(size);
+        }
     }
+    Space::with_sizes(space, sizes)
 }
 
 /// The leaf contraction `acc += lhs · rhs`, reached only at a final tile. Keyed on the
