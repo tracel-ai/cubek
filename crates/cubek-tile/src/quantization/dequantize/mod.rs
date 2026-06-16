@@ -3,7 +3,7 @@ pub mod schedule;
 use cubecl::prelude::*;
 
 use crate::{
-    Linear, Partitioner, Region, Schedule, Tile, TileExpand,
+    Partitioner, Region, Schedule, Tile, TileExpand,
     quantization::dequantize::schedule::dequantize_direct,
 };
 
@@ -61,15 +61,11 @@ impl<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>
         // per-tensor: one scale at flat position 0
         let scale = Vector::cast_from(scales.view().read(seq![0]));
 
-        // Re-view both operands as flat 1-D: `Linear` turns the index into the N-D position,
-        // so the leaf scans linearly without re-deriving strides or the element count.
-        let input_view = input.view();
-        let input_shape = input_view.shape();
-        let input_view = input_view.view(Linear::new(input_shape.clone()));
-        let mut out = output.view_mut().view_mut(Linear::new(input_shape.clone()));
+        let values = input.flat();
+        let mut out = output.flat_mut();
 
         for i in 0..out.shape() {
-            out.write(i, Vector::cast_from(input_view.read(i)) * scale);
+            out.write(i, Vector::cast_from(values.read(i)) * scale);
         }
     }
 }

@@ -49,9 +49,9 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric, L: Size,
 /// run `kc` rank-1 updates ([`outer_product`]), store once. `nr` counts `N`-lines.
 #[cube]
 fn mma_register<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
-    lhs: &MaskedView<'_, Vector<EL, L>>,
-    rhs: &MaskedView<'_, Vector<ER, V>>,
-    acc: &mut MaskedViewMut<'_, Vector<E, V>>,
+    lhs: &MatrixView<'_, Vector<EL, L>>,
+    rhs: &MatrixView<'_, Vector<ER, V>>,
+    acc: &mut MatrixViewMut<'_, Vector<E, V>>,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] kc: usize,
@@ -86,8 +86,8 @@ fn mma_register<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
 /// Each operand is read in its own element (`EL`/`ER`) and cast to the accumulate element `E`.
 #[cube]
 fn outer_product<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
-    lhs: &MaskedView<'_, Vector<EL, L>>,
-    rhs: &MaskedView<'_, Vector<ER, V>>,
+    lhs: &MatrixView<'_, Vector<EL, L>>,
+    rhs: &MatrixView<'_, Vector<ER, V>>,
     c: &mut Array<Vector<E, V>>,
     p: usize,
     #[comptime] mr: usize,
