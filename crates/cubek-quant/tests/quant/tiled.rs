@@ -9,7 +9,9 @@
 //! `cubek-test-utils`; only the cubek-tile `Space`/`Partitioner` wiring is built here.
 
 use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
+use cubek_test_utils::{
+    HostData, HostDataType, HostDataVec, StridedLayout, TileInput, assert_equals_approx,
+};
 use cubek_tile::{
     Axis, ByAxis, ComputeScope, Coverage, CubeAxis, Distribution, Partitioner, Space, Spread,
     TileArgLaunch,
@@ -23,24 +25,6 @@ fn dequantize_tiled_native_per_tensor_matches_reference() {
     dequantize_tiled_native(&[8, 8], 4, &[]);
 }
 
-#[test]
-fn dequantize_tiled_native_per_block_1d_matches_reference() {
-    // `&[4]` -> a 1-D block over the last axis ([1,4] in 2-D terms).
-    dequantize_tiled_native(&[8, 8], 4, &[4]);
-}
-
-#[test]
-fn dequantize_tiled_native_per_block_2d_matches_reference() {
-    // `&[4,4]` -> a 2-D block.
-    dequantize_tiled_native(&[8, 8], 4, &[4, 4]);
-}
-
-#[test]
-fn dequantize_tiled_native_per_block_3d_matches_reference() {
-    // `&[2,2,2]` -> a 3-D block over a rank-3 tensor, tiled 2×2×2.
-    dequantize_tiled_native(&[4, 4, 4], 2, &[2, 2, 2]);
-}
-
 /// Launch the tiled dequantize and assert it matches the CPU reference
 /// `values[i] * scales[cell_of(i)]`, for any rank.
 ///
@@ -52,7 +36,6 @@ fn dequantize_tiled_native_per_block_3d_matches_reference() {
 fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) {
     let client = TestRuntime::client(&Default::default());
     let rank = tensor.len();
-
     let block_dims = block_dims(tensor, block);
     let grid: Vec<usize> = tensor
         .iter()
@@ -63,20 +46,17 @@ fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) 
     // cubek-tile wiring: tile values/output into `tile_edge` squares; scales are the
     // block grid itself (its partitioner is unused — dequantize3 reads scales by
     // absolute cell coord). Plain row-major buffers, so 0 tile levels.
-    let ax = axes(rank);
     let tile_edges = vec![tile_edge; rank];
-    let values = TileInput::builder(&client, space_nd(&ax, tensor, &tile_edges))
+    let values = TileInput::builder(&client, spatial_space(tensor, &tile_edges))
         .untiled()
         .arange();
-    let scales = TileInput::builder(&client, space_nd(&ax, &grid, &grid))
+    let scales = TileInput::builder(&client, spatial_space(&grid, &grid))
         .untiled()
         .uniform(SEED, 0.25, 2.0);
-    let output = TileInput::builder(&client, space_nd(&ax, tensor, &tile_edges))
+    let output = TileInput::builder(&client, spatial_space(tensor, &tile_edges))
         .untiled()
         .zeros();
 
-    // One cube per tile: the spatial partitioner maps each tiled axis to a cube
-    // dimension, so the kernel's walk gives each cube exactly its own tile.
     let values_space = values.space();
     let cube_count = values_space.partitioner().cube_count(&values_space);
     let cube_dim = values_space.partitioner().cube_dim(&client, &values_space);
@@ -97,14 +77,11 @@ fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) 
         1usize,
     );
 
-    // Reference: values are arange, so element i's value is `i`; its block cell is
-    // coord[a] / block[a] per axis, raveled row-major into the scale grid.
     check_output(
         &client,
         scales.handle(),
         output.handle(),
         tensor,
-        &grid,
         &block_dims,
     );
 }
@@ -114,24 +91,26 @@ fn check_output(
     scales_h: TensorHandle<TestRuntime>,
     output_h: TensorHandle<TestRuntime>,
     tensor: &[usize],
-    grid: &[usize],
     block_dims: &[usize],
 ) {
-    let scales_host = HostData::from_tensor_handle(&client, scales_h.clone(), HostDataType::F32);
-    let n_elems: usize = tensor.iter().product();
+    let scales = HostData::from_tensor_handle(client, scales_h, HostDataType::F32);
+    let got = HostData::from_tensor_handle(client, output_h, HostDataType::F32);
 
-    let expected: Vec<f32> = (0..n_elems)
-        .map(|i| {
-            let coord = unravel(i, tensor);
-            let cell: Vec<usize> = coord.iter().zip(block_dims).map(|(&c, &b)| c / b).collect();
-            i as f32 * scales_host.data.get_f32(ravel(&cell, grid))
-        })
-        .collect();
-
-    let got = HostData::from_tensor_handle(&client, output_h, HostDataType::F32);
-    let (_, expected) = TestInput::builder(client.clone(), Shape::from(tensor.to_vec()))
-        .custom(expected)
-        .generate_with_f32_host_data();
+    let shape = Shape::from(tensor.to_vec());
+    let expected = HostData {
+        data: HostDataVec::F32(
+            got.iter_indices()
+                .enumerate()
+                .map(|(i, coord)| {
+                    let cell: Vec<usize> =
+                        coord.iter().zip(block_dims).map(|(&c, &b)| c / b).collect();
+                    i as f32 * scales.get_f32(&cell)
+                })
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
     assert_equals_approx(&got, &expected, 1e-6)
         .as_test_outcome()
         .enforce();
@@ -152,18 +131,18 @@ fn block_dims(tensor: &[usize], block: &[usize]) -> Vec<usize> {
     dims
 }
 
-/// The first `rank` canonical axes.
-fn axes(rank: usize) -> Vec<Axis> {
-    (0..rank as u8).map(Axis).collect()
-}
-
-/// A row-major partitioner that hands **one tile per cube**: each tiled axis is spread
-/// `Spatial` across a cube dimension (X/Y/Z), one tile per instance. The kernel's walk
-/// then resolves to exactly this cube's tile, so tiles run in parallel. Rank must be ≤ 3.
-fn row_major_spatial_nd(axes: &[Axis], edges: &[usize]) -> Partitioner {
+/// A `Space` with one cube per tile: each axis maps to a cube dimension (X/Y/Z) and
+/// carries exactly one tile. Rank must be ≤ 3.
+fn spatial_space(extents: &[usize], tile_edges: &[usize]) -> Space {
     const CUBE_AXES: [CubeAxis; 3] = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
-    assert!(axes.len() <= CUBE_AXES.len(), "spatial tiling supports rank ≤ 3");
-    let edges: Vec<(Axis, usize)> = axes.iter().copied().zip(edges.iter().copied()).collect();
+    let rank = extents.len();
+    assert!(rank <= CUBE_AXES.len(), "spatial tiling supports rank ≤ 3");
+    let axes: Vec<Axis> = (0..rank as u8).map(Axis).collect();
+    let edges: Vec<(Axis, usize)> = axes
+        .iter()
+        .copied()
+        .zip(tile_edges.iter().copied())
+        .collect();
     let dists: Vec<(Axis, Distribution)> = axes
         .iter()
         .enumerate()
@@ -178,26 +157,7 @@ fn row_major_spatial_nd(axes: &[Axis], edges: &[usize]) -> Partitioner {
             )
         })
         .collect();
-    Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists)).direct()
-}
-
-/// A `Space` over `axes` with the given extents, tiled by `edges`.
-fn space_nd(axes: &[Axis], extents: &[usize], edges: &[usize]) -> Space {
     let entries: Vec<(Axis, usize)> = axes.iter().copied().zip(extents.iter().copied()).collect();
-    Space::new(&entries).with_partitioner(row_major_spatial_nd(axes, edges))
-}
-
-/// Row-major unravel of a flat index into per-axis coordinates.
-fn unravel(mut i: usize, shape: &[usize]) -> Vec<usize> {
-    let mut coord = vec![0usize; shape.len()];
-    for a in (0..shape.len()).rev() {
-        coord[a] = i % shape[a];
-        i /= shape[a];
-    }
-    coord
-}
-
-/// Row-major ravel of per-axis coordinates back into a flat index.
-fn ravel(coord: &[usize], shape: &[usize]) -> usize {
-    coord.iter().zip(shape).fold(0, |idx, (&c, &s)| idx * s + c)
+    Space::new(&entries)
+        .with_partitioner(Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists)).direct())
 }

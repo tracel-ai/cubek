@@ -1,5 +1,87 @@
-use cubecl::prelude::*;
-use cubek_tile::TileArg;
+use cubecl::{
+    ir::ElemType,
+    prelude::*,
+    quant::scheme::{QuantLevel, QuantScheme, QuantStore},
+};
+use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArg, TileArgLaunch};
+
+// Input axes
+const M: Axis = Axis(0);
+const N: Axis = Axis(1);
+
+/// A row-major space whose every axis is `Sequential`: a single cube walks all the tiles.
+/// Each axis is one tile covering its full extent (one tile total).
+fn sequential_space(extents: &[(Axis, usize)]) -> Space {
+    let dists: Vec<(Axis, Distribution)> = extents
+        .iter()
+        .map(|&(a, _)| (a, Distribution::Sequential))
+        .collect();
+    let partitioner = Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).direct();
+    Space::new(extents).with_partitioner(partitioner)
+}
+
+/// Convert the tensor back to a higher precision data type.
+/// Uses the tile-based implementation for dequantization.
+/// Very WIP and naive implementation for now.
+pub fn launch_ref<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    scales: TensorBinding<R>,
+    scheme: &QuantScheme,
+    output_dtype: StorageType,
+) -> Result<(), LaunchError> {
+    assert!(
+        scheme.store == QuantStore::Native,
+        "only native quantization is supported for now."
+    );
+    assert!(
+        scheme.level == QuantLevel::Tensor,
+        "only per tensor quantization is supported for now."
+    );
+
+    let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
+    let input_storage = Storage::of(input.shape.len(), input_space.rank());
+    let input_tilearg =
+        TileArgLaunch::new(input.into_tensor_arg(), input_space.clone(), input_storage);
+
+    // for per tensor quantization, scales are 1d but need to be reshaped to 2d
+    let rank = input_space.rank();
+    let mut scales = scales;
+    scales.shape = vec![1; rank].into();
+    scales.strides = vec![1; rank].into();
+    // only 1 scale per tensor
+    let scale_space = sequential_space(&[(M, 1usize), (N, 1usize)]);
+    let scale_storage = Storage::of(scales.shape.len(), scale_space.rank());
+    let scale_tilearg = TileArgLaunch::new(scales.into_tensor_arg(), scale_space, scale_storage);
+
+    let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
+    let output_storage = Storage::of(output.shape.len(), output_space.rank());
+    let output_tilearg = TileArgLaunch::new(output.into_tensor_arg(), output_space, output_storage);
+
+    let cube_count = input_space.partitioner().cube_count(&input_space);
+    let cube_dim = input_space.partitioner().cube_dim(&client, &input_space);
+
+    let input_dtype = ElemType::from_quant_value(scheme.value).into();
+    let scale_dtype = ElemType::from_quant_param(scheme.param).into();
+
+    dequantize::launch(
+        client,
+        cube_count,
+        cube_dim,
+        input_tilearg,
+        scale_tilearg,
+        output_tilearg,
+        input_dtype,
+        scale_dtype,
+        output_dtype,
+        1usize,
+        1usize,
+        1usize,
+    );
+
+    Ok(())
+}
 
 #[cube(launch)]
 /// input: the quantized input tensor
@@ -19,5 +101,5 @@ pub fn dequantize<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Si
     let input = input.tile();
     let scales = scales.tile();
     let mut output = output.tile();
-    output.dequantize3(&input, &scales);
+    output.dequantize(&input, &scales);
 }
