@@ -1,7 +1,8 @@
 use cubecl::{
+    features::TypeUsage,
     ir::ElemType,
     prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore},
+    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArg, TileArgLaunch};
 
@@ -28,6 +29,7 @@ pub fn launch_ref<R: Runtime>(
         scheme.level == QuantLevel::Tensor,
         "only per tensor quantization is supported for now."
     );
+    check_i8_supported(client, scheme);
 
     let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
@@ -76,6 +78,27 @@ fn sequential_space(extents: &[(Axis, usize)]) -> Space {
         .collect();
     let partitioner = Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).direct();
     Space::new(extents).with_partitioner(partitioner)
+}
+
+fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantScheme) {
+    match scheme {
+        QuantScheme {
+            value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
+            store: QuantStore::Native,
+            ..
+        }
+        | QuantScheme {
+            value: QuantValue::E2M1,
+            store: QuantStore::PackedNative(_),
+            ..
+        } if !i8::supported_uses(client).contains(TypeUsage::Conversion) => {
+            panic!(
+                "{:?} is not supported for native quantization",
+                scheme.value
+            );
+        }
+        _ => {}
+    }
 }
 
 #[cube(launch)]
