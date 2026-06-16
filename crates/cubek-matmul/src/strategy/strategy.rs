@@ -17,7 +17,7 @@ use crate::{
     },
     definition::{MatmulElems, MatmulSetupError},
     routines::{
-        BlueprintStrategy, Routine,
+        BlueprintStrategy, Routine, into_contiguous_if_highly_permuted,
         batch::{
             double_buffering::{
                 AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
@@ -546,8 +546,8 @@ impl Strategy {
             }
             Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
                 client,
-                WithLayout::strided_input(lhs)?,
-                WithLayout::strided_input(rhs)?,
+                WithLayout::strided_input(into_contiguous_if_highly_permuted(client, lhs)?)?,
+                WithLayout::strided_input(into_contiguous_if_highly_permuted(client, rhs)?)?,
                 WithLayout::strided_output(out)?,
                 strategy,
                 dtypes,

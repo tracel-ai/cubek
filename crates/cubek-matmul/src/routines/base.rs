@@ -11,8 +11,25 @@ use crate::{
 };
 use cubecl::ir::HardwareProperties;
 use cubecl::prelude::*;
+use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
+use cubek_std::InputBinding;
 use cubek_std::cube_count::CubeCountPlan;
 use std::fmt::{Debug, Display};
+
+/// A stride-0 (broadcast) matrix dim, or any layout that isn't row/col-major,
+/// classifies as [`MatrixBatchLayout::HighlyPermuted`] and can't be consumed
+/// directly; materialize such an operand into a contiguous tensor. A broadcast
+/// *batch* dim is only `MildlyPermuted` and stays untouched (handled natively).
+#[allow(clippy::result_large_err)]
+pub(crate) fn into_contiguous_if_highly_permuted<R: Runtime>(
+    client: &ComputeClient<R>,
+    binding: InputBinding<R>,
+) -> Result<InputBinding<R>, MatmulSetupError> {
+    match matrix_batch_layout(&binding.data().strides, binding.scheme()) {
+        MatrixBatchLayout::HighlyPermuted => Ok(binding.into_contiguous(client)?),
+        _ => Ok(binding),
+    }
+}
 
 /// The contract to solve a matmul
 pub trait Routine<RC: RuntimeConfig>: Sized {

@@ -16,6 +16,7 @@ mod cpu_gemm;
 mod gemm;
 mod layouts;
 mod quantization;
+mod stride_zero;
 mod tiling_scheme;
 
 /// Test the correctness of a [`TestStrategy`] (test-only routines) against

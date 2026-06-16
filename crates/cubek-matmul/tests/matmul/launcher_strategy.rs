@@ -6,7 +6,9 @@ use cubek_matmul::{
     strategy::Strategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+use cubek_test_utils::{
+    ExecutionOutcome, StridedLayout, TestInput, TestOutcome, launch_and_capture_outcome,
+};
 
 use crate::matmul::assert_result;
 
@@ -70,4 +72,51 @@ where
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
     .enforce()
+}
+
+/// Like [`run`], but feeds the kernel the explicit strides already on `problem`
+/// (via [`StridedLayout::Explicit`]) instead of deriving them from the layouts,
+/// and returns the [`TestOutcome`] rather than enforcing it. Stride-0 broadcast
+/// dims thus reach the kernel intact, and callers can interpret the outcome
+/// themselves (e.g. compare a broadcast run against its contiguous baseline).
+#[allow(unused)]
+pub(crate) fn run_with_strides(
+    client: ComputeClient<TestRuntime>,
+    problem: MatmulProblem,
+    strategy: Strategy,
+) -> TestOutcome {
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+        .dtype(problem.global_dtypes.lhs)
+        .layout(StridedLayout::Explicit(problem.lhs_strides.to_vec()))
+        .uniform(1234, -1., 1.)
+        .generate_with_f32_host_data();
+
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .dtype(problem.global_dtypes.rhs)
+        .layout(StridedLayout::Explicit(problem.rhs_strides.to_vec()))
+        .uniform(5678, -1., 1.)
+        .generate_with_f32_host_data();
+
+    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(problem.global_dtypes.out)
+        .layout(MatrixLayout::RowMajor)
+        .zeros()
+        .generate_without_host_data();
+
+    let lhs_handle = InputBinding::Normal(lhs.binding(), problem.global_dtypes.lhs);
+    let rhs_handle = InputBinding::Normal(rhs.binding(), problem.global_dtypes.rhs);
+    let out_handle = out.clone().binding();
+
+    let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
+
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        launch_ref(&strategy, c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
+    });
+
+    match outcome {
+        ExecutionOutcome::Executed => {
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    }
 }
