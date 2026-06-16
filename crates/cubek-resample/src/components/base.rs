@@ -64,12 +64,7 @@ fn accumulate_taps<F: Float, N: Size>(
     let (start_coords, centers) =
         compute_anchors::<F, N>(out_coord, args, config, vectorized_axis, num_lanes);
 
-    let mut num_taps = 1;
-    #[unroll]
-    for axis_idx in comptime!(0..config.resample_axes.len()) {
-        let resample_axis_args = args.resample_axes.index(axis_idx);
-        num_taps *= resample_axis_args.window_args.size
-    }
+    let num_taps = compute_num_taps(args, config);
 
     for tap_idx in 0..num_taps {
         ResampleInstruction::count_position(accumulator, out_coord, config);
@@ -98,10 +93,21 @@ fn accumulate_taps<F: Float, N: Size>(
 fn compute_num_lanes(config: &Resample, vectorized_axis: usize, vector_size: usize) -> usize {
     let mut is_vectorized = false;
 
-    for axis in 0..config.resample_axes.len() {
-        let resample_axis = config.resample_axes.index(axis);
-        is_vectorized |= resample_axis.axis == vectorized_axis;
+    for axis_idx in comptime!(0..config.resample_axes.len()) {
+        is_vectorized |= config.resample_axes[axis_idx].axis == vectorized_axis;
     }
 
     if is_vectorized { vector_size } else { 1 }
+}
+
+/// Computes the total number of taps.
+#[cube]
+fn compute_num_taps(args: &ResampleArgs, #[comptime] config: &Resample) -> usize {
+    let mut num_taps = 1;
+
+    for axis_idx in comptime!(0..config.resample_axes.len()) {
+        num_taps *= args.resample_axes.index(axis_idx).window_args.size
+    }
+
+    num_taps
 }

@@ -29,8 +29,7 @@ impl TapResolver {
 
         let input_shape = input.shape();
 
-        #[unroll]
-        for lane in 0..num_lanes {
+        for lane in comptime!(0..num_lanes) {
             let (in_coord, clamped_coord) = resolve_tap_coords(
                 tap_idx,
                 out_coord,

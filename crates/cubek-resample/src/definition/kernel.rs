@@ -55,8 +55,7 @@ impl Kernel {
 
         let num_axes = comptime!(config.resample_axes.len());
 
-        #[unroll]
-        for axis_idx in 0..num_axes {
+        for axis_idx in comptime!(0..num_axes) {
             let resample_axis = config.resample_axes.index(axis_idx);
 
             let lane_idx = lane * num_axes + axis_idx;

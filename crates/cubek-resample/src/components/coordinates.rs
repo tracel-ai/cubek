@@ -39,9 +39,7 @@ pub fn compute_anchors<F: Float, N: Size>(
     let mut start_coords = CoordsDynI::new();
     let mut centers = Sequence::<F>::new();
 
-    #[unroll]
-    for lane in 0..num_lanes {
-        #[unroll]
+    for lane in comptime!(0..num_lanes) {
         for axis_idx in comptime!(0..config.resample_axes.len()) {
             let resample_axis = config.resample_axes.index(axis_idx);
             let resample_axis_args = args.resample_axes.index(axis_idx);
@@ -115,16 +113,15 @@ fn map_coord(
     #[comptime] config: &Resample,
     #[comptime] lane: usize,
 ) {
-    let mut current_flat_idx = tap_idx;
+    let mut flat_idx = tap_idx;
     let num_axes = comptime!(config.resample_axes.len());
 
-    #[unroll]
     for axis_idx in comptime!(0..num_axes) {
         let resample_axis = config.resample_axes.index(axis_idx);
         let resample_axis_args = args.resample_axes.index(axis_idx);
 
-        let tap_axis_idx = current_flat_idx % resample_axis_args.window_args.size;
-        current_flat_idx /= resample_axis_args.window_args.size;
+        let tap_axis_idx = flat_idx % resample_axis_args.window_args.size;
+        flat_idx /= resample_axis_args.window_args.size;
 
         let flat_idx = lane * num_axes + axis_idx;
 
