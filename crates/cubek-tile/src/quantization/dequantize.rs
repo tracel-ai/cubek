@@ -3,7 +3,7 @@ use cubecl::prelude::*;
 use crate::{Tile, TileExpand, Walk};
 
 #[cube]
-impl<O: CubeMul + Cast> Tile<O> {
+impl<E: Numeric, N: Size> Tile<Vector<E, N>> {
     /// naive implementation only for per tensor native
     pub fn dequantize<I: CubePrimitive, S: CubePrimitive>(
         &mut self,
@@ -12,7 +12,7 @@ impl<O: CubeMul + Cast> Tile<O> {
     ) {
         // per-tensor: one scale at flat position 0
         let scale = scales.view().read(seq![0u32]);
-        let scale = O::cast_from(scale);
+        let scale = Vector::cast_from(scale);
 
         for region in Walk::over(values.space.clone()) {
             let lhs = values.at(&region);
@@ -27,7 +27,7 @@ impl<O: CubeMul + Cast> Tile<O> {
                 for r in 0..h {
                     for c in 0..w {
                         let q = v.read((r, c));
-                        o.write((r, c), O::cast_from(q) * scale);
+                        o.write((r, c), Vector::cast_from(q) * scale);
                     }
                 }
             }
