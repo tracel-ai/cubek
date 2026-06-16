@@ -1,3 +1,4 @@
+use crate::components::coordinates::CoordsDynI;
 use crate::components::resample_instruction::Accumulator;
 use crate::definition::{Resample, ResampleArgs};
 use crate::{
@@ -102,20 +103,10 @@ fn accumulate_taps<F: Float, N: Size>(
 
     let vector_size = N::value();
 
-    let resampling_vectorized_axis = comptime!(is_resampling_vectorized_axis(
-        config,
-        vectorized_axis,
-        vector_size,
-    ));
+    let num_lanes = comptime!(compute_num_lanes(config, vectorized_axis, vector_size));
 
-    let (start_coords, centers) = compute_anchors::<F, N>(
-        out_coord,
-        args,
-        config,
-        vectorized_axis,
-        resampling_vectorized_axis,
-        vector_size,
-    );
+    let (start_coords, centers) =
+        compute_anchors::<F, N>(out_coord, args, config, vectorized_axis, num_lanes);
 
     #[unroll]
     for tap_idx in 0..num_taps {
@@ -129,7 +120,7 @@ fn accumulate_taps<F: Float, N: Size>(
             &centers,
             config,
             vectorized_axis,
-            resampling_vectorized_axis,
+            num_lanes,
         );
 
         ResampleInstruction::combine(&mut value, weight, tap_idx, config);
@@ -138,20 +129,17 @@ fn accumulate_taps<F: Float, N: Size>(
     }
 }
 
-/// Check if vectorized axis is resampling axis.
-fn is_resampling_vectorized_axis(
-    config: &Resample,
-    vectorized_axis: usize,
-    vector_size: usize,
-) -> bool {
+/// Returns the number of lanes to unroll: `vector_size` if the vectorized axis
+/// is a resampling axis, otherwise `1`.
+fn compute_num_lanes(config: &Resample, vectorized_axis: usize, vector_size: usize) -> usize {
     let mut is_vectorized = false;
 
-    for axis in comptime!(0..config.resample_axes.len()) {
+    for axis in 0..config.resample_axes.len() {
         let resample_axis = config.resample_axes.index(axis);
         is_vectorized |= resample_axis.axis == vectorized_axis;
     }
 
-    is_vectorized && vector_size > 1
+    if is_vectorized { vector_size } else { 1 }
 }
 
 /// Precompute the starting input coordinates and continuous centers.
@@ -161,16 +149,13 @@ pub fn compute_anchors<F: Float, N: Size>(
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
-    #[comptime] resampling_vectorized_axis: bool,
-    #[comptime] vector_size: usize,
-) -> (Sequence<i32>, Sequence<F>) {
-    let mut start_coords = Sequence::new();
+    #[comptime] num_lanes: usize,
+) -> (CoordsDynI, Sequence<F>) {
+    let mut start_coords = CoordsDynI::new();
     let mut centers = Sequence::<F>::new();
 
-    let compute_lanes = comptime! {if resampling_vectorized_axis {vector_size} else {1}};
-
     #[unroll]
-    for lane in 0..compute_lanes {
+    for lane in 0..num_lanes {
         #[unroll]
         for axis_idx in comptime!(0..config.resample_axes.len()) {
             let resample_axis = config.resample_axes.index(axis_idx);
