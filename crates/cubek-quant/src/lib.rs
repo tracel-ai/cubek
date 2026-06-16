@@ -6,6 +6,9 @@ extern crate alloc;
 pub mod dequantize;
 
 #[cfg(feature = "kernels")]
+pub mod dequantize_tiled;
+
+#[cfg(feature = "kernels")]
 pub mod quantize;
 
 #[cfg(feature = "kernels")]

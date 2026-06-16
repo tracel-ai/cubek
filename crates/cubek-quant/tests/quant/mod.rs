@@ -1,5 +1,6 @@
 use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::{QuantLevel, QuantParam};
+mod tiled;
 
 #[macro_export]
 macro_rules! testgen_quant {
