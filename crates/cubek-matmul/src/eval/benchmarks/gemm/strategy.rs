@@ -12,9 +12,6 @@ use crate::routines::{
 };
 use crate::strategy::Strategy;
 
-/// Forced CpuGemm blueprint probe (diagnostic): a fixed leaf cuboid and plane grid so a
-/// masked-vs-maskless or plane-scaling comparison can be isolated. `t64` divides 512 (no edge
-/// masking); `t48` does not. `plane_m × plane_n` is the per-cube worker-thread split.
 fn cpu_gemm_forced(
     tag: &'static str,
     label: &'static str,
