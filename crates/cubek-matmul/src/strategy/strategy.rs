@@ -17,7 +17,7 @@ use crate::{
     },
     definition::{MatmulElems, MatmulSetupError},
     routines::{
-        BlueprintStrategy, Routine, into_contiguous_if_highly_permuted,
+        BlueprintStrategy, Routine,
         batch::{
             double_buffering::{
                 AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
@@ -38,6 +38,7 @@ use crate::{
         gemv_unit_perpendicular::{
             GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
         },
+        into_contiguous_if_highly_permuted,
         naive::launch as launch_naive,
     },
 };

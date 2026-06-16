@@ -110,7 +110,15 @@ pub(crate) fn run_with_strides(
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
     let outcome = launch_and_capture_outcome(&client, |c| {
-        launch_ref(&strategy, c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
+        launch_ref(
+            &strategy,
+            c,
+            lhs_handle,
+            rhs_handle,
+            out_handle,
+            &mut dtypes,
+        )
+        .into()
     });
 
     match outcome {
