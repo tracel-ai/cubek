@@ -44,16 +44,6 @@ impl Kernel {
 
 #[cube]
 impl Kernel {
-    /// Number of taps in the kernel.
-    pub fn num_taps(#[comptime] this: &Self) -> usize {
-        match this {
-            Kernel::Uniform { .. } => 1,
-            Kernel::Linear => 2,
-            Kernel::Cubic { .. } => 4,
-            Kernel::Lanczos { lobes } => 2 * *lobes as usize,
-        }
-    }
-
     /// Compute the combined weight from already-mapped coordinates across all resample axes.
     pub fn weight<F: Float, N: Size>(
         in_coord: &Sequence<i32>,

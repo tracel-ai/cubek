@@ -1,10 +1,7 @@
-use crate::components::coordinates::CoordsDynI;
+use crate::components::coordinates::{compute_anchors, coord_from_index};
 use crate::components::resample_instruction::Accumulator;
+use crate::components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver};
 use crate::definition::{Resample, ResampleArgs};
-use crate::{
-    components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver},
-    definition::Kernel,
-};
 use cubecl::{
     prelude::*,
     std::{
@@ -32,57 +29,26 @@ pub fn resample_kernel<F: Float, N: Size>(
         terminate!();
     }
 
-    let out_coord = get_coord(index * output.vector_size(), &output_shape, &output_strides);
+    let vector_size = N::value();
 
-    resample_coord::<F, N>(input, output, &out_coord, &args, &config, vectorized_axis);
-}
+    let out_coord = coord_from_index(index * vector_size, &output_shape, &output_strides);
 
-/// Convert a linear index to a coordinate.
-#[cube]
-fn get_coord(
-    index: usize,
-    shape: &Sequence<FastDivmod<usize>>,
-    strides: &Sequence<FastDivmod<usize>>,
-) -> CoordsDyn {
-    let mut coords = CoordsDyn::new();
-
-    #[unroll]
-    for i in 0..shape.len() {
-        let (index_at_dim, _) = strides[i].div_mod(index);
-
-        let (_, coord) = shape[i].div_mod(index_at_dim);
-
-        coords.push(coord as u32);
-    }
-
-    coords
-}
-
-/// Resample a single output coord.
-#[cube]
-pub fn resample_coord<F: Float, N: Size>(
-    input: &View<'_, Vector<F, N>, CoordsDyn>,
-    output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
-    out_coord: &CoordsDyn,
-    args: &ResampleArgs,
-    #[comptime] config: &Resample,
-    #[comptime] vectorized_axis: usize,
-) {
-    let mut accumulator = ResampleInstruction::initialize(config);
+    let mut accumulator = ResampleInstruction::initialize(&config);
 
     accumulate_taps::<F, N>(
         input,
-        out_coord,
+        &out_coord,
         &mut accumulator,
-        args,
-        config,
+        &args,
+        &config,
         vectorized_axis,
+        vector_size,
     );
 
-    ResampleInstruction::store(out_coord.clone(), output, accumulator, config);
+    ResampleInstruction::store(out_coord.clone(), output, accumulator, &config);
 }
 
-/// Accumulate tap weights to produce a single tap value.
+/// Accumulate taps to produce a single output value.
 #[cube]
 fn accumulate_taps<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
@@ -91,24 +57,20 @@ fn accumulate_taps<F: Float, N: Size>(
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
+    #[comptime] vector_size: usize,
 ) {
-    let num_taps = comptime! {
-        let mut num_taps = 1;
-        for axis_idx in comptime!(0..config.resample_axes.len()) {
-            let resample_axis = config.resample_axes.index(axis_idx);
-            num_taps *= Kernel::num_taps(&resample_axis.kernel)
-        }
-        num_taps
-    };
-
-    let vector_size = N::value();
-
     let num_lanes = comptime!(compute_num_lanes(config, vectorized_axis, vector_size));
 
     let (start_coords, centers) =
         compute_anchors::<F, N>(out_coord, args, config, vectorized_axis, num_lanes);
 
+    let mut num_taps = 1;
     #[unroll]
+    for axis_idx in comptime!(0..config.resample_axes.len()) {
+        let resample_axis_args = args.resample_axes.index(axis_idx);
+        num_taps *= resample_axis_args.window_args.size
+    }
+
     for tap_idx in 0..num_taps {
         ResampleInstruction::count_position(accumulator, out_coord, config);
 
@@ -118,9 +80,11 @@ fn accumulate_taps<F: Float, N: Size>(
             out_coord,
             &start_coords,
             &centers,
+            args,
             config,
             vectorized_axis,
             num_lanes,
+            vector_size,
         );
 
         ResampleInstruction::combine(&mut value, weight, tap_idx, config);
@@ -140,50 +104,4 @@ fn compute_num_lanes(config: &Resample, vectorized_axis: usize, vector_size: usi
     }
 
     if is_vectorized { vector_size } else { 1 }
-}
-
-/// Precompute the starting input coordinates and continuous centers.
-#[cube]
-pub fn compute_anchors<F: Float, N: Size>(
-    out_coord: &CoordsDyn,
-    args: &ResampleArgs,
-    #[comptime] config: &Resample,
-    #[comptime] vectorized_axis: usize,
-    #[comptime] num_lanes: usize,
-) -> (CoordsDynI, Sequence<F>) {
-    let mut start_coords = CoordsDynI::new();
-    let mut centers = Sequence::<F>::new();
-
-    #[unroll]
-    for lane in 0..num_lanes {
-        #[unroll]
-        for axis_idx in comptime!(0..config.resample_axes.len()) {
-            let resample_axis = config.resample_axes.index(axis_idx);
-            let resample_axis_args = args.resample_axes.index(axis_idx);
-
-            let num_taps = Kernel::num_taps(&resample_axis.kernel);
-            let radius = num_taps.div_ceil(2);
-
-            let out_pos = out_coord[resample_axis.axis] as usize;
-
-            let lane_out_pos = if resample_axis.axis == vectorized_axis {
-                out_pos + lane
-            } else {
-                out_pos
-            };
-
-            let center = resample_axis_args
-                .placement_args
-                .map::<F>(lane_out_pos, &resample_axis.placement);
-
-            let center_floored = center.floor();
-
-            let start_tap = isize::cast_from(center_floored) - radius as isize + 1;
-
-            start_coords.push(start_tap as i32);
-            centers.push(center);
-        }
-    }
-
-    (start_coords, centers)
 }

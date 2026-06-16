@@ -1,10 +1,24 @@
 use cubecl::prelude::*;
 
-/// Convolution window parameters.
-#[derive(Debug, Clone, PartialEq, CubeType)]
-pub struct Window {
+#[derive(CubeType, CubeLaunch)]
+pub struct WindowArgs {
     /// Number of taps.
-    size: usize,
+    pub size: usize,
     /// Tap spacing.
-    dilation: usize,
+    pub dilation: usize,
+}
+
+impl WindowArgs {
+    pub fn new(size: usize) -> WindowArgs {
+        WindowArgs { size, dilation: 0 }
+    }
+
+    pub fn with_dilation(mut self, dilation: usize) -> WindowArgs {
+        self.dilation = dilation;
+        self
+    }
+
+    pub fn to_launch<R: Runtime>(&self) -> WindowArgsLaunch<R> {
+        WindowArgsLaunch::new(self.size, self.dilation)
+    }
 }

@@ -1,4 +1,4 @@
-use crate::definition::{Kernel, Placement, PlacementArgs, Semiring};
+use crate::definition::{Kernel, Placement, PlacementArgs, Semiring, WindowArgs};
 use cubecl::prelude::*;
 
 /// Resampling args.
@@ -31,16 +31,23 @@ impl ResampleArgs {
 /// Resampling axis args.
 #[derive(CubeType, CubeLaunch)]
 pub struct ResampleAxisArgs {
+    pub window_args: WindowArgs,
     pub placement_args: PlacementArgs,
 }
 
 impl ResampleAxisArgs {
-    pub fn new(placement_args: PlacementArgs) -> Self {
-        Self { placement_args }
+    pub fn new(window_args: WindowArgs, placement_args: PlacementArgs) -> Self {
+        Self {
+            window_args,
+            placement_args,
+        }
     }
 
     pub fn to_launch<R: Runtime>(&self) -> ResampleAxisArgsLaunch<R> {
-        ResampleAxisArgsLaunch::new(self.placement_args.to_launch::<R>())
+        ResampleAxisArgsLaunch::new(
+            self.window_args.to_launch::<R>(),
+            self.placement_args.to_launch::<R>(),
+        )
     }
 }
 
