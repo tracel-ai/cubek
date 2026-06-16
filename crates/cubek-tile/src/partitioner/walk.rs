@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Region, Space, instance_count, tiles_per_instance};
+use crate::{Region, RegionExpand, Space, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -83,6 +83,43 @@ impl Walk {
             coords.push(coord_of(local, *self.counts.index(p), inner_weight, dist) as u32);
         }
         coords
+    }
+}
+
+/// Iterating a `Walk` visits its regions in order, so `for region in walk` lowers to the same
+/// `0..total()` / `region(i)` odometer the index API exposes. Schedules that need random access
+/// (prefetch, double-buffering) still index by hand. `IntoIterator` covers the runtime view a
+/// `#[cube]` body is type-checked against; `Iterable` drives the expansion.
+impl IntoIterator for Walk {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut regions = Vec::new();
+        for i in 0..self.total() {
+            regions.push(self.region(i));
+        }
+        regions.into_iter()
+    }
+}
+
+impl Iterable for WalkExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
+        let start = 0usize.into_expand(scope);
+        let total = self.__expand_total_method(scope);
+        RangeExpand::new(start, total).expand(scope, |scope, i| {
+            body(scope, self.__expand_region_method(scope, i));
+        });
+    }
+
+    fn expand_unroll(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
+        let start = 0usize.into_expand(scope);
+        let total = self.__expand_total_method(scope);
+        RangeExpand::new(start, total).expand_unroll(scope, |scope, i| {
+            body(scope, self.__expand_region_method(scope, i));
+        });
     }
 }
 
