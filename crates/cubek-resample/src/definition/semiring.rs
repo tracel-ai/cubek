@@ -33,7 +33,7 @@ impl Semiring {
         }
     }
 
-    /// Accumulate the a new value in the accumulator.
+    /// Accumulate a new value in the accumulator.
     pub fn accumulate<F: Float, N: Size>(
         accumulator: Vector<F, N>,
         value: Vector<F, N>,
