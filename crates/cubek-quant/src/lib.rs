@@ -39,7 +39,6 @@ pub(crate) mod utils {
     pub(crate) fn packed_storage_elem(scheme: &QuantScheme) -> ElemType {
         match scheme.store {
             QuantStore::PackedU32(_) => ElemType::UInt(UIntKind::U32),
-            QuantStore::Native => ElemType::UInt(UIntKind::U32),
             store => panic!("Unsupported packed storage {store:?}"),
         }
     }

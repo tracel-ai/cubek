@@ -1,13 +1,3 @@
-//! Correctness harness for the tiled dequantization kernel
-//! (`Tile::dequantize3`, launched via `cubek_quant::dequantize_tiled::dequantize`).
-//!
-//! Native (unpacked) storage: quantized values stand in as plain `f32`, so the tests
-//! exercise the tile plumbing (walk → per-tile access → block→scale lookup) rather than
-//! integer unpacking. [`check_output`] runs the kernel for a given tensor shape, tile
-//! edge and block shape, and diffs against a CPU reference; per-tensor / 1-D / 2-D / 3-D
-//! blocks are just different arguments. Operand data and the comparison come from
-//! `cubek-test-utils`; only the cubek-tile `Space`/`Partitioner` wiring is built here.
-
 use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TileInput, assert_equals_approx,
@@ -17,7 +7,7 @@ use cubek_tile::{
     TileArgLaunch,
 };
 
-const SEED: u64 = 0xC0FF_EE00;
+const SEED: u64 = 0x1;
 
 #[test]
 fn dequantize_tiled_native_per_tensor_matches_reference() {
@@ -25,14 +15,7 @@ fn dequantize_tiled_native_per_tensor_matches_reference() {
     dequantize_tiled_native(&[8, 8], 4, &[]);
 }
 
-/// Launch the tiled dequantize and assert it matches the CPU reference
-/// `values[i] * scales[cell_of(i)]`, for any rank.
-///
-/// - `tensor`: the logical shape (any rank).
-/// - `tile_edge`: every axis is tiled into squares of this edge (must divide each dim).
-/// - `block`: per-axis block shape, trailing-aligned like `BlockSize`. `&[]` is
-///   per-tensor (one block); a shorter slice left-pads with `1` (each leading axis is its
-///   own block). The scale grid is one scale per block: `tensor[a] / block[a]` per axis.
+/// Launch the tiled dequantize and assert it matches the CPU reference.
 fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) {
     let client = TestRuntime::client(&Default::default());
     let rank = tensor.len();
@@ -49,10 +32,6 @@ fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) 
         grid.clone()
     };
 
-    // cubek-tile wiring: tile values/output into `tile_edge` squares; scales are the
-    // block grid itself (its partitioner is unused — dequantize3 reads scales by
-    // absolute cell coord). For per-tensor, use a rank-1 `[1]` scale tensor so the
-    // test matches the tiled dequantize launch path.
     let tile_edges = vec![tile_edge; rank];
     let values = TileInput::builder(&client, spatial_space(tensor, &tile_edges))
         .untiled()
@@ -94,6 +73,7 @@ fn dequantize_tiled_native(tensor: &[usize], tile_edge: usize, block: &[usize]) 
     );
 }
 
+/// Check that the tiled dequantize output matches the CPU reference `values[i] * scales[cell_of(i)]`.
 fn check_output(
     client: &ComputeClient<TestRuntime>,
     scales_h: TensorHandle<TestRuntime>,
