@@ -28,9 +28,7 @@ impl<Acc: CubePrimitive> Tile<Acc> {
         }
     }
 
-    /// The runtime space the schedules `Walk::over`: the operand spaces merged, carrying the
-    /// `Dynamic` axes' sizes read off whichever input spans them (`lhs ∈ {M,K,batch}`,
-    /// `rhs ∈ {K,N,batch}` cover the merge). The all-`Static` interior carries none.
+    /// Merges the spaces of lhs, rhs and out, taking dynamic space into account
     fn operand_space<Lhs: CubePrimitive, Rhs: CubePrimitive>(
         &self,
         lhs: &Tile<Lhs>,
