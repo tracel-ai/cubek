@@ -7,7 +7,7 @@ use crate::routines::{
         ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
         simple_unit::SimpleUnitSelectionArgs,
     },
-    cpu_gemm::CpuGemmBlueprint,
+    cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid},
     gemm::GemmStrategy,
 };
 use crate::strategy::Strategy;
@@ -26,11 +26,8 @@ fn cpu_gemm_forced(
         tag,
         label,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile,
-            tile_n: tile,
-            tile_k: tile,
-            plane_m,
-            plane_n,
+            instruction: Instruction::new(tile, tile, tile),
+            planes: PlaneGrid::new(plane_m, plane_n),
         })),
     )
 }

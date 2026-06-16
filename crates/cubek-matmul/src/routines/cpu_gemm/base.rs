@@ -81,34 +81,60 @@ fn nearest_divisor(g: usize, target: usize) -> usize {
     best
 }
 
-/// A fully-resolved CpuGemm plan. `tile_m × tile_n × tile_k` is the register leaf one plane
-/// computes (`tile_n` rides SIMD lines, `tile_m` is register rows, `tile_k` the contraction
-/// depth). `plane_m × plane_n` is the spatial split of a cube's stage tile across planes —
-/// the CPU's parallel worker threads — so a cube owns a `(plane_m·tile_m) × (plane_n·tile_n)`
-/// tile and each plane a `tile_m × tile_n` sub-tile of it.
+/// The `m × n × k` extent of the innermost leaf — the tile one plane contracts in registers,
+/// the level the [`Mma`](cubek_tile) leaf realizes (one MMA "instruction"). `n` rides SIMD
+/// lines, `m` is register rows, `k` the in-register contraction depth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Instruction {
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+}
+
+impl Instruction {
+    pub fn new(m: usize, n: usize, k: usize) -> Self {
+        Instruction { m, n, k }
+    }
+}
+
+/// How many planes a cube's stage tile is divided into, along `m` and `n`. Planes are the
+/// CPU's parallel worker threads, so the cube owns an `(m·instruction.m) × (n·instruction.n)`
+/// tile and each plane one [`Instruction`] of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaneGrid {
+    pub m: usize,
+    pub n: usize,
+}
+
+impl PlaneGrid {
+    pub fn new(m: usize, n: usize) -> Self {
+        PlaneGrid { m, n }
+    }
+}
+
+/// A fully-resolved CpuGemm plan: the leaf each plane computes ([`Instruction`]) and how
+/// finely a cube's stage tile is split across planes ([`PlaneGrid`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CpuGemmBlueprint {
-    pub tile_m: usize,
-    pub tile_n: usize,
-    pub tile_k: usize,
-    pub plane_m: usize,
-    pub plane_n: usize,
+    pub instruction: Instruction,
+    pub planes: PlaneGrid,
 }
 
 impl CpuGemmBlueprint {
     /// Reject a degenerate blueprint.
     #[allow(clippy::result_large_err)]
     pub fn validate(&self, _problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
-        if self.tile_m == 0 || self.tile_n == 0 || self.tile_k == 0 {
+        let (i, p) = (self.instruction, self.planes);
+        if i.m == 0 || i.n == 0 || i.k == 0 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "CpuGemm blocks must be non-zero, got {}x{}x{}",
-                self.tile_m, self.tile_n, self.tile_k
+                "CpuGemm instruction must be non-zero, got {}x{}x{}",
+                i.m, i.n, i.k
             ))));
         }
-        if self.plane_m == 0 || self.plane_n == 0 {
+        if p.m == 0 || p.n == 0 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "CpuGemm plane grid must be non-zero, got {}x{}",
-                self.plane_m, self.plane_n
+                p.m, p.n
             ))));
         }
         Ok(())
@@ -187,14 +213,10 @@ impl CpuGemmRoutine {
         Ok(blueprint)
     }
 
-    /// The tile-size heuristic. The leaf is the largest *square register block* whose
-    /// `tile_m × (tile_n/vw)` accumulator lines still fit the microkernel's unroll window
-    /// ([`REGISTER_LINES`]) — beyond it the inner loops fall to a ~2× slower runtime path,
-    /// so L1-sized leaves (the temptation) are a trap. `alpha` then sets the contraction
-    /// depth `tile_k` between shallow and the deepest A/B panel that stays L1-resident
-    /// alongside the C tile (reuse). Parallelism is the *plane* grid, not the cubes (cubes
-    /// are a serial loop on CPU): `cores` is factored across the M/N tile grid by its aspect
-    /// ratio, each plane a worker thread owning one `tile_m × tile_n` leaf.
+    /// The tile-size heuristic. The leaf is the largest square block fitting the unroll
+    /// window ([`REGISTER_LINES`]) — bigger drops to a ~2× slower path, so L1-sized leaves
+    /// are a trap. `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`] (the worker
+    /// threads — cubes are serial on CPU).
     fn select<R: Runtime>(
         strategy: &CpuGemmStrategy,
         problem: &MatmulProblem,
@@ -244,11 +266,12 @@ impl CpuGemmRoutine {
         // Edge tiles are masked, so the heuristic's ideal block stands — just clamp each
         // edge to its axis (a tile no larger than the matrix) and keep it non-zero.
         CpuGemmBlueprint {
-            tile_m: tile_m.clamp(1, m.max(1)),
-            tile_n: tile_n.clamp(1, n.max(1)),
-            tile_k: tile_k.clamp(1, k.max(1)),
-            plane_m,
-            plane_n,
+            instruction: Instruction::new(
+                tile_m.clamp(1, m.max(1)),
+                tile_n.clamp(1, n.max(1)),
+                tile_k.clamp(1, k.max(1)),
+            ),
+            planes: PlaneGrid::new(plane_m, plane_n),
         }
     }
 }

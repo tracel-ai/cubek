@@ -407,7 +407,7 @@ fn check_matmul_batched(
         .tile(&[batch_edge, tile_edge, tile_edge])
         .zeros();
 
-    let cube_count = partitioner.cube_count(&space);
+    let cube_count = space.cube_count();
     let cube_dim = CubeDim::new_single();
 
     launch_staged_matmul::launch::<TestRuntime>(
@@ -474,8 +474,8 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
         .tile(&[1, 1, t, t])
         .zeros();
 
-    // The coarsest level drives the launch geometry.
-    let cube_count = partitioners[0].cube_count(&out);
+    // The launch geometry comes off the (whole-tree) space.
+    let cube_count = out.cube_count();
     let cube_dim = CubeDim::new_single();
 
     launch_staged_matmul::launch::<TestRuntime>(
@@ -539,8 +539,8 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 
     launch_cpu_matmul::launch::<TestRuntime>(
         &client,
-        partitioner.cube_count(&space),
-        partitioner.cube_dim(&client, &space),
+        space.cube_count(),
+        space.cube_dim(&client),
         TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
         TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),
         TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
@@ -693,7 +693,7 @@ fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Pa
 
     launch_staged_matmul::launch::<TestRuntime>(
         &client,
-        l0.cube_count(&space),
+        space.cube_count(),
         CubeDim::new_single(),
         TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
         TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),
@@ -735,7 +735,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 
     launch_staged_matmul::launch::<TestRuntime>(
         &client,
-        partitioner.cube_count(&space),
+        space.cube_count(),
         CubeDim::new_single(),
         TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
         TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),

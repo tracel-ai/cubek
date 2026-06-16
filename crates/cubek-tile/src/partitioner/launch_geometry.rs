@@ -1,27 +1,27 @@
-//! The launch geometry a [`Partitioner`] implies.
+//! The launch geometry a [`Space`]'s partitioner tree implies.
 
 use cubecl::prelude::*;
 
 use crate::Space;
 
-use super::{ComputeScope, CubeAxis, Partitioner};
+use super::{ComputeScope, CubeAxis};
 
-impl Partitioner {
+impl Space {
     /// Cube dimension `d` gets the instance count of whichever axis is
     /// `Spatial { Cube(d), .. }`, at any level of the tree, else 1.
-    pub fn cube_count(&self, space: &Space) -> CubeCount {
+    pub fn cube_count(&self) -> CubeCount {
         CubeCount::Static(
-            instances_for(space, ComputeScope::Cube(CubeAxis::X)),
-            instances_for(space, ComputeScope::Cube(CubeAxis::Y)),
-            instances_for(space, ComputeScope::Cube(CubeAxis::Z)),
+            instances_for(self, ComputeScope::Cube(CubeAxis::X)),
+            instances_for(self, ComputeScope::Cube(CubeAxis::Y)),
+            instances_for(self, ComputeScope::Cube(CubeAxis::Z)),
         )
     }
 
     /// `plane_size × plane_count`. Plane length is the hardware's (`1` on CPU, the warp
     /// width on GPU).
-    pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>, space: &Space) -> CubeDim {
+    pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>) -> CubeDim {
         let plane_size = client.properties().hardware.plane_size_max;
-        CubeDim::new_2d(plane_size, instances_for(space, ComputeScope::Plane))
+        CubeDim::new_2d(plane_size, instances_for(self, ComputeScope::Plane))
     }
 }
 
