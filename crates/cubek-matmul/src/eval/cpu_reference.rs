@@ -125,25 +125,17 @@ fn seed_inputs(
     seed_lhs: u64,
     seed_rhs: u64,
 ) -> (Tensor, HostData, Tensor, HostData, Tensor, MatmulProblem) {
-    let lhs_input = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
         .dtype(problem.global_dtypes.lhs)
         .layout(problem.lhs_layout)
-        .uniform(seed_lhs, -1., 1.);
-    let (lhs, lhs_data) = if host_data_type_for(problem.global_dtypes.lhs) == HostDataType::F64 {
-        lhs_input.generate_with_f64_host_data()
-    } else {
-        lhs_input.generate_with_f32_host_data()
-    };
+        .uniform(seed_lhs, -1., 1.)
+        .generate_with_host_data(host_data_type_for(problem.global_dtypes.lhs));
 
-    let rhs_input = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
         .layout(problem.rhs_layout)
-        .uniform(seed_rhs, -1., 1.);
-    let (rhs, rhs_data) = if host_data_type_for(problem.global_dtypes.rhs) == HostDataType::F64 {
-        rhs_input.generate_with_f64_host_data()
-    } else {
-        rhs_input.generate_with_f32_host_data()
-    };
+        .uniform(seed_rhs, -1., 1.)
+        .generate_with_host_data(host_data_type_for(problem.global_dtypes.rhs));
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
         .layout(MatrixLayout::RowMajor)
