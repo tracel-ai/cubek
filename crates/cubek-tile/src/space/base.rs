@@ -117,6 +117,12 @@ impl Space {
         self.extents.get(axis).is_dynamic()
     }
 
+    /// Every axis is [`Static`](Extent::Static): the walk is fully comptime. True at every level
+    /// below the top, since [`divide`](Space::divide) yields `Static` children.
+    pub fn is_static(&self) -> bool {
+        self.axes().all(|axis| !self.is_dynamic(axis))
+    }
+
     pub fn extent_at(&self, i: usize) -> usize {
         self.extent(self.axis_at(i))
     }

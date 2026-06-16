@@ -21,29 +21,43 @@ pub struct Walk {
 
 #[cube]
 impl Walk {
-    /// To subdivide an operation, merge the operands' spaces then `Walk::over` the result.
-    /// `runtime_extents` supplies the per-axis problem size for every [`Dynamic`](Extent::Dynamic)
-    /// axis (unused for `Static` axes, whose count stays comptime), aligned to the space's axis
-    /// order; the caller reads it off the operand tiles' runtime bounds.
-    pub fn over(#[comptime] space: Space, runtime_extents: Sequence<usize>) -> Walk {
+    /// Walk a fully-[`Static`](Extent::Static) space: every tile count is comptime, so `total()`
+    /// stays comptime and the schedule loops unroll. Every level below the dynamic top takes this
+    /// (`divide` yields `Static`), so it's the common case and carries no runtime input.
+    pub fn over(#[comptime] space: Space) -> Walk {
         let mut counts = Sequence::<usize>::new();
         #[unroll]
         for p in 0..space.rank() {
             let axis = comptime!(space.axis_at(p));
-            // A `Static` axis keeps its comptime tile count; a `Dynamic` one ceil-divides its
-            // runtime size by the (comptime) sub-tile edge, so the trip count never bakes in.
+            counts.push(comptime!(space.count(axis)).runtime());
+        }
+        Walk::from_counts(space, counts)
+    }
+
+    /// Walk a space carrying [`Dynamic`](Extent::Dynamic) axes (only the top level). A dynamic
+    /// axis ceil-divides its runtime size by the (comptime) sub-tile edge, so its trip count never
+    /// bakes in; static axes keep their comptime count. `extents` is aligned to the space's axis
+    /// order (read off the operand tiles' runtime bounds); its static slots are ignored.
+    pub fn dynamic(#[comptime] space: Space, extents: Sequence<usize>) -> Walk {
+        let mut counts = Sequence::<usize>::new();
+        #[unroll]
+        for p in 0..space.rank() {
+            let axis = comptime!(space.axis_at(p));
             let count = match comptime!(space.extent_raw(axis)) {
                 Extent::Static(_) => comptime!(space.count(axis)).runtime(),
                 Extent::Dynamic => {
                     let edge = comptime!(space.partitioner().edge(axis));
-                    (*runtime_extents.index(p)).div_ceil(edge)
+                    (*extents.index(p)).div_ceil(edge)
                 }
             };
             counts.push(count);
         }
+        Walk::from_counts(space, counts)
+    }
 
+    /// Total step count from the per-axis grid `counts`, shared by both constructors.
+    fn from_counts(#[comptime] space: Space, counts: Sequence<usize>) -> Walk {
         let mut steps = 1usize;
-
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let axis = space.axis_at(p);

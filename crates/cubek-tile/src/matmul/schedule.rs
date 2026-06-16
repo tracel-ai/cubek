@@ -5,12 +5,12 @@ use cubecl::prelude::*;
 
 use crate::{matmul::lower::Mma, *};
 
-/// The per-axis runtime problem size for `Walk::over`, aligned to `space`'s axis order. A
-/// `Static` axis contributes a placeholder (its count stays comptime); a `Dynamic` axis reads
+/// The per-axis runtime problem size for [`Walk::dynamic`], aligned to `space`'s axis order. A
+/// `Static` axis contributes a placeholder (`Walk::dynamic` ignores it); a `Dynamic` axis reads
 /// its runtime extent off whichever input carries it. The two inputs span the whole merge
 /// (`lhs ∈ {M,K,batch}`, `rhs ∈ {K,N,batch}`), so `out` is never needed. Only the top-level
-/// merge is dynamic — `divide` yields `Static` children — so at inner levels every axis takes
-/// the placeholder and the whole walk stays comptime.
+/// merge is dynamic — `divide` yields `Static` children — so inner levels skip this entirely and
+/// take [`Walk::over`].
 #[cube]
 fn merged_extents<Lhs: CubePrimitive, Rhs: CubePrimitive>(
     #[comptime] space: Space,
@@ -45,7 +45,11 @@ pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     Acc: CubePrimitive + Mma<Lhs, Rhs>,
 {
     let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = Walk::over(comptime!(space.clone()), merged_extents(space, lhs, rhs));
+    let walk = if comptime!(space.is_static()) {
+        Walk::over(space)
+    } else {
+        Walk::dynamic(comptime!(space.clone()), merged_extents(space, lhs, rhs))
+    };
     for i in 0..walk.total() {
         out.mma_at(lhs, rhs, &walk.region(i));
     }
@@ -71,7 +75,11 @@ pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut b_tile = Tile::smem(&b_smem, b_sub);
 
     let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = Walk::over(comptime!(space.clone()), merged_extents(space, lhs, rhs));
+    let walk = if comptime!(space.is_static()) {
+        Walk::over(space)
+    } else {
+        Walk::dynamic(comptime!(space.clone()), merged_extents(space, lhs, rhs))
+    };
     for i in 0..walk.total() {
         let region = walk.region(i);
         a_tile.stage(&lhs.at(&region));
@@ -107,7 +115,11 @@ pub(crate) fn mma_double<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
     let mut b = Ring::new(b_buf);
 
     let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &out.space]));
-    let walk = Walk::over(comptime!(space.clone()), merged_extents(space, lhs, rhs));
+    let walk = if comptime!(space.is_static()) {
+        Walk::over(space)
+    } else {
+        Walk::dynamic(comptime!(space.clone()), merged_extents(space, lhs, rhs))
+    };
 
     // prologue: prime slot 0 with region 0.
     let r0 = walk.region(0);
