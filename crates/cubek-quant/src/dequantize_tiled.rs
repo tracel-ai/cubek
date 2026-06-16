@@ -9,17 +9,6 @@ use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileAr
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 
-/// A row-major space whose every axis is `Sequential`: a single cube walks all the tiles.
-/// Each axis is one tile covering its full extent (one tile total).
-fn sequential_space(extents: &[(Axis, usize)]) -> Space {
-    let dists: Vec<(Axis, Distribution)> = extents
-        .iter()
-        .map(|&(a, _)| (a, Distribution::Sequential))
-        .collect();
-    let partitioner = Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).direct();
-    Space::new(extents).with_partitioner(partitioner)
-}
-
 /// Convert the tensor back to a higher precision data type.
 /// Uses the tile-based implementation for dequantization.
 /// Very WIP and naive implementation for now.
@@ -45,13 +34,8 @@ pub fn launch_ref<R: Runtime>(
     let input_tilearg =
         TileArgLaunch::new(input.into_tensor_arg(), input_space.clone(), input_storage);
 
-    // for per tensor quantization, scales are 1d but need to be reshaped to 2d
-    let rank = input_space.rank();
-    let mut scales = scales;
-    scales.shape = vec![1; rank].into();
-    scales.strides = vec![1; rank].into();
-    // only 1 scale per tensor
-    let scale_space = sequential_space(&[(M, 1usize), (N, 1usize)]);
+    // per-tensor scale: rank-1 [1] tensor, no reshape needed
+    let scale_space = sequential_space(&[(M, 1usize)]);
     let scale_storage = Storage::of(scales.shape.len(), scale_space.rank());
     let scale_tilearg = TileArgLaunch::new(scales.into_tensor_arg(), scale_space, scale_storage);
 
@@ -81,6 +65,17 @@ pub fn launch_ref<R: Runtime>(
     );
 
     Ok(())
+}
+
+/// A row-major space whose every axis is `Sequential`: a single cube walks all the tiles.
+/// Each axis is one tile covering its full extent (one tile total).
+fn sequential_space(extents: &[(Axis, usize)]) -> Space {
+    let dists: Vec<(Axis, Distribution)> = extents
+        .iter()
+        .map(|&(a, _)| (a, Distribution::Sequential))
+        .collect();
+    let partitioner = Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).direct();
+    Space::new(extents).with_partitioner(partitioner)
 }
 
 #[cube(launch)]
