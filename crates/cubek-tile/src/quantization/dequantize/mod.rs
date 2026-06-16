@@ -3,7 +3,7 @@ pub mod schedule;
 use cubecl::prelude::*;
 
 use crate::{
-    Partitioner, Region, Schedule, Tile, TileExpand,
+    Linear, Partitioner, Region, Schedule, Tile, TileExpand,
     quantization::dequantize::schedule::dequantize_direct,
 };
 
@@ -61,32 +61,15 @@ impl<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>
         // per-tensor: one scale at flat position 0
         let scale = Vector::cast_from(scales.view().read(seq![0]));
 
-        let rank = comptime!(output.space.rank());
-        let inp = input.view(); // View<Vector<I, IN>, CoordsDyn>
-        let mut out = output.view_mut(); // ViewMut<Vector<O, ON>, CoordsDyn>
-        let shape = out.shape(); // CoordsDyn (Sequence<u32>)
+        // Re-view both operands as flat 1-D: `Linear` turns the index into the N-D position,
+        // so the leaf scans linearly without re-deriving strides or the element count.
+        let input_view = input.view();
+        let input_shape = input_view.shape();
+        let input_view = input_view.view(Linear::new(input_shape.clone()));
+        let mut out = output.view_mut().view_mut(Linear::new(input_shape.clone()));
 
-        // total element count over the window extent
-        let mut total = 1u32;
-        #[unroll]
-        for i in 0..rank {
-            total *= shape[i];
-        }
-
-        // flat scan + row-major unravel into an N-D position (same stride idiom as `row_major`)
-        for f in 0..total {
-            let mut pos = Sequence::<u32>::new();
-            #[unroll]
-            for p in 0..rank {
-                let mut stride = 1u32;
-                #[unroll]
-                for q in p + 1..rank {
-                    stride *= shape[q];
-                }
-                pos.push((f / stride) % shape[p]);
-            }
-            let q = inp.read(pos.clone());
-            out.write(pos, Vector::cast_from(q) * scale);
+        for i in 0..out.shape() {
+            out.write(i, Vector::cast_from(input_view.read(i)) * scale);
         }
     }
 }
