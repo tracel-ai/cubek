@@ -45,8 +45,8 @@ pub fn launch_ref<R: Runtime>(
     let output_storage = Storage::of(output.shape.len(), output_space.rank());
     let output_tilearg = TileArgLaunch::new(output.into_tensor_arg(), output_space, output_storage);
 
-    let cube_count = input_space.partitioner().cube_count(&input_space);
-    let cube_dim = input_space.partitioner().cube_dim(client, &input_space);
+    let cube_count = input_space.cube_count();
+    let cube_dim = input_space.cube_dim(client);
 
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
     let scale_dtype = ElemType::from_quant_param(scheme.param).into();

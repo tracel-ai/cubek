@@ -18,7 +18,9 @@ impl<Acc: CubePrimitive> Tile<Acc> {
         match comptime!(self.space.partitioner()) {
             Partitioner::Final => Acc::mma(self, lhs, rhs),
             Partitioner::Level(level) => {
-                let space = self.operand_space(lhs, rhs);
+                // The level's operation space is the merge of the operands' runtime spaces; the
+                // output contributes no axis beyond `lhs ∪ rhs`, so the two operands cover it.
+                let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
                 match level.schedule() {
                     Schedule::Direct => mma_direct(lhs, rhs, self, space),
                     Schedule::Staged => mma_staged(lhs, rhs, self, space),
@@ -26,31 +28,6 @@ impl<Acc: CubePrimitive> Tile<Acc> {
                 }
             }
         }
-    }
-
-    /// Merges the spaces of lhs, rhs and out, taking dynamic space into account
-    fn operand_space<Lhs: CubePrimitive, Rhs: CubePrimitive>(
-        &self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-    ) -> Space {
-        let space = comptime!(Space::merge(&[&lhs.space, &rhs.space, &self.space]));
-        let mut sizes = Sequence::<usize>::new();
-        if comptime!(!space.is_static()) {
-            #[unroll]
-            for p in 0..comptime!(space.rank()) {
-                let axis = comptime!(space.axis_at(p));
-                // `Static` slots are ignored by `Extents::count`, so every axis just takes its
-                // operand extent — no per-axis dynamic test, no placeholder.
-                let extent = if comptime!(lhs.space.contains(axis)) {
-                    lhs.runtime_extent(axis)
-                } else {
-                    rhs.runtime_extent(axis)
-                };
-                sizes.push(extent);
-            }
-        }
-        Space::with_sizes(space, sizes)
     }
 }
 

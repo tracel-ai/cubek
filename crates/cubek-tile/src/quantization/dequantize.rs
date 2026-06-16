@@ -14,7 +14,7 @@ impl<E: Numeric, N: Size> Tile<Vector<E, N>> {
         let scale = scales.view().read(seq![0u32]);
         let scale = Vector::cast_from(scale);
 
-        for region in Walk::over(values.space.clone()) {
+        for region in Walk::over(values.runtime_space()) {
             let lhs = values.at(&region);
             let mut out = self.at(&region);
 

@@ -223,6 +223,20 @@ impl<T: CubePrimitive> Tile<T> {
         }
     }
 
+    /// The runtime space to walk this tile: its comptime tiling spec plus the runtime sizes of any
+    /// `Dynamic` axes, read off the tile. A fully-`Static` tile short-circuits to no runtime sizes.
+    pub fn runtime_space(&self) -> Space {
+        let space = comptime!(self.space.clone());
+        let mut sizes = Sequence::<usize>::new();
+        if comptime!(!space.is_static()) {
+            #[unroll]
+            for p in 0..comptime!(space.rank()) {
+                sizes.push(self.runtime_extent(space.axis_at(p)));
+            }
+        }
+        Space::with_sizes(space, sizes)
+    }
+
     /// A read [`View`]: the buffer re-viewed through its base layout, then the
     /// [`Window`].
     pub fn view(&self) -> View<'_, T, CoordsDyn> {

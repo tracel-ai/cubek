@@ -155,6 +155,35 @@ impl Space {
             partitioner: comptime!(space.partitioner.clone()),
         }
     }
+
+    /// Merge two already-sized runtime spaces into the operation space: the comptime structure is
+    /// the host [`merge`](Space::merge) of their specs, and each merged axis takes its runtime size
+    /// from whichever input spans it. A fully-`Static` merge carries no runtime sizes.
+    pub fn merge_with(&self, other: &Space) -> Space {
+        let merged = comptime!(Space::merge(&[&self.clone(), &other.clone()]));
+        let mut sizes = Sequence::<usize>::new();
+        if comptime!(!merged.is_static()) {
+            #[unroll]
+            for p in 0..comptime!(merged.rank()) {
+                let axis = comptime!(merged.axis_at(p));
+                if comptime!(self.clone().contains(axis)) {
+                    sizes.push(self.size(axis));
+                } else {
+                    sizes.push(other.size(axis));
+                }
+            }
+        }
+        Space::with_sizes(merged, sizes)
+    }
+
+    /// This (sized) space's runtime size along `axis`, read from the per-axis `sizes`. Only valid
+    /// once filled (a `Dynamic` axis on an unsized space has none).
+    fn size(&self, #[comptime] axis: Axis) -> usize {
+        *self
+            .extents
+            .sizes
+            .index(comptime!(self.clone().position(axis)))
+    }
 }
 
 impl Space {
