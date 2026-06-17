@@ -1,4 +1,4 @@
-use crate::definition::{Resample, Semiring};
+use crate::definition::{NormalizationMode, Resample, Semiring};
 use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::CoordsDyn},
@@ -12,6 +12,7 @@ pub struct ResampleInstruction;
 #[allow(dead_code)]
 pub struct Accumulator<F: Float, N: Size> {
     pub elements: Value<Vector<F, N>>,
+    pub weight: Value<Vector<F, N>>,
     pub args: Value<Vector<u32, N>>,
 }
 
@@ -45,18 +46,11 @@ impl<T: CubePrimitive> Value<T> {
         }
     }
 
-    pub fn assign(&mut self, other: &Value<T>) {
-        match (self, other) {
-            (Value::Multiple(this), Value::Multiple(other)) => {
-                for i in 0..this.len() {
-                    this[i] = other[i];
-                }
-            }
-            (Value::Single(this), Value::Single(other)) => {
-                this.value = other.value;
-            }
-            (Value::None, Value::None) => {}
-            _ => panic!("Tried assigning different accumulator kinds"),
+    pub fn set_item(&mut self, new_value: T) {
+        #[comptime]
+        match self {
+            Value::Single(item) => item.value = new_value,
+            _ => panic!("Tried setting item on a non-Single variant"),
         }
     }
 }
@@ -64,10 +58,16 @@ impl<T: CubePrimitive> Value<T> {
 #[cube]
 impl ResampleInstruction {
     pub fn initialize<F: Float, N: Size>(#[comptime] config: &Resample) -> Accumulator<F, N> {
-        let identity = Semiring::identity(&config.semiring);
+        let identity = Value::new_single(Semiring::identity(&config.semiring));
+
+        let weight = match config.normalization {
+            NormalizationMode::None => Value::new_None(),
+            NormalizationMode::Renormalize => Value::new_single(Vector::zeroed()),
+        };
 
         Accumulator::<F, N> {
-            elements: Value::new_single(identity),
+            elements: identity,
+            weight,
             args: Value::new_None(),
         }
     }
@@ -78,19 +78,25 @@ impl ResampleInstruction {
         _tap_idx: usize,
         #[comptime] config: &Resample,
     ) {
-        *value = Semiring::combine(*value, weight, &config.semiring)
+        *value = Semiring::combine(*value, weight, &config.semiring);
     }
 
     pub fn accumulate<F: Float, N: Size>(
         accumulator: &mut Accumulator<F, N>,
         combined: Vector<F, N>,
+        weight: Vector<F, N>,
         _tap_idx: usize,
         #[comptime] config: &Resample,
     ) {
         let elements = accumulator.elements.item();
         let accumulated = Semiring::accumulate(elements, combined, &config.semiring);
 
-        accumulator.elements.assign(&Value::new_single(accumulated));
+        accumulator.elements.set_item(accumulated);
+
+        if config.normalization == NormalizationMode::Renormalize {
+            let weight = accumulator.weight.item() + weight;
+            accumulator.weight.set_item(weight);
+        }
     }
 
     pub fn count_position<F: Float, N: Size>(
@@ -104,8 +110,14 @@ impl ResampleInstruction {
         out_coord: CoordsDyn,
         output: &mut ViewMut<Vector<F, N>, CoordsDyn>,
         accumulator: Accumulator<F, N>,
-        #[comptime] _config: &Resample,
+        #[comptime] config: &Resample,
     ) {
-        output.write(out_coord, accumulator.elements.item());
+        match config.normalization {
+            NormalizationMode::None => output.write(out_coord, accumulator.elements.item()),
+            NormalizationMode::Renormalize => output.write(
+                out_coord,
+                accumulator.elements.item() / accumulator.weight.item(),
+            ),
+        }
     }
 }

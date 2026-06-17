@@ -1,6 +1,8 @@
 use crate::resample::run_test;
 use cubecl::{Runtime, TestRuntime};
-use cubek_resample::definition::{Kernel, Placement, Resample, ResampleAxis, Semiring};
+use cubek_resample::definition::{
+    BoundaryMode, Kernel, NormalizationMode, Placement, Resample, ResampleAxis, Semiring,
+};
 
 #[test]
 fn resample_1d_identity_test() {
@@ -20,7 +22,12 @@ fn resample_1d_identity_test() {
             offset: 0.0,
         },
     );
-    let config = Resample::new(Semiring::Linear).with_axis(resample_axis);
+    let config = Resample::new(
+        Semiring::Linear,
+        BoundaryMode::Clamp,
+        NormalizationMode::None,
+    )
+    .with_axis(resample_axis);
 
     run_test(
         &client,
@@ -50,7 +57,12 @@ fn resample_1d_test() {
             offset: 0.0,
         },
     );
-    let config = Resample::new(Semiring::Linear).with_axis(resample_axis);
+    let config = Resample::new(
+        Semiring::Linear,
+        BoundaryMode::Clamp,
+        NormalizationMode::None,
+    )
+    .with_axis(resample_axis);
 
     run_test(
         &client,
@@ -79,9 +91,13 @@ fn resample_2d_test() {
     };
     let resample_axis0 = ResampleAxis::new(0, kernel.clone(), placement.clone());
     let resample_axis2 = ResampleAxis::new(2, kernel, placement);
-    let config = Resample::new(Semiring::Linear)
-        .with_axis(resample_axis0)
-        .with_axis(resample_axis2);
+    let config = Resample::new(
+        Semiring::Linear,
+        BoundaryMode::Clamp,
+        NormalizationMode::None,
+    )
+    .with_axis(resample_axis0)
+    .with_axis(resample_axis2);
 
     run_test(
         &client,
@@ -110,9 +126,13 @@ fn resample_nhwc_2d_test() {
     };
     let resample_axis0 = ResampleAxis::new(0, kernel.clone(), placement.clone());
     let resample_axis1 = ResampleAxis::new(1, kernel, placement);
-    let config = Resample::new(Semiring::Linear)
-        .with_axis(resample_axis0)
-        .with_axis(resample_axis1);
+    let config = Resample::new(
+        Semiring::Linear,
+        BoundaryMode::Clamp,
+        NormalizationMode::None,
+    )
+    .with_axis(resample_axis0)
+    .with_axis(resample_axis1);
 
     run_test(
         &client,

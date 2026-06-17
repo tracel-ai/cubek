@@ -12,13 +12,13 @@ pub enum Placement {
 #[cube]
 impl Placement {
     /// Map output position to source coordinate.
-    pub fn map<F: Float>(out_pos: usize, #[comptime] placement: &Placement) -> F {
+    pub fn map<F: Float>(pos: usize, #[comptime] placement: &Placement) -> F {
         match placement {
             Placement::Continuous { scale, offset } => {
-                F::cast_from(out_pos) * F::cast_from(*scale) + F::cast_from(*offset)
+                F::cast_from(pos) * F::cast_from(*scale) + F::cast_from(*offset)
             }
 
-            Placement::Windowed { step, padding } => F::cast_from(out_pos * *step - *padding),
+            Placement::Windowed { step, padding } => F::cast_from(pos * *step - *padding),
         }
     }
 }

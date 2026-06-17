@@ -5,6 +5,7 @@ mod matmul;
 mod matrix;
 mod partitioner;
 mod payload;
+mod quantization;
 mod ring;
 mod space;
 mod tile;
