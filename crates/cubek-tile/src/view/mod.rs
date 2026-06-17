@@ -1,6 +1,8 @@
+pub mod dequant;
 pub mod flat;
 pub mod matrix;
 
+pub use dequant::*;
 pub use flat::*;
 pub use matrix::*;
 
