@@ -7,7 +7,9 @@ use cubecl::{
 };
 use cubek_matmul::definition::{InnerLayout, MatmulElems, MatmulProblem};
 use cubek_matmul::routines::BlueprintStrategy;
-use cubek_matmul::routines::cpu_gemm::{CpuGemmBlueprint, WithLayout, launch_ref};
+use cubek_matmul::routines::cpu_gemm::{
+    CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref,
+};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::TestInput;
 use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
@@ -219,9 +221,8 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
             layout: out.layout.clone(),
         },
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile,
-            tile_n: tile,
-            tile_k: tile,
+            instruction: Instruction::new(tile, tile, tile),
+            planes: PlaneGrid::new(2, 2),
         }),
         &dtypes,
     )

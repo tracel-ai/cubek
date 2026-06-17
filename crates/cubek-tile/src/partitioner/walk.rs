@@ -21,16 +21,21 @@ pub struct Walk {
 
 #[cube]
 impl Walk {
-    /// To subdivide an operation, merge the operands' spaces then `Walk::over` the result.
-    pub fn over(#[comptime] space: Space) -> Walk {
+    /// The [`Walk`] over `space`'s tiles
+    /// Comptime for `Static` axes, runtime for `Dynamic`.
+    pub fn over(space: Space) -> Walk {
         let mut counts = Sequence::<usize>::new();
         #[unroll]
-        for p in 0..space.rank() {
-            counts.push(space.count(space.axis_at(p)))
+        for p in 0..comptime!(space.rank()) {
+            let edge = comptime!(space.partitioner().edge(space.axis_at(p)));
+            counts.push(space.extents.count(p, edge));
         }
+        Walk::from_counts(comptime!(space.clone()), counts)
+    }
 
+    /// Total step count from the per-axis grid `counts`, shared by both constructors.
+    fn from_counts(#[comptime] space: Space, counts: Sequence<usize>) -> Walk {
         let mut steps = 1usize;
-
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let axis = space.axis_at(p);
@@ -45,17 +50,18 @@ impl Walk {
         }
     }
 
+    /// Returns the regions count
     pub fn total(&self) -> usize {
         self.steps
     }
 
+    /// Returns the ith region of the walk
     pub fn region(&self, i: usize) -> Region {
         let idx = walk_index(i, self.steps, comptime!(self.space.partitioner().order()));
         Region::new(self.resolve(idx), self.space.clone())
     }
 
-    /// Unravel a runtime step `idx` to its per-axis coordinates: an odometer over
-    /// the per-axis tile counts, last axis fastest.
+    /// Unravel a runtime step `idx` to its per-axis coordinates
     fn resolve(&self, idx: usize) -> CoordsDyn {
         let rank = comptime!(self.space.rank());
         let mut counts = Sequence::<usize>::new();
@@ -79,17 +85,29 @@ impl Walk {
             let local = (idx / weight) % *counts.index(p);
             let axis = comptime!(self.space.axis_at(p));
             let dist = comptime!(self.space.partitioner().distribution(axis));
-            let inner_weight = comptime!(self.space.spatial_inner_weight(axis));
+            // Mixed-radix stride for axes sharing one hardware dim: the product of the later
+            // same-scope axes' instance counts (the earlier axis is the more significant
+            // digit). Computed from the runtime grid counts, so dynamic extents work; `1` when
+            // this axis owns its scope or is sequential.
+            let mut inner_weight = 1usize;
+            #[unroll]
+            for q in comptime!(p + 1)..rank {
+                let other = comptime!(self.space.axis_at(q));
+                let other_dist = comptime!(self.space.partitioner().distribution(other));
+                if comptime!(dist.scope().is_some() && other_dist.scope() == dist.scope()) {
+                    inner_weight *=
+                        instance_count(*self.counts.index(q), comptime!(other_dist.coverage()));
+                }
+            }
             coords.push(coord_of(local, *self.counts.index(p), inner_weight, dist) as u32);
         }
         coords
     }
 }
 
-/// Iterating a `Walk` visits its regions in order, so `for region in walk` lowers to the same
-/// `0..total()` / `region(i)` odometer the index API exposes. Schedules that need random access
-/// (prefetch, double-buffering) still index by hand. `IntoIterator` covers the runtime view a
-/// `#[cube]` body is type-checked against; `Iterable` drives the expansion.
+/// Iterating a `Walk` visits its regions in order, so `for region in walk` is equivalent to
+/// `for i in 0..walk.total() {let region = walk.region(i); ...}`
+/// Schedules that need random access (prefetch, double-buffering) still index by hand.
 impl IntoIterator for Walk {
     type Item = Region;
     type IntoIter = std::vec::IntoIter<Region>;
@@ -143,7 +161,7 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 fn coord_of(
     step: usize,
     grid: usize,
-    #[comptime] inner_weight: usize,
+    inner_weight: usize,
     #[comptime] dist: Distribution,
 ) -> usize {
     let mut coord = step;

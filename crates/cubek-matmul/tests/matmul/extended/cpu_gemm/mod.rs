@@ -6,7 +6,7 @@ use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     routines::{
         BlueprintStrategy,
-        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy},
+        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy, Instruction, PlaneGrid},
     },
     strategy::Strategy,
 };
@@ -70,9 +70,8 @@ fn mixed_precision_f16_inputs_f32_acc() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -113,9 +112,8 @@ fn very_small_square() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -156,9 +154,8 @@ fn small_square() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -199,9 +196,8 @@ fn rectangular() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -242,9 +238,8 @@ fn single_tile() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -313,9 +308,8 @@ fn batched_small() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -356,9 +350,8 @@ fn batched_rectangular() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -387,9 +380,8 @@ fn indivisible_all_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -418,9 +410,8 @@ fn indivisible_rectangular_batched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -532,9 +523,8 @@ fn broadcast_rhs_unbatched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -563,9 +553,8 @@ fn broadcast_lhs_unbatched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -596,9 +585,8 @@ fn broadcast_two_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -628,9 +616,8 @@ fn batched_two_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }
@@ -659,9 +646,8 @@ fn broadcast_indivisible() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            tile_m: tile_size,
-            tile_n: tile_size,
-            tile_k: tile_size,
+            instruction: Instruction::new(tile_size, tile_size, tile_size),
+            planes: PlaneGrid::new(2, 2),
         })),
     );
 }

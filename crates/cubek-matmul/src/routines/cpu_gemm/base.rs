@@ -47,33 +47,84 @@ pub(crate) fn batch_axis(i: usize) -> Axis {
 /// the runtime exposes per-core cache sizes.
 const L1_BYTES: usize = 32 * 1024;
 
-/// A fully-resolved CpuGemm plan: the cuboid sub-tile each cube computes. `tile_n`
-/// rides SIMD lines (N is the vectorized axis), `tile_m` is register rows, `tile_k`
-/// is the in-cube contraction depth.
+/// Accumulator lines the register microkernel fully unrolls
+const REGISTER_LINES: usize = 64;
+
+/// The largest divisor of `k` not exceeding `cap` (≥1).
+fn divisor_at_most(k: usize, cap: usize) -> usize {
+    let cap = cap.clamp(1, k.max(1));
+    let mut best = 1;
+    for d in 1..=cap {
+        if k.is_multiple_of(d) {
+            best = d;
+        }
+    }
+    best
+}
+
+/// The divisor of `g` nearest `target`, ties going to the larger
+fn nearest_divisor(g: usize, target: usize) -> usize {
+    let target = target.clamp(1, g.max(1));
+    let mut best: usize = 1;
+    for d in 1..=g {
+        if g.is_multiple_of(d)
+            && (d.abs_diff(target) < best.abs_diff(target)
+                || (d.abs_diff(target) == best.abs_diff(target) && d > best))
+        {
+            best = d;
+        }
+    }
+    best
+}
+
+/// The `m × n × k` extent of the innermost instruction
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Instruction {
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+}
+
+/// How many planes a cube's stage tile is divided into, along `m` and `n`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlaneGrid {
+    pub m: usize,
+    pub n: usize,
+}
+
+/// A fully-resolved CpuGemm plan: the leaf each plane computes ([`Instruction`]) and how
+/// finely a cube's stage tile is split across planes ([`PlaneGrid`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CpuGemmBlueprint {
-    pub tile_m: usize,
-    pub tile_n: usize,
-    pub tile_k: usize,
+    pub instruction: Instruction,
+    pub planes: PlaneGrid,
 }
 
 impl CpuGemmBlueprint {
     /// Reject a degenerate blueprint.
     #[allow(clippy::result_large_err)]
     pub fn validate(&self, _problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
-        if self.tile_m == 0 || self.tile_n == 0 || self.tile_k == 0 {
+        let (i, p) = (self.instruction, self.planes);
+        if i.m == 0 || i.n == 0 || i.k == 0 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "CpuGemm blocks must be non-zero, got {}x{}x{}",
-                self.tile_m, self.tile_n, self.tile_k
+                "CpuGemm instruction must be non-zero, got {}x{}x{}",
+                i.m, i.n, i.k
+            ))));
+        }
+        if p.m == 0 || p.n == 0 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "CpuGemm plane grid must be non-zero, got {}x{}",
+                p.m, p.n
             ))));
         }
         Ok(())
     }
 }
 
-/// `alpha` slides the M/N microtile between favouring
-/// - parallelism (→0: many small cubes)
-/// - reuse (→1: fewer fat cubes with deeper cache residency).
+/// `alpha` sets the contraction depth `tile_k` (the leaf is fixed to the register-block
+/// size), trading
+/// - shallow K, lighter L1 footprint (→0)
+/// - deeper K panels, more A/B reuse per accumulator load (→1).
 #[derive(Clone, Debug)]
 pub struct CpuGemmStrategy {
     pub alpha: f32,
@@ -142,17 +193,15 @@ impl CpuGemmRoutine {
         Ok(blueprint)
     }
 
-    /// The tile-size heuristic. `alpha` picks the M/N microtile edge between one SIMD
-    /// vector (max parallelism) and the largest square C tile that still leaves room in
-    /// L1 for the streaming A/B panels (max reuse). A parallelism floor shrinks it
-    /// further if cubes would leave cores idle, then `tile_k` fills the remaining cache
-    /// depth while the C accumulator stays resident.
+    /// The tile-size heuristic. The leaf is the largest square block fitting the unroll
+    /// window ([`REGISTER_LINES`]) — bigger drops to a ~2× slower path, so L1-sized leaves
+    /// are a trap. `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`]
     fn select<R: Runtime>(
         strategy: &CpuGemmStrategy,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
     ) -> CpuGemmBlueprint {
-        let (m, n, k, batch) = (problem.m, problem.n, problem.k, problem.num_batches());
+        let (m, n, k) = (problem.m, problem.n, problem.k);
         let elem = problem.global_dtypes.out.size().max(1);
         let vw = device_settings.vector_sizes.out.max(1); // SIMD width along N
         let cores = device_settings
@@ -165,43 +214,50 @@ impl CpuGemmRoutine {
             .max(1);
         let alpha = strategy.alpha.clamp(0.0, 1.0);
 
-        // Microtile edge: lerp between one vector (parallelism) and the largest square C
-        // tile that fits half of L1 (reuse), per `alpha`.
-        let e_min = vw;
-        let e_max = { ((L1_BYTES / (2 * elem)) as f64).sqrt() as usize }.max(e_min);
-        let edge = e_min + (alpha * (e_max - e_min) as f32) as usize;
+        // Leaf = largest square register block (in elements) that still unrolls: `nr`
+        // N-lines by `nr·vw` M-rows, so `nr·(nr·vw) = nr²·vw <= REGISTER_LINES`. A narrow
+        // `n < nr·vw` caps `tile_n` at `n` (scalar edge).
+        let nr = ((REGISTER_LINES as f64 / vw as f64).sqrt() as usize).max(1);
+        let tile_n = (nr * vw).min(n.max(1));
+        let tile_m = (nr * vw).min(m.max(1));
 
-        // N rides SIMD lines: round the microtile edge up to a whole vector, capped at N.
-        // The floor is one vector, but never wider than N itself (a narrow `n < vw` has no
-        // full line — it rides the scalar path, with `tile_n = n`).
-        let n_floor = vw.min(n.max(1));
-        let mut tile_n = (edge.div_ceil(vw) * vw).min(n.max(1));
-        // M is register rows
-        let mut tile_m = edge.clamp(1, m.max(1));
+        // K depth: `alpha` lerps from a shallow `vw` to the deepest panel that keeps A
+        // (tile_m×tile_k) and B (tile_k×tile_n) in L1 with the C tile (tile_m×tile_n)
+        // resident, then snaps to a divisor of `k`. A ragged K tile bounds-checks every leaf
+        // and disables the register unroll (~2×), so a clean shallower tile beats a deep
+        // ragged one.
+        let l1_tk = (L1_BYTES / elem).saturating_sub(tile_m * tile_n) / (tile_m + tile_n);
+        let tk_cap = (vw + (alpha * l1_tk.saturating_sub(vw) as f32) as usize).clamp(1, k.max(1));
+        let tile_k = divisor_at_most(k, tk_cap);
 
-        // Parallelism floor: keep at least one cube per core. Utilisation overrides the
-        // `alpha` preference for reuse.
-        while batch * m.div_ceil(tile_m) * n.div_ceil(tile_n) < cores
-            && (tile_m > 1 || tile_n > n_floor)
-        {
-            if tile_m >= tile_n {
-                tile_m = (tile_m / 2).max(1);
-            } else {
-                tile_n = (tile_n / 2).max(n_floor);
-            }
-        }
-
-        // K depth: fill the rest of L1 with the A (tile_m×tile_k) and B (tile_k×tile_n)
-        // panels while the C tile (tile_m×tile_n) stays resident.
-        let tile_k = ((L1_BYTES / elem).saturating_sub(tile_m * tile_n) / (tile_m + tile_n))
-            .clamp(1, k.max(1));
+        // Plane grid: split the leaf grid among ~`cores` worker threads by aspect ratio.
+        // Each plane is a thread and the cube loop is *serial*, so the factors must divide
+        // the grid — an indivisible split inflates the cube count (serial depth) and idles
+        // planes on the overhang. Snap the aspect-ratio target to grid divisors.
+        let grid_m = m.div_ceil(tile_m).max(1);
+        let grid_n = n.div_ceil(tile_n).max(1);
+        let target_m = (cores as f64 * grid_m as f64 / grid_n as f64)
+            .sqrt()
+            .round() as usize;
+        let plane_m = nearest_divisor(grid_m, target_m);
+        let plane_n = nearest_divisor(grid_n, (cores / plane_m).max(1));
 
         // Edge tiles are masked, so the heuristic's ideal block stands — just clamp each
         // edge to its axis (a tile no larger than the matrix) and keep it non-zero.
+        let instruction = Instruction {
+            m: tile_m.clamp(1, m.max(1)),
+            n: tile_n.clamp(1, n.max(1)),
+            k: tile_k.clamp(1, k.max(1)),
+        };
+
+        let planes = PlaneGrid {
+            m: plane_m,
+            n: plane_n,
+        };
+
         CpuGemmBlueprint {
-            tile_m: tile_m.clamp(1, m.max(1)),
-            tile_n: tile_n.clamp(1, n.max(1)),
-            tile_k: tile_k.clamp(1, k.max(1)),
+            instruction,
+            planes,
         }
     }
 }

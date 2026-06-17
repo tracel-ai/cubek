@@ -17,24 +17,17 @@ impl<Acc: CubePrimitive> Tile<Acc> {
     {
         match comptime!(self.space.partitioner()) {
             Partitioner::Final => Acc::mma(self, lhs, rhs),
-            Partitioner::Level(level) => match level.schedule() {
-                Schedule::Direct => mma_direct(lhs, rhs, self),
-                Schedule::Staged => mma_staged(lhs, rhs, self),
-                Schedule::DoubleBuffered => mma_double(lhs, rhs, self),
-            },
+            Partitioner::Level(level) => {
+                // The level's operation space is the merge of the operands' runtime spaces; the
+                // output contributes no axis beyond `lhs ∪ rhs`, so the two operands cover it.
+                let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
+                match level.schedule() {
+                    Schedule::Direct => mma_direct(lhs, rhs, self, space),
+                    Schedule::Staged => mma_staged(lhs, rhs, self, space),
+                    Schedule::DoubleBuffered => mma_double(lhs, rhs, self, space),
+                }
+            }
         }
-    }
-
-    /// The [`Direct`](Schedule::Direct) lowering's per-region step.
-    pub fn mma_at<Lhs: CubePrimitive, Rhs: CubePrimitive>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        region: &Region,
-    ) where
-        Acc: Mma<Lhs, Rhs>,
-    {
-        self.at(region).mma(&lhs.at(region), &rhs.at(region));
     }
 }
 
