@@ -8,12 +8,9 @@ use crate::{Axis, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
-/// One axis's size. `Static` is a comptime constant (a tile edge, or a problem dim we
-/// deliberately specialize on); `Dynamic` is a runtime scalar resolved in-kernel from the
-/// tensor shape. A `Dynamic` axis carries no value, so two problem shapes that differ only
-/// in their dynamic dims produce the *same* `Space` — hence one compiled kernel rather than
-/// one per shape. [`divide`](Space::divide) always yields `Static` children (a sub-tile edge
-/// is comptime), so dynamism only ever lives at the top level.
+/// One axis's size.
+/// `Static` is a comptime constant (a tile edge);
+/// `Dynamic` is a runtime scalar resolved in-kernel from the tensor shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Extent {
     Static(usize),

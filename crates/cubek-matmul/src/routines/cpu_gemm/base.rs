@@ -47,13 +47,10 @@ pub(crate) fn batch_axis(i: usize) -> Axis {
 /// the runtime exposes per-core cache sizes.
 const L1_BYTES: usize = 32 * 1024;
 
-/// Accumulator lines the register microkernel fully unrolls (mirrors cubek_tile's
-/// `UNROLL_BLOCK`). A leaf wider than this in `tile_m × (tile_n/vw)` lines drops to the
-/// slow runtime-looped inner path (~2× on CPU), so the leaf is sized to fit it.
+/// Accumulator lines the register microkernel fully unrolls
 const REGISTER_LINES: usize = 64;
 
-/// The largest divisor of `k` not exceeding `cap` (≥1). Snaps the contraction depth onto a
-/// clean K tiling so the leaf stays unrolled (a ragged K tile masks every leaf).
+/// The largest divisor of `k` not exceeding `cap` (≥1).
 fn divisor_at_most(k: usize, cap: usize) -> usize {
     let cap = cap.clamp(1, k.max(1));
     let mut best = 1;
@@ -65,8 +62,7 @@ fn divisor_at_most(k: usize, cap: usize) -> usize {
     best
 }
 
-/// The divisor of `g` nearest `target`, ties going to the larger (more planes, shallower
-/// serial cube depth). Result in `[1, g]`. Used to snap the plane grid onto the leaf grid.
+/// The divisor of `g` nearest `target`, ties going to the larger
 fn nearest_divisor(g: usize, target: usize) -> usize {
     let target = target.clamp(1, g.max(1));
     let mut best: usize = 1;
@@ -81,9 +77,7 @@ fn nearest_divisor(g: usize, target: usize) -> usize {
     best
 }
 
-/// The `m × n × k` extent of the innermost leaf — the tile one plane contracts in registers,
-/// the level the [`Mma`](cubek_tile) leaf realizes (one MMA "instruction"). `n` rides SIMD
-/// lines, `m` is register rows, `k` the in-register contraction depth.
+/// The `m × n × k` extent of the innermost instruction
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Instruction {
     pub m: usize,
@@ -91,25 +85,11 @@ pub struct Instruction {
     pub k: usize,
 }
 
-impl Instruction {
-    pub fn new(m: usize, n: usize, k: usize) -> Self {
-        Instruction { m, n, k }
-    }
-}
-
-/// How many planes a cube's stage tile is divided into, along `m` and `n`. Planes are the
-/// CPU's parallel worker threads, so the cube owns an `(m·instruction.m) × (n·instruction.n)`
-/// tile and each plane one [`Instruction`] of it.
+/// How many planes a cube's stage tile is divided into, along `m` and `n`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlaneGrid {
     pub m: usize,
     pub n: usize,
-}
-
-impl PlaneGrid {
-    pub fn new(m: usize, n: usize) -> Self {
-        PlaneGrid { m, n }
-    }
 }
 
 /// A fully-resolved CpuGemm plan: the leaf each plane computes ([`Instruction`]) and how
@@ -215,8 +195,7 @@ impl CpuGemmRoutine {
 
     /// The tile-size heuristic. The leaf is the largest square block fitting the unroll
     /// window ([`REGISTER_LINES`]) — bigger drops to a ~2× slower path, so L1-sized leaves
-    /// are a trap. `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`] (the worker
-    /// threads — cubes are serial on CPU).
+    /// are a trap. `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`]
     fn select<R: Runtime>(
         strategy: &CpuGemmStrategy,
         problem: &MatmulProblem,
@@ -265,13 +244,20 @@ impl CpuGemmRoutine {
 
         // Edge tiles are masked, so the heuristic's ideal block stands — just clamp each
         // edge to its axis (a tile no larger than the matrix) and keep it non-zero.
+        let instruction = Instruction {
+            m: tile_m.clamp(1, m.max(1)),
+            n: tile_n.clamp(1, n.max(1)),
+            k: tile_k.clamp(1, k.max(1)),
+        };
+
+        let planes = PlaneGrid {
+            m: plane_m,
+            n: plane_n,
+        };
+
         CpuGemmBlueprint {
-            instruction: Instruction::new(
-                tile_m.clamp(1, m.max(1)),
-                tile_n.clamp(1, n.max(1)),
-                tile_k.clamp(1, k.max(1)),
-            ),
-            planes: PlaneGrid::new(plane_m, plane_n),
+            instruction,
+            planes,
         }
     }
 }

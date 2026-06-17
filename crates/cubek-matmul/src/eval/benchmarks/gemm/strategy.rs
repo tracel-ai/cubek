@@ -23,8 +23,15 @@ fn cpu_gemm_forced(
         tag,
         label,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction::new(tile, tile, tile),
-            planes: PlaneGrid::new(plane_m, plane_n),
+            instruction: Instruction {
+                m: tile,
+                n: tile,
+                k: tile,
+            },
+            planes: PlaneGrid {
+                m: plane_m,
+                n: plane_n,
+            },
         })),
     )
 }

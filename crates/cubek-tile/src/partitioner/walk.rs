@@ -21,10 +21,8 @@ pub struct Walk {
 
 #[cube]
 impl Walk {
-    /// The [`Walk`] over `space`'s tiles: one trip count per axis, from [`Extents::count`] — comptime
-    /// for `Static` axes (so the loop unrolls), runtime for `Dynamic`. An all-`Static` space (the
-    /// whole interior — `divide` yields `Static` children) stays fully comptime; only the top reads
-    /// runtime sizes.
+    /// The [`Walk`] over `space`'s tiles
+    /// Comptime for `Static` axes, runtime for `Dynamic`.
     pub fn over(space: Space) -> Walk {
         let mut counts = Sequence::<usize>::new();
         #[unroll]
@@ -52,17 +50,18 @@ impl Walk {
         }
     }
 
+    /// Returns the regions count
     pub fn total(&self) -> usize {
         self.steps
     }
 
+    /// Returns the ith region of the walk
     pub fn region(&self, i: usize) -> Region {
         let idx = walk_index(i, self.steps, comptime!(self.space.partitioner().order()));
         Region::new(self.resolve(idx), self.space.clone())
     }
 
-    /// Unravel a runtime step `idx` to its per-axis coordinates: an odometer over
-    /// the per-axis tile counts, last axis fastest.
+    /// Unravel a runtime step `idx` to its per-axis coordinates
     fn resolve(&self, idx: usize) -> CoordsDyn {
         let rank = comptime!(self.space.rank());
         let mut counts = Sequence::<usize>::new();
@@ -106,10 +105,9 @@ impl Walk {
     }
 }
 
-/// Iterating a `Walk` visits its regions in order, so `for region in walk` lowers to the same
-/// `0..total()` / `region(i)` odometer the index API exposes. Schedules that need random access
-/// (prefetch, double-buffering) still index by hand. `IntoIterator` covers the runtime view a
-/// `#[cube]` body is type-checked against; `Iterable` drives the expansion.
+/// Iterating a `Walk` visits its regions in order, so `for region in walk` is equivalent to
+/// `for i in 0..walk.total() {let region = walk.region(i); ...}`
+/// Schedules that need random access (prefetch, double-buffering) still index by hand.
 impl IntoIterator for Walk {
     type Item = Region;
     type IntoIter = std::vec::IntoIter<Region>;

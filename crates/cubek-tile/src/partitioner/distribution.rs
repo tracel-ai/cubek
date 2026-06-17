@@ -49,7 +49,7 @@ pub enum ComputeScope {
 }
 
 impl Distribution {
-    /// One tile per cube on `axis`, contiguous — the common spatial case.
+    /// One tile per cube on `axis`, contiguous
     pub fn cube(axis: CubeAxis) -> Self {
         Distribution::Spatial {
             scope: ComputeScope::Cube(axis),
@@ -58,7 +58,7 @@ impl Distribution {
         }
     }
 
-    /// One tile per plane (worker thread), contiguous — the common spatial case.
+    /// One tile per plane, contiguous
     pub fn plane() -> Self {
         Distribution::Spatial {
             scope: ComputeScope::Plane,

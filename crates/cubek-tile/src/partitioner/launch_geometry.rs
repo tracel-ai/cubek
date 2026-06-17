@@ -11,9 +11,9 @@ impl Space {
     /// `Spatial { Cube(d), .. }`, at any level of the tree, else 1.
     pub fn cube_count(&self) -> CubeCount {
         CubeCount::Static(
-            instances_for(self, ComputeScope::Cube(CubeAxis::X)),
-            instances_for(self, ComputeScope::Cube(CubeAxis::Y)),
-            instances_for(self, ComputeScope::Cube(CubeAxis::Z)),
+            instances_count(self, ComputeScope::Cube(CubeAxis::X)),
+            instances_count(self, ComputeScope::Cube(CubeAxis::Y)),
+            instances_count(self, ComputeScope::Cube(CubeAxis::Z)),
         )
     }
 
@@ -21,16 +21,12 @@ impl Space {
     /// width on GPU).
     pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>) -> CubeDim {
         let plane_size = client.properties().hardware.plane_size_max;
-        CubeDim::new_2d(plane_size, instances_for(self, ComputeScope::Plane))
+        CubeDim::new_2d(plane_size, instances_count(self, ComputeScope::Plane))
     }
 }
 
-/// Product of instance counts over every axis riding `scope`, across the whole partitioner
-/// tree (`1` when none). Each level contributes its spatial axes' instances; nested grids
-/// multiply, and several axes sharing one dim ride it as a mixed-radix index — [`Walk`]
-/// decodes the flat position back into per-axis coordinates. The tree is descended via
-/// [`Space::divide`], so each level sees its own grid (parent edge ÷ this level's edge).
-fn instances_for(space: &Space, scope: ComputeScope) -> u32 {
+/// Product of instance counts over every axis riding `scope`, across the whole partitioner tree
+fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
     let mut total = 1u32;
     let mut level = space.clone();
     while !level.is_final() {
