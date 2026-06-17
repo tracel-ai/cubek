@@ -79,6 +79,32 @@ impl Resample {
         self.resample_axes.push(axis);
         self
     }
+
+    /// Returns the number of lanes to unroll: `vector_size` if the vectorized axis
+    /// is a resampling axis, otherwise `1`.
+    pub fn compute_num_lanes(&self, vectorized_axis: usize, vector_size: usize) -> usize {
+        let mut is_vectorized = false;
+
+        for axis_idx in 0..self.resample_axes.len() {
+            is_vectorized |= self.resample_axes[axis_idx].axis == vectorized_axis;
+        }
+
+        if is_vectorized { vector_size } else { 1_usize }
+    }
+}
+
+#[cube]
+impl Resample {
+    /// Computes the total number of taps.
+    pub fn compute_num_taps(args: &ResampleArgs, #[comptime] config: &Resample) -> usize {
+        let mut num_taps = 1;
+
+        for axis_idx in comptime!(0..config.resample_axes.len()) {
+            num_taps *= args.resample_axes.index(axis_idx).window_args.size
+        }
+
+        num_taps
+    }
 }
 
 /// Resample axis operation.
