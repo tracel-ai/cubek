@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::{Space, Tile, Walk, quantization::dequantize::Dequantize};
+use crate::{dequantize::Dequantize, *};
 
 #[cube]
 pub(crate) fn dequantize_direct<
@@ -12,8 +12,7 @@ pub(crate) fn dequantize_direct<
     scales: &Tile<S>,
     output: &mut Tile<O>,
 ) {
-    let space = comptime![Space::merge(&[&input.space, &output.space])];
-    for region in Walk::over(space) {
+    for region in Walk::over(input.runtime_space()) {
         output.dequantize_at(input, scales, &region);
     }
 }

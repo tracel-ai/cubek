@@ -2,10 +2,7 @@ pub mod schedule;
 
 use cubecl::prelude::*;
 
-use crate::{
-    Partitioner, Region, Schedule, Tile, TileExpand,
-    quantization::dequantize::schedule::dequantize_direct,
-};
+use crate::{dequantize::schedule::dequantize_direct, *};
 
 #[cube]
 impl<O: CubePrimitive> Tile<O> {
