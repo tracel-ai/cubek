@@ -1,5 +1,9 @@
-use crate::definition::{Kernel, Placement, PlacementArgs, Semiring, WindowArgs};
+use crate::definition::{
+    BoundaryMode, Kernel, NormalizationMode, Placement, PlacementArgs, Semiring, WindowArgs,
+};
 use cubecl::prelude::*;
+
+pub type CoordsDynI = Sequence<i32>;
 
 /// Resampling args.
 #[derive(CubeType, CubeLaunch)]
@@ -125,22 +129,4 @@ impl ResampleAxis {
             placement,
         }
     }
-}
-
-/// Boundary handling mode for out-of-bounds taps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
-pub enum BoundaryMode {
-    /// Out-of-bounds taps contribute zero (skip the tap).
-    Zero,
-    /// Out-of-bounds coordinates are clamped to the nearest valid input coordinate.
-    Clamp,
-}
-
-/// Normalization mode for tap weights.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
-pub enum NormalizationMode {
-    /// Preserve the kernel weights exactly.
-    None,
-    /// Divide by the accumulated valid weight.
-    Renormalize,
 }

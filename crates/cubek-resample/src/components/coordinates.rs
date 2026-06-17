@@ -1,10 +1,8 @@
-use crate::definition::{Resample, ResampleArgs, fast_div_mod_value};
+use crate::definition::{CoordsDynI, Resample, ResampleArgs, fast_div_mod_value};
 use cubecl::{
     prelude::*,
     std::{FastDivmod, tensor::layout::CoordsDyn},
 };
-
-pub type CoordsDynI = Sequence<i32>;
 
 /// Computes the absolute coordinate of a cube.
 #[cube]
@@ -138,19 +136,6 @@ pub fn resolve_tap_coords(
     let clamped_coord = clamp_to_coords_dyn(input_shape, &in_coord);
 
     (in_coord, clamped_coord)
-}
-
-/// Check if coordinate is in bounds depending on boundary mode.
-#[cube]
-pub fn is_in_bounds(in_coord: &CoordsDynI, clamped_coord: &CoordsDyn) -> bool {
-    let mut in_bounds = true;
-
-    #[unroll]
-    for i in 0..in_coord.len() {
-        in_bounds &= in_coord[i] == clamped_coord[i] as i32;
-    }
-
-    in_bounds
 }
 
 /// Map output coordinate to input coordinate using precomputed anchors.

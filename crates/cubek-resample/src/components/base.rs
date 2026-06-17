@@ -1,9 +1,8 @@
 use crate::components::coordinates::{
-    CoordsDynI, compute_anchors, cube_absolute_coord, in_bounds, tile_absolute_coord,
+    compute_anchors, cube_absolute_coord, in_bounds, tile_absolute_coord,
 };
-use crate::components::resample_instruction::Accumulator;
 use crate::components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver};
-use crate::definition::{Resample, ResampleArgs, TileArgs};
+use crate::definition::{Accumulator, CoordsDynI, Resample, ResampleArgs, TileArgs};
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::CoordsDyn},
@@ -64,7 +63,7 @@ fn resample_unit<F: Float, N: Size>(
     let out_coord = tile_absolute_coord(
         &tile_args.tile_shape,
         &tile_args.tile_strides,
-        &cube_coord,
+        cube_coord,
         unit_pos,
         vectorized_axis,
         vector_size,
@@ -83,7 +82,7 @@ fn resample_unit<F: Float, N: Size>(
             vector_size,
         );
 
-        ResampleInstruction::store(out_coord, output, accumulator, config);
+        ResampleInstruction::store(out_coord, output, &accumulator, config);
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
-    components::coordinates::{CoordsDynI, is_in_bounds, resolve_tap_coords},
-    definition::{BoundaryMode, Kernel, Resample, ResampleArgs},
+    components::coordinates::resolve_tap_coords,
+    definition::{BoundaryMode, CoordsDynI, Kernel, Resample, ResampleArgs},
 };
 use cubecl::{
     prelude::*,
@@ -40,8 +40,14 @@ impl TapResolver {
                 lane,
             );
 
-            let lane_weight =
-                compute_weight::<F, N>(&in_coord, &clamped_coord, centers, config, lane);
+            let unclamped_weight = Kernel::weight::<F, N>(&in_coord, centers, config, lane);
+
+            let lane_weight = BoundaryMode::resolve_weight::<F, N>(
+                unclamped_weight,
+                &in_coord,
+                &clamped_coord,
+                &config.boundary,
+            );
 
             // Extract input values only when vectorized over multiple lanes
             if num_lanes > 1 {
@@ -59,24 +65,5 @@ impl TapResolver {
         }
 
         (value, weight)
-    }
-}
-
-/// Computes weight considering boundary mode.
-#[cube]
-fn compute_weight<F: Float, N: Size>(
-    in_coord: &CoordsDynI,
-    clamped_coord: &CoordsDyn,
-    centers: &Sequence<F>,
-    #[comptime] config: &Resample,
-    #[comptime] lane: usize,
-) -> F {
-    match config.boundary {
-        BoundaryMode::Clamp => Kernel::weight::<F, N>(in_coord, centers, config, lane),
-        BoundaryMode::Zero => select(
-            is_in_bounds(in_coord, clamped_coord),
-            Kernel::weight::<F, N>(in_coord, centers, config, lane),
-            F::zero(),
-        ),
     }
 }
