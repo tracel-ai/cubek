@@ -33,11 +33,6 @@ pub fn resample_launch<R: Runtime>(
 
     let cube_count = calculate_cube_count(client, &tile_args);
 
-    println!("cube count : {:?}", cube_count);
-    println!("tile args : {:?}", tile_args);
-    println!("vector size : {:?}", vector_size);
-    println!("vectorized axis : {:?}", vectorized_axis);
-
     unsafe {
         resample_kernel::launch_unchecked(
             client,

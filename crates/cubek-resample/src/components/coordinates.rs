@@ -1,7 +1,7 @@
-use crate::definition::{Resample, ResampleArgs};
+use crate::definition::{Resample, ResampleArgs, fast_div_mod_value};
 use cubecl::{
     prelude::*,
-    std::{FastDivmod, FastDivmodExpand, tensor::layout::CoordsDyn},
+    std::{FastDivmod, tensor::layout::CoordsDyn},
 };
 
 pub type CoordsDynI = Sequence<i32>;
@@ -11,8 +11,8 @@ pub type CoordsDynI = Sequence<i32>;
 pub fn cube_absolute_coord(
     cube_shape: &Sequence<FastDivmod<usize>>,
     cube_strides: &Sequence<FastDivmod<usize>>,
+    cube_pos: usize,
 ) -> CoordsDyn {
-    let cube_pos = CUBE_POS;
     let mut coords = CoordsDyn::new();
 
     #[unroll]
@@ -32,10 +32,10 @@ pub fn tile_absolute_coord(
     tile_shape: &Sequence<FastDivmod<usize>>,
     tile_strides: &Sequence<FastDivmod<usize>>,
     cube_coord: &CoordsDyn,
+    unit_pos: usize,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
 ) -> CoordsDyn {
-    let unit_pos = UNIT_POS as usize;
     let mut coords = CoordsDyn::new();
 
     #[unroll]
@@ -43,10 +43,7 @@ pub fn tile_absolute_coord(
         let (unit_pos_at_dim, _) = tile_strides[i].div_mod(unit_pos);
         let (_, coord) = tile_shape[i].div_mod(unit_pos_at_dim);
 
-        let tile_dim_size = match &tile_shape[i] {
-            FastDivmod::Fast { divisor, .. } => *divisor,
-            FastDivmod::Fallback { divisor } => *divisor,
-        };
+        let tile_dim_size = fast_div_mod_value(&tile_shape[i]);
 
         let coord = if i == vectorized_axis {
             ((cube_coord[i] as usize * tile_dim_size + coord) * vector_size) as u32
@@ -60,21 +57,24 @@ pub fn tile_absolute_coord(
     coords
 }
 
-/// Checks if the given coordinate is out of bounds for the given output shape.
+/// Checks if the given coordinate is in bounds for the given output shape.
 #[cube]
-pub fn is_out_of_bounds(
+pub fn in_bounds(
     output_shape: &Sequence<usize>,
     out_coord: &CoordsDyn,
     #[comptime] config: &Resample,
 ) -> bool {
-    let mut is_out_of_bounds = false;
+    let mut in_bounds = true;
 
     for axis_idx in comptime!(0..config.resample_axes.len()) {
-        if out_coord[axis_idx] as usize >= output_shape[axis_idx] {
-            is_out_of_bounds = true;
+        let resample_axis = config.resample_axes.index(axis_idx);
+        let axis = resample_axis.axis;
+
+        if out_coord[axis] as usize >= output_shape[axis] {
+            in_bounds = false;
         }
     }
-    is_out_of_bounds
+    in_bounds
 }
 
 /// Precompute the starting input coordinates and continuous centers.

@@ -1,4 +1,8 @@
-use cubecl::{prelude::*, std::FastDivmod, zspace::Shape};
+use cubecl::{
+    prelude::*,
+    std::{FastDivmod, FastDivmodExpand},
+    zspace::Shape,
+};
 
 /// Tile args.
 #[derive(CubeType, CubeLaunch)]
@@ -8,6 +12,20 @@ pub struct TileArgs {
     pub cube_shape: Sequence<FastDivmod<usize>>,
     pub cube_strides: Sequence<FastDivmod<usize>>,
     pub output_shape: Sequence<usize>,
+}
+
+#[cube]
+impl TileArgs {
+    pub fn area(&self) -> usize {
+        let mut area = 1;
+
+        #[unroll]
+        for i in 0..self.tile_shape.len() {
+            area *= fast_div_mod_value(&self.tile_shape[i]);
+        }
+
+        area
+    }
 }
 
 /// Tile args launcher to convert to Sequence with FastDivmod and usize.
@@ -81,6 +99,15 @@ impl TileArgsLauncher {
             to_sequence::<R, FastDivmod<usize>>(&self.cube_strides),
             to_sequence::<R, usize>(&self.output_shape),
         )
+    }
+}
+
+/// Get the value of a FastDivmod.
+#[cube]
+pub fn fast_div_mod_value(div_mod: &FastDivmod<usize>) -> usize {
+    match div_mod {
+        FastDivmod::Fast { divisor, .. } => *divisor,
+        FastDivmod::Fallback { divisor } => *divisor,
     }
 }
 
