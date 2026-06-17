@@ -388,9 +388,9 @@ impl<T: CubePrimitive> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
-    /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
+    /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
     /// so the leaf masks without being asked.
-    pub(crate) fn masked(&self, layout: BatchMatrix) -> MaskedView<'_, T> {
+    pub(crate) fn masked(&self, layout: BatchMatrix) -> MatrixView<'_, T> {
         MaskedView::new(
             self.buffer
                 .view(self.base())
@@ -401,12 +401,40 @@ impl<T: CubePrimitive> MemData<T> {
     }
 
     /// The mutable twin of [`masked`](MemData::masked).
-    pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MaskedViewMut<'_, T> {
+    pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MatrixViewMut<'_, T> {
         let base = self.base();
         let window = self.window();
         let check = comptime!(self.check);
         MaskedViewMut::new(
             self.buffer.view_mut(base).view_mut(window).view_mut(layout),
+            check,
+        )
+    }
+
+    /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent: a
+    /// [`FlatLayout`] turns a row-major index into the N-D position, carrying the `check` flag
+    /// so a flat scan masks the overhang without being asked.
+    pub(crate) fn flat(&self) -> FlatView<'_, T> {
+        FlatView::new(
+            self.buffer
+                .view(self.base())
+                .view(self.window())
+                .view(FlatLayout::new(self.extent.clone())),
+            comptime!(self.check),
+        )
+    }
+
+    /// The mutable twin of [`flat`](MemData::flat).
+    pub(crate) fn flat_mut(&mut self) -> FlatViewMut<'_, T> {
+        let base = self.base();
+        let window = self.window();
+        let extent = self.extent.clone();
+        let check = comptime!(self.check);
+        FlatViewMut::new(
+            self.buffer
+                .view_mut(base)
+                .view_mut(window)
+                .view_mut(FlatLayout::new(extent)),
             check,
         )
     }
@@ -417,7 +445,7 @@ impl<T: CubePrimitive> MemData<T> {
         &mut self,
         i: usize,
         #[comptime] space: Space,
-    ) -> MaskedViewMut<'_, T> {
+    ) -> MatrixViewMut<'_, T> {
         let rank = comptime!(space.rank());
         let rows = comptime!(space.extent_at(rank - 2));
         let cols = comptime!(space.extent_at(rank - 1));
