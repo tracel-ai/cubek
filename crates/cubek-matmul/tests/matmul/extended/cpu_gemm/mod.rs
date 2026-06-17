@@ -70,7 +70,11 @@ fn mixed_precision_f16_inputs_f32_acc() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -112,7 +116,11 @@ fn very_small_square() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -154,7 +162,11 @@ fn small_square() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -196,7 +208,11 @@ fn rectangular() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -238,7 +254,11 @@ fn single_tile() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -308,7 +328,11 @@ fn batched_small() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -350,7 +374,11 @@ fn batched_rectangular() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -380,7 +408,11 @@ fn indivisible_all_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -410,7 +442,11 @@ fn indivisible_rectangular_batched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -523,7 +559,11 @@ fn broadcast_rhs_unbatched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -553,7 +593,11 @@ fn broadcast_lhs_unbatched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -585,7 +629,11 @@ fn broadcast_two_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -616,7 +664,11 @@ fn batched_two_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );
@@ -646,7 +698,11 @@ fn broadcast_indivisible() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile_size, n: tile_size, k: tile_size },
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         })),
     );

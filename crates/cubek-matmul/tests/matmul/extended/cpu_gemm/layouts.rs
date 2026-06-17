@@ -221,7 +221,11 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
             layout: out.layout.clone(),
         },
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m: tile, n: tile, k: tile },
+            instruction: Instruction {
+                m: tile,
+                n: tile,
+                k: tile,
+            },
             planes: PlaneGrid { m: 2, n: 2 },
         }),
         &dtypes,
