@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{matmul::lower::Mma, *};
+use crate::{matmul::instruction::Mma, *};
 
 /// `Direct`: no staging
 #[cube]
