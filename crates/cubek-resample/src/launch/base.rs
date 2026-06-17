@@ -12,6 +12,7 @@ use cubecl::{
             fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
         },
     },
+    tensor_vector_size_parallel,
 };
 
 /// Launch the resample kernel for a single spatial axis.
@@ -57,29 +58,27 @@ fn vectorize<R: Runtime>(
     output: &TensorBinding<R>,
     dtype: StorageType,
 ) -> (usize, usize) {
-    let supported_sizes = client.io_optimized_vector_sizes(dtype.size());
     let rank = input.shape.len();
 
-    for i in 1..=rank {
-        let axis = rank - i;
+    for axis in (0..rank).rev() {
+        let in_vec = tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
+            &input.shape,
+            &input.strides,
+            axis,
+        );
 
-        // Break and don't vectorize if the axis is not contiguous.
-        if input.strides[axis] > 1 || output.strides[axis] > 1 {
-            break;
-        }
+        let out_vec = tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
+            &output.shape,
+            &output.strides,
+            axis,
+        );
 
-        // Find the largest vector size that works for both tensors on this axis
-        for vector_size in supported_sizes.clone() {
-            if vector_size == 1 {
-                continue;
-            }
+        let vector_size = in_vec.min(out_vec);
 
-            // If this vector size is supported by both, take it and break.
-            if input.shape[axis].is_multiple_of(vector_size)
-                && output.shape[axis].is_multiple_of(vector_size)
-            {
-                return (vector_size, axis);
-            }
+        if vector_size > 1 {
+            return (vector_size, axis);
         }
     }
 
