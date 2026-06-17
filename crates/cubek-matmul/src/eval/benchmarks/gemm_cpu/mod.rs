@@ -8,13 +8,7 @@ use crate::strategy::Strategy;
 /// CpuGemm vs the simple-unit baseline, plus the forced-tile mask probes. The forced
 /// tiles are diagnostic on the 512 square: `t64`/`t32` divide 512 (maskless), `t48`
 /// does not (masked).
-const STRATEGIES: &[&str] = &[
-    "cpu_gemm",
-    "simple_unit_min",
-    "cpu_gemm_t48",
-    "cpu_gemm_t64",
-    "cpu_gemm_t32",
-];
+const STRATEGIES: &[&str] = &["simple_unit_min", "simple_unit_max", "cpu_gemm"];
 
 /// Base shapes; the catalog expands each over all four layouts (rr/rc/cr/cc) and both
 /// precisions (f32/f16). The 512 square keeps the CPU reference cheap while still
