@@ -4,6 +4,8 @@ use cubecl::prelude::*;
 /// The kernel function, it determines the shape of the kernel.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
 pub enum Kernel {
+    /// A kernel that always returns zero.
+    Zero,
     /// Uniform taps with distribution: `1.0 / scale`.
     Uniform { scale: u8 },
     /// Triangle, support 2.
@@ -15,6 +17,10 @@ pub enum Kernel {
 }
 
 impl Kernel {
+    pub fn zero() -> Self {
+        Kernel::Zero
+    }
+
     pub fn one() -> Self {
         Kernel::Uniform { scale: 1 }
     }
@@ -76,6 +82,7 @@ fn weight_separable<F: Float>(
     #[comptime] resample_axis: &ResampleAxis,
 ) -> F {
     match resample_axis.kernel {
+        Kernel::Zero => F::new(0.0),
         Kernel::Uniform { scale } => F::new(1.0) / F::cast_from(scale),
         Kernel::Linear | Kernel::Cubic { .. } | Kernel::Lanczos { .. } => {
             let frac = F::cast_from(in_coord[resample_axis.axis]) - centers[lane_idx];

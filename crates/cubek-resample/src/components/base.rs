@@ -2,7 +2,7 @@ use crate::components::coordinates::{
     compute_anchors, cube_absolute_coord, in_bounds, tile_absolute_coord,
 };
 use crate::components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver};
-use crate::definition::{Accumulator, CoordsDynI, Resample, ResampleArgs, TileArgs};
+use crate::definition::{Accumulator, CoordsDynI, Resample, ResampleArgs, TileSize};
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::CoordsDyn},
@@ -13,7 +13,8 @@ use cubecl::{
 pub fn resample_kernel<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDyn>,
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
-    tile_args: TileArgs,
+    tile_size: TileSize,
+    cube_size: TileSize,
     args: ResampleArgs,
     #[comptime] config: Resample,
     #[comptime] vectorized_axis: usize,
@@ -23,12 +24,12 @@ pub fn resample_kernel<F: Float, N: Size>(
 
     let cube_pos = CUBE_POS;
 
-    let cube_coord = cube_absolute_coord(&tile_args.cube_shape, &tile_args.cube_strides, cube_pos);
+    let cube_coord = cube_absolute_coord(&cube_size, cube_pos);
 
     let unit_pos = UNIT_POS as usize;
     let cube_dim = CUBE_DIM as usize;
 
-    let num_iterations = (tile_args.area() - unit_pos).div_ceil(cube_dim);
+    let num_iterations = (tile_size.area() - unit_pos).div_ceil(cube_dim);
 
     for iteration in 0..num_iterations {
         let unit_pos = unit_pos + iteration * cube_dim;
@@ -38,7 +39,7 @@ pub fn resample_kernel<F: Float, N: Size>(
             output,
             &cube_coord,
             unit_pos,
-            &tile_args,
+            &tile_size,
             &args,
             &config,
             vectorized_axis,
@@ -54,22 +55,21 @@ fn resample_unit<F: Float, N: Size>(
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
     cube_coord: &CoordsDyn,
     unit_pos: usize,
-    tile_args: &TileArgs,
+    tile_size: &TileSize,
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
 ) {
     let out_coord = tile_absolute_coord(
-        &tile_args.tile_shape,
-        &tile_args.tile_strides,
+        tile_size,
         cube_coord,
         unit_pos,
         vectorized_axis,
         vector_size,
     );
 
-    if in_bounds(&tile_args.output_shape, &out_coord, config) {
+    if in_bounds(&output.shape(), &out_coord, config) {
         let mut accumulator = ResampleInstruction::initialize(config);
 
         accumulate_taps::<F, N>(

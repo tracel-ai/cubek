@@ -1,22 +1,15 @@
-use crate::definition::{CoordsDynI, Resample, ResampleArgs, fast_div_mod_value};
-use cubecl::{
-    prelude::*,
-    std::{FastDivmod, tensor::layout::CoordsDyn},
-};
+use crate::definition::{CoordsDynI, Resample, ResampleArgs, TileSize, fast_div_mod_value};
+use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 /// Computes the absolute coordinate of a cube.
 #[cube]
-pub fn cube_absolute_coord(
-    cube_shape: &Sequence<FastDivmod<usize>>,
-    cube_strides: &Sequence<FastDivmod<usize>>,
-    cube_pos: usize,
-) -> CoordsDyn {
+pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDyn {
     let mut coords = CoordsDyn::new();
 
     #[unroll]
-    for i in 0..cube_shape.len() {
-        let (cube_pos_at_dim, _) = cube_strides[i].div_mod(cube_pos);
-        let (_, cube_coord) = cube_shape[i].div_mod(cube_pos_at_dim);
+    for i in 0..cube_size.shape.len() {
+        let (cube_pos_at_dim, _) = cube_size.strides[i].div_mod(cube_pos);
+        let (_, cube_coord) = cube_size.shape[i].div_mod(cube_pos_at_dim);
 
         coords.push(cube_coord as u32);
     }
@@ -27,8 +20,7 @@ pub fn cube_absolute_coord(
 /// Computes the local coordinate within a tile.
 #[cube]
 pub fn tile_absolute_coord(
-    tile_shape: &Sequence<FastDivmod<usize>>,
-    tile_strides: &Sequence<FastDivmod<usize>>,
+    tile_size: &TileSize,
     cube_coord: &CoordsDyn,
     unit_pos: usize,
     #[comptime] vectorized_axis: usize,
@@ -37,11 +29,11 @@ pub fn tile_absolute_coord(
     let mut coords = CoordsDyn::new();
 
     #[unroll]
-    for i in 0..tile_shape.len() {
-        let (unit_pos_at_dim, _) = tile_strides[i].div_mod(unit_pos);
-        let (_, coord) = tile_shape[i].div_mod(unit_pos_at_dim);
+    for i in 0..tile_size.shape.len() {
+        let (unit_pos_at_dim, _) = tile_size.strides[i].div_mod(unit_pos);
+        let (_, coord) = tile_size.shape[i].div_mod(unit_pos_at_dim);
 
-        let tile_dim_size = fast_div_mod_value(&tile_shape[i]);
+        let tile_dim_size = fast_div_mod_value(&tile_size.shape[i]);
 
         let coord = if i == vectorized_axis {
             ((cube_coord[i] as usize * tile_dim_size + coord) * vector_size) as u32
@@ -58,7 +50,7 @@ pub fn tile_absolute_coord(
 /// Checks if the given coordinate is in bounds for the given output shape.
 #[cube]
 pub fn in_bounds(
-    output_shape: &Sequence<usize>,
+    output_shape: &CoordsDyn,
     out_coord: &CoordsDyn,
     #[comptime] config: &Resample,
 ) -> bool {
@@ -68,7 +60,7 @@ pub fn in_bounds(
         let resample_axis = config.resample_axes.index(axis_idx);
         let axis = resample_axis.axis;
 
-        if out_coord[axis] as usize >= output_shape[axis] {
+        if out_coord[axis] >= output_shape[axis] {
             in_bounds = false;
         }
     }

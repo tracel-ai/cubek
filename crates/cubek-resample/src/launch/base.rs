@@ -1,6 +1,6 @@
 use crate::{
     components::resample_kernel,
-    definition::{Resample, ResampleArgsLaunch, TileArgsLauncher},
+    definition::{Resample, ResampleArgsLaunch, TileSizeLauncher},
 };
 use cubecl::{
     prelude::*,
@@ -30,9 +30,10 @@ pub fn resample_launch<R: Runtime>(
 
     let cube_dim = CubeDim::new(client, working_units);
 
-    let tile_args = TileArgsLauncher::new(&output.shape, &cube_dim, vectorized_axis, vector_size);
+    let (tile_size, cube_size) =
+        TileSizeLauncher::new(&output.shape, &cube_dim, vectorized_axis, vector_size);
 
-    let cube_count = calculate_cube_count(client, &tile_args);
+    let cube_count = calculate_cube_count(client, &cube_size);
 
     unsafe {
         resample_kernel::launch_unchecked(
@@ -42,7 +43,8 @@ pub fn resample_launch<R: Runtime>(
             vector_size,
             view(input, vector_size),
             view(output, vector_size),
-            tile_args.to_launch::<R>(),
+            tile_size.to_launch(),
+            cube_size.to_launch(),
             args,
             config,
             vectorized_axis,
@@ -90,12 +92,12 @@ fn vectorize<R: Runtime>(
 /// assigned to one tile.
 fn calculate_cube_count<R: Runtime>(
     client: &ComputeClient<R>,
-    tile_args: &TileArgsLauncher,
+    cube_size_launcher: &TileSizeLauncher,
 ) -> CubeCount {
-    if tile_args.is_empty() {
+    if cube_size_launcher.is_empty() {
         return CubeCount::Static(0, 0, 0);
     }
-    CubeCountSelection::new(client, tile_args.num_cubes() as u32).cube_count()
+    CubeCountSelection::new(client, cube_size_launcher.num_cubes() as u32).cube_count()
 }
 
 /// Convert a tensor binding to a view argument.

@@ -1,55 +1,49 @@
 use cubecl::{
     prelude::*,
     std::{FastDivmod, FastDivmodExpand},
-    zspace::Shape,
+    zspace::{Shape, SmallVec},
 };
 
-/// Tile args.
+/// Tile size.
 #[derive(CubeType, CubeLaunch)]
-pub struct TileArgs {
-    pub tile_shape: Sequence<FastDivmod<usize>>,
-    pub tile_strides: Sequence<FastDivmod<usize>>,
-    pub cube_shape: Sequence<FastDivmod<usize>>,
-    pub cube_strides: Sequence<FastDivmod<usize>>,
-    pub output_shape: Sequence<usize>,
+pub struct TileSize {
+    pub shape: Sequence<FastDivmod<usize>>,
+    pub strides: Sequence<FastDivmod<usize>>,
 }
 
 #[cube]
-impl TileArgs {
+impl TileSize {
     pub fn area(&self) -> usize {
         let mut area = 1;
 
         #[unroll]
-        for i in 0..self.tile_shape.len() {
-            area *= fast_div_mod_value(&self.tile_shape[i]);
+        for i in 0..self.shape.len() {
+            area *= fast_div_mod_value(&self.shape[i]);
         }
 
         area
     }
 }
 
-/// Tile args launcher to convert to Sequence with FastDivmod and usize.
+/// Tile size launcher to convert to Sequence with FastDivmod.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TileArgsLauncher {
-    pub tile_shape: Vec<usize>,
-    pub tile_strides: Vec<usize>,
-    pub cube_shape: Vec<usize>,
-    pub cube_strides: Vec<usize>,
-    pub output_shape: Vec<usize>,
+pub struct TileSizeLauncher {
+    pub shape: SmallVec<[usize; 8]>,
+    pub strides: SmallVec<[usize; 8]>,
 }
 
-impl TileArgsLauncher {
+impl TileSizeLauncher {
     /// Distributes the workload between threads in a tiled layout.
     pub fn new(
         output_shape: &Shape,
         cube_dim: &CubeDim,
         vectorized_axis: usize,
         vector_size: usize,
-    ) -> TileArgsLauncher {
+    ) -> (TileSizeLauncher, TileSizeLauncher) {
         let len = output_shape.len();
 
-        let mut tile_shape = vec![1; len];
-        let mut cube_shape = vec![1; len];
+        let mut tile_shape: SmallVec<[usize; 8]> = (0..len).map(|_| 1).collect();
+        let mut cube_shape: SmallVec<[usize; 8]> = (0..len).map(|_| 1).collect();
 
         let mut remaining_cube_dim = cube_dim.num_elems() as usize;
 
@@ -72,32 +66,30 @@ impl TileArgsLauncher {
         let tile_strides = compute_strides(&tile_shape);
         let cube_strides = compute_strides(&cube_shape);
 
-        let output_shape = output_shape.to_vec();
-
-        TileArgsLauncher {
-            tile_shape,
-            tile_strides,
-            cube_shape,
-            cube_strides,
-            output_shape,
-        }
+        (
+            TileSizeLauncher {
+                shape: tile_shape,
+                strides: tile_strides,
+            },
+            TileSizeLauncher {
+                shape: cube_shape,
+                strides: cube_strides,
+            },
+        )
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tile_shape.is_empty()
+        self.shape.is_empty()
     }
 
     pub fn num_cubes(&self) -> usize {
-        self.cube_shape.iter().product()
+        self.shape.iter().product()
     }
 
-    pub fn to_launch<R: Runtime>(self) -> TileArgsLaunch<R> {
-        TileArgsLaunch::new(
-            to_sequence::<R, FastDivmod<usize>>(&self.tile_shape),
-            to_sequence::<R, FastDivmod<usize>>(&self.tile_strides),
-            to_sequence::<R, FastDivmod<usize>>(&self.cube_shape),
-            to_sequence::<R, FastDivmod<usize>>(&self.cube_strides),
-            to_sequence::<R, usize>(&self.output_shape),
+    pub fn to_launch<R: Runtime>(&self) -> TileSizeLaunch<R> {
+        TileSizeLaunch::new(
+            to_sequence::<R, FastDivmod<usize>>(&self.shape),
+            to_sequence::<R, FastDivmod<usize>>(&self.strides),
         )
     }
 }
@@ -112,8 +104,12 @@ pub fn fast_div_mod_value(div_mod: &FastDivmod<usize>) -> usize {
 }
 
 /// Helper to compute row-major stride from a shape.
-fn compute_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1; shape.len()];
+fn compute_strides(shape: &[usize]) -> SmallVec<[usize; 8]> {
+    let mut strides: SmallVec<[usize; 8]> = (0..shape.len()).map(|_| 1).collect();
+
+    if shape.is_empty() {
+        return strides;
+    }
 
     // Iterate backwards starting from the second-to-last element
     for i in (0..shape.len() - 1).rev() {
