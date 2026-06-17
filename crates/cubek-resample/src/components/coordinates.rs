@@ -6,13 +6,11 @@ use cubecl::{
 
 pub type CoordsDynI = Sequence<i32>;
 
-/// Computes the absolute starting coordinate of a cube in the global grid.
+/// Computes the absolute coordinate of a cube.
 #[cube]
 pub fn cube_absolute_coord(
     cube_shape: &Sequence<FastDivmod<usize>>,
     cube_strides: &Sequence<FastDivmod<usize>>,
-    #[comptime] vectorized_axis: usize,
-    #[comptime] vector_size: usize,
 ) -> CoordsDyn {
     let cube_pos = CUBE_POS;
     let mut coords = CoordsDyn::new();
@@ -22,13 +20,7 @@ pub fn cube_absolute_coord(
         let (cube_pos_at_dim, _) = cube_strides[i].div_mod(cube_pos);
         let (_, cube_coord) = cube_shape[i].div_mod(cube_pos_at_dim);
 
-        let coord = if i == vectorized_axis {
-            (cube_coord * vector_size) as u32
-        } else {
-            cube_coord as u32
-        };
-
-        coords.push(coord);
+        coords.push(cube_coord as u32);
     }
 
     coords
@@ -66,6 +58,23 @@ pub fn tile_absolute_coord(
     }
 
     coords
+}
+
+/// Checks if the given coordinate is out of bounds for the given output shape.
+#[cube]
+pub fn is_out_of_bounds(
+    output_shape: &Sequence<usize>,
+    out_coord: &CoordsDyn,
+    #[comptime] config: &Resample,
+) -> bool {
+    let mut is_out_of_bounds = false;
+
+    for axis_idx in comptime!(0..config.resample_axes.len()) {
+        if out_coord[axis_idx] as usize >= output_shape[axis_idx] {
+            is_out_of_bounds = true;
+        }
+    }
+    is_out_of_bounds
 }
 
 /// Precompute the starting input coordinates and continuous centers.

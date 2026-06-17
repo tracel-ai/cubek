@@ -1,15 +1,5 @@
 use crate::definition::{Kernel, Placement, PlacementArgs, Semiring, WindowArgs};
-use cubecl::{prelude::*, std::FastDivmod};
-
-/// Tile args.
-#[derive(CubeType, CubeLaunch)]
-pub struct TileArgs {
-    pub tile_shape: Sequence<FastDivmod<usize>>,
-    pub tile_strides: Sequence<FastDivmod<usize>>,
-    pub cube_shape: Sequence<FastDivmod<usize>>,
-    pub cube_strides: Sequence<FastDivmod<usize>>,
-    pub output_shape: Sequence<usize>,
-}
+use cubecl::prelude::*;
 
 /// Resampling args.
 #[derive(CubeType, CubeLaunch)]
@@ -107,8 +97,8 @@ impl Resample {
 
 #[cube]
 impl Resample {
-    /// Computes the total number of taps.
-    pub fn compute_num_taps(args: &ResampleArgs, #[comptime] config: &Resample) -> usize {
+    /// Calculates the total number of taps.
+    pub fn calculate_num_taps(args: &ResampleArgs, #[comptime] config: &Resample) -> usize {
         let mut num_taps = 1;
 
         for axis_idx in comptime!(0..config.resample_axes.len()) {

@@ -43,6 +43,7 @@ impl TapResolver {
             let lane_weight =
                 compute_weight::<F, N>(&in_coord, &clamped_coord, centers, config, lane);
 
+            // Extract input values only when vectorized over multiple lanes
             if num_lanes > 1 {
                 let extract_idx = clamped_coord[vectorized_axis] as usize % vector_size;
 

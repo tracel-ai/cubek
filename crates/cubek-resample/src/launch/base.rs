@@ -1,10 +1,10 @@
 use crate::{
     components::resample_kernel,
-    definition::{Resample, ResampleArgsLaunch, TileArgsLaunch},
+    definition::{Resample, ResampleArgsLaunch, TileArgsLauncher},
 };
 use cubecl::{
-    calculate_cube_count_elemwise,
     prelude::*,
+    server::CubeCountSelection,
     std::tensor::{
         launch::ViewArg,
         layout::{
@@ -29,9 +29,14 @@ pub fn resample_launch<R: Runtime>(
 
     let cube_dim = CubeDim::new(client, working_units);
 
-    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
+    let tile_args = TileArgsLauncher::new(&output.shape, &cube_dim, vectorized_axis, vector_size);
 
-    let tile_args = compute_tile_args(&output, &cube_dim, vectorized_axis, vector_size);
+    let cube_count = calculate_cube_count(client, &tile_args);
+
+    println!("cube count : {:?}", cube_count);
+    println!("tile args : {:?}", tile_args);
+    println!("vector size : {:?}", vector_size);
+    println!("vectorized axis : {:?}", vectorized_axis);
 
     unsafe {
         resample_kernel::launch_unchecked(
@@ -41,7 +46,7 @@ pub fn resample_launch<R: Runtime>(
             vector_size,
             view(input, vector_size),
             view(output, vector_size),
-            tile_args,
+            tile_args.to_launch::<R>(),
             args,
             config,
             vectorized_axis,
@@ -87,70 +92,16 @@ fn vectorize<R: Runtime>(
     (1, rank.saturating_sub(1))
 }
 
-/// Distributes the workload between threads in a tiled layout.
-fn compute_tile_args<R: Runtime>(
-    output: &TensorBinding<R>,
-    cube_dim: &CubeDim,
-    vectorized_axis: usize,
-    vector_size: usize,
-) -> TileArgsLaunch<R> {
-    let len = output.shape.len();
-
-    let mut tile_size = vec![1; len];
-    let mut cube_size = vec![1; len];
-
-    let mut remaining_cube_dim = cube_dim.num_elems() as usize;
-
-    // Process dimensions in reverse order to ensure a cube processes contiguous memory (memory coalescing).
-    for i in (0..len).rev() {
-        let size = if vectorized_axis == i {
-            output.shape[i] / vector_size
-        } else {
-            output.shape[i]
-        };
-
-        // This strategy ensure that the product of tile_sizes >= the original cube_dim.
-        // Which guarantee that each thread will have at least one element to process.
-        tile_size[i] = size.min(remaining_cube_dim).max(1);
-        cube_size[i] = size.div_ceil(tile_size[i]);
-
-        remaining_cube_dim = remaining_cube_dim.div_ceil(tile_size[i]);
+/// Calculate the number of cubes required to execute an operation where one cube unit is
+/// assigned to one tile.
+fn calculate_cube_count<R: Runtime>(
+    client: &ComputeClient<R>,
+    tile_args: &TileArgsLauncher,
+) -> CubeCount {
+    if tile_args.is_empty() {
+        return CubeCount::Static(0, 0, 0);
     }
-
-    let tile_strides = compute_strides(&tile_size);
-    let cube_strides = compute_strides(&cube_size);
-
-    TileArgsLaunch::new(
-        to_sequence(&tile_size),
-        to_sequence(&tile_strides),
-        to_sequence(&cube_size),
-        to_sequence(&cube_strides),
-        to_sequence(&output.shape),
-    )
-}
-
-/// Helper to compute row-major stride from a shape.
-fn compute_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1; shape.len()];
-
-    // Iterate backwards starting from the second-to-last element
-    for i in (0..shape.len() - 1).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-
-    strides
-}
-
-/// Convert a slice of dimensions into a `SequenceArg`.
-fn to_sequence<R: Runtime, T: LaunchArg>(shape: &[usize]) -> SequenceArg<R, T>
-where
-    usize: Into<<T as LaunchArg>::RuntimeArg<R>>,
-{
-    let mut sequence = SequenceArg::new();
-    for dim in shape.iter() {
-        sequence.push((*dim).into());
-    }
-    sequence
+    CubeCountSelection::new(client, tile_args.num_cubes() as u32).cube_count()
 }
 
 /// Convert a tensor binding to a view argument.

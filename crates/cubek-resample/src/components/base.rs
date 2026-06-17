@@ -1,5 +1,5 @@
 use crate::components::coordinates::{
-    CoordsDynI, compute_anchors, cube_absolute_coord, tile_absolute_coord,
+    CoordsDynI, compute_anchors, cube_absolute_coord, is_out_of_bounds, tile_absolute_coord,
 };
 use crate::components::resample_instruction::Accumulator;
 use crate::components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver};
@@ -22,12 +22,7 @@ pub fn resample_kernel<F: Float, N: Size>(
 ) {
     let vector_size = N::value();
 
-    let cube_coord = cube_absolute_coord(
-        &tile_args.cube_shape,
-        &tile_args.cube_strides,
-        vectorized_axis,
-        vector_size,
-    );
+    let cube_coord = cube_absolute_coord(&tile_args.cube_shape, &tile_args.cube_strides);
 
     let out_coord = tile_absolute_coord(
         &tile_args.tile_shape,
@@ -56,23 +51,6 @@ pub fn resample_kernel<F: Float, N: Size>(
     ResampleInstruction::store(out_coord, output, accumulator, &config);
 }
 
-/// Checks if the given coordinate is out of bounds for the given output shape.
-#[cube]
-fn is_out_of_bounds(
-    output_shape: &Sequence<usize>,
-    out_coord: &CoordsDyn,
-    #[comptime] config: &Resample,
-) -> bool {
-    let mut is_out_of_bounds = false;
-
-    for axis_idx in comptime!(0..config.resample_axes.len()) {
-        if out_coord[axis_idx] as usize >= output_shape[axis_idx] {
-            is_out_of_bounds = true;
-        }
-    }
-    is_out_of_bounds
-}
-
 /// Accumulate taps to produce a single output value.
 #[cube]
 fn accumulate_taps<F: Float, N: Size>(
@@ -89,7 +67,7 @@ fn accumulate_taps<F: Float, N: Size>(
     let (start_coords, centers) =
         compute_anchors::<F>(out_coord, args, config, vectorized_axis, num_lanes);
 
-    let num_taps = Resample::compute_num_taps(args, config);
+    let num_taps = Resample::calculate_num_taps(args, config);
 
     for tap_idx in 0..num_taps {
         accumulate_tap(
