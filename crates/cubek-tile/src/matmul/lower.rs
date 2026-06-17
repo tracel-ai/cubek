@@ -1,11 +1,11 @@
 //! Lowering `c.mma(a, b)`: while the tile still has levels it lowers per its [`Schedule`],
 //! shuffling operands around as opaque [`CubePrimitive`] tiles; at a final tile it hands off to the
-//! [`Mma`](super::leaf::Mma) leaf, the one place that commits to concrete numeric types.
+//! [`Mma`](super::instruction::Mma) leaf, the one place that commits to concrete numeric types.
 
 use cubecl::prelude::*;
 
 use super::schedule::{mma_direct, mma_double, mma_staged};
-use crate::{matmul::leaf::Mma, *};
+use crate::{matmul::instruction::Mma, *};
 
 #[cube]
 impl<Acc: CubePrimitive> Tile<Acc> {
