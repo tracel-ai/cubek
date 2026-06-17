@@ -98,7 +98,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         scale.binding(),
         output_scale.clone().binding(),
         &scheme,
-        ElemType::Float(FloatKind::Flex32),
+        ElemType::Float(FloatKind::F32),
     )
     .unwrap();
 
@@ -239,7 +239,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         scale.binding(),
         output_scale.clone().binding(),
         &scheme,
-        ElemType::Float(FloatKind::Flex32),
+        ElemType::Float(FloatKind::F32),
     )
     .unwrap();
 

@@ -37,20 +37,20 @@ impl Layout for FlatLayout {
     type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let rank = self.shape.len().comptime();
         let mut out = CoordsDyn::new();
+        let mut offs = pos as u32;
 
+        // Peel off the least-significant dim each step (row-major), carrying the quotient up.
         #[unroll]
-        for p in 0..self.shape.len() {
-            let mut stride = 1u32;
-
-            #[unroll]
-            for q in p + 1..self.shape.len() {
-                stride *= self.shape[q];
-            }
-
-            out.push((pos as u32 / stride) % self.shape[p]);
+        for i in 0..rank {
+            let dim = rank - i - 1;
+            let extent = self.shape[dim];
+            out.push(offs % extent);
+            offs /= extent;
         }
 
+        out.reverse(); // pushed last→first; restore ascending dim order
         out
     }
 
