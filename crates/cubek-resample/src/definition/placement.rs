@@ -49,15 +49,6 @@ impl PlacementArgs {
 
 #[cube]
 impl PlacementArgs {
-    pub fn new() -> PlacementArgs {
-        PlacementArgs {
-            scale: 0.0,
-            offset: 0.0,
-            step: 0,
-            padding: 0,
-        }
-    }
-
     pub fn map<F: Float>(&self, pos: usize, #[comptime] placement: &Placement) -> F {
         match placement {
             Placement::Continuous => {

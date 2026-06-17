@@ -1,5 +1,15 @@
 use crate::definition::{Kernel, Placement, PlacementArgs, Semiring, WindowArgs};
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::FastDivmod};
+
+/// Tile args.
+#[derive(CubeType, CubeLaunch)]
+pub struct TileArgs {
+    pub tile_shape: Sequence<FastDivmod<usize>>,
+    pub tile_strides: Sequence<FastDivmod<usize>>,
+    pub cube_shape: Sequence<FastDivmod<usize>>,
+    pub cube_strides: Sequence<FastDivmod<usize>>,
+    pub output_shape: Sequence<usize>,
+}
 
 /// Resampling args.
 #[derive(CubeType, CubeLaunch)]
@@ -7,13 +17,15 @@ pub struct ResampleArgs {
     pub resample_axes: Sequence<ResampleAxisArgs>,
 }
 
-impl ResampleArgs {
-    pub fn new() -> Self {
+impl Default for ResampleArgs {
+    fn default() -> Self {
         Self {
             resample_axes: Sequence::new(),
         }
     }
+}
 
+impl ResampleArgs {
     pub fn with_resample_axis_args(mut self, resample_axis_args: ResampleAxisArgs) -> Self {
         self.resample_axes.push(resample_axis_args);
         self

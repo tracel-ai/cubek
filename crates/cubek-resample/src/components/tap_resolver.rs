@@ -11,7 +11,7 @@ pub struct TapResolver;
 
 #[cube]
 impl TapResolver {
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve<F: Float, N: Size>(
         tap_idx: usize,
         input: &View<'_, Vector<F, N>, CoordsDyn>,
@@ -73,7 +73,7 @@ fn compute_weight<F: Float, N: Size>(
     match config.boundary {
         BoundaryMode::Clamp => Kernel::weight::<F, N>(in_coord, centers, config, lane),
         BoundaryMode::Zero => select(
-            is_in_bounds(in_coord, &clamped_coord),
+            is_in_bounds(in_coord, clamped_coord),
             Kernel::weight::<F, N>(in_coord, centers, config, lane),
             F::zero(),
         ),

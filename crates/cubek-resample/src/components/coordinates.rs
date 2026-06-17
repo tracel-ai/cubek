@@ -1,27 +1,68 @@
 use crate::definition::{Resample, ResampleArgs};
 use cubecl::{
     prelude::*,
-    std::{FastDivmod, tensor::layout::CoordsDyn},
+    std::{FastDivmod, FastDivmodExpand, tensor::layout::CoordsDyn},
 };
 
 pub type CoordsDynI = Sequence<i32>;
 
-/// Convert a linear index to a coordinate.
+/// Computes the absolute starting coordinate of a cube in the global grid.
 #[cube]
-pub fn coord_from_index(
-    index: usize,
-    shape: &Sequence<FastDivmod<usize>>,
-    strides: &Sequence<FastDivmod<usize>>,
+pub fn cube_absolute_coord(
+    cube_shape: &Sequence<FastDivmod<usize>>,
+    cube_strides: &Sequence<FastDivmod<usize>>,
+    #[comptime] vectorized_axis: usize,
+    #[comptime] vector_size: usize,
 ) -> CoordsDyn {
+    let cube_pos = CUBE_POS;
     let mut coords = CoordsDyn::new();
 
     #[unroll]
-    for i in 0..shape.len() {
-        let (index_at_dim, _) = strides[i].div_mod(index);
+    for i in 0..cube_shape.len() {
+        let (cube_pos_at_dim, _) = cube_strides[i].div_mod(cube_pos);
+        let (_, cube_coord) = cube_shape[i].div_mod(cube_pos_at_dim);
 
-        let (_, coord) = shape[i].div_mod(index_at_dim);
+        let coord = if i == vectorized_axis {
+            (cube_coord * vector_size) as u32
+        } else {
+            cube_coord as u32
+        };
 
-        coords.push(coord as u32);
+        coords.push(coord);
+    }
+
+    coords
+}
+
+/// Computes the local coordinate within a tile.
+#[cube]
+pub fn tile_absolute_coord(
+    tile_shape: &Sequence<FastDivmod<usize>>,
+    tile_strides: &Sequence<FastDivmod<usize>>,
+    cube_coord: &CoordsDyn,
+    #[comptime] vectorized_axis: usize,
+    #[comptime] vector_size: usize,
+) -> CoordsDyn {
+    let unit_pos = UNIT_POS as usize;
+    let mut coords = CoordsDyn::new();
+
+    #[unroll]
+    for i in 0..tile_shape.len() {
+        let (unit_pos_at_dim, _) = tile_strides[i].div_mod(unit_pos);
+        let (_, coord) = tile_shape[i].div_mod(unit_pos_at_dim);
+
+        let tile_dim_size = match &tile_shape[i] {
+            FastDivmod::Fast { divisor, .. } => *divisor,
+            FastDivmod::Fallback { divisor } => *divisor,
+        };
+
+        let coord = if i == vectorized_axis {
+            ((cube_coord[i] as usize * tile_dim_size + coord) * vector_size) as u32
+        } else {
+            (cube_coord[i] as usize * tile_dim_size + coord) as u32
+        };
+
+        coords.push(coord);
     }
 
     coords
@@ -29,7 +70,7 @@ pub fn coord_from_index(
 
 /// Precompute the starting input coordinates and continuous centers.
 #[cube]
-pub fn compute_anchors<F: Float, N: Size>(
+pub fn compute_anchors<F: Float>(
     out_coord: &CoordsDyn,
     args: &ResampleArgs,
     #[comptime] config: &Resample,

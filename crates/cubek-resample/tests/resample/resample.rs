@@ -15,7 +15,7 @@ fn resample_1d_identity_test() {
     let output_shape = vec![4];
     let expected_data = vec![1.0, 2.0, 3.0, 4.0];
 
-    let resample_args = ResampleArgs::new().with_resample_axis_args(ResampleAxisArgs::new(
+    let resample_args = ResampleArgs::default().with_resample_axis_args(ResampleAxisArgs::new(
         WindowArgs::new(1),
         PlacementArgs::identity(),
     ));
@@ -49,7 +49,7 @@ fn resample_1d_test() {
     let output_shape = vec![8];
     let expected_data = vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0];
 
-    let resample_args = ResampleArgs::new().with_resample_axis_args(ResampleAxisArgs::new(
+    let resample_args = ResampleArgs::default().with_resample_axis_args(ResampleAxisArgs::new(
         WindowArgs::new(1),
         PlacementArgs::continuous(0.5, 0.0),
     ));
@@ -83,7 +83,7 @@ fn resample_2d_test() {
     let output_shape = vec![1, 2, 1];
     let expected_output = vec![1.0, 3.0];
 
-    let resample_args = ResampleArgs::new()
+    let resample_args = ResampleArgs::default()
         .with_resample_axis_args(ResampleAxisArgs::new(
             WindowArgs::new(1),
             PlacementArgs::continuous(0.5, 0.0),
@@ -125,7 +125,7 @@ fn resample_nhwc_2d_test() {
     let output_shape = vec![1, 4, 2, 1];
     let expected_output = vec![1.0, 2.0, 1.0, 2.0, 3.0, 4.0, 3.0, 4.0];
 
-    let resample_args = ResampleArgs::new()
+    let resample_args = ResampleArgs::default()
         .with_resample_axis_args(ResampleAxisArgs::new(
             WindowArgs::new(1),
             PlacementArgs::continuous(0.5, 0.0),
