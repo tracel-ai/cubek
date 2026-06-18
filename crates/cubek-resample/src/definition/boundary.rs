@@ -1,4 +1,4 @@
-use crate::definition::CoordsDynI;
+use crate::definition::{CoordsDynI, Resample};
 use cubecl::prelude::*;
 
 /// Boundary handling mode for out-of-bounds taps.
@@ -13,27 +13,59 @@ pub enum BoundaryMode {
 #[cube]
 impl BoundaryMode {
     pub fn resolve_weight<F: Float, N: Size>(
-        weight: F,
-        in_coord: &CoordsDynI,
-        clamped_coord: &CoordsDynI,
-        #[comptime] this: &Self,
-    ) -> F {
-        match this {
-            BoundaryMode::Clamp => weight,
-            BoundaryMode::Zero => select(is_in_bounds(in_coord, clamped_coord), weight, F::zero()),
+        weight: &mut F,
+        in_coord: &mut CoordsDynI,
+        output_shape: &CoordsDynI,
+        #[comptime] config: &Resample,
+    ) {
+        match config.boundary {
+            BoundaryMode::Clamp => {
+                clamp_coord(in_coord, output_shape, config);
+            }
+            BoundaryMode::Zero => {
+                *weight = select(
+                    in_bounds(&*in_coord, output_shape, config),
+                    *weight,
+                    F::zero(),
+                );
+            }
         }
     }
 }
 
-/// Check if coordinate is in bounds depending on boundary mode.
+/// Clamps the given coordinate to the given output shape.
 #[cube]
-fn is_in_bounds(in_coord: &CoordsDynI, clamped_coord: &CoordsDynI) -> bool {
+pub fn clamp_coord(
+    coord: &mut CoordsDynI,
+    output_shape: &CoordsDynI,
+    #[comptime] config: &Resample,
+) {
+    #[unroll]
+    for axis_idx in 0..config.num_axes() {
+        let resample_axis = config.resample_axes.index(axis_idx);
+        let axis = resample_axis.axis;
+
+        coord[axis] = coord[axis].clamp(0, output_shape[axis] - 1);
+    }
+}
+
+/// Checks if the given coordinate is in bounds for the given output shape.
+#[cube]
+pub fn in_bounds(
+    coord: &CoordsDynI,
+    output_shape: &CoordsDynI,
+    #[comptime] config: &Resample,
+) -> bool {
     let mut in_bounds = true;
 
     #[unroll]
-    for i in 0..in_coord.len() {
-        in_bounds &= in_coord[i] == clamped_coord[i];
-    }
+    for axis_idx in 0..config.num_axes() {
+        let resample_axis = config.resample_axes.index(axis_idx);
+        let axis = resample_axis.axis;
 
+        if coord[axis] < 0 || coord[axis] >= output_shape[axis] {
+            in_bounds = false;
+        }
+    }
     in_bounds
 }
