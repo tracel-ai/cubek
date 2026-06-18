@@ -1,5 +1,5 @@
-use crate::definition::{CoordsDynI, Resample};
-use cubecl::prelude::*;
+use crate::definition::Resample;
+use cubecl::{prelude::*, std::tensor::layout::CoordsDynI};
 
 /// Boundary handling mode for out-of-bounds taps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]

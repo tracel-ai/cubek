@@ -1,13 +1,16 @@
 use crate::{
     components::resample_kernel,
-    definition::{CoordsDynI, Resample, ResampleArgsLaunch, TileSizeLauncher},
+    definition::{Resample, ResampleArgsLaunch, TileSizeLauncher},
 };
 use cubecl::{
     prelude::*,
     server::CubeCountSelection,
     std::tensor::{
         launch::ViewArg,
-        layout::fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
+        layout::{
+            CoordsDynI,
+            fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
+        },
     },
     tensor_vector_size_parallel,
 };

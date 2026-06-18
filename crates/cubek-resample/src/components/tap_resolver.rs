@@ -1,8 +1,11 @@
 use crate::{
     components::coordinates::map_coord,
-    definition::{BoundaryMode, CoordsDynI, Kernel, Resample, ResampleArgs},
+    definition::{BoundaryMode, Kernel, Resample, ResampleArgs},
 };
-use cubecl::{prelude::*, std::tensor::View};
+use cubecl::{
+    prelude::*,
+    std::tensor::{View, layout::CoordsDynI},
+};
 
 pub struct TapResolver;
 

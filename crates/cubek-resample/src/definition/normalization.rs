@@ -1,5 +1,8 @@
-use crate::definition::{CoordsDynI, Value};
-use cubecl::{prelude::*, std::tensor::ViewMut};
+use crate::definition::Value;
+use cubecl::{
+    prelude::*,
+    std::tensor::{ViewMut, layout::CoordsDynI},
+};
 
 /// Normalization mode for tap weights.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]

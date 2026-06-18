@@ -1,9 +1,9 @@
 use crate::components::coordinates::{compute_anchors, cube_absolute_coord, tile_absolute_coord};
 use crate::components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver};
-use crate::definition::{Accumulator, CoordsDynI, Resample, ResampleArgs, TileSize, in_bounds};
+use crate::definition::{Accumulator, Resample, ResampleArgs, TileSize, in_bounds};
 use cubecl::{
     prelude::*,
-    std::tensor::{View, ViewMut},
+    std::tensor::{View, ViewMut, layout::CoordsDynI},
 };
 
 /// Resample kernel.

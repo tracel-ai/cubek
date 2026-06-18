@@ -1,5 +1,8 @@
-use crate::definition::{Accumulator, CoordsDynI, NormalizationMode, Resample, Semiring, Value};
-use cubecl::{prelude::*, std::tensor::ViewMut};
+use crate::definition::{Accumulator, NormalizationMode, Resample, Semiring, Value};
+use cubecl::{
+    prelude::*,
+    std::tensor::{ViewMut, layout::CoordsDynI},
+};
 
 /// Resample instruction that accumulates tap weights to produce a single tap value.
 pub struct ResampleInstruction;

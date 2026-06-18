@@ -3,8 +3,6 @@ use crate::definition::{
 };
 use cubecl::prelude::*;
 
-pub type CoordsDynI = Sequence<i32>;
-
 /// Resampling args.
 #[derive(CubeType, CubeLaunch)]
 pub struct ResampleArgs {

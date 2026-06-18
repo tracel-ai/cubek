@@ -1,5 +1,5 @@
-use crate::definition::{CoordsDynI, Resample, ResampleArgs, TileSize, fast_div_mod_value};
-use cubecl::prelude::*;
+use crate::definition::{Resample, ResampleArgs, TileSize, fast_div_mod_value};
+use cubecl::{prelude::*, std::tensor::layout::CoordsDynI};
 
 /// Computes the absolute coordinate of a cube.
 #[cube]
