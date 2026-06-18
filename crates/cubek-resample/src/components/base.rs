@@ -5,14 +5,14 @@ use crate::components::{resample_instruction::ResampleInstruction, tap_resolver:
 use crate::definition::{Accumulator, CoordsDynI, Resample, ResampleArgs, TileSize};
 use cubecl::{
     prelude::*,
-    std::tensor::{View, ViewMut, layout::CoordsDyn},
+    std::tensor::{View, ViewMut},
 };
 
 /// Resample kernel.
 #[cube(launch_unchecked)]
 pub fn resample_kernel<F: Float, N: Size>(
-    input: &View<'_, Vector<F, N>, CoordsDyn>,
-    output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
+    input: &View<'_, Vector<F, N>, CoordsDynI>,
+    output: &mut ViewMut<'_, Vector<F, N>, CoordsDynI>,
     tile_size: TileSize,
     cube_size: TileSize,
     args: ResampleArgs,
@@ -51,9 +51,9 @@ pub fn resample_kernel<F: Float, N: Size>(
 /// Resample a single unit (a slice of the output).
 #[cube]
 fn resample_unit<F: Float, N: Size>(
-    input: &View<'_, Vector<F, N>, CoordsDyn>,
-    output: &mut ViewMut<'_, Vector<F, N>, CoordsDyn>,
-    cube_coord: &CoordsDyn,
+    input: &View<'_, Vector<F, N>, CoordsDynI>,
+    output: &mut ViewMut<'_, Vector<F, N>, CoordsDynI>,
+    cube_coord: &CoordsDynI,
     unit_pos: usize,
     tile_size: &TileSize,
     args: &ResampleArgs,
@@ -89,8 +89,8 @@ fn resample_unit<F: Float, N: Size>(
 /// Accumulate taps to produce a single output value.
 #[cube]
 fn accumulate_taps<F: Float, N: Size>(
-    input: &View<'_, Vector<F, N>, CoordsDyn>,
-    out_coord: &CoordsDyn,
+    input: &View<'_, Vector<F, N>, CoordsDynI>,
+    out_coord: &CoordsDynI,
     accumulator: &mut Accumulator<F, N>,
     args: &ResampleArgs,
     #[comptime] config: &Resample,
@@ -125,8 +125,8 @@ fn accumulate_taps<F: Float, N: Size>(
 #[cube]
 fn accumulate_tap<F: Float, N: Size>(
     tap_idx: usize,
-    input: &View<'_, Vector<F, N>, CoordsDyn>,
-    out_coord: &CoordsDyn,
+    input: &View<'_, Vector<F, N>, CoordsDynI>,
+    out_coord: &CoordsDynI,
     start_coords: &CoordsDynI,
     centers: &Sequence<F>,
     accumulator: &mut Accumulator<F, N>,

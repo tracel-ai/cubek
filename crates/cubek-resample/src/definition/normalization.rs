@@ -1,8 +1,5 @@
-use crate::definition::Value;
-use cubecl::{
-    prelude::*,
-    std::tensor::{ViewMut, layout::CoordsDyn},
-};
+use crate::definition::{CoordsDynI, Value};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 
 /// Normalization mode for tap weights.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
@@ -36,8 +33,8 @@ impl NormalizationMode {
     }
 
     pub fn normalize<F: Float, N: Size>(
-        out_coord: CoordsDyn,
-        output: &mut ViewMut<Vector<F, N>, CoordsDyn>,
+        out_coord: CoordsDynI,
+        output: &mut ViewMut<Vector<F, N>, CoordsDynI>,
         elements: Vector<F, N>,
         weight_accumulator: &Value<Vector<F, N>>,
         #[comptime] this: &NormalizationMode,

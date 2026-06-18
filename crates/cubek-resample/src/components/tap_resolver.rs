@@ -2,10 +2,7 @@ use crate::{
     components::coordinates::resolve_tap_coords,
     definition::{BoundaryMode, CoordsDynI, Kernel, Resample, ResampleArgs},
 };
-use cubecl::{
-    prelude::*,
-    std::tensor::{View, layout::CoordsDyn},
-};
+use cubecl::{prelude::*, std::tensor::View};
 
 pub struct TapResolver;
 
@@ -14,8 +11,8 @@ impl TapResolver {
     #[allow(clippy::too_many_arguments)]
     pub fn resolve<F: Float, N: Size>(
         tap_idx: usize,
-        input: &View<'_, Vector<F, N>, CoordsDyn>,
-        out_coord: &CoordsDyn,
+        input: &View<'_, Vector<F, N>, CoordsDynI>,
+        out_coord: &CoordsDynI,
         start_coords: &CoordsDynI,
         centers: &Sequence<F>,
         args: &ResampleArgs,

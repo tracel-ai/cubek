@@ -1,17 +1,17 @@
 use crate::definition::{CoordsDynI, Resample, ResampleArgs, TileSize, fast_div_mod_value};
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use cubecl::prelude::*;
 
 /// Computes the absolute coordinate of a cube.
 #[cube]
-pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDyn {
-    let mut coords = CoordsDyn::new();
+pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDynI {
+    let mut coords = CoordsDynI::new();
 
     #[unroll]
     for i in 0..cube_size.rank() {
         let (cube_pos_at_dim, _) = cube_size.strides[i].div_mod(cube_pos);
         let (_, cube_coord) = cube_size.shape[i].div_mod(cube_pos_at_dim);
 
-        coords.push(cube_coord as u32);
+        coords.push(cube_coord as i32);
     }
 
     coords
@@ -21,12 +21,12 @@ pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDyn {
 #[cube]
 pub fn tile_absolute_coord(
     tile_size: &TileSize,
-    cube_coord: &CoordsDyn,
+    cube_coord: &CoordsDynI,
     unit_pos: usize,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
-) -> CoordsDyn {
-    let mut coords = CoordsDyn::new();
+) -> CoordsDynI {
+    let mut coords = CoordsDynI::new();
 
     #[unroll]
     for i in 0..tile_size.rank() {
@@ -36,9 +36,9 @@ pub fn tile_absolute_coord(
         let tile_dim_size = fast_div_mod_value(&tile_size.shape[i]);
 
         let coord = if i == vectorized_axis {
-            ((cube_coord[i] as usize * tile_dim_size + coord) * vector_size) as u32
+            ((cube_coord[i] as usize * tile_dim_size + coord) * vector_size) as i32
         } else {
-            (cube_coord[i] as usize * tile_dim_size + coord) as u32
+            (cube_coord[i] as usize * tile_dim_size + coord) as i32
         };
 
         coords.push(coord);
@@ -50,8 +50,8 @@ pub fn tile_absolute_coord(
 /// Checks if the given coordinate is in bounds for the given output shape.
 #[cube]
 pub fn in_bounds(
-    output_shape: &CoordsDyn,
-    out_coord: &CoordsDyn,
+    output_shape: &CoordsDynI,
+    out_coord: &CoordsDynI,
     #[comptime] config: &Resample,
 ) -> bool {
     let mut in_bounds = true;
@@ -71,7 +71,7 @@ pub fn in_bounds(
 /// Precompute the starting input coordinates and continuous centers.
 #[cube]
 pub fn compute_anchors<F: Float>(
-    out_coord: &CoordsDyn,
+    out_coord: &CoordsDynI,
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
@@ -117,14 +117,14 @@ pub fn compute_anchors<F: Float>(
 #[cube]
 pub fn resolve_tap_coords(
     tap_idx: usize,
-    out_coord: &CoordsDyn,
-    input_shape: &CoordsDyn,
+    out_coord: &CoordsDynI,
+    input_shape: &CoordsDynI,
     start_coords: &CoordsDynI,
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] lane: usize,
-) -> (CoordsDynI, CoordsDyn) {
-    let mut in_coord = from_coords_dyn(out_coord);
+) -> (CoordsDynI, CoordsDynI) {
+    let mut in_coord = out_coord.clone();
 
     map_coord(tap_idx, &mut in_coord, start_coords, args, config, lane);
 
@@ -159,27 +159,14 @@ fn map_coord(
     }
 }
 
-/// Convert CoordsDyn to CoordsDynI.
-#[cube]
-fn from_coords_dyn(coords: &CoordsDyn) -> CoordsDynI {
-    let mut coords_i32 = Sequence::new();
-
-    #[unroll]
-    for i in 0..coords.len() {
-        coords_i32.push(coords[i] as i32);
-    }
-
-    coords_i32
-}
-
 /// Clamp coordinates from CoordsDynI to CoordsDyn, with bounds check.
 #[cube]
-fn clamp_to_coords_dyn(shape: &CoordsDyn, coords: &CoordsDynI) -> CoordsDyn {
-    let mut clamped_coord = CoordsDyn::new();
+fn clamp_to_coords_dyn(shape: &CoordsDynI, coords: &CoordsDynI) -> CoordsDynI {
+    let mut clamped_coord = CoordsDynI::new();
 
     #[unroll]
     for i in 0..coords.len() {
-        clamped_coord.push(coords[i].clamp(0, (shape[i] - 1) as i32) as u32);
+        clamped_coord.push(coords[i].clamp(0, shape[i] - 1));
     }
 
     clamped_coord

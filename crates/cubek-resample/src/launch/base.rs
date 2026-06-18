@@ -1,16 +1,13 @@
 use crate::{
     components::resample_kernel,
-    definition::{Resample, ResampleArgsLaunch, TileSizeLauncher},
+    definition::{CoordsDynI, Resample, ResampleArgsLaunch, TileSizeLauncher},
 };
 use cubecl::{
     prelude::*,
     server::CubeCountSelection,
     std::tensor::{
         launch::ViewArg,
-        layout::{
-            CoordsDyn,
-            fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
-        },
+        layout::fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
     },
     tensor_vector_size_parallel,
 };
@@ -101,18 +98,18 @@ fn calculate_cube_count<R: Runtime>(
 }
 
 /// Convert a tensor binding to a view argument.
-fn view<R: Runtime>(tensor: TensorBinding<R>, vector_size: VectorSize) -> ViewArg<CoordsDyn, R> {
+fn view<R: Runtime>(tensor: TensorBinding<R>, vector_size: VectorSize) -> ViewArg<CoordsDynI, R> {
     let shape_seq = tensor
         .shape
         .iter()
-        .map(|&s| s as u32)
-        .collect::<SequenceArg<R, u32>>();
+        .map(|&s| s as i32)
+        .collect::<SequenceArg<R, i32>>();
 
-    let layout = FixedDimLayoutLaunch::<CoordsDyn, R>::from_shape_handle_unchecked(
+    let layout = FixedDimLayoutLaunch::<CoordsDynI, R>::from_shape_handle_unchecked(
         &tensor,
         shape_seq,
         vector_size,
     );
     let buffer = tensor.into_tensor_arg();
-    ViewArg::new_tensor::<FixedDimLayout<CoordsDyn>>(buffer, layout)
+    ViewArg::new_tensor::<FixedDimLayout<CoordsDynI>>(buffer, layout)
 }

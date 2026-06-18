@@ -1,8 +1,5 @@
-use crate::definition::{Accumulator, NormalizationMode, Resample, Semiring, Value};
-use cubecl::{
-    prelude::*,
-    std::tensor::{ViewMut, layout::CoordsDyn},
-};
+use crate::definition::{Accumulator, CoordsDynI, NormalizationMode, Resample, Semiring, Value};
+use cubecl::{prelude::*, std::tensor::ViewMut};
 
 /// Resample instruction that accumulates tap weights to produce a single tap value.
 pub struct ResampleInstruction;
@@ -52,14 +49,14 @@ impl ResampleInstruction {
 
     pub fn count_position<F: Float, N: Size>(
         _accumulator: &mut Accumulator<F, N>,
-        _position: &CoordsDyn,
+        _position: &CoordsDynI,
         #[comptime] _config: &Resample,
     ) {
     }
 
     pub fn store<F: Float, N: Size>(
-        out_coord: CoordsDyn,
-        output: &mut ViewMut<Vector<F, N>, CoordsDyn>,
+        out_coord: CoordsDynI,
+        output: &mut ViewMut<Vector<F, N>, CoordsDynI>,
         accumulator: &Accumulator<F, N>,
         #[comptime] config: &Resample,
     ) {
