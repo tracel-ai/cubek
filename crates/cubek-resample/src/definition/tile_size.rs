@@ -13,11 +13,15 @@ pub struct TileSize {
 
 #[cube]
 impl TileSize {
+    pub fn rank(&self) -> usize {
+        self.shape.len()
+    }
+
     pub fn area(&self) -> usize {
         let mut area = 1;
 
         #[unroll]
-        for i in 0..self.shape.len() {
+        for i in 0..self.rank() {
             area *= fast_div_mod_value(&self.shape[i]);
         }
 

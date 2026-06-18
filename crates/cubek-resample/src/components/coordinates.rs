@@ -7,7 +7,7 @@ pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDyn {
     let mut coords = CoordsDyn::new();
 
     #[unroll]
-    for i in 0..cube_size.shape.len() {
+    for i in 0..cube_size.rank() {
         let (cube_pos_at_dim, _) = cube_size.strides[i].div_mod(cube_pos);
         let (_, cube_coord) = cube_size.shape[i].div_mod(cube_pos_at_dim);
 
@@ -29,7 +29,7 @@ pub fn tile_absolute_coord(
     let mut coords = CoordsDyn::new();
 
     #[unroll]
-    for i in 0..tile_size.shape.len() {
+    for i in 0..tile_size.rank() {
         let (unit_pos_at_dim, _) = tile_size.strides[i].div_mod(unit_pos);
         let (_, coord) = tile_size.shape[i].div_mod(unit_pos_at_dim);
 
@@ -56,7 +56,8 @@ pub fn in_bounds(
 ) -> bool {
     let mut in_bounds = true;
 
-    for axis_idx in comptime!(0..config.resample_axes.len()) {
+    #[unroll]
+    for axis_idx in 0..config.num_axes() {
         let resample_axis = config.resample_axes.index(axis_idx);
         let axis = resample_axis.axis;
 
@@ -79,8 +80,10 @@ pub fn compute_anchors<F: Float>(
     let mut start_coords = CoordsDynI::new();
     let mut centers = Sequence::<F>::new();
 
-    for lane in comptime!(0..num_lanes) {
-        for axis_idx in comptime!(0..config.resample_axes.len()) {
+    #[unroll]
+    for lane in 0..num_lanes {
+        #[unroll]
+        for axis_idx in 0..config.num_axes() {
             let resample_axis = config.resample_axes.index(axis_idx);
             let resample_axis_args = args.resample_axes.index(axis_idx);
 
@@ -141,16 +144,16 @@ fn map_coord(
     #[comptime] lane: usize,
 ) {
     let mut flat_idx = tap_idx;
-    let num_axes = comptime!(config.resample_axes.len());
 
-    for axis_idx in comptime!(0..num_axes) {
+    #[unroll]
+    for axis_idx in 0..config.num_axes() {
         let resample_axis = config.resample_axes.index(axis_idx);
         let resample_axis_args = args.resample_axes.index(axis_idx);
 
         let tap_axis_idx = flat_idx % resample_axis_args.window_args.size;
         flat_idx /= resample_axis_args.window_args.size;
 
-        let flat_idx = lane * num_axes + axis_idx;
+        let flat_idx = lane * config.num_axes() + axis_idx;
 
         in_coord[resample_axis.axis] = start_coords[flat_idx] + tap_axis_idx as i32;
     }

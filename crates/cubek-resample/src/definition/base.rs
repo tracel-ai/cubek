@@ -91,11 +91,15 @@ impl Resample {
     pub fn compute_num_lanes(&self, vectorized_axis: usize, vector_size: usize) -> usize {
         let mut is_vectorized = false;
 
-        for axis_idx in 0..self.resample_axes.len() {
+        for axis_idx in 0..self.num_axes() {
             is_vectorized |= self.resample_axes[axis_idx].axis == vectorized_axis;
         }
 
         if is_vectorized { vector_size } else { 1_usize }
+    }
+
+    pub fn num_axes(&self) -> usize {
+        self.resample_axes.len()
     }
 }
 
@@ -105,7 +109,8 @@ impl Resample {
     pub fn calculate_num_taps(args: &ResampleArgs, #[comptime] config: &Resample) -> usize {
         let mut num_taps = 1;
 
-        for axis_idx in comptime!(0..config.resample_axes.len()) {
+        #[unroll]
+        for axis_idx in 0..config.num_axes() {
             num_taps *= args.resample_axes.index(axis_idx).window_args.size
         }
 
