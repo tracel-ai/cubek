@@ -78,7 +78,7 @@ impl Layout for FlatLayout {
 impl<T: CubePrimitive> Tile<T> {
     /// A flat 1-D masked view: a row-major scan over the tile's window, masking the overhang
     /// per its comptime `check` flag. The elementwise twin of [`matrix`](Tile::matrix).
-    pub fn flat(&self) -> FlatView<'_, T> {
+    pub fn flat(&self) -> TileView<'_, T, Coords1d> {
         match &self.payload {
             Payload::Gmem(g) | Payload::Smem(g) => g.flat(),
             Payload::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),

@@ -56,6 +56,7 @@ impl<I: Numeric, S: Scalar, O: Numeric, N: Size> AddScalar<Vector<I, N>, S> for 
     fn add(input: &Tile<Vector<I, N>>, scalar: S, output: &mut Tile<Vector<O, N>>) {
         let scalar = Vector::cast_from(scalar);
 
+        // Dequant-on-read: a plain tile reads through unchanged, a quantized one folds in its scale.
         let in_flat = input.flat();
         let mut out = output.flat_mut();
 

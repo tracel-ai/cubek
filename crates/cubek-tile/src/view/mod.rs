@@ -11,6 +11,28 @@ use cubecl::{
     std::tensor::{View, ViewMut, layout::Coordinates},
 };
 
+#[derive(CubeType)]
+pub enum TileView<'a, T: Numeric, C: Coordinates + 'a, F: Numeric = f32> {
+    Masked(MaskedView<'a, T, C>),
+    Dequant(DequantView<'a, T, F, C, Const<1>>),
+}
+
+impl<'a, T: Numeric, C: Coordinates + 'a, F: Numeric> TileView<'a, T, C, F> {
+    pub fn read(&self, pos: C) -> T {
+        match self {
+            TileView::Masked(masked) => masked.read(pos),
+            TileView::Dequant(dequant) => dequant.read(pos),
+        }
+    }
+
+    pub fn shape(&self) -> C {
+        match self {
+            TileView::Masked(masked) => masked.shape(),
+            TileView::Dequant(dequant) => dequant.shape(),
+        }
+    }
+}
+
 /// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some
 /// [`Layout`](cubecl::std::tensor::layout::Layout) (a 2-D [`BatchMatrix`] or a 1-D [`FlatLayout`])
 /// plus its own comptime bounds-check flag, so the

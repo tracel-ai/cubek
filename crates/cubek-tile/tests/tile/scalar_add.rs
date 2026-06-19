@@ -3,7 +3,9 @@ use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, Quant
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TileInput, assert_equals_approx,
 };
-use cubek_tile::{Axis, Space, Storage, TileArg, TileArgLaunch};
+use cubek_tile::{
+    Axis, QuantArgLaunch, QuantTileArg, QuantTileArgLaunch, Space, Storage, TileArg, TileArgLaunch,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -46,7 +48,12 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::new(input.tensor_arg(1), input.space(), input.storage()),
+        QuantTileArgLaunch::new(
+            input.tensor_arg(1),
+            ComptimeOptionArgs::None,
+            input.space(),
+            input.storage(),
+        ),
         scalar,
         TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
         dtype,
@@ -79,7 +86,7 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
 /// scalar: the scalar to multiply with
 /// output: the output tensor
 pub fn scalar_add<I: Numeric, O: Numeric, N: Size>(
-    input: &TileArg<'_, I, N>,
+    input: &QuantTileArg<'_, I, N>,
     scalar: f32,
     output: &TileArg<'_, O, N>,
     #[define(I)] _input_dtype: StorageType,
@@ -115,12 +122,25 @@ fn run_quantized(m: usize, n: usize, scalar: f32) {
     let storage = Storage::of(2, 2);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
+    // Per-tensor scale grid: a single [1] f32 tensor carried alongside the quantized input.
+    let scales = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
+        .custom(vec![scale])
+        .generate_without_host_data();
+
     let out_dtype = f32::as_type_native_unchecked().storage_type();
     scalar_add::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::new(input.binding().into_tensor_arg(), space, storage),
+        QuantTileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            ComptimeOptionArgs::Some(QuantArgLaunch::new(
+                scales.binding().into_tensor_arg(),
+                scheme,
+            )),
+            space,
+            storage,
+        ),
         scalar,
         TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
         input_dtype,

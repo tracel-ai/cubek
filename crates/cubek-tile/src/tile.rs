@@ -3,6 +3,7 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
+    quant::scheme::QuantScheme,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coords1d, CoordsDyn, Layout, LayoutExpand, tiled_view::TiledLayout},
@@ -66,11 +67,71 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
             self.tensor,
             comptime!(self.space.clone()),
             comptime!(self.storage),
+            ComptimeOption::new_None(),
         )
     }
 }
 
-/// One operand's data: the runtime [`Payload`] and the comptime [`Space`] it projects.
+/// The quantization side-channel of a [`QuantTileArg`]: the scale grid plus the comptime
+/// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
+/// quantized or not (the [`Tile`] dequantizes on read; see [`Tile::flat_dequant`]).
+#[derive(CubeType, CubeLaunch)]
+pub struct QuantArg {
+    /// Per-tensor scales (currently a single value at flat index 0).
+    pub scales: OwnedTensor<f32>,
+    #[cube(comptime)]
+    pub scheme: QuantScheme,
+}
+
+/// A [`TileArg`] that may carry quantization. `quant = None` is the plain path (identical to
+/// [`TileArg`]); `quant = Some` attaches the scales + scheme so [`tile`](QuantTileArg::tile) yields a
+/// quant-aware [`Tile`]. Kept separate from [`TileArg`] so the launchable form stays a thin,
+/// removable add-on that doesn't churn every non-quant call site.
+#[derive(CubeType, CubeLaunch)]
+pub struct QuantTileArg<'a, E: Numeric, V: Size> {
+    pub tensor: &'a Tensor<Vector<E, V>>,
+    pub quant: ComptimeOption<QuantArg>,
+    #[cube(comptime)]
+    pub space: Space,
+    #[cube(comptime)]
+    pub storage: Storage,
+}
+
+#[cube]
+impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
+    pub fn tile(&self) -> Tile<Vector<E, V>> {
+        let quant = if comptime!(self.quant.is_some()) {
+            let q = self.quant.as_ref().unwrap();
+            // Per-tensor native: a single scale at flat index 0.
+            ComptimeOption::new_Some(QuantInfo {
+                scale: q.scales[0],
+                scheme: comptime!(q.scheme),
+            })
+        } else {
+            ComptimeOption::new_None()
+        };
+        Tile::from_tensor(
+            self.tensor,
+            comptime!(self.space.clone()),
+            comptime!(self.storage),
+            quant,
+        )
+    }
+}
+
+/// The quantization a [`Tile`] carries so reads can dequantize transparently: a runtime `scale`
+/// (per-tensor for now) plus the comptime [`QuantScheme`]. Absent (`ComptimeOption::None` on the
+/// tile) for a plain tile.
+#[derive(CubeType, Clone, Copy)]
+#[expand(derive(Clone, Copy))]
+pub struct QuantInfo {
+    pub scale: f32,
+    #[cube(comptime)]
+    pub scheme: QuantScheme,
+}
+
+/// One operand's data: the runtime [`Payload`] and the comptime [`Space`] it projects, plus an
+/// optional [`QuantInfo`] so a quantized operand dequantizes on read without the kernel knowing.
 #[derive(CubeType)]
 pub struct Tile<T: CubePrimitive> {
     pub payload: Payload<T>,
@@ -120,6 +181,7 @@ pub struct MemData<T: CubePrimitive> {
     /// always `false` there; gmem inherits its operand's launch-time flag.
     #[cube(comptime)]
     check: bool,
+    quant: ComptimeOption<QuantInfo>,
 }
 
 #[cube]
@@ -130,6 +192,7 @@ impl<T: CubePrimitive> Tile<T> {
         tensor: &Tensor<T>,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
+        quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
         let start_axis = comptime!(storage.start_axis);
         let num_tiled = comptime!(space.rank() - storage.start_axis);
@@ -160,6 +223,7 @@ impl<T: CubePrimitive> Tile<T> {
                 num_tiled,
                 levels,
                 check: comptime!(storage.check_bounds),
+                quant,
             }),
             space: comptime!(space),
         }
@@ -186,6 +250,7 @@ impl<T: CubePrimitive> Tile<T> {
                 num_tiled: comptime!(space.rank()),
                 levels: comptime!(0usize),
                 check: comptime!(false),
+                quant: ComptimeOption::new_None(),
             }),
             space: comptime!(space),
         }
@@ -414,14 +479,24 @@ impl<T: CubePrimitive> MemData<T> {
     /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent: a
     /// [`FlatLayout`] turns a row-major index into the N-D position, carrying the `check` flag
     /// so a flat scan masks the overhang without being asked.
-    pub(crate) fn flat(&self) -> FlatView<'_, T> {
-        FlatView::new(
+    pub(crate) fn flat(&self) -> TileView<'_, T, Coords1d> {
+        let values = FlatView::new(
             self.buffer
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.extent.clone())),
             comptime!(self.check),
-        )
+        );
+
+        if comptime!(self.quant.is_some()) {
+            TileView::new_Dequant(DequantView::new(
+                values,
+                comptime!(self.quant.unwrap().scale),
+                comptime!(self.quant.unwrap().scheme),
+            ))
+        } else {
+            TileView::new_Masked(values)
+        }
     }
 
     /// The mutable twin of [`flat`](MemData::flat).
@@ -492,6 +567,7 @@ impl<T: CubePrimitive> MemData<T> {
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
             check: comptime!(self.check),
+            quant: self.quant.clone(),
         }
     }
 }
