@@ -87,13 +87,13 @@ impl<I: Numeric, N: Size> Tile<Vector<I, N>> {
                 let quant = self.quant;
                 if comptime!(quant.is_some()) {
                     let info = quant.unwrap();
-                    TileView::new_Dequant(DequantView::new(
+                    TileView::new_Quantized(QuantizedView::new(
                         values,
                         info.scale,
                         comptime!(info.scheme),
                     ))
                 } else {
-                    TileView::new_Masked(values)
+                    TileView::new_Direct(values)
                 }
             }
             Payload::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
@@ -106,9 +106,9 @@ impl<I: Numeric, N: Size> Tile<Vector<I, N>> {
                 let values = g.flat_mut();
                 let quant = self.quant;
                 if comptime!(quant.is_some()) {
-                    unimplemented!()
+                    panic!("writing to quantized view is not supported yet")
                 } else {
-                    TileViewMut::new_Masked(values)
+                    TileViewMut::new_Direct(values)
                 }
             }
             Payload::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
