@@ -137,6 +137,7 @@ pub struct Tile<T: CubePrimitive> {
     pub payload: Payload<T>,
     #[cube(comptime)]
     pub space: Space,
+    pub quant: ComptimeOption<QuantInfo>,
 }
 
 /// A tensor-core fragment plus its comptime config. `cmma::load` picks
@@ -181,7 +182,6 @@ pub struct MemData<T: CubePrimitive> {
     /// always `false` there; gmem inherits its operand's launch-time flag.
     #[cube(comptime)]
     check: bool,
-    quant: ComptimeOption<QuantInfo>,
 }
 
 #[cube]
@@ -223,8 +223,8 @@ impl<T: CubePrimitive> Tile<T> {
                 num_tiled,
                 levels,
                 check: comptime!(storage.check_bounds),
-                quant,
             }),
+            quant,
             space: comptime!(space),
         }
     }
@@ -250,8 +250,8 @@ impl<T: CubePrimitive> Tile<T> {
                 num_tiled: comptime!(space.rank()),
                 levels: comptime!(0usize),
                 check: comptime!(false),
-                quant: ComptimeOption::new_None(),
             }),
+            quant: ComptimeOption::new_None(),
             space: comptime!(space),
         }
     }
@@ -274,6 +274,7 @@ impl<T: CubePrimitive> Tile<T> {
                 layout,
             }),
             space: comptime!(space),
+            quant: ComptimeOption::new_None(),
         }
     }
 
@@ -340,6 +341,7 @@ impl<T: CubePrimitive> Tile<T> {
         Tile::<T> {
             payload,
             space: comptime!(self.space.divide()),
+            quant: self.quant,
         }
     }
 
@@ -479,24 +481,14 @@ impl<T: CubePrimitive> MemData<T> {
     /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent: a
     /// [`FlatLayout`] turns a row-major index into the N-D position, carrying the `check` flag
     /// so a flat scan masks the overhang without being asked.
-    pub(crate) fn flat(&self) -> TileView<'_, T, Coords1d> {
-        let values = FlatView::new(
+    pub(crate) fn flat(&self) -> FlatView<'_, T> {
+        FlatView::new(
             self.buffer
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.extent.clone())),
             comptime!(self.check),
-        );
-
-        if comptime!(self.quant.is_some()) {
-            TileView::new_Dequant(DequantView::new(
-                values,
-                comptime!(self.quant.unwrap().scale),
-                comptime!(self.quant.unwrap().scheme),
-            ))
-        } else {
-            TileView::new_Masked(values)
-        }
+        )
     }
 
     /// The mutable twin of [`flat`](MemData::flat).
@@ -567,7 +559,6 @@ impl<T: CubePrimitive> MemData<T> {
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
             check: comptime!(self.check),
-            quant: self.quant.clone(),
         }
     }
 }

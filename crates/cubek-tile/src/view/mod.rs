@@ -1,26 +1,30 @@
 pub mod dequant;
 pub mod flat;
+pub mod masked;
 pub mod matrix;
 
 pub use dequant::*;
 pub use flat::*;
+pub use masked::*;
 pub use matrix::*;
 
-use cubecl::{
-    prelude::*,
-    std::tensor::{View, ViewMut, layout::Coordinates},
-};
+use cubecl::{prelude::*, std::tensor::layout::Coordinates};
 
+/// A quantization-transparent view over a [`Tile`]: either a plain [`MaskedView`] or a
+/// [`DequantView`]. Both branches `read` into the same compute type `Vector<F, N>` (`F` defaults to
+/// `f32`), so an elementwise leaf treats a quantized and a plain tile identically — the dequant
+/// happens underneath. Which branch is taken is fixed at comptime when [`Tile::flat`] builds it.
 #[derive(CubeType)]
-pub enum TileView<'a, T: Numeric, C: Coordinates + 'a, F: Numeric = f32> {
-    Masked(MaskedView<'a, T, C>),
-    Dequant(DequantView<'a, T, F, C, Const<1>>),
+pub enum TileView<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric = f32> {
+    Masked(MaskedView<'a, Vector<I, N>, C>),
+    Dequant(DequantView<'a, I, N, F, C>),
 }
 
-impl<'a, T: Numeric, C: Coordinates + 'a, F: Numeric> TileView<'a, T, C, F> {
-    pub fn read(&self, pos: C) -> T {
+#[cube]
+impl<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> TileView<'a, I, N, C, F> {
+    pub fn read(&self, pos: C) -> Vector<F, N> {
         match self {
-            TileView::Masked(masked) => masked.read(pos),
+            TileView::Masked(masked) => Vector::cast_from(masked.read(pos)),
             TileView::Dequant(dequant) => dequant.read(pos),
         }
     }
@@ -33,70 +37,32 @@ impl<'a, T: Numeric, C: Coordinates + 'a, F: Numeric> TileView<'a, T, C, F> {
     }
 }
 
-/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some
-/// [`Layout`](cubecl::std::tensor::layout::Layout) (a 2-D [`BatchMatrix`] or a 1-D [`FlatLayout`])
-/// plus its own comptime bounds-check flag, so the
-/// leaf reads it without being asked. `check` zeroes reads / skips writes past the operand's
-/// logical bound (the partial-tile overhang); `false` is the unchecked fast path. The coordinate
-/// type `C` is whatever the layout exposes — `Coords2d` for a matrix, `Coords1d` for a flat scan.
 #[derive(CubeType)]
-pub struct MaskedView<'a, T: CubePrimitive, C: Coordinates + 'a> {
-    view: View<'a, T, C>,
-    #[cube(comptime)]
-    pub(crate) check: bool,
+pub enum TileViewMut<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric = f32> {
+    Masked(MaskedViewMut<'a, Vector<I, N>, C>),
+    Dequant(DequantView<'a, I, N, F, C>),
 }
 
 #[cube]
-impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
-    pub fn new(view: View<'a, T, C>, #[comptime] check: bool) -> Self {
-        MaskedView::<'a, T, C> { view, check }
-    }
-
-    pub fn read(&self, pos: C) -> T {
-        if comptime!(self.check) {
-            self.view.read_checked(pos)
-        } else {
-            self.view.read(pos)
+impl<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> TileViewMut<'a, I, N, C, F> {
+    pub fn read(&self, pos: C) -> Vector<F, N> {
+        match self {
+            TileViewMut::Masked(masked) => Vector::cast_from(masked.read(pos)),
+            TileViewMut::Dequant(dequant) => dequant.read(pos),
         }
     }
 
     pub fn shape(&self) -> C {
-        self.view.shape()
-    }
-}
-
-/// The mutable twin of [`MaskedView`]. Its `write` skips the overhang under `check`, matching
-/// the masked reads.
-#[derive(CubeType)]
-pub struct MaskedViewMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
-    view: ViewMut<'a, T, C>,
-    #[cube(comptime)]
-    pub(crate) check: bool,
-}
-
-#[cube]
-impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
-    pub fn new(view: ViewMut<'a, T, C>, #[comptime] check: bool) -> Self {
-        MaskedViewMut::<'a, T, C> { view, check }
-    }
-
-    pub fn read(&self, pos: C) -> T {
-        if comptime!(self.check) {
-            self.view.read_checked(pos)
-        } else {
-            self.view.read(pos)
+        match self {
+            TileViewMut::Masked(masked) => masked.shape(),
+            TileViewMut::Dequant(dequant) => dequant.shape(),
         }
     }
 
-    pub fn write(&mut self, pos: C, value: T) {
-        if comptime!(self.check) {
-            self.view.write_checked(pos, value);
-        } else {
-            self.view.write(pos, value);
+    pub fn write(&mut self, pos: C, value: Vector<I, N>) {
+        match self {
+            TileViewMut::Masked(masked) => masked.write(pos, value),
+            TileViewMut::Dequant(_) => unimplemented!(),
         }
-    }
-
-    pub fn shape(&self) -> C {
-        self.view.shape()
     }
 }

@@ -75,19 +75,42 @@ impl Layout for FlatLayout {
 }
 
 #[cube]
-impl<T: CubePrimitive> Tile<T> {
-    /// A flat 1-D masked view: a row-major scan over the tile's window, masking the overhang
-    /// per its comptime `check` flag. The elementwise twin of [`matrix`](Tile::matrix).
-    pub fn flat(&self) -> TileView<'_, T, Coords1d> {
+impl<I: Numeric, N: Size> Tile<Vector<I, N>> {
+    /// A flat 1-D scan that is quantization-transparent: a row-major scan over the tile's window
+    /// whose reads yield the dequantized compute value (`Vector<f32, N>`). A plain tile casts the
+    /// raw line through; a quantized one folds in its per-tensor scale. The elementwise twin of
+    /// [`matrix`](Tile::matrix); masking follows the comptime `check` flag underneath.
+    pub fn flat(&self) -> TileView<'_, I, N, Coords1d> {
         match &self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.flat(),
+            Payload::Gmem(g) | Payload::Smem(g) => {
+                let values = g.flat();
+                let quant = self.quant;
+                if comptime!(quant.is_some()) {
+                    let info = quant.unwrap();
+                    TileView::new_Dequant(DequantView::new(
+                        values,
+                        info.scale,
+                        comptime!(info.scheme),
+                    ))
+                } else {
+                    TileView::new_Masked(values)
+                }
+            }
             Payload::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
         }
     }
 
-    pub fn flat_mut(&mut self) -> FlatViewMut<'_, T> {
+    pub fn flat_mut(&mut self) -> TileViewMut<'_, I, N, Coords1d> {
         match &mut self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.flat_mut(),
+            Payload::Gmem(g) | Payload::Smem(g) => {
+                let values = g.flat_mut();
+                let quant = self.quant;
+                if comptime!(quant.is_some()) {
+                    unimplemented!()
+                } else {
+                    TileViewMut::new_Masked(values)
+                }
+            }
             Payload::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
         }
     }
