@@ -56,11 +56,11 @@ impl<I: Numeric, S: Scalar, O: Numeric, N: Size> AddScalar<Vector<I, N>, S> for 
     fn add(input: &Tile<Vector<I, N>>, scalar: S, output: &mut Tile<Vector<O, N>>) {
         let scalar = Vector::cast_from(scalar);
 
-        let in_flat = input.flat();
-        let mut out = output.flat_mut();
+        let values = input.flat::<O>();
+        let mut out = output.flat_mut::<O>();
 
         for i in 0..out.shape() {
-            out.write(i, Vector::cast_from(in_flat.read(i)) + scalar);
+            out.write(i, values.read(i) + scalar);
         }
     }
 }

@@ -58,8 +58,8 @@ impl<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>
         // per-tensor: one scale at flat position 0
         let scale = Vector::cast_from(scales.view().read(seq![0]));
 
-        let values = input.flat();
-        let mut out = output.flat_mut();
+        let values = input.flat::<O>();
+        let mut out = output.flat_mut::<O>();
 
         for i in 0..out.shape() {
             out.write(i, Vector::cast_from(values.read(i)) * scale);

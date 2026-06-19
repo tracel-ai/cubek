@@ -10,9 +10,9 @@ pub use quant::*;
 
 use cubecl::{prelude::*, std::tensor::layout::Coordinates};
 
-// A quantization-transparent view over a tile.
+// A quantization-transparent view over tile data.
 #[derive(CubeType)]
-pub enum TileView<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric = f32> {
+pub enum TileView<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> {
     Direct(MaskedView<'a, Vector<I, N>, C>),
     Quantized(QuantizedView<'a, I, N, F, C>),
 }
@@ -34,8 +34,10 @@ impl<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> TileView<'a, I, N
     }
 }
 
+// used already for the `FlatViewMut` to explicitly tell a quantized `Tile` cannot be written to directly for now
+// as it requires more logic for packed values and require a requantization
 #[derive(CubeType)]
-pub enum TileViewMut<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric = f32> {
+pub enum TileViewMut<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> {
     Direct(MaskedViewMut<'a, Vector<I, N>, C>),
     Quantized(QuantizedView<'a, I, N, F, C>),
 }
