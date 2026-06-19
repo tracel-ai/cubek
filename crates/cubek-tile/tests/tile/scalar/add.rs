@@ -22,15 +22,26 @@ fn scalar_add_non_quantized_matches_reference() {
     run_non_quantized(8, 8, -2.5);
 }
 
-/// RED (TDD): the first-class goal — calling `scalar_add` on a *quantized* input must
-/// transparently dequantize on read, i.e. produce `dequant(q) + scalar = q * scale + scalar`.
-/// Uses real native (unpacked) Q8S quantization; packing isn't implemented yet. `scalar_add`
-/// currently reads the raw quantized value and ignores the scale, so this FAILS until the
-/// quant-aware tile read applies it.
-/// NOTE: native Q8S stores i8, which wgpu can't compile — run on a CPU/CUDA backend.
 #[test]
 fn scalar_add_quantized_matches_reference() {
     run_quantized(8, 8, -3.0);
+}
+
+#[cube(launch)]
+/// input: the input tensor
+/// scalar: the scalar to multiply with
+/// output: the output tensor
+pub fn scalar_add<I: Numeric, O: Numeric, N: Size>(
+    input: &QuantTileArg<'_, I, N>,
+    scalar: f32,
+    output: &TileArg<'_, O, N>,
+    #[define(I)] _input_dtype: StorageType,
+    #[define(O)] _output_dtype: StorageType,
+    #[define(N)] _size: usize,
+) {
+    let input = input.tile();
+    let mut output = output.tile();
+    output.add_scalar::<Vector<I, N>, f32>(&input, scalar);
 }
 
 /// Launch `scalar_add` over a plain (non-quantized) f32 tensor and check `out == in + scalar`.
@@ -79,23 +90,6 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
     assert_equals_approx(&got, &expected, 1e-6)
         .as_test_outcome()
         .enforce();
-}
-
-#[cube(launch)]
-/// input: the input tensor
-/// scalar: the scalar to multiply with
-/// output: the output tensor
-pub fn scalar_add<I: Numeric, O: Numeric, N: Size>(
-    input: &QuantTileArg<'_, I, N>,
-    scalar: f32,
-    output: &TileArg<'_, O, N>,
-    #[define(I)] _input_dtype: StorageType,
-    #[define(O)] _output_dtype: StorageType,
-    #[define(N)] _size: usize,
-) {
-    let input = input.tile();
-    let mut output = output.tile();
-    output.add_scalar::<Vector<I, N>, f32>(&input, scalar);
 }
 
 /// Launch `scalar_add` over a native (unpacked) Q8S quantized input and check

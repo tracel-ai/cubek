@@ -1,5 +1,5 @@
 mod matmul;
 mod recursive;
 mod references;
-mod scalar_add;
+mod scalar;
 mod space;

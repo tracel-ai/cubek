@@ -74,7 +74,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 
 /// The quantization side-channel of a [`QuantTileArg`]: the scale grid plus the comptime
 /// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
-/// quantized or not (the [`Tile`] dequantizes on read; see [`Tile::flat_dequant`]).
+/// quantized or not (the [`Tile`] dequantizes on read).
 #[derive(CubeType, CubeLaunch)]
 pub struct QuantArg {
     /// Per-tensor scales (currently a single value at flat index 0).
