@@ -22,9 +22,11 @@ full = ["extended"]
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
+cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.1", default-features = false }
 
 half.workspace = true
 serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }

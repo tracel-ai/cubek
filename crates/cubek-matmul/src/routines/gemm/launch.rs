@@ -14,7 +14,7 @@ use crate::{
     args::InputArg,
     args::{ConcreteInputsFactory, ConcreteOutputFactory, OutputArg, TensorArgs},
     routines::gemm::GemmRoutine,
-    routines::{BatchMatmulRoutine as _, BlueprintStrategy},
+    routines::{BatchMatmulRoutine as _, BlueprintStrategy, into_contiguous_if_highly_permuted},
 };
 
 fn vector_size_for<R: Runtime>(
@@ -45,6 +45,11 @@ pub fn launch_ref<R: Runtime>(
     strategy: &BlueprintStrategy<(), GemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    // A stride-0 (broadcast) matrix dim can't be classified as row/col-major;
+    // materialize such operands so they read as plain contiguous tensors.
+    lhs = into_contiguous_if_highly_permuted(client, lhs)?;
+    rhs = into_contiguous_if_highly_permuted(client, rhs)?;
+
     let rank = rhs.shape().len();
     let lhs_shape = lhs.shape();
     let rhs_shape = rhs.shape();

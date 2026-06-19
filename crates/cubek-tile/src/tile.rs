@@ -142,10 +142,12 @@ impl<T: CubePrimitive> Tile<T> {
             physical_strides.push(tensor.stride(i) as u32);
         }
         let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
-        let (origin, extent) = full_window(comptime!(space.clone()));
         // Logical bound folded from the physical shape, so it's correct for tiled
         // operands too (the physical buffer is padded; the logical extent is not).
         let bound = logical_bound(&physical_shape, start_axis, num_tiled, levels);
+        // The whole-tile window. A `Dynamic` axis takes its runtime size from `bound`, so the
+        // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
+        let (origin, extent) = top_window(comptime!(space.clone()), &bound);
         Tile::<T> {
             payload: Payload::new_Gmem(MemData::<T> {
                 buffer,
@@ -208,6 +210,31 @@ impl<T: CubePrimitive> Tile<T> {
             }),
             space: comptime!(space),
         }
+    }
+
+    /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData) folded
+    /// from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's tile count, so
+    /// one kernel serves any shape. A cmma fragment has no buffer extent.
+    pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
+        let p = comptime!(self.space.position(axis));
+        match &self.payload {
+            Payload::Gmem(g) | Payload::Smem(g) => g.bound[p] as usize,
+            Payload::Cmma(_) => panic!("Tile::runtime_extent: a cmma fragment has no extent"),
+        }
+    }
+
+    /// The runtime space to walk this tile: its comptime tiling spec plus the runtime sizes of any
+    /// `Dynamic` axes, read off the tile. A fully-`Static` tile short-circuits to no runtime sizes.
+    pub fn runtime_space(&self) -> Space {
+        let space = comptime!(self.space.clone());
+        let mut sizes = Sequence::<usize>::new();
+        if comptime!(!space.is_static()) {
+            #[unroll]
+            for p in 0..comptime!(space.rank()) {
+                sizes.push(self.runtime_extent(space.axis_at(p)));
+            }
+        }
+        Space::with_sizes(space, sizes)
     }
 
     /// A read [`View`]: the buffer re-viewed through its base layout, then the
@@ -361,9 +388,9 @@ impl<T: CubePrimitive> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
-    /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
+    /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
     /// so the leaf masks without being asked.
-    pub(crate) fn masked(&self, layout: BatchMatrix) -> MaskedView<'_, T> {
+    pub(crate) fn masked(&self, layout: BatchMatrix) -> MatrixView<'_, T> {
         MaskedView::new(
             self.buffer
                 .view(self.base())
@@ -374,12 +401,40 @@ impl<T: CubePrimitive> MemData<T> {
     }
 
     /// The mutable twin of [`masked`](MemData::masked).
-    pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MaskedViewMut<'_, T> {
+    pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MatrixViewMut<'_, T> {
         let base = self.base();
         let window = self.window();
         let check = comptime!(self.check);
         MaskedViewMut::new(
             self.buffer.view_mut(base).view_mut(window).view_mut(layout),
+            check,
+        )
+    }
+
+    /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent: a
+    /// [`FlatLayout`] turns a row-major index into the N-D position, carrying the `check` flag
+    /// so a flat scan masks the overhang without being asked.
+    pub(crate) fn flat(&self) -> FlatView<'_, T> {
+        FlatView::new(
+            self.buffer
+                .view(self.base())
+                .view(self.window())
+                .view(FlatLayout::new(self.extent.clone())),
+            comptime!(self.check),
+        )
+    }
+
+    /// The mutable twin of [`flat`](MemData::flat).
+    pub(crate) fn flat_mut(&mut self) -> FlatViewMut<'_, T> {
+        let base = self.base();
+        let window = self.window();
+        let extent = self.extent.clone();
+        let check = comptime!(self.check);
+        FlatViewMut::new(
+            self.buffer
+                .view_mut(base)
+                .view_mut(window)
+                .view_mut(FlatLayout::new(extent)),
             check,
         )
     }
@@ -390,7 +445,7 @@ impl<T: CubePrimitive> MemData<T> {
         &mut self,
         i: usize,
         #[comptime] space: Space,
-    ) -> MaskedViewMut<'_, T> {
+    ) -> MatrixViewMut<'_, T> {
         let rank = comptime!(space.rank());
         let rows = comptime!(space.extent_at(rank - 2));
         let cols = comptime!(space.extent_at(rank - 1));
@@ -478,6 +533,28 @@ fn full_window(#[comptime] space: Space) -> (CoordsDyn, CoordsDyn) {
     for p in 0..space.rank() {
         origin.push(0);
         extent.push(space.extent(space.axis_at(p)) as u32);
+    }
+
+    (origin, extent)
+}
+
+/// [`full_window`] for the top gmem tile, where an axis may be [`Dynamic`](crate::Extent): such
+/// an axis reads its runtime size from `bound` (the folded logical extent) instead of a comptime
+/// constant, so the problem shape never specializes the kernel.
+#[cube]
+fn top_window(#[comptime] space: Space, bound: &CoordsDyn) -> (CoordsDyn, CoordsDyn) {
+    let mut origin = CoordsDyn::new();
+    let mut extent = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..space.rank() {
+        origin.push(0);
+        let axis = comptime!(space.axis_at(p));
+        let size = match comptime!(space.extent_raw(axis)) {
+            Extent::Static(e) => (e as u32).runtime(),
+            Extent::Dynamic => bound[p],
+        };
+        extent.push(size);
     }
 
     (origin, extent)

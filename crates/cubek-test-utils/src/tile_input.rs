@@ -193,12 +193,17 @@ impl TileInputBuilder {
         self.build(TestInputBuilder::zeros)
     }
 
+    /// Uniformly distributed random values in `[lo, hi)` range, seeded by `seed`.
+    pub fn uniform(self, seed: u64, lo: f32, hi: f32) -> TileInput {
+        self.build(|b: TestInputBuilder| b.uniform(seed, lo, hi))
+    }
+
     /// Build the `[grid…, level…, finest…]` device buffer, filled by `fill` (a
     /// `TestInput` finalizer like `arange`/`zeros`) in physical row-major order.
     /// Walking coarse→fine, each level becomes one block of `rank` dims and the
     /// leftover edge is the finest block — `(levels + 1) * rank` dims, the layout
     /// the `tiled_view` reads back.
-    fn build(self, fill: fn(TestInputBuilder) -> TestInput) -> TileInput {
+    fn build(self, fill: impl FnOnce(TestInputBuilder) -> TestInput) -> TileInput {
         let levels = self
             .levels
             .expect("TileInput: set .split/.tile(...) or .untiled() before a finalizer");

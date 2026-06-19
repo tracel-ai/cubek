@@ -48,6 +48,26 @@ pub enum ComputeScope {
     Unit,
 }
 
+impl Distribution {
+    /// One tile per cube on `axis`, contiguous
+    pub fn cube(axis: CubeAxis) -> Self {
+        Distribution::Spatial {
+            scope: ComputeScope::Cube(axis),
+            spread: Spread::Contiguous,
+            coverage: Coverage::TilesEach(1),
+        }
+    }
+
+    /// One tile per plane, contiguous
+    pub fn plane() -> Self {
+        Distribution::Spatial {
+            scope: ComputeScope::Plane,
+            spread: Spread::Contiguous,
+            coverage: Coverage::TilesEach(1),
+        }
+    }
+}
+
 impl Coverage {
     pub fn instances(self, grid: usize) -> usize {
         match self {

@@ -38,6 +38,7 @@ use crate::{
         gemv_unit_perpendicular::{
             GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
         },
+        into_contiguous_if_highly_permuted,
         naive::launch as launch_naive,
     },
 };
@@ -546,8 +547,8 @@ impl Strategy {
             }
             Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
                 client,
-                WithLayout::strided_input(lhs)?,
-                WithLayout::strided_input(rhs)?,
+                WithLayout::strided_input(into_contiguous_if_highly_permuted(client, lhs)?)?,
+                WithLayout::strided_input(into_contiguous_if_highly_permuted(client, rhs)?)?,
                 WithLayout::strided_output(out)?,
                 strategy,
                 dtypes,
