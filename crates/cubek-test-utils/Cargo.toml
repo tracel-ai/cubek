@@ -30,6 +30,7 @@ cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
 cubecl-common = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

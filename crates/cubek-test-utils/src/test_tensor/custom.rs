@@ -55,7 +55,7 @@ fn scatter_logical_to_physical(shape: &Shape, strides: &Strides, src: &[f32], ds
     }
 }
 
-fn cast_f32_to_dtype(data: &[f32], dtype: StorageType) -> Vec<u8> {
+pub(crate) fn cast_f32_to_dtype(data: &[f32], dtype: StorageType) -> Vec<u8> {
     match dtype {
         StorageType::Scalar(ElemType::Float(FloatKind::F32)) => f32::as_bytes(data).to_vec(),
         StorageType::Scalar(ElemType::Float(FloatKind::F16)) => {
