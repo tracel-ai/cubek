@@ -1,5 +1,6 @@
 use cubecl::prelude::*;
 use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
+use cubek_resample::definition::ResampleArgsLaunch;
 use cubek_resample::{definition::Resample, resample};
 use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
 
@@ -37,6 +38,7 @@ pub fn run_test(
     input_data: Vec<f32>,
     output_shape: Vec<usize>,
     expected_data: Vec<f32>,
+    args: ResampleArgsLaunch<TestRuntime>,
     config: Resample,
 ) {
     let input_handle = TestInput::builder(client.clone(), input_shape)
@@ -56,6 +58,7 @@ pub fn run_test(
         &client,
         input,
         output,
+        args,
         config,
         f32::as_type_native_unchecked().storage_type(),
     );

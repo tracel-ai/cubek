@@ -1,9 +1,11 @@
-use crate::definition::{Placement, Resample, ResampleAxis};
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use crate::definition::{Resample, ResampleAxis};
+use cubecl::prelude::*;
 
 /// The kernel function, it determines the shape of the kernel.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
 pub enum Kernel {
+    /// A kernel that always returns zero.
+    Zero,
     /// Uniform taps with distribution: `1.0 / scale`.
     Uniform { scale: u8 },
     /// Triangle, support 2.
@@ -15,6 +17,10 @@ pub enum Kernel {
 }
 
 impl Kernel {
+    pub fn zero() -> Self {
+        Kernel::Zero
+    }
+
     pub fn one() -> Self {
         Kernel::Uniform { scale: 1 }
     }
@@ -44,31 +50,23 @@ impl Kernel {
 
 #[cube]
 impl Kernel {
-    /// Number of taps in the kernel.
-    pub fn num_taps(#[comptime] this: &Self) -> usize {
-        match this {
-            Kernel::Uniform { .. } => 1,
-            Kernel::Linear => 2,
-            Kernel::Cubic { .. } => 4,
-            Kernel::Lanczos { lobes } => 2 * *lobes as usize,
-        }
-    }
-
     /// Compute the combined weight from already-mapped coordinates across all resample axes.
     pub fn weight<F: Float, N: Size>(
-        in_coord: &mut Sequence<i32>,
-        out_coord: &CoordsDyn,
+        in_coord: &Sequence<i32>,
+        centers: &Sequence<F>,
         #[comptime] config: &Resample,
-        #[comptime] vectorized_axis: usize,
         #[comptime] lane: usize,
     ) -> F {
         let mut weight = F::new(1.0);
 
-        #[unroll]
-        for axis_idx in 0..comptime!(config.resample_axes.len()) {
+        let num_axes = comptime!(config.resample_axes.len());
+
+        for axis_idx in comptime!(0..num_axes) {
             let resample_axis = config.resample_axes.index(axis_idx);
 
-            weight *= weight_1d::<F>(in_coord, out_coord, resample_axis, vectorized_axis, lane);
+            let lane_idx = lane * num_axes + axis_idx;
+
+            weight *= weight_separable::<F>(lane_idx, in_coord, centers, resample_axis);
         }
 
         weight
@@ -77,71 +75,29 @@ impl Kernel {
 
 /// Computes the weight of a single kernel.
 #[cube]
-fn weight_1d<F: Float>(
-    in_coord: &mut Sequence<i32>,
-    out_coord: &CoordsDyn,
+fn weight_separable<F: Float>(
+    lane_idx: usize,
+    in_coord: &Sequence<i32>,
+    centers: &Sequence<F>,
     #[comptime] resample_axis: &ResampleAxis,
-    #[comptime] vectorized_axis: usize,
-    #[comptime] lane: usize,
 ) -> F {
     match resample_axis.kernel {
+        Kernel::Zero => F::new(0.0),
         Kernel::Uniform { scale } => F::new(1.0) / F::cast_from(scale),
         Kernel::Linear | Kernel::Cubic { .. } | Kernel::Lanczos { .. } => {
-            compute_frac_kernel::<F>(in_coord, out_coord, resample_axis, vectorized_axis, lane)
+            let frac = F::cast_from(in_coord[resample_axis.axis]) - centers[lane_idx];
+
+            match resample_axis.kernel {
+                Kernel::Linear => linear_weight::<F>(frac),
+                Kernel::Cubic {
+                    a_numerator,
+                    a_denominator,
+                } => cubic_weight::<F>(frac, a_numerator, a_denominator),
+                Kernel::Lanczos { lobes } => lanczos_weight::<F>(frac, lobes),
+                _ => unreachable!(),
+            }
         }
     }
-}
-
-/// Computes the weight for a fractional position.
-#[cube]
-fn compute_frac_kernel<F: Float>(
-    in_coord: &mut Sequence<i32>,
-    out_coord: &CoordsDyn,
-    #[comptime] resample_axis: &ResampleAxis,
-    #[comptime] vectorized_axis: usize,
-    #[comptime] lane: usize,
-) -> F {
-    let lane_pos = compute_lane_pos(out_coord, resample_axis, vectorized_axis, lane);
-    let frac = compute_frac::<F>(in_coord, lane_pos, resample_axis);
-
-    match resample_axis.kernel {
-        Kernel::Linear => linear_weight::<F>(frac),
-        Kernel::Cubic {
-            a_numerator,
-            a_denominator,
-        } => cubic_weight::<F>(frac, a_numerator, a_denominator),
-        Kernel::Lanczos { lobes } => lanczos_weight::<F>(frac, lobes),
-        _ => unreachable!(),
-    }
-}
-
-/// Computes the lane position.
-#[cube]
-fn compute_lane_pos(
-    out_coord: &CoordsDyn,
-    #[comptime] resample_axis: &ResampleAxis,
-    #[comptime] vectorized_axis: usize,
-    #[comptime] lane: usize,
-) -> usize {
-    let out_pos = out_coord[resample_axis.axis] as usize;
-
-    if resample_axis.axis == vectorized_axis {
-        out_pos + lane
-    } else {
-        out_pos
-    }
-}
-
-/// Computes the fractional position.
-#[cube]
-fn compute_frac<F: Float>(
-    in_coord: &mut Sequence<i32>,
-    lane_pos: usize,
-    #[comptime] resample_axis: &ResampleAxis,
-) -> F {
-    let center = Placement::map::<F>(lane_pos, &resample_axis.placement);
-
-    F::cast_from(in_coord[resample_axis.axis]) - center
 }
 
 /// Computes the linear weight for a given fractional position.

@@ -1,17 +1,18 @@
-use crate::{components::resample_kernel, definition::Resample};
+use crate::{
+    components::resample_kernel,
+    definition::{Resample, ResampleArgsLaunch, TileSizeLauncher},
+};
 use cubecl::{
-    calculate_cube_count_elemwise,
     prelude::*,
-    std::{
-        FastDivmod,
-        tensor::{
-            launch::ViewArg,
-            layout::{
-                CoordsDyn,
-                fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
-            },
+    server::CubeCountSelection,
+    std::tensor::{
+        launch::ViewArg,
+        layout::{
+            CoordsDynI,
+            fixed_dim::{FixedDimLayout, FixedDimLayoutLaunch},
         },
     },
+    tensor_vector_size_parallel,
 };
 
 /// Launch the resample kernel for a single spatial axis.
@@ -19,6 +20,7 @@ pub fn resample_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
+    args: ResampleArgsLaunch<R>,
     config: Resample,
     dtype: StorageType,
 ) {
@@ -28,10 +30,10 @@ pub fn resample_launch<R: Runtime>(
 
     let cube_dim = CubeDim::new(client, working_units);
 
-    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
+    let (tile_size, cube_size) =
+        TileSizeLauncher::new(&output.shape, &cube_dim, vectorized_axis, vector_size);
 
-    let output_shape = divmod_sequence(&output.shape);
-    let output_strides = divmod_sequence(&output.strides);
+    let cube_count = calculate_cube_count(client, &cube_size);
 
     unsafe {
         resample_kernel::launch_unchecked(
@@ -41,9 +43,9 @@ pub fn resample_launch<R: Runtime>(
             vector_size,
             view(input, vector_size),
             view(output, vector_size),
-            output_shape,
-            output_strides,
-            working_units,
+            tile_size.to_launch(),
+            cube_size.to_launch(),
+            args,
             config,
             vectorized_axis,
             dtype,
@@ -58,29 +60,27 @@ fn vectorize<R: Runtime>(
     output: &TensorBinding<R>,
     dtype: StorageType,
 ) -> (usize, usize) {
-    let supported_sizes = client.io_optimized_vector_sizes(dtype.size());
     let rank = input.shape.len();
 
-    for i in 1..=rank {
-        let axis = rank - i;
+    for axis in (0..rank).rev() {
+        let in_vec = tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
+            &input.shape,
+            &input.strides,
+            axis,
+        );
 
-        // Break and don't vectorize if the axis is not contiguous.
-        if input.strides[axis] > 1 || output.strides[axis] > 1 {
-            break;
-        }
+        let out_vec = tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
+            &output.shape,
+            &output.strides,
+            axis,
+        );
 
-        // Find the largest vector size that works for both tensors on this axis
-        for vector_size in supported_sizes.clone() {
-            if vector_size == 1 {
-                continue;
-            }
+        let vector_size = in_vec.min(out_vec);
 
-            // If this vector size is supported by both, take it and break.
-            if input.shape[axis].is_multiple_of(vector_size)
-                && output.shape[axis].is_multiple_of(vector_size)
-            {
-                return (vector_size, axis);
-            }
+        if vector_size > 1 {
+            return (vector_size, axis);
         }
     }
 
@@ -88,28 +88,31 @@ fn vectorize<R: Runtime>(
     (1, rank.saturating_sub(1))
 }
 
-/// Convert a sequence of shapes to a sequence of fast divmod.
-fn divmod_sequence<R: Runtime>(shape: &[usize]) -> SequenceArg<R, FastDivmod<usize>> {
-    let mut out_seq = SequenceArg::new();
-    for dim in shape.iter() {
-        out_seq.push(*dim);
+/// Calculate the number of cubes required to execute an operation where one cube unit is
+/// assigned to one tile.
+fn calculate_cube_count<R: Runtime>(
+    client: &ComputeClient<R>,
+    cube_size_launcher: &TileSizeLauncher,
+) -> CubeCount {
+    if cube_size_launcher.is_empty() {
+        return CubeCount::Static(0, 0, 0);
     }
-    out_seq
+    CubeCountSelection::new(client, cube_size_launcher.num_cubes() as u32).cube_count()
 }
 
 /// Convert a tensor binding to a view argument.
-fn view<R: Runtime>(tensor: TensorBinding<R>, vector_size: VectorSize) -> ViewArg<CoordsDyn, R> {
+fn view<R: Runtime>(tensor: TensorBinding<R>, vector_size: VectorSize) -> ViewArg<CoordsDynI, R> {
     let shape_seq = tensor
         .shape
         .iter()
-        .map(|&s| s as u32)
-        .collect::<SequenceArg<R, u32>>();
+        .map(|&s| s as i32)
+        .collect::<SequenceArg<R, i32>>();
 
-    let layout = FixedDimLayoutLaunch::<CoordsDyn, R>::from_shape_handle_unchecked(
+    let layout = FixedDimLayoutLaunch::<CoordsDynI, R>::from_shape_handle_unchecked(
         &tensor,
         shape_seq,
         vector_size,
     );
     let buffer = tensor.into_tensor_arg();
-    ViewArg::new_tensor::<FixedDimLayout<CoordsDyn>>(buffer, layout)
+    ViewArg::new_tensor::<FixedDimLayout<CoordsDynI>>(buffer, layout)
 }
