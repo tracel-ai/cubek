@@ -20,8 +20,8 @@ version = "0.3.0-pre.1"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "945cce851dd7d0614e127fbf9a63e767c04ebdda", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "945cce851dd7d0614e127fbf9a63e767c04ebdda", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "2ece353135c955efcf2e6a6c5de755c20ae8862e", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "2ece353135c955efcf2e6a6c5de755c20ae8862e", default-features = false }
 
 ### For releases ###
 # cubecl = { version = "0.10.0", default-features = false }
@@ -67,3 +67,22 @@ opt-level = 0
 
 [profile.dev.build-override]
 opt-level = 3
+
+# Temporary: vendored cubecl @945cce8 + ViewMut::as_read (lets the unified View-backed
+# TileArg downgrade its mutable carrier to a read view). Drop once upstreamed.
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl = { path = "../cubecl/crates/cubecl" }
+cubecl-common = { path = "../cubecl/crates/cubecl-common" }
+cubecl-core = { path = "../cubecl/crates/cubecl-core" }
+cubecl-cpp = { path = "../cubecl/crates/cubecl-cpp" }
+cubecl-cpu = { path = "../cubecl/crates/cubecl-cpu" }
+cubecl-cuda = { path = "../cubecl/crates/cubecl-cuda" }
+cubecl-hip = { path = "../cubecl/crates/cubecl-hip" }
+cubecl-ir = { path = "../cubecl/crates/cubecl-ir" }
+cubecl-macros = { path = "../cubecl/crates/cubecl-macros" }
+cubecl-macros-internal = { path = "../cubecl/crates/cubecl-macros-internal" }
+cubecl-opt = { path = "../cubecl/crates/cubecl-opt" }
+cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
+cubecl-std = { path = "../cubecl/crates/cubecl-std" }
+cubecl-wgpu = { path = "../cubecl/crates/cubecl-wgpu" }
+cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }

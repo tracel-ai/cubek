@@ -104,16 +104,20 @@ impl<T: CubePrimitive> Tile<T> {
     pub fn matrix(&self, i: usize) -> MatrixView<'_, T> {
         let layout = self.batch_matrix(i);
         match &self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.masked(layout),
+            Payload::Gmem(g) => g.masked(layout),
+            Payload::Smem(g) => g.masked(layout),
             Payload::Cmma(_) => panic!("Tile::matrix: a cmma fragment has no memory view"),
+            Payload::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
         }
     }
 
     pub fn matrix_mut(&mut self, i: usize) -> MatrixViewMut<'_, T> {
         let layout = self.batch_matrix(i);
         match &mut self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.masked_mut(layout),
+            Payload::Gmem(g) => g.masked_mut(layout),
+            Payload::Smem(g) => g.masked_mut(layout),
             Payload::Cmma(_) => panic!("Tile::matrix_mut: a cmma fragment has no memory view"),
+            Payload::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
         }
     }
 }

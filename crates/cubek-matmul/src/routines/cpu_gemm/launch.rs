@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Schedule, Space, Split, TileArgLaunch, Tiling};
+use cubek_tile::{Axis, ConcreteLayout, CubeAxis, PhysicalAxis, Schedule, Split, TileArgLaunch, Tiling};
 
 use crate::{
     definition::{
@@ -236,44 +236,25 @@ fn launch_vectorized<R: Runtime>(
     let check_n = !n.is_multiple_of(blueprint.planes.n * blueprint.instruction.n);
     let check_k = !k.is_multiple_of(blueprint.instruction.k);
 
-    // `lhs` always staged scalar (`v = 1`); `rhs`/`out` carry the line size. The output
-    // rank left-aligns each operand's (possibly shorter) batch shape, numpy-style. Each
-    // operand bounds-checks the edges its tile may overhang.
-    let rank = out_batches.len();
+    // Each operand's physical layout as a `ConcreteLayout` (the loader derives its tiling + spanned
+    // axes from it), paired with the binding reshaped to match. `batch_axes` labels each output
+    // batch position, so an operand's surviving batches land on the right axes. `lhs` always staged
+    // scalar (`v = 1`); `rhs`/`out` carry the line size. Each operand bounds-checks its overhang.
+    let batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
+    let (lhs_data, lhs_concrete, lhs_axes) =
+        operand_concrete(&lhs_layout, lhs_data, lhs_batches, &batch_axes, [M, K], m, k);
+    let (rhs_data, rhs_concrete, rhs_axes) =
+        operand_concrete(&rhs_layout, rhs_data, rhs_batches, &batch_axes, [K, N], k, n);
+    let (out, out_concrete, out_axes) =
+        operand_concrete(&out_layout, out, out_batches, &batch_axes, [M, N], m, n);
+
     cpu_gemm_kernel::launch::<R>(
         client,
         cube_count,
         cube_dim,
-        tile_arg(
-            lhs_data,
-            &lhs_layout,
-            lhs_batches,
-            rank,
-            &space,
-            [M, K],
-            1,
-            check_m || check_k,
-        ),
-        tile_arg(
-            rhs_data,
-            &rhs_layout,
-            rhs_batches,
-            rank,
-            &space,
-            [K, N],
-            v,
-            check_k || check_n,
-        ),
-        tile_arg(
-            out,
-            &out_layout,
-            out_batches,
-            rank,
-            &space,
-            [M, N],
-            v,
-            check_m || check_n,
-        ),
+        TileArgLaunch::from_concrete(lhs_data, &lhs_concrete, &lhs_axes, &space, 1, check_m || check_k),
+        TileArgLaunch::from_concrete(rhs_data, &rhs_concrete, &rhs_axes, &space, v, check_k || check_n),
+        TileArgLaunch::from_concrete(out, &out_concrete, &out_axes, &space, v, check_m || check_n),
         lhs_dtype,
         rhs_dtype,
         acc_dtype,
@@ -281,44 +262,43 @@ fn launch_vectorized<R: Runtime>(
     );
 }
 
-/// Build one operand's launchable [`TileArgLaunch`]: the tensor arg, the [`Space`] it
-/// projects, and its [`Storage`] (bounds-checked per `check`). Broadcasting is omission —
-/// the operand drops each batch dim it keeps at size 1 (both the buffer dim and the axis),
-/// so a dim of `batches` survives only when `> 1`. Its axis is `batch_axis(p)` at the
-/// operand's *padded* batch position `p` (left-aligned to the output rank), matching the
-/// binding's own leading dims; `matrix` closes out the projection (`[M,K]`/`[K,N]`/`[M,N]`).
-#[allow(clippy::too_many_arguments)]
-fn tile_arg<R: Runtime, E: Numeric, V: Size>(
-    binding: TensorBinding<R>,
+/// Build one operand's `(reshaped binding, ConcreteLayout, logical axes)`. Drops size-1 (broadcast)
+/// batch dims — axis and buffer dim both, survivors at their padded position `pad + j`. The
+/// `ConcreteLayout` describes the *physical* layout (surviving batches single-fragment, the `matrix`
+/// axes expanded per storage-tiling level via `to_concrete`) and feeds the tile [`Storage`]; the
+/// `axes` are the binding's *logical* dim order `[batches…, row, col]` and drive the projection
+/// (col-major's physical order differs, so the two aren't interchangeable).
+fn operand_concrete<R: Runtime>(
     layout: &InnerLayout,
+    binding: TensorBinding<R>,
     batches: &[usize],
-    rank: usize,
-    space: &Space,
+    batch_axes: &[Axis],
     matrix: [Axis; 2],
-    v: usize,
-    check: bool,
-) -> TileArgLaunch<'static, E, V, R> {
-    let pad = rank - batches.len();
+    rows: usize,
+    cols: usize,
+) -> (TensorBinding<R>, ConcreteLayout, Vec<Axis>) {
+    let pad = batch_axes.len() - batches.len();
 
     let mut axes = Vec::new();
+    let mut phys = Vec::new();
     let mut shape = Vec::new();
     let mut strides = Vec::new();
     for (j, &b) in batches.iter().enumerate() {
         if b > 1 {
-            axes.push(batch_axis(pad + j));
+            axes.push(batch_axes[pad + j]);
+            phys.push(PhysicalAxis::new(batch_axes[pad + j], b));
             shape.push(binding.shape[j]);
             strides.push(binding.strides[j]);
         }
     }
-    // The matrix (and, for a tiled buffer, its grid/tile) dims follow the batch prefix.
     shape.extend_from_slice(&binding.shape[batches.len()..]);
     strides.extend_from_slice(&binding.strides[batches.len()..]);
     axes.extend(matrix);
+    phys.extend_from_slice(layout.to_concrete(matrix, rows, cols).axes());
 
     let mut binding = binding;
     binding.shape = shape[..].into();
     binding.strides = strides[..].into();
-
-    let (arg, storage) = layout.tensor_arg(binding, v);
-    TileArgLaunch::new(arg, space.project(&axes), storage.checked(check))
+    (binding, ConcreteLayout::new(&phys), axes)
 }
+

@@ -25,12 +25,20 @@ impl<E: Numeric, EL: Numeric, ER: Numeric, V: Size, L: Size> Mma<Vector<EL, L>, 
 {
     fn mma(acc: &mut Tile<Vector<E, V>>, lhs: &Tile<Vector<EL, L>>, rhs: &Tile<Vector<ER, V>>) {
         let space = comptime!(acc.space.clone());
-        let payload = &mut acc.payload;
-        match payload {
-            Payload::Cmma(d) => d.mma(lhs, rhs),
-            Payload::Gmem(g) | Payload::Smem(g) => {
-                mma_register_memory::<E, EL, ER, L, V>(g, lhs, rhs, space)
+        // A cmma accumulator runs the hardware leaf; plain memory (gmem output or smem) runs the
+        // register microkernel, which writes through `acc.matrix_mut` (dispatched per payload).
+        #[allow(clippy::match_like_matches_macro)]
+        let is_cmma = match &acc.payload {
+            Payload::Cmma(_) => true,
+            _ => false,
+        };
+        if is_cmma {
+            match &mut acc.payload {
+                Payload::Cmma(d) => d.mma(lhs, rhs),
+                Payload::Gmem(_) | Payload::Smem(_) | Payload::TmaGmem(_) => (),
             }
+        } else {
+            mma_register_memory::<E, EL, ER, L, V>(acc, lhs, rhs, space);
         }
     }
 }

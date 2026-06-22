@@ -70,7 +70,6 @@ impl InnerLayout {
     /// axis into its `[grid…, leaf]` fragments (level-major, leaf innermost) just like the
     /// physical buffer. Batch axes are layout-irrelevant, so only the matrix is described.
     /// Temporary bridge while `InnerLayout` converges onto `ConcreteLayout`.
-    #[allow(dead_code)]
     pub fn to_concrete(
         &self,
         matrix: [Axis; 2],
@@ -202,7 +201,7 @@ impl InnerLayout {
     }
 
     /// The raw [`TensorArg`] (operand strides preserved) plus the tensor's physical
-    /// [`Storage`] that `Tile::from_tensor` needs in-kernel. The batch count is read off
+    /// [`Storage`], which `TileArgLaunch::strided` turns into a `TiledViewLayout` view. The batch count is read off
     /// the binding's rank: every leading dim before the matrix is a batch axis, so a
     /// broadcast operand simply arrives with the size-1 batch dims already squeezed out
     /// (its omitted axes). Tiled keeps its physical `[batches…, grid…, tile…]` buffer

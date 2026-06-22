@@ -80,15 +80,19 @@ impl<T: CubePrimitive> Tile<T> {
     /// per its comptime `check` flag. The elementwise twin of [`matrix`](Tile::matrix).
     pub fn flat(&self) -> FlatView<'_, T> {
         match &self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.flat(),
+            Payload::Gmem(g) => g.flat(),
+            Payload::Smem(g) => g.flat(),
             Payload::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
+            Payload::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
         }
     }
 
     pub fn flat_mut(&mut self) -> FlatViewMut<'_, T> {
         match &mut self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.flat_mut(),
+            Payload::Gmem(g) => g.flat_mut(),
+            Payload::Smem(g) => g.flat_mut(),
             Payload::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
+            Payload::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
         }
     }
 }

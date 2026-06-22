@@ -10,9 +10,9 @@ use cubek_tile::TileArg;
 /// `EL = ER = E` case, where the casts fold away).
 #[cube(launch)]
 pub fn cpu_gemm_kernel<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
-    a: &TileArg<'_, EL, Const<1>>,
-    b: &TileArg<'_, ER, V>,
-    c: &TileArg<'_, E, V>,
+    a: &TileArg<EL, Const<1>>,
+    b: &TileArg<ER, V>,
+    c: &TileArg<E, V>,
     #[define(EL)] _lhs_dtype: StorageType,
     #[define(ER)] _rhs_dtype: StorageType,
     #[define(E)] _acc_dtype: StorageType,
