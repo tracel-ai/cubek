@@ -20,12 +20,20 @@ pub(crate) fn handle_command(
     for backend in backends {
         helpers::custom_crates_tests(
             vec![
-                "cubek-matmul",
-                "cubek-convolution",
                 "cubek-attention",
+                "cubek-convolution",
+                "cubek-fft",
+                "cubek-interpolate",
+                "cubek-layout",
+                "cubek-matmul",
+                "cubek-pool",
+                "cubek-quant",
                 "cubek-random",
                 "cubek-reduce",
-                "cubek-fft",
+                "cubek-resample",
+                "cubek-std",
+                "cubek-test-utils",
+                "cubek-tile",
             ],
             vec!["--features", backend],
             None,
