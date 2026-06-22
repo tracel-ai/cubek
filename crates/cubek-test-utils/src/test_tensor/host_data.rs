@@ -1,6 +1,7 @@
 use cubecl::{
     CubeElement, TestRuntime,
     client::ComputeClient,
+    ir::{ElemType, FloatKind, StorageType},
     prelude::CubePrimitive,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -18,13 +19,40 @@ pub struct HostData {
 #[derive(Eq, PartialEq, PartialOrd, Clone, Copy, Debug)]
 pub enum HostDataType {
     F32,
+    F64,
     I32,
     Bool,
+}
+
+/// Convert a `Vec<f64>` accumulation buffer into a `HostDataVec` at the
+/// precision dictated by `dtype`: kept as `F64` for f64 tensors, downcast to
+/// `F32` for everything else (matching `HostDataType::from`).
+impl From<(Vec<f64>, StorageType)> for HostDataVec {
+    fn from((data, dtype): (Vec<f64>, StorageType)) -> Self {
+        match HostDataType::from(dtype) {
+            HostDataType::F64 => HostDataVec::F64(data),
+            _ => HostDataVec::F32(data.into_iter().map(|x| x as f32).collect()),
+        }
+    }
+}
+
+impl From<StorageType> for HostDataType {
+    /// Map a tensor storage type to the host representation used in tests.
+    /// `f64` tensors get `F64` so comparisons happen at full precision; all
+    /// other numeric types collapse to `F32`.
+    fn from(dtype: StorageType) -> Self {
+        if matches!(dtype.elem_type(), ElemType::Float(FloatKind::F64)) {
+            HostDataType::F64
+        } else {
+            HostDataType::F32
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum HostDataVec {
     F32(Vec<f32>),
+    F64(Vec<f64>),
     I32(Vec<i32>),
     Bool(Vec<bool>),
 }
@@ -34,6 +62,17 @@ impl HostDataVec {
         match self {
             HostDataVec::F32(items) => items[i],
             _ => panic!("Can't get as f32"),
+        }
+    }
+
+    /// Get the element as `f64`, losslessly upcasting `F32` data if needed.
+    /// This is the precision-preserving accessor used by the correctness
+    /// comparator so `F64` host data can be compared at full precision.
+    pub fn get_f64(&self, i: usize) -> f64 {
+        match self {
+            HostDataVec::F32(items) => items[i] as f64,
+            HostDataVec::F64(items) => items[i],
+            _ => panic!("Can't get as f64"),
         }
     }
 
@@ -54,6 +93,15 @@ impl HostDataVec {
     pub fn try_get_f32(&self, i: usize) -> Option<f32> {
         match self {
             HostDataVec::F32(items) => items.get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// Like [`try_get_f32`](Self::try_get_f32), but for [`get_f64`](Self::get_f64).
+    pub fn try_get_f64(&self, i: usize) -> Option<f64> {
+        match self {
+            HostDataVec::F32(items) => items.get(i).map(|&x| x as f64),
+            HostDataVec::F64(items) => items.get(i).copied(),
             _ => None,
         }
     }
@@ -106,6 +154,19 @@ impl HostData {
 
                 HostDataVec::F32(data)
             }
+            HostDataType::F64 => {
+                let handle = copy_casted(
+                    client,
+                    tensor_handle,
+                    f64::as_type_native_unchecked().storage_type(),
+                );
+                let data = f64::from_bytes(
+                    &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
+                )
+                .to_owned();
+
+                HostDataVec::F64(data)
+            }
             HostDataType::I32 => {
                 let handle = copy_casted(
                     client,
@@ -145,6 +206,12 @@ impl HostData {
         self.data.get_f32(self.strided_index(index))
     }
 
+    /// Like [`get_f32`](Self::get_f32), but returns `f64`, losslessly
+    /// upcasting `F32` data if needed.
+    pub fn get_f64(&self, index: &[usize]) -> f64 {
+        self.data.get_f64(self.strided_index(index))
+    }
+
     pub fn get_bool(&self, index: &[usize]) -> bool {
         self.data.get_bool(self.strided_index(index))
     }
@@ -157,6 +224,11 @@ impl HostData {
     /// (or the index is out of bounds), instead of panicking.
     pub fn try_get_f32(&self, index: &[usize]) -> Option<f32> {
         self.data.try_get_f32(self.strided_index(index))
+    }
+
+    /// Like [`try_get_f32`](Self::try_get_f32), but for [`get_f64`](Self::get_f64).
+    pub fn try_get_f64(&self, index: &[usize]) -> Option<f64> {
+        self.data.try_get_f64(self.strided_index(index))
     }
 
     pub fn try_get_i32(&self, index: &[usize]) -> Option<i32> {
@@ -180,6 +252,15 @@ impl HostData {
     pub fn iter_indexed_f32(&self) -> impl Iterator<Item = (Vec<usize>, f32)> + '_ {
         self.iter_indices().map(move |idx| {
             let v = self.get_f32(&idx);
+            (idx, v)
+        })
+    }
+
+    /// Iterate `(index, f64 value)` pairs in row-major order, losslessly
+    /// upcasting `F32` data if needed.
+    pub fn iter_indexed_f64(&self) -> impl Iterator<Item = (Vec<usize>, f64)> + '_ {
+        self.iter_indices().map(move |idx| {
+            let v = self.get_f64(&idx);
             (idx, v)
         })
     }
@@ -273,6 +354,7 @@ impl HostData {
         match &self.data {
             HostDataVec::I32(_) => self.data.get_i32(idx).to_string(),
             HostDataVec::F32(_) => format!("{:.3}", self.data.get_f32(idx)),
+            HostDataVec::F64(_) => format!("{:.3}", self.data.get_f64(idx)),
             HostDataVec::Bool(_) => self.data.get_bool(idx).to_string(),
         }
     }
