@@ -70,11 +70,18 @@ pub(crate) fn cast_f32_to_dtype(data: &[f32], dtype: StorageType) -> Vec<u8> {
             let casted: Vec<u32> = data.iter().map(|&x| x as u32).collect();
             u32::as_bytes(&casted).to_vec()
         }
+        StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U8)) => {
+            data.iter().map(|&x| x as u8).collect()
+        }
         StorageType::Scalar(ElemType::Int(cubecl::ir::IntKind::I32)) => {
             let casted: Vec<i32> = data.iter().map(|&x| x as i32).collect();
             i32::as_bytes(&casted).to_vec()
         }
-        other => panic!("DataKind::Custom: unsupported storage type {other:?}"),
+        StorageType::Scalar(ElemType::Int(cubecl::ir::IntKind::I8)) => {
+            let casted: Vec<i8> = data.iter().map(|&x| x as i8).collect();
+            i8::as_bytes(&casted).to_vec()
+        }
+        other => panic!("cast_f32_to_dtype: unsupported storage type {other:?}"),
     }
 }
 

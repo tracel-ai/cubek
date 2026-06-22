@@ -27,7 +27,6 @@ fn random_tensor_handle(
     // steps over padding) need more room; broadcast strides (0) need less.
     let physical_len = physical_extent(&Shape::from(tensor_shape.to_vec()), &Strides::new(strides));
 
-    // Host-side generation, deterministic per seed.
     let mut rng = StdRng::seed_from_u64(seed);
     let data = random_data(&mut rng, distribution, physical_len);
 
