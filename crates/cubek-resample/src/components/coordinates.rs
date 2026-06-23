@@ -1,15 +1,22 @@
-use crate::definition::{Resample, ResampleArgs, TileSize, fast_div_mod_value};
-use cubecl::{prelude::*, std::tensor::layout::CoordsDynI};
+use crate::{
+    components::fast_div_mod_value,
+    definition::{Resample, ResampleArgs},
+};
+use cubecl::{prelude::*, std::FastDivmod, std::tensor::layout::CoordsDynI};
 
 /// Computes the absolute coordinate of a cube.
 #[cube]
-pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDynI {
+pub fn cube_absolute_coord(
+    cube_shape: &Sequence<FastDivmod<usize>>,
+    cube_strides: &Sequence<FastDivmod<usize>>,
+    cube_pos: usize,
+) -> CoordsDynI {
     let mut coords = CoordsDynI::new();
 
     #[unroll]
-    for i in 0..cube_size.rank() {
-        let (cube_pos_at_dim, _) = cube_size.strides[i].div_mod(cube_pos);
-        let (_, cube_coord) = cube_size.shape[i].div_mod(cube_pos_at_dim);
+    for i in 0..cube_shape.len() {
+        let (cube_pos_at_dim, _) = cube_strides[i].div_mod(cube_pos);
+        let (_, cube_coord) = cube_shape[i].div_mod(cube_pos_at_dim);
 
         coords.push(cube_coord as i32);
     }
@@ -20,7 +27,8 @@ pub fn cube_absolute_coord(cube_size: &TileSize, cube_pos: usize) -> CoordsDynI 
 /// Computes the local coordinate within a tile.
 #[cube]
 pub fn tile_absolute_coord(
-    tile_size: &TileSize,
+    tile_shape: &Sequence<FastDivmod<usize>>,
+    tile_strides: &Sequence<FastDivmod<usize>>,
     cube_coord: &CoordsDynI,
     unit_pos: usize,
     #[comptime] vectorized_axis: usize,
@@ -29,11 +37,11 @@ pub fn tile_absolute_coord(
     let mut coords = CoordsDynI::new();
 
     #[unroll]
-    for i in 0..tile_size.rank() {
-        let (unit_pos_at_dim, _) = tile_size.strides[i].div_mod(unit_pos);
-        let (_, coord) = tile_size.shape[i].div_mod(unit_pos_at_dim);
+    for i in 0..tile_shape.len() {
+        let (unit_pos_at_dim, _) = tile_strides[i].div_mod(unit_pos);
+        let (_, coord) = tile_shape[i].div_mod(unit_pos_at_dim);
 
-        let tile_dim_size = fast_div_mod_value(&tile_size.shape[i]);
+        let tile_dim_size = fast_div_mod_value(&tile_shape[i]);
 
         let coord = if i == vectorized_axis {
             ((cube_coord[i] as usize * tile_dim_size + coord) * vector_size) as i32
