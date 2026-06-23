@@ -22,6 +22,10 @@ pub struct Storage {
     /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
     /// keeps the unchecked (divisible) fast path.
     pub check_bounds: bool,
+    /// Whether the leaf is one contiguous storage block, letting its matrix view address the
+    /// block affinely (`base + i·row + j·col`) instead of the per-read `[grid, leaf]` split.
+    /// Only sound when the launch guarantees leaf ≤ finest block; `false` keeps the tiled split.
+    pub contiguous_leaf: bool,
 }
 
 impl Storage {
@@ -31,6 +35,7 @@ impl Storage {
             start_axis: 0,
             levels: physical_rank / logical_rank - 1,
             check_bounds: false,
+            contiguous_leaf: false,
         }
     }
 
@@ -39,12 +44,20 @@ impl Storage {
             start_axis,
             levels,
             check_bounds: false,
+            contiguous_leaf: false,
         }
     }
 
     /// Set whether edge reads/writes must be bounds-checked.
     pub fn checked(mut self, check_bounds: bool) -> Self {
         self.check_bounds = check_bounds;
+        self
+    }
+
+    /// Mark that a partitioned leaf is one contiguous storage block (enables affine
+    /// leaf addressing). See [`contiguous_leaf`](Storage::contiguous_leaf).
+    pub fn contiguous(mut self, contiguous_leaf: bool) -> Self {
+        self.contiguous_leaf = contiguous_leaf;
         self
     }
 }
@@ -193,6 +206,10 @@ pub struct MemData<T: CubePrimitive> {
     /// always `false` there; gmem inherits its operand's launch-time flag.
     #[cube(comptime)]
     check: bool,
+    /// Whether the leaf is one contiguous storage block, so its matrix view addresses the
+    /// block affinely (`base + i·row + j·col`) instead of splitting `[grid, leaf]` per read.
+    #[cube(comptime)]
+    contiguous_leaf: bool,
 }
 
 #[cube]
@@ -242,6 +259,7 @@ impl<T: CubePrimitive> Tile<T> {
                 num_tiled: comptime!(space.rank()),
                 levels: comptime!(0usize),
                 check: comptime!(false),
+                contiguous_leaf: comptime!(false),
             }),
             space: comptime!(space),
         }
@@ -518,27 +536,54 @@ impl<T: CubePrimitive> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
+    /// The affine layout for a contiguous-block leaf: probe the `base∘window∘matrix` chain at
+    /// `(0,0)`, `(1,0)`, `(0,1)` to recover the block's base offset and row/col strides. Once-
+    /// per-view; exact while the leaf stays within one block (the `contiguous_leaf` contract).
+    fn affine(&self, layout: &BatchMatrix) -> AffineLayout {
+        let base = self.base();
+        let window = self.window();
+        let p00 = base
+            .to_source_pos(window.to_source_pos(layout.to_source_pos((0u32, 0u32).runtime())))
+            as u32;
+        let p10 = base
+            .to_source_pos(window.to_source_pos(layout.to_source_pos((1u32, 0u32).runtime())))
+            as u32;
+        let p01 = base
+            .to_source_pos(window.to_source_pos(layout.to_source_pos((0u32, 1u32).runtime())))
+            as u32;
+        AffineLayout::new(p00, p10 - p00, p01 - p00, layout.shape())
+    }
+
     /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
-    /// so the leaf masks without being asked.
+    /// so the leaf masks without being asked. A contiguous-block leaf takes the affine path.
     pub(crate) fn masked(&self, layout: BatchMatrix) -> MatrixView<'_, T> {
-        MaskedView::new(
-            self.buffer
-                .view(self.base())
-                .view(self.window())
-                .view(layout),
-            comptime!(self.check),
-        )
+        if comptime!(self.contiguous_leaf && !self.check) {
+            MaskedView::new(self.buffer.view(self.affine(&layout)), comptime!(false))
+        } else {
+            MaskedView::new(
+                self.buffer
+                    .view(self.base())
+                    .view(self.window())
+                    .view(layout),
+                comptime!(self.check),
+            )
+        }
     }
 
     /// The mutable twin of [`masked`](MemData::masked).
     pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MatrixViewMut<'_, T> {
-        let base = self.base();
-        let window = self.window();
-        let check = comptime!(self.check);
-        MaskedViewMut::new(
-            self.buffer.view_mut(base).view_mut(window).view_mut(layout),
-            check,
-        )
+        if comptime!(self.contiguous_leaf && !self.check) {
+            let affine = self.affine(&layout);
+            MaskedViewMut::new(self.buffer.view_mut(affine), comptime!(false))
+        } else {
+            let base = self.base();
+            let window = self.window();
+            let check = comptime!(self.check);
+            MaskedViewMut::new(
+                self.buffer.view_mut(base).view_mut(window).view_mut(layout),
+                check,
+            )
+        }
     }
 
     /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent: a
@@ -598,6 +643,7 @@ impl<T: CubePrimitive> MemData<T> {
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
             check: comptime!(self.check),
+            contiguous_leaf: comptime!(self.contiguous_leaf),
         }
     }
 }

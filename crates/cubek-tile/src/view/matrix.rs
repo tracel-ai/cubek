@@ -6,7 +6,7 @@
 
 use cubecl::{
     prelude::*,
-    std::tensor::layout::{Coords2d, CoordsDyn, Layout, LayoutExpand},
+    std::tensor::layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
 };
 
 use crate::*;
@@ -15,6 +15,55 @@ use crate::*;
 pub type MatrixView<'a, T> = MaskedView<'a, T, Coords2d>;
 /// The mutable twin of [`MatrixView`].
 pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
+
+/// A [`Layout`] mapping `(row, col)` to a 1-D buffer offset by `base + row·row_stride +
+/// col·col_stride`. For a contiguous-block leaf the base and strides are derived once, so the
+/// hot loop reads with two multiply-adds instead of re-splitting the `[grid, leaf]` tiling
+/// (a divmod) per element.
+#[derive(CubeType, Clone)]
+pub struct AffineLayout {
+    base: u32,
+    row_stride: u32,
+    col_stride: u32,
+    tile_shape: Coords2d,
+}
+
+#[cube]
+impl AffineLayout {
+    pub fn new(base: u32, row_stride: u32, col_stride: u32, shape: Coords2d) -> Self {
+        AffineLayout {
+            base,
+            row_stride,
+            col_stride,
+            tile_shape: shape,
+        }
+    }
+}
+
+#[cube]
+impl Layout for AffineLayout {
+    type Coordinates = Coords2d;
+    type SourceCoordinates = Coords1d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let (row, col) = pos;
+        (self.base + row * self.row_stride + col * self.col_stride) as usize
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        self.tile_shape
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let (row, col) = pos;
+        let (rows, cols) = self.tile_shape;
+        row < rows && col < cols
+    }
+}
 
 /// A [`Layout`] mapping a matrix coordinate `(row, col)` to the tile's source
 /// coordinate `[batches…, row, col]`: leading batch axes pinned, trailing two exposed.
