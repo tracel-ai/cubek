@@ -90,8 +90,8 @@ impl TileInput {
     /// Launch arg for this tile's raw global buffer — a plain [`TensorArg`] over the
     /// `[grid…, tile…]` buffer, optionally re-lined by `vector_size` along the inner
     /// axis (so a kernel reading `Vector<E, S>` lands on contiguous lines).
-    /// `Tile::from_tensor` rebuilds the logical (tiled) view in-kernel, so no
-    /// `TiledViewLayout` is baked here. `vector_size == 1` is the plain buffer.
+    /// `TileArgLaunch::strided` wraps it in a `TiledViewLayout` at launch (this just produces the
+    /// raw physical buffer/strides). `vector_size == 1` is the plain buffer.
     pub fn tensor_arg(&self, vector_size: usize) -> TensorArg<TestRuntime> {
         if vector_size <= 1 {
             return self.handle.clone().binding().into_tensor_arg();

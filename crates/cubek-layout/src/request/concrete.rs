@@ -19,6 +19,14 @@ impl PhysicalAxis {
     pub fn new(axis: Axis, extent: usize) -> Self {
         PhysicalAxis { axis, extent }
     }
+
+    pub fn axis(&self) -> Axis {
+        self.axis
+    }
+
+    pub fn extent(&self) -> usize {
+        self.extent
+    }
 }
 
 /// A concrete physical layout: its axes in major (outer) to minor (inner) order, the last
@@ -37,6 +45,47 @@ impl ConcreteLayout {
         ConcreteLayout {
             axes: SmallVec::from_slice(axes),
         }
+    }
+
+    /// The physical axes, major-to-minor (a storage-tiled logical axis repeats, one per level).
+    pub fn axes(&self) -> &[PhysicalAxis] {
+        &self.axes
+    }
+
+    /// The distinct logical axes in first-occurrence order — the axes the operand spans, with each
+    /// storage-tiled axis (which contributes several physical fragments) collapsed to one entry.
+    pub fn distinct_axes(&self) -> SmallVec<[Axis; MAX_AXES]> {
+        let mut out = SmallVec::new();
+        for a in &self.axes {
+            if !out.contains(&a.axis) {
+                out.push(a.axis);
+            }
+        }
+        out
+    }
+
+    /// Storage-tiling nesting depth: the deepest logical axis splits into `levels + 1` physical
+    /// fragments. `0` when untiled (every axis is one fragment).
+    pub fn levels(&self) -> usize {
+        let deepest = self
+            .axes
+            .iter()
+            .map(|a| self.axes.iter().filter(|b| b.axis == a.axis).count())
+            .max()
+            .unwrap_or(1);
+        deepest - 1
+    }
+
+    /// The leading passthrough (untiled) axes before the first storage-tiled one — the batch
+    /// prefix. `0` when untiled, so the whole buffer is one tiled block.
+    pub fn passthrough(&self) -> usize {
+        if self.levels() == 0 {
+            return 0;
+        }
+        self.axes
+            .iter()
+            .position(|a| self.axes.iter().filter(|b| b.axis == a.axis).count() > 1)
+            .unwrap_or(0)
     }
 
     pub(super) fn innermost(&self) -> Option<Axis> {

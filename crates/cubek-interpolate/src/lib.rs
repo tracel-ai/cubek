@@ -25,6 +25,7 @@ pub fn interpolate<R: Runtime>(
     strategy: InterpolateStrategy,
     dtype: StorageType,
 ) -> Result<(), InterpolateError> {
+    validate_strategy(client, &strategy)?;
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
@@ -64,6 +65,25 @@ pub fn interpolate_backward<R: Runtime>(
             "{:?} interpolation backward is not supported by JIT backend",
             options.mode
         ))),
+    }
+}
+
+/// Checks if the strategy is valid for the current client
+fn validate_strategy<R: Runtime>(
+    client: &ComputeClient<R>,
+    strategy: &InterpolateStrategy,
+) -> Result<(), InterpolateError> {
+    // If the client is not running on a CPU, we don't need to validate the strategy
+    if client.properties().hardware.num_cpu_cores.is_none() {
+        return Ok(());
+    }
+
+    // If the client is running on a CPU, we need to validate the strategy
+    match strategy {
+        InterpolateStrategy::GlobalMemoryStrategy(_) => Ok(()),
+        InterpolateStrategy::SharedMemoryStrategy(_) => Err(InterpolateError::UnsupportedMode(
+            "interpolation shared memory strategy is not supported on CPU".to_string(),
+        )),
     }
 }
 

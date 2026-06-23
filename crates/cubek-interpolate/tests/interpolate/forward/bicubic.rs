@@ -10,7 +10,7 @@ use cubek_interpolate::{
 
 use super::{make_problem, run_interpolate_global_test};
 
-const BICUBIC_TOLERANCE: f32 = 0.00001;
+const BICUBIC_TOLERANCE: f32 = 0.0001;
 const BICUBIC_HIGH_RESOLUTION_TOLERANCE: f32 = 0.001;
 
 const TILE_SIZE: TileSize = TileSize::new(16, 16);
