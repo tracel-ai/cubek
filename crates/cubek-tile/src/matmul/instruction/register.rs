@@ -15,10 +15,10 @@ const UNROLL_BLOCK: usize = 64;
 /// Run the register microkernel over each batch matrix. `mr × nr` are the accumulator's
 /// trailing axes (`nr` in `N`-lines); `kc` is scalar `K`, read off `rhs` (whose `K` is unlined).
 #[cube]
-pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
-    acc: &mut MemData<Vector<E, V>>,
-    lhs: &Tile<Vector<EL, L>>,
-    rhs: &Tile<Vector<ER, V>>,
+pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
     #[comptime] space: Space,
 ) {
     let (mr, nr, kc) = comptime! {
@@ -37,11 +37,15 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric, L: Size,
         count
     };
 
+    let lw = comptime!(lhs.width);
+    let size!(V) = comptime!(rhs.width);
+    let size!(L) = lw;
+
     for j in 0..matrices {
-        let l = lhs.matrix(j);
-        let r = rhs.matrix(j);
-        let mut a = acc.matrix_mut(j, comptime!(space.clone()));
-        mma_register::<E, EL, ER, L, V>(&l, &r, &mut a, mr, nr, kc);
+        let l = lhs.matrix::<L>(j);
+        let r = rhs.matrix::<V>(j);
+        let mut a = acc.matrix_mut::<V>(j, comptime!(space.clone()));
+        mma_register(&l, &r, &mut a, mr, nr, kc, lw);
     }
 }
 
@@ -55,6 +59,7 @@ fn mma_register<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] kc: usize,
+    #[comptime] l: usize,
 ) {
     // Unroll only when no mask, otherwise compilation too long
     let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs.check && !rhs.check && !acc.check);
@@ -69,7 +74,7 @@ fn mma_register<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
     }
 
     for p in 0..kc {
-        outer_product::<E, EL, ER, L, V>(lhs, rhs, &mut c, p, mr, nr, unroll);
+        outer_product::<E, EL, ER, L, V>(lhs, rhs, &mut c, p, mr, nr, unroll, l);
     }
 
     #[unroll(unroll)]
@@ -93,11 +98,12 @@ fn outer_product<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
+    #[comptime] l: usize,
 ) {
     // `p` is a runtime K step (the `kc` loop never unrolls), so the line index and lane
     // fold are runtime too; `extract` takes a runtime index. `unroll` mirrors the caller's
-    // masked-block decision so a masked tile keeps these inner loops at runtime too.
-    let l = comptime!(L::value());
+    // masked-block decision so a masked tile keeps these inner loops at runtime too. `l` is the
+    // `lhs` line width (passed in: a reconstructed `DynamicSize` can't answer `L::value()` here).
     let mut b = Array::<Vector<E, V>>::new(nr);
     #[unroll(unroll)]
     for j in 0..nr {

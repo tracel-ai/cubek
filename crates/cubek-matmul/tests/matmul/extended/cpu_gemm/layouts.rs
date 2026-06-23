@@ -11,7 +11,7 @@ use cubek_matmul::routines::cpu_gemm::{
     CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::TestInput;
+use cubek_test_utils::{TestInput, skip_unless_cpu};
 use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
 
 use super::Dims;
@@ -35,8 +35,8 @@ fn copy_logical<E: Numeric>(
 ) {
     let src = src.tile();
     let mut dst = dst.tile();
-    let r = src.view();
-    let mut w = dst.view_mut();
+    let r = src.view::<Const<1>>();
+    let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();
     for i in 0..shape[0] {
         for j in 0..shape[1] {
@@ -161,6 +161,9 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     } = dims;
     let out_batch = lhs_batch.max(rhs_batch);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let dtypes = MatmulElems::from_single_dtype(f32::as_type_native_unchecked());
 
     // Logical inputs (row-major) via cubek-test-utils, with host data for the

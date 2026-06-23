@@ -11,6 +11,7 @@ use cubek_matmul::{
     strategy::Strategy,
 };
 use cubek_std::MatrixLayout;
+use cubek_test_utils::skip_unless_cpu;
 
 type TestRuntime = cubecl::TestRuntime;
 
@@ -46,6 +47,9 @@ fn mixed_precision_f16_inputs_f32_acc() {
         tile_size: 8,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let elems = MatmulGlobalElems {
         lhs: half::f16::as_type_native_unchecked().storage_type(),
         rhs: half::f16::as_type_native_unchecked().storage_type(),
@@ -98,6 +102,9 @@ fn very_small_square() {
         tile_size: 4,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -144,6 +151,9 @@ fn small_square() {
         tile_size: 8,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -190,6 +200,9 @@ fn rectangular() {
         tile_size: 16,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -236,6 +249,9 @@ fn single_tile() {
         tile_size: 8,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -271,6 +287,9 @@ fn single_tile() {
 fn many_tiles_inferred_size() {
     let (batch, m, n, k) = (1, 64, 64, 128);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -310,6 +329,9 @@ fn batched_small() {
         tile_size: 8,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -356,6 +378,9 @@ fn batched_rectangular() {
         tile_size: 16,
     };
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -390,6 +415,9 @@ fn batched_rectangular() {
 fn indivisible_all_axes() {
     let (batch, m, n, k, tile_size) = (1, 10, 10, 10, 4);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -424,6 +452,9 @@ fn indivisible_all_axes() {
 fn indivisible_rectangular_batched() {
     let (batch, m, n, k, tile_size) = (2, 30, 20, 32, 8);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -458,6 +489,9 @@ fn indivisible_rectangular_batched() {
 fn indivisible_inferred() {
     let (batch, m, n, k) = (1, 37, 41, 53);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -486,6 +520,9 @@ fn indivisible_inferred() {
 fn matvec_inferred() {
     let (batch, m, n, k) = (1, 64, 1, 64);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -513,6 +550,9 @@ fn matvec_inferred() {
 fn narrow_n_inferred() {
     let (batch, m, n, k) = (1, 32, 3, 48);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -541,6 +581,9 @@ fn narrow_n_inferred() {
 fn broadcast_rhs_unbatched() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![4], shape![1], 16, 16, 32, 8);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -575,6 +618,9 @@ fn broadcast_rhs_unbatched() {
 fn broadcast_lhs_unbatched() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![1], shape![4], 16, 16, 32, 8);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -611,6 +657,9 @@ fn broadcast_two_axes() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) =
         (shape![4, 1], shape![1, 3], 16, 16, 32, 8);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -646,6 +695,9 @@ fn batched_two_axes() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) =
         (shape![2, 3], shape![2, 3], 16, 16, 32, 8);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -680,6 +732,9 @@ fn batched_two_axes() {
 fn broadcast_indivisible() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![3], shape![1], 10, 14, 10, 4);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let problem = MatmulProblem::from_parameters(
         m,
         n,

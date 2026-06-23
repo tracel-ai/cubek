@@ -64,8 +64,8 @@ fn copy_logical<E: Numeric>(
 ) {
     let input = input.tile();
     let mut output = output.tile();
-    let r = input.view();
-    let mut w = output.view_mut();
+    let r = input.view::<Const<1>>();
+    let mut w = output.view_mut::<Const<1>>();
     let shape = r.shape();
     let rows = shape[0];
     let cols = shape[1];
