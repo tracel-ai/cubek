@@ -12,7 +12,7 @@
 //!   ------  ----   -----
 //!     0     4      magic = "CKHD"
 //!     4     1      version (currently 1)
-//!     5     1      dtype tag (0=F32, 1=I32, 2=Bool)
+//!     5     1      dtype tag (0=F32, 1=I32, 2=Bool, 3=F64)
 //!     6     4      rank
 //!    10     8*rank shape
 //!    +     8*rank  strides
@@ -37,6 +37,7 @@ const VERSION: u8 = 1;
 const TAG_F32: u8 = 0;
 const TAG_I32: u8 = 1;
 const TAG_BOOL: u8 = 2;
+const TAG_F64: u8 = 3;
 
 /// Write `data` to `path` in the binary format documented at the module level.
 ///
@@ -51,6 +52,7 @@ pub fn write_host_data(path: &Path, data: &HostData) -> io::Result<u64> {
 
     let (tag, elem_count) = match &data.data {
         HostDataVec::F32(v) => (TAG_F32, v.len()),
+        HostDataVec::F64(v) => (TAG_F64, v.len()),
         HostDataVec::I32(v) => (TAG_I32, v.len()),
         HostDataVec::Bool(v) => (TAG_BOOL, v.len()),
     };
@@ -79,6 +81,7 @@ pub fn write_host_data(path: &Path, data: &HostData) -> io::Result<u64> {
 
     match &data.data {
         HostDataVec::F32(v) => w.write_all(bytemuck::cast_slice(v))?,
+        HostDataVec::F64(v) => w.write_all(bytemuck::cast_slice(v))?,
         HostDataVec::I32(v) => w.write_all(bytemuck::cast_slice(v))?,
         HostDataVec::Bool(v) => {
             // One byte per bool — keeps reads alignment-free and rare enough
@@ -141,6 +144,15 @@ pub fn read_host_data(path: &Path) -> io::Result<HostData> {
             }
             HostDataVec::F32(v)
         }
+        TAG_F64 => {
+            let mut buf = vec![0u8; elem_count * std::mem::size_of::<f64>()];
+            r.read_exact(&mut buf)?;
+            let mut v = Vec::with_capacity(elem_count);
+            for chunk in buf.chunks_exact(8) {
+                v.push(f64::from_le_bytes(chunk.try_into().unwrap()));
+            }
+            HostDataVec::F64(v)
+        }
         TAG_I32 => {
             let mut buf = vec![0u8; elem_count * std::mem::size_of::<i32>()];
             r.read_exact(&mut buf)?;
@@ -202,6 +214,7 @@ mod tests {
         assert_eq!(data.strides, read_back.strides);
         match (&data.data, &read_back.data) {
             (HostDataVec::F32(a), HostDataVec::F32(b)) => assert_eq!(a, b),
+            (HostDataVec::F64(a), HostDataVec::F64(b)) => assert_eq!(a, b),
             (HostDataVec::I32(a), HostDataVec::I32(b)) => assert_eq!(a, b),
             (HostDataVec::Bool(a), HostDataVec::Bool(b)) => assert_eq!(a, b),
             _ => panic!("dtype mismatch on round-trip"),
@@ -215,6 +228,18 @@ mod tests {
             "f32",
             HostData {
                 data: HostDataVec::F32(vec![1.0, -2.0, std::f32::consts::PI, 0.5, 0.0]),
+                shape: Shape::from(vec![5]),
+                strides: Strides::new(&[1]),
+            },
+        );
+    }
+
+    #[test]
+    fn round_trip_f64() {
+        round_trip(
+            "f64",
+            HostData {
+                data: HostDataVec::F64(vec![1.0, -2.0, std::f64::consts::PI, 0.5, 0.0]),
                 shape: Shape::from(vec![5]),
                 strides: Strides::new(&[1]),
             },

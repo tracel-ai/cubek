@@ -18,11 +18,9 @@ version = "0.3.0-pre.1"
 ### For local development. ###
 # cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
-
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "a1aff5e5673f81dfb54df30ea8b43a32a57de162", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "a1aff5e5673f81dfb54df30ea8b43a32a57de162", default-features = false }
-
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "0b6bcc333546694cc1d3d736fddd65f8563c4d27", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "0b6bcc333546694cc1d3d736fddd65f8563c4d27", default-features = false }
 ### For releases ###
 # cubecl = { version = "0.10.0", default-features = false }
 # cubecl-common = { version = "0.10.0", default-features = false }
@@ -67,22 +65,3 @@ opt-level = 0
 
 [profile.dev.build-override]
 opt-level = 3
-
-# Temporary: vendored cubecl @945cce8 + ViewMut::as_read (lets the unified View-backed
-# TileArg downgrade its mutable carrier to a read view). Drop once upstreamed.
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { path = "../cubecl/crates/cubecl" }
-cubecl-common = { path = "../cubecl/crates/cubecl-common" }
-cubecl-core = { path = "../cubecl/crates/cubecl-core" }
-cubecl-cpp = { path = "../cubecl/crates/cubecl-cpp" }
-cubecl-cpu = { path = "../cubecl/crates/cubecl-cpu" }
-cubecl-cuda = { path = "../cubecl/crates/cubecl-cuda" }
-cubecl-hip = { path = "../cubecl/crates/cubecl-hip" }
-cubecl-ir = { path = "../cubecl/crates/cubecl-ir" }
-cubecl-macros = { path = "../cubecl/crates/cubecl-macros" }
-cubecl-macros-internal = { path = "../cubecl/crates/cubecl-macros-internal" }
-cubecl-opt = { path = "../cubecl/crates/cubecl-opt" }
-cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
-cubecl-std = { path = "../cubecl/crates/cubecl-std" }
-cubecl-wgpu = { path = "../cubecl/crates/cubecl-wgpu" }
-cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }

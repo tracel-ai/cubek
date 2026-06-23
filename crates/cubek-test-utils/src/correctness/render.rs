@@ -55,7 +55,7 @@ pub fn print_tensors(cfg: &PrintSection, label: &str, tensors: &[&HostData], eps
     // `max(epsilon, epsilon * |expected|)`), so a single number would lie.
     println!("=== {label}  shape={:?} ===", primary.shape);
 
-    let eps = epsilon.unwrap_or(0.0);
+    let eps = epsilon.unwrap_or(0.0) as f64;
     match cfg.view {
         PrintView::Table => render_table(cfg, primary, other, eps, filter.as_ref()),
         PrintView::Lines => render_lines(cfg, primary, other, eps, filter.as_ref()),
@@ -68,7 +68,7 @@ fn render_table(
     cfg: &PrintSection,
     a: &HostData,
     b: Option<&HostData>,
-    epsilon: f32,
+    epsilon: f64,
     filter: Option<&TensorFilter>,
 ) {
     let rank = a.shape.rank();
@@ -77,11 +77,11 @@ fn render_table(
     }
 
     let cell = |full: &[usize]| -> String {
-        let av = a.get_f32(full);
+        let av = a.get_f64(full);
         match b {
             None => format_value(av),
             Some(rhs) => {
-                let bv = rhs.get_f32(full);
+                let bv = rhs.get_f64(full);
                 let cell_eps = (epsilon * bv).abs().max(epsilon);
                 let is_wrong = compare_pair(av, bv, cell_eps);
                 if cfg.fail_only && !is_wrong {
@@ -160,7 +160,7 @@ fn render_lines(
     cfg: &PrintSection,
     a: &HostData,
     b: Option<&HostData>,
-    epsilon: f32,
+    epsilon: f64,
     filter: Option<&TensorFilter>,
 ) {
     let mut rows: Vec<LineRow> = Vec::new();
@@ -170,7 +170,7 @@ fn render_lines(
         {
             continue;
         }
-        let av = a.get_f32(&idx);
+        let av = a.get_f64(&idx);
         match b {
             None => {
                 rows.push(LineRow {
@@ -183,7 +183,7 @@ fn render_lines(
                 });
             }
             Some(rhs) => {
-                let bv = rhs.get_f32(&idx);
+                let bv = rhs.get_f64(&idx);
                 let cell_eps = (epsilon * bv).abs().max(epsilon);
                 let delta = (av - bv).abs();
                 let is_wrong = compare_pair(av, bv, cell_eps);
@@ -274,7 +274,7 @@ fn render_lines(
 
 // ---------- shared helpers ----------
 
-fn format_value(v: f32) -> String {
+fn format_value(v: f64) -> String {
     format!("{:.6}", v)
 }
 
@@ -290,7 +290,7 @@ fn format_index(idx: &[usize]) -> String {
 
 /// Returns `true` if `(a, b)` is a mismatch under `epsilon`. Mirrors
 /// `assert_equals_approx`'s NaN/Inf semantics.
-fn compare_pair(a: f32, b: f32, epsilon: f32) -> bool {
+fn compare_pair(a: f64, b: f64, epsilon: f64) -> bool {
     if a.is_nan() && b.is_nan() {
         return false;
     }

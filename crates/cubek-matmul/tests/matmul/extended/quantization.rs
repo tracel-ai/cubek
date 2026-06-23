@@ -461,6 +461,20 @@ pub fn test_matmul_quantized_lhs_q4s_rect() {
     });
 }
 
+#[test]
+pub fn test_matmul_quantized_rhs_gemv() {
+    // Vec-mat (m=1) with a packed quantized RHS through GEMV, whose read layout differs
+    // from the packed buffer layout.
+    run_quantized_matmul(QuantizedMatmulCase {
+        m: 1,
+        n: 64,
+        k: 64,
+        rhs_scheme: Some(tensor_scheme(QuantValue::Q4S)),
+        strategy: Strategy::GemvUnitPerpendicular(Default::default()),
+        ..Default::default()
+    });
+}
+
 /// Helper to convert TestTensor (which may be marked as quantized) to InputBinding.
 fn test_tensor_to_binding(tensor: TestTensor) -> InputBinding<TestRuntime> {
     match tensor.quantization {

@@ -8,8 +8,8 @@
 use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
-    ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
-    ValidationResult, assert_equals_approx, launch_and_capture_outcome,
+    ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput, ValidationResult,
+    assert_equals_approx, launch_and_capture_outcome,
 };
 
 use crate::{
@@ -96,7 +96,7 @@ where
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             &client,
             out,
-            HostDataType::F32,
+            problem.global_dtypes.out.into(),
         )),
     }
 }
@@ -113,12 +113,13 @@ fn seed_inputs(
         .dtype(problem.global_dtypes.lhs)
         .layout(problem.lhs_layout)
         .uniform(seed_lhs, -1., 1.)
-        .generate_with_f32_host_data();
+        .generate_with_host_data(problem.global_dtypes.lhs.into());
+
     let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
         .dtype(problem.global_dtypes.rhs)
         .layout(problem.rhs_layout)
         .uniform(seed_rhs, -1., 1.)
-        .generate_with_f32_host_data();
+        .generate_with_host_data(problem.global_dtypes.rhs.into());
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
         .layout(MatrixLayout::RowMajor)
@@ -156,7 +157,7 @@ pub fn assert_result_with_epsilon(
     epsilon: f32,
 ) -> ValidationResult {
     let expected = matmul_cpu_reference(lhs, rhs, problem, None);
-    let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
+    let actual = HostData::from_tensor_handle(client, out, problem.global_dtypes.out.into());
     assert_equals_approx(&actual, &expected, epsilon)
 }
 
@@ -196,7 +197,7 @@ pub fn matmul_cpu_reference(
         p.set_total((num_batches * m * n) as u64);
     }
 
-    let mut out = vec![0.0; num_batches * m * n];
+    let mut out = vec![0.0f64; num_batches * m * n];
 
     let mut batch_index = vec![0usize; rank - 2];
     let mut lhs_index = vec![0usize; rank];
@@ -236,12 +237,12 @@ pub fn matmul_cpu_reference(
                 rhs_index[rank - 1] = j;
                 out_index[rank - 1] = j;
 
-                let mut sum = 0.0;
+                let mut sum = 0.0f64;
                 for kk in 0..k {
                     lhs_index[rank - 1] = kk;
                     rhs_index[rank - 2] = kk;
 
-                    sum += lhs.get_f32(&lhs_index) * rhs.get_f32(&rhs_index);
+                    sum += lhs.get_f64(&lhs_index) * rhs.get_f64(&rhs_index);
                 }
 
                 let out_linear = batch_flat * (m * n) + i * n + j;
@@ -255,8 +256,10 @@ pub fn matmul_cpu_reference(
 
     let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
 
+    let data = HostDataVec::from((out, problem.global_dtypes.out));
+
     HostData {
-        data: HostDataVec::F32(out),
+        data,
         shape: out_shape,
         strides,
     }
