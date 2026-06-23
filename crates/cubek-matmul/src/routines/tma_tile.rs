@@ -60,5 +60,10 @@ pub fn operand_tma<R: Runtime, E: Numeric, V: Size>(
         true => (cols as u32, rows as u32),
         false => (rows as u32, cols as u32),
     };
-    TileArgLaunch::tma(tensor_map, space, (batches as u32, box_rows, box_cols), transposed)
+    TileArgLaunch::tma(
+        tensor_map,
+        space,
+        (batches as u32, box_rows, box_cols),
+        transposed,
+    )
 }

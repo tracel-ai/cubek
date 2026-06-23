@@ -108,7 +108,6 @@ impl<E: Numeric, V: Size> TileArg<E, V> {
     }
 }
 
-
 /// A strided global-memory tile: a launch-built [`ViewMut`] whose `TiledViewLayout` already maps
 /// logical [`CoordsDyn`] to the buffer (replacing the old in-kernel stride dot), plus the current
 /// window (`origin`/`extent`) and the logical `bound` for overhang masking. `at` shifts `origin`;

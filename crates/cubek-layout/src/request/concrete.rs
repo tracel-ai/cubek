@@ -52,6 +52,18 @@ impl ConcreteLayout {
         &self.axes
     }
 
+    /// The distinct logical axes in first-occurrence order — the axes the operand spans, with each
+    /// storage-tiled axis (which contributes several physical fragments) collapsed to one entry.
+    pub fn distinct_axes(&self) -> SmallVec<[Axis; MAX_AXES]> {
+        let mut out = SmallVec::new();
+        for a in &self.axes {
+            if !out.contains(&a.axis) {
+                out.push(a.axis);
+            }
+        }
+        out
+    }
+
     /// Storage-tiling nesting depth: the deepest logical axis splits into `levels + 1` physical
     /// fragments. `0` when untiled (every axis is one fragment).
     pub fn levels(&self) -> usize {
