@@ -111,17 +111,24 @@ pub fn launch_ref<R: Runtime>(
 
     let blueprint = CpuGemmRoutine::blueprint(strategy, &problem, &device_settings)?;
 
-    // Vectorize `N` only when both `rhs` and the output keep it contiguous (both
-    // row-major): then a kernel reading `Vector<E, V>` lands on whole lines. Any
-    // other layout — col-major or tiled — falls back to scalar (`V = 1`). `lhs` is
-    // always scalar (broadcast per `K`), so its layout never matters here.
-    let v = matches!(rhs_layout, InnerLayout::RowMajor)
-        .then_some(matches!(out_layout, InnerLayout::RowMajor))
-        .filter(|&x| x)
-        .and_then(|_| {
+    // Vectorize `N` only when both `rhs` and the output keep it contiguous: row-major, or
+    // tiled with a row-major leaf block (`N` is the innermost leaf fragment). Then a kernel
+    // reading `Vector<E, V>` lands on whole lines. Col-major (rows innermost) falls back to
+    // scalar (`V = 1`). The line must divide the logical `N`, the compute leaf `N`, and each
+    // operand's innermost-contiguous extent so a line never straddles a block boundary.
+    // `lhs` is always scalar (broadcast per `K`), so its layout never matters here.
+    let v = rhs_layout
+        .inner_col_extent(n)
+        .zip(out_layout.inner_col_extent(n))
+        .and_then(|(rhs_edge, out_edge)| {
             client
                 .io_optimized_vector_sizes(sz)
-                .filter(|&v| n.is_multiple_of(v) && blueprint.instruction.n.is_multiple_of(v))
+                .filter(|&v| {
+                    n.is_multiple_of(v)
+                        && blueprint.instruction.n.is_multiple_of(v)
+                        && rhs_edge.is_multiple_of(v)
+                        && out_edge.is_multiple_of(v)
+                })
                 .max()
         })
         .unwrap_or(1);
@@ -178,6 +185,16 @@ pub fn launch_ref<R: Runtime>(
     let check_n = !n.is_multiple_of(planes.n * leaf.n);
     let check_k = !k.is_multiple_of(leaf.k);
 
+    // A tiled operand whose finest block equals the compute leaf is read affinely (the leaf
+    // is one contiguous block): each plane lands on a whole block, so the hot loop skips the
+    // per-read `[grid, leaf]` split. The leaf axes per operand are `[M,K]`/`[K,N]`/`[M,N]`.
+    let block_is_leaf = |layout: &InnerLayout, rows: usize, cols: usize| {
+        matches!(layout, InnerLayout::Tiled { tiles } if tiles.last() == Some(&(rows, cols)))
+    };
+    let lhs_contig = block_is_leaf(&lhs_layout, leaf.m, leaf.k);
+    let rhs_contig = block_is_leaf(&rhs_layout, leaf.k, leaf.n);
+    let out_contig = block_is_leaf(&out_layout, leaf.m, leaf.n);
+
     // `lhs` always staged scalar (`v = 1`); `rhs`/`out` carry the line size. Each operand
     // bounds-checks the edges its tile may overhang, and projects into the `rank`-deep output
     // batch space (numpy right-alignment of its own, possibly shorter, batch shape).
@@ -189,9 +206,9 @@ pub fn launch_ref<R: Runtime>(
         client,
         cube_count,
         cube_dim,
-        lhs.tile_arg(rank, &global_space, 1, check_m || check_k),
-        rhs.tile_arg(rank, &global_space, v, check_k || check_n),
-        out.tile_arg(rank, &global_space, v, check_m || check_n),
+        lhs.tile_arg(rank, &global_space, 1, check_m || check_k, lhs_contig),
+        rhs.tile_arg(rank, &global_space, v, check_k || check_n, rhs_contig),
+        out.tile_arg(rank, &global_space, v, check_m || check_n, out_contig),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
@@ -238,6 +255,7 @@ impl<'a, R: Runtime> Operand<'a, R> {
         space: &Space,
         v: usize,
         check: bool,
+        contiguous: bool,
     ) -> TileArgLaunch<'static, E, V, R> {
         let Operand {
             mut binding,
@@ -266,6 +284,10 @@ impl<'a, R: Runtime> Operand<'a, R> {
         binding.strides = strides[..].into();
 
         let (arg, storage) = layout.tensor_arg(binding, v);
-        TileArgLaunch::new(arg, space.project(&axes), storage.checked(check))
+        TileArgLaunch::new(
+            arg,
+            space.project(&axes),
+            storage.checked(check).contiguous(contiguous),
+        )
     }
 }

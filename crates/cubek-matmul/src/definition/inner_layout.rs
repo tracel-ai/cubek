@@ -209,38 +209,51 @@ impl InnerLayout {
     /// (batch passthrough, `start_axis = num_batch`); strided is a plain
     /// `[batches…, rows, cols]` dot (`levels = 0`).
     ///
-    /// `vector_size > 1` lines the innermost (`cols`) axis: its shape and every
-    /// non-contiguous stride are divided by the line size, so a kernel reading
-    /// `Vector<E, vector_size>` lands on contiguous lines. Only valid when `cols` is
-    /// contiguous (a row-major operand); tiled operands must pass `vector_size = 1`.
+    /// `vector_size > 1` lines the innermost (`cols`) axis: its shape and every coarser
+    /// stride are divided by the line size, so a kernel reading `Vector<E, vector_size>`
+    /// lands on contiguous lines. The innermost physical axis is `cols` for a row-major
+    /// operand and the leaf block's `cols` for a tiled operand (its finest fragment is
+    /// row-major, so `cols` is contiguous) — both re-line identically. A col-major operand
+    /// has `rows` innermost, so the caller must pass `vector_size = 1` for it.
     pub fn tensor_arg<R: Runtime>(
         &self,
         mut binding: TensorBinding<R>,
         vector_size: usize,
     ) -> (TensorArg<R>, Storage) {
-        match self {
+        // Re-line the buffer as `Vector<E, v>`: the contiguous innermost stride stays 1,
+        // every coarser stride and the innermost extent shrink by `v`. For a tiled buffer
+        // the innermost extent is the leaf `cols`; the coarser strides span the leaf rows
+        // and the whole tile grid, all of which scale with the line.
+        let n = binding.strides.len();
+        let mut shape = binding.shape.to_vec();
+        let mut strides = binding.strides.to_vec();
+        shape[n - 1] /= vector_size;
+        for s in &mut strides[..n - 1] {
+            *s /= vector_size;
+        }
+        binding.shape = shape[..].into();
+        binding.strides = strides[..].into();
+
+        let storage = match self {
             InnerLayout::Tiled { tiles } => {
                 let levels = tiles.len();
                 let num_batch = binding.shape.len() - 2 * (levels + 1);
-                (
-                    binding.into_tensor_arg(),
-                    Storage::passthrough(num_batch, levels),
-                )
+                Storage::passthrough(num_batch, levels)
             }
-            _ => {
-                // Re-line the buffer as `Vector<E, v>`: the contiguous innermost stride
-                // stays 1, every coarser stride and the `cols` extent shrink by `v`.
-                let n = binding.strides.len();
-                let mut shape = binding.shape.to_vec();
-                let mut strides = binding.strides.to_vec();
-                shape[n - 1] /= vector_size;
-                for s in &mut strides[..n - 1] {
-                    *s /= vector_size;
-                }
-                binding.shape = shape[..].into();
-                binding.strides = strides[..].into();
-                (binding.into_tensor_arg(), Storage::passthrough(0, 0))
-            }
+            _ => Storage::passthrough(0, 0),
+        };
+        (binding.into_tensor_arg(), storage)
+    }
+
+    /// The innermost-contiguous extent along `cols` (the `N` axis), if `cols` is contiguous
+    /// — `cols` itself for row-major, the leaf block's `cols` for tiled. `None` for col-major
+    /// (`rows` innermost), which cannot vectorize over `N`. The line size must divide this so
+    /// a `Vector<E, v>` never straddles a block boundary.
+    pub fn inner_col_extent(&self, cols: usize) -> Option<usize> {
+        match self {
+            InnerLayout::RowMajor => Some(cols),
+            InnerLayout::Tiled { tiles } => Some(tiles.last().map(|t| t.1).unwrap_or(cols)),
+            InnerLayout::ColMajor => None,
         }
     }
 }
