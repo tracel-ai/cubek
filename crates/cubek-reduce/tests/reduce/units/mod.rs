@@ -212,22 +212,35 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     #[define(S)] _vector_size: usize,
 ) {
     let mut elements = Array::new(k);
-    let offset = UNIT_POS_X as usize * k;
+    let lane = UNIT_POS_X as usize;
+    let offset = lane * k;
+
+    // The launch rounds the requested unit count up to a full plane, so lanes past the
+    // input data read out of bounds. Read at a clamped index and mask them to the
+    // reduction identity (min_value) so they never win the plane-wide top-k, mirroring
+    // the null_input masking the production reader does.
+    let valid = lane < new_item.len();
+    let valid_v = Vector::new(valid);
+    let null = Vector::new(N::min_value());
+    let safe_offset = offset * usize::cast_from(valid);
+    let safe_lane = lane * usize::cast_from(valid);
 
     #[unroll]
     for i in 0..k {
-        elements[i] = accumulator[offset + i];
+        elements[i] = select_many(valid_v, accumulator[safe_offset + i], null);
     }
 
-    let item = new_item[UNIT_POS_X as usize];
+    let item = select_many(valid_v, new_item[safe_lane], null);
     let args = Value::new_None();
     let mut coordinates = Value::new_None();
 
     plane_topk_insert::<N, S>(&mut elements, &mut coordinates, item, &args, k, false);
 
-    #[unroll]
-    for i in 0..k {
-        accumulator[offset + i] = elements[i];
+    if valid {
+        #[unroll]
+        for i in 0..k {
+            accumulator[offset + i] = elements[i];
+        }
     }
 }
 
