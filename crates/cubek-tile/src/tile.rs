@@ -22,11 +22,9 @@ pub struct Storage {
     /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
     /// keeps the unchecked (divisible) fast path.
     pub check_bounds: bool,
-    /// Whether a fully-partitioned leaf is one contiguous storage block — the compute leaf
-    /// fits within (and aligns to) the finest tiled block. When set, the leaf's matrix view
-    /// addresses its block affinely (`base + i·row + j·col`), skipping the per-read
-    /// `[grid, leaf]` split. Only sound when the launch guarantees leaf ≤ finest block;
-    /// `false` keeps the general tiled split.
+    /// Whether the leaf is one contiguous storage block, letting its matrix view address the
+    /// block affinely (`base + i·row + j·col`) instead of the per-read `[grid, leaf]` split.
+    /// Only sound when the launch guarantees leaf ≤ finest block; `false` keeps the tiled split.
     pub contiguous_leaf: bool,
 }
 
@@ -538,23 +536,21 @@ impl<T: CubePrimitive> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
-    /// The affine layout for a contiguous-block leaf: probe the full `base∘window∘matrix`
-    /// chain at `(0,0)`, `(1,0)`, `(0,1)` to recover the block's base offset and its row/col
-    /// strides, so the hot loop reads `base + row·row_stride + col·col_stride` with no
-    /// per-element `[grid, leaf]` split. Exact while the leaf stays within one block (the
-    /// `contiguous_leaf` contract); the probes are loop-invariant, evaluated once per view.
+    /// The affine layout for a contiguous-block leaf: probe the `base∘window∘matrix` chain at
+    /// `(0,0)`, `(1,0)`, `(0,1)` to recover the block's base offset and row/col strides. Once-
+    /// per-view; exact while the leaf stays within one block (the `contiguous_leaf` contract).
     fn affine(&self, layout: &BatchMatrix) -> AffineLayout {
         let base = self.base();
         let window = self.window();
-        let p00 =
-            base.to_source_pos(window.to_source_pos(layout.to_source_pos((0u32, 0u32).runtime())))
-                as u32;
-        let p10 =
-            base.to_source_pos(window.to_source_pos(layout.to_source_pos((1u32, 0u32).runtime())))
-                as u32;
-        let p01 =
-            base.to_source_pos(window.to_source_pos(layout.to_source_pos((0u32, 1u32).runtime())))
-                as u32;
+        let p00 = base
+            .to_source_pos(window.to_source_pos(layout.to_source_pos((0u32, 0u32).runtime())))
+            as u32;
+        let p10 = base
+            .to_source_pos(window.to_source_pos(layout.to_source_pos((1u32, 0u32).runtime())))
+            as u32;
+        let p01 = base
+            .to_source_pos(window.to_source_pos(layout.to_source_pos((0u32, 1u32).runtime())))
+            as u32;
         AffineLayout::new(p00, p10 - p00, p01 - p00, layout.shape())
     }
 

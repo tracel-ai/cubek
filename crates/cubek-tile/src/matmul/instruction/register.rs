@@ -5,11 +5,9 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// Fully unroll the `mr × nr` register block only up to this many cells. Past it the
-/// load/store loops run at runtime: a larger block (a forced or inferred blueprint can still
-/// exceed the register-sized leaf the heuristic picks) would inline hundreds of cells into one
-/// straight chain, overflowing the optimizer's recursive block pass. An *edge-masked* block
-/// never fully unrolls regardless
-/// of size — each guarded load/store is its own CFG branch, so `mr × nr` of them in a chain
+/// load/store loops run at runtime: inlining hundreds of cells into one straight chain
+/// overflows the optimizer's recursive block pass. An edge-masked block never fully unrolls
+/// regardless of size — each guarded load/store is its own CFG branch, so `mr × nr` of them
 /// blow the recursive passes even well under this cap (see [`mma_register`]).
 const UNROLL_BLOCK: usize = 64;
 
@@ -114,9 +112,8 @@ fn outer_product<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
         let a = Vector::<E, V>::cast_from(scalar);
         #[unroll(unroll)]
         for j in 0..nr {
-            // A single fused multiply-add: `a * b + c`. `c += a * b` would emit a separate
-            // mul then add (strict-FP, no contraction), which the backend cannot fuse — half
-            // the FP throughput on a machine with an FMA unit.
+            // Explicit FMA: `c += a * b` emits a separate mul+add (strict-FP, no contraction)
+            // the backend won't fuse, halving throughput on a machine with an FMA unit.
             c[i * nr + j] = fma(a, b[j], c[i * nr + j]);
         }
     }

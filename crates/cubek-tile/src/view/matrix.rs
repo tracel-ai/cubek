@@ -16,11 +16,10 @@ pub type MatrixView<'a, T> = MaskedView<'a, T, Coords2d>;
 /// The mutable twin of [`MatrixView`].
 pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 
-/// A [`Layout`] mapping a matrix coordinate `(row, col)` straight to a 1-D buffer offset by an
-/// affine formula `base + row·row_stride + col·col_stride`. For a leaf that is one contiguous
-/// storage block, the `base` (the block's offset) and the two strides are derived once at
-/// construction, so the hot loop reads with two multiply-adds instead of re-splitting the
-/// `[grid, leaf]` tiling (a divmod) on every element.
+/// A [`Layout`] mapping `(row, col)` to a 1-D buffer offset by `base + row·row_stride +
+/// col·col_stride`. For a contiguous-block leaf the base and strides are derived once, so the
+/// hot loop reads with two multiply-adds instead of re-splitting the `[grid, leaf]` tiling
+/// (a divmod) per element.
 #[derive(CubeType, Clone)]
 pub struct AffineLayout {
     base: u32,

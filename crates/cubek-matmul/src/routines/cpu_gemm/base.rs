@@ -47,12 +47,9 @@ pub(crate) fn batch_axis(i: usize) -> Axis {
 /// the runtime exposes per-core cache sizes.
 const L1_BYTES: usize = 32 * 1024;
 
-/// Byte budget for the leaf's accumulator block in the SIMD register file. The block is
-/// `tile_m × tile_n` accumulate-dtype elements and must stay resident in vector registers
-/// across the `K` loop; overflowing the file spills every accumulator to the stack — a
-/// load-add-store round-trip per update, ~2× slower. Targets ~24 of 32 NEON q-registers
-/// (or ~12 of 16 AVX2 ymm) — both ≈ 384 B — leaving the rest for the `A` broadcast and
-/// `B` lines.
+/// Byte budget for the leaf's `tile_m × tile_n` accumulator block, which must stay in vector
+/// registers across the `K` loop; overflowing spills every accumulator to the stack (~2×).
+/// ~24 of 32 NEON q-registers (~12 of 16 AVX2 ymm), leaving room for the A/B operands.
 const ACC_REG_BYTES: usize = 384;
 
 /// The largest divisor of `k` not exceeding `cap` (≥1).
@@ -198,9 +195,8 @@ impl CpuGemmRoutine {
         Ok(blueprint)
     }
 
-    /// The tile-size heuristic. The leaf's accumulator block is sized to the SIMD register
-    /// file ([`ACC_REG_BYTES`]) — overflow spills every accumulator to the stack (~2×), so
-    /// L1-sized leaves are a trap. `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`]
+    /// The tile-size heuristic. The leaf's accumulator block is sized to the register file
+    /// ([`ACC_REG_BYTES`]), not L1; `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`].
     fn select<R: Runtime>(
         strategy: &CpuGemmStrategy,
         problem: &MatmulProblem,
@@ -219,15 +215,11 @@ impl CpuGemmRoutine {
             .max(1);
         let alpha = strategy.alpha.clamp(0.0, 1.0);
 
-        // Leaf accumulator block sized to the register file ([`ACC_REG_BYTES`]), not L1.
-        // Balance the register *grid*, not the element block: `N` is read in `vw`-wide lines,
-        // so an element-square tile degenerates to a single N-line (`nr = 1`) when `vw` is
-        // wide — starving N-reuse. Aim `tile_m` rows ≈ `tile_n / vw` lines (i.e. `tile_n ≈
-        // √(budget·vw)`) so both register extents exceed 1, then fill the byte budget. Each
-        // tile is snapped to a *divisor* of its axis so the leaf tiles the matrix exactly — a
-        // ragged tile masks every leaf and disables the register unroll (~2×, the whole kernel
-        // de-unrolls), so a smaller clean tile beats a budget-filling ragged one. A narrow
-        // axis collapses its tile to the whole axis (no edge).
+        // Balance the register grid, not the element block: N is read in `vw`-wide lines, so
+        // an element-square tile would collapse to one N-line (nr=1) for wide `vw`, starving
+        // N-reuse. Aim `tile_n ≈ √(budget·vw)`, then fill the budget along M. Snap each tile to
+        // a divisor of its axis: a ragged tile masks every leaf and de-unrolls the kernel (~2×),
+        // so a smaller clean tile wins. A narrow axis collapses its tile to the whole axis.
         let budget_elems = (ACC_REG_BYTES / elem).max(1);
         let tn_target = ((budget_elems * vw) as f64).sqrt() as usize;
         let tile_n = divisor_at_most(n, tn_target.max(1));
@@ -254,8 +246,7 @@ impl CpuGemmRoutine {
         let plane_m = nearest_divisor(grid_m, target_m);
         let plane_n = nearest_divisor(grid_n, (cores / plane_m).max(1));
 
-        // Each tile is a divisor of its axis, so it never overhangs; the clamp is a defensive
-        // floor at 1 (and ceiling at the axis) for a degenerate zero-length axis.
+        // Tiles already divide their axes; the clamp is a defensive [1, axis] floor.
         let instruction = Instruction {
             m: tile_m.clamp(1, m.max(1)),
             n: tile_n.clamp(1, n.max(1)),
