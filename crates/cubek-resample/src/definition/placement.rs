@@ -1,43 +1,60 @@
 use cubecl::prelude::*;
 
 /// Coordinate map: output index to source coordinate.
-#[derive(Debug, Clone, PartialEq, CubeType)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, CubeType)]
 pub enum Placement {
     /// Continuous affine slide: `start = scale * pos + offset`.
-    Continuous { scale: f32, offset: f32 },
+    Continuous,
     /// Windowed: `start = step * pos − padding`.
-    Windowed { step: usize, padding: usize },
+    Windowed,
 }
 
-#[cube]
-impl Placement {
-    /// Map output position to source coordinate.
-    pub fn map<F: Float>(pos: usize, #[comptime] placement: &Placement) -> F {
-        match placement {
-            Placement::Continuous { scale, offset } => {
-                F::cast_from(pos) * F::cast_from(*scale) + F::cast_from(*offset)
-            }
+#[derive(CubeType, CubeLaunch)]
+pub struct PlacementArgs {
+    // Continuous args
+    pub scale: f32,
+    pub offset: f32,
+    // Windowed args
+    pub step: usize,
+    pub padding: isize,
+}
 
-            Placement::Windowed { step, padding } => F::cast_from(pos * *step - *padding),
+impl PlacementArgs {
+    pub fn identity() -> Self {
+        Self::windowed(1, 0)
+    }
+
+    pub fn continuous(scale: f32, offset: f32) -> Self {
+        Self {
+            scale,
+            offset,
+            step: 0,
+            padding: 0,
         }
+    }
+
+    pub fn windowed(step: usize, padding: isize) -> Self {
+        Self {
+            scale: 0.0,
+            offset: 0.0,
+            step,
+            padding,
+        }
+    }
+
+    pub fn to_launch<R: Runtime>(&self) -> PlacementArgsLaunch<R> {
+        PlacementArgsLaunch::new(self.scale, self.offset, self.step, self.padding)
     }
 }
 
-impl Eq for Placement {}
-
-// Hash implementation to fix f32 `#[derive(Hash)]` error.
-impl core::hash::Hash for Placement {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        core::mem::discriminant(self).hash(state);
-        match self {
-            Placement::Continuous { scale, offset } => {
-                scale.to_bits().hash(state);
-                offset.to_bits().hash(state);
+#[cube]
+impl PlacementArgs {
+    pub fn map<F: Float>(&self, pos: usize, #[comptime] placement: &Placement) -> F {
+        match placement {
+            Placement::Continuous => {
+                F::cast_from(pos) * F::cast_from(self.scale) + F::cast_from(self.offset)
             }
-            Placement::Windowed { step, padding } => {
-                step.hash(state);
-                padding.hash(state);
-            }
+            Placement::Windowed => F::cast_from((pos * self.step) as isize - self.padding),
         }
     }
 }

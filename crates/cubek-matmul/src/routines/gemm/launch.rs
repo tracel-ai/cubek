@@ -36,6 +36,36 @@ fn vector_size_for<R: Runtime>(
         .ok_or(VectorizationError::NoValidVectorization)
 }
 
+/// Return `binding` materialized into the `target` matrix layout, copying the
+/// data only when its current layout differs. `RowMajor` leaves the last dim
+/// contiguous, `ColMajor` the second-to-last.
+#[allow(clippy::result_large_err)]
+fn make_k_contiguous<R: Runtime>(
+    client: &ComputeClient<R>,
+    binding: InputBinding<R>,
+    target: MatrixLayout,
+) -> Result<InputBinding<R>, MatmulSetupError> {
+    let rank = binding.shape().len();
+    let layout = MatrixLayout::from_shape_and_strides(
+        binding.shape(),
+        &binding.data().strides,
+        binding.scheme(),
+    )?;
+    if layout == target {
+        return Ok(binding);
+    }
+    Ok(match target {
+        MatrixLayout::RowMajor => binding.into_contiguous(client)?,
+        MatrixLayout::ColMajor => {
+            let mut binding = binding;
+            binding.swap_dims(rank - 2, rank - 1);
+            let mut binding = binding.into_contiguous(client)?;
+            binding.swap_dims(rank - 2, rank - 1);
+            binding
+        }
+    })
+}
+
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
@@ -49,6 +79,28 @@ pub fn launch_ref<R: Runtime>(
     // materialize such operands so they read as plain contiguous tensors.
     lhs = into_contiguous_if_highly_permuted(client, lhs)?;
     rhs = into_contiguous_if_highly_permuted(client, rhs)?;
+
+    // On GPU only the `Dot` variant has a kernel, and it needs both operands
+    // K-contiguous, so normalize each float matrix operand to that layout.
+    //
+    // Quantized operands are excluded here by the `scheme().is_none()` guards. A
+    // quantized operand that is not already K-contiguous can only reach `Dot` by
+    // being transposed, and that transpose repacks its u32 buffer through cubecl
+    // `into_contiguous_packed`, which currently writes a zero buffer. Quantized
+    // matmul on GPU is therefore BLOCKED on that cubecl bug being fixed upstream.
+    // When it lands, remove these guards so quantized operands take the same path.
+    let plane_dim = client.properties().hardware.plane_size_max as usize;
+    if plane_dim > 1 {
+        let rank = lhs.shape().len();
+        let m = lhs.shape().to_vec()[rank - 2];
+        let n = rhs.shape().to_vec()[rank - 1];
+        if m > 1 && lhs.scheme().is_none() {
+            lhs = make_k_contiguous(client, lhs, MatrixLayout::RowMajor)?;
+        }
+        if n > 1 && rhs.scheme().is_none() {
+            rhs = make_k_contiguous(client, rhs, MatrixLayout::ColMajor)?;
+        }
+    }
 
     let rank = rhs.shape().len();
     let lhs_shape = lhs.shape();
