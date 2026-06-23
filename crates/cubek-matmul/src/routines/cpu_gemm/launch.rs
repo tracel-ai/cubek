@@ -2,12 +2,11 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Schedule, Space, TileArgLaunch, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Schedule, TileArgLaunch, Tiling, WalkOrder};
 
 use crate::{
     definition::{
-        AvailableVectorSizes, InnerLayout, MatmulElems, MatmulProblem, MatmulSetupError,
-        broadcast_batches,
+        AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
     routines::{
         BlueprintStrategy, DeviceSettings,
@@ -18,31 +17,68 @@ use crate::{
     },
 };
 
-/// A binding together with the [`InnerLayout`] that folds its (possibly higher-rank,
-/// tiled) physical shape back to the logical `(batches, rows, cols)`.
+/// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
+/// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the
+/// binding's own shape/strides don't reveal — a tiled buffer just looks like a higher-rank strided
+/// one — so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
+/// [`ConcreteLayout`] is built at load time ([`Operand::tile_arg`]).
 pub struct WithLayout<B> {
     pub binding: B,
-    pub layout: InnerLayout,
+    pub levels: usize,
 }
 
 impl<R: Runtime> WithLayout<InputBinding<R>> {
-    /// Deduce a plain strided layout from the binding's strides. Valid only for
-    /// non-tiled bindings; errors on a binding contiguous in neither matrix axis.
+    /// A plain strided operand (`levels = 0`). Errors on a binding contiguous in neither matrix axis.
     #[allow(clippy::result_large_err)]
     pub fn strided_input(binding: InputBinding<R>) -> Result<Self, MatmulSetupError> {
-        let layout = InnerLayout::from_shape_and_strides(binding.shape(), &binding.data().strides)?;
-        Ok(Self { binding, layout })
+        validate_strided(&binding.data().strides)?;
+        Ok(Self { binding, levels: 0 })
     }
 }
 
 impl<R: Runtime> WithLayout<TensorBinding<R>> {
-    /// Deduce a plain strided layout from the binding's strides. Valid only for
-    /// non-tiled bindings; errors on a binding contiguous in neither matrix axis.
+    /// A plain strided operand (`levels = 0`). Errors on a binding contiguous in neither matrix axis.
     #[allow(clippy::result_large_err)]
     pub fn strided_output(binding: TensorBinding<R>) -> Result<Self, MatmulSetupError> {
-        let layout = InnerLayout::from_shape_and_strides(&binding.shape, &binding.strides)?;
-        Ok(Self { binding, layout })
+        validate_strided(&binding.strides)?;
+        Ok(Self { binding, levels: 0 })
     }
+}
+
+/// A strided matmul operand must be contiguous along one of its two matrix axes.
+#[allow(clippy::result_large_err)]
+fn validate_strided(strides: &[usize]) -> Result<(), MatmulSetupError> {
+    let n = strides.len();
+    if strides[n - 1] == 1 || strides[n - 2] == 1 {
+        Ok(())
+    } else {
+        Err(MatmulSetupError::InvalidConfig(Box::new(
+            "CpuGemm: strided operand is contiguous in neither matrix axis".to_string(),
+        )))
+    }
+}
+
+/// Fold a physical shape back to logical `(batches, rows, cols)` given its storage-tiling `levels`:
+/// the trailing `2·(levels + 1)` dims are the matrix's level-major `[row, col]` factors (their
+/// products are `rows`/`cols`), everything before them is the batch shape.
+fn fold_logical(shape: &[usize], levels: usize) -> (Vec<usize>, usize, usize) {
+    let split = shape.len() - 2 * (levels + 1);
+    let (mut rows, mut cols) = (1, 1);
+    for (i, &d) in shape[split..].iter().enumerate() {
+        if i % 2 == 0 {
+            rows *= d;
+        } else {
+            cols *= d;
+        }
+    }
+    (shape[..split].to_vec(), rows, cols)
+}
+
+/// Whether a strided operand vectorizes along `N`: an untiled buffer whose innermost (`cols`) axis
+/// is contiguous, so a kernel reading `Vector<E, V>` lands on whole lines. Tiled or col-major falls
+/// back to scalar.
+fn vectorizes_n(strides: &[usize], levels: usize) -> bool {
+    levels == 0 && strides.last() == Some(&1)
 }
 
 #[allow(clippy::result_large_err)]
@@ -54,9 +90,9 @@ pub fn launch_ref<R: Runtime>(
     strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let (lhs, lhs_layout) = (lhs.binding, lhs.layout);
-    let (rhs, rhs_layout) = (rhs.binding, rhs.layout);
-    let (out, out_layout) = (out.binding, out.layout);
+    let (lhs, lhs_levels) = (lhs.binding, lhs.levels);
+    let (rhs, rhs_levels) = (rhs.binding, rhs.levels);
+    let (out, out_levels) = (out.binding, out.levels);
     let sz = dtypes.acc_global.size();
 
     if matches!(lhs, InputBinding::Quantized { .. })
@@ -67,11 +103,11 @@ pub fn launch_ref<R: Runtime>(
         )));
     }
 
-    // Logical dims from each operand's imposed layout (its physical shape may be a higher-rank
-    // tiled buffer): `k` on lhs's trailing axis, `n` on rhs's, leading dims each operand's own
-    // (possibly broadcast) batch shape.
-    let (lhs_batches, m, k) = lhs_layout.logical_dims(lhs.shape());
-    let (rhs_batches, _, n) = rhs_layout.logical_dims(rhs.shape());
+    // Logical dims folded from each operand's physical shape (it may be a higher-rank tiled
+    // buffer): `k` on lhs's trailing axis, `n` on rhs's, leading dims each operand's own (possibly
+    // broadcast) batch shape.
+    let (lhs_batches, m, k) = fold_logical(lhs.shape(), lhs_levels);
+    let (rhs_batches, _, n) = fold_logical(rhs.shape(), rhs_levels);
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "CpuGemm: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -83,8 +119,8 @@ pub fn launch_ref<R: Runtime>(
         .max(rhs.required_address_type())
         .max(out.required_address_type(sz));
 
-    // CpuGemm reads only `(m, n, k, batches)` + global dtypes off the problem; the physical
-    // layout lives in each operand's `InnerLayout`, so the matrix-layout args are placeholders.
+    // CpuGemm reads only `(m, n, k, batches)` + global dtypes off the problem; each operand's
+    // physical layout rides in its own strides, so the matrix-layout args are placeholders.
     let problem = MatmulProblem::from_parameters(
         m,
         n,
@@ -115,16 +151,16 @@ pub fn launch_ref<R: Runtime>(
     // row-major): then a kernel reading `Vector<E, V>` lands on whole lines. Any
     // other layout — col-major or tiled — falls back to scalar (`V = 1`). `lhs` is
     // always scalar (broadcast per `K`), so its layout never matters here.
-    let v = matches!(rhs_layout, InnerLayout::RowMajor)
-        .then_some(matches!(out_layout, InnerLayout::RowMajor))
-        .filter(|&x| x)
-        .and_then(|_| {
-            client
-                .io_optimized_vector_sizes(sz)
-                .filter(|&v| n.is_multiple_of(v) && blueprint.instruction.n.is_multiple_of(v))
-                .max()
-        })
-        .unwrap_or(1);
+    let v = (vectorizes_n(&rhs.data().strides, rhs_levels)
+        && vectorizes_n(&out.strides, out_levels))
+    .then_some(())
+    .and_then(|_| {
+        client
+            .io_optimized_vector_sizes(sz)
+            .filter(|&v| n.is_multiple_of(v) && blueprint.instruction.n.is_multiple_of(v))
+            .max()
+    })
+    .unwrap_or(1);
 
     // Output batch dims that survive (extent > 1).
     let batch: Vec<usize> = (0..out_batches.len())
@@ -178,20 +214,37 @@ pub fn launch_ref<R: Runtime>(
     let check_n = !n.is_multiple_of(planes.n * leaf.n);
     let check_k = !k.is_multiple_of(leaf.k);
 
-    // `lhs` always staged scalar (`v = 1`); `rhs`/`out` carry the line size. Each operand
-    // bounds-checks the edges its tile may overhang, and projects into the `rank`-deep output
-    // batch space (numpy right-alignment of its own, possibly shorter, batch shape).
-    let lhs = Operand::new(lhs.into_data(), &lhs_layout, &lhs_batches, [M, K]);
-    let rhs = Operand::new(rhs.into_data(), &rhs_layout, &rhs_batches, [K, N]);
-    let out = Operand::new(out, &out_layout, &out_batches, [M, N]);
+    // Load each operand through the tile builder over its subspace (the matrix `[row, col]` plus
+    // batches). Each operand's batches right-align to the output's `rank` batch axes (numpy
+    // broadcast — a size-1 dim then drops out in the builder), so they're the trailing slice of
+    // `out_batch_axes`. `lhs` stages scalar (`v = 1`), `rhs`/`out` carry the line size; each
+    // bounds-checks its overhang. All the layout/broadcast mechanics live in the builder.
     let rank = out_batches.len();
+    let out_batch_axes: Vec<Axis> = (0..rank).map(batch_axis).collect();
     cpu_gemm_kernel::launch::<R>(
         client,
         cube_count,
         cube_dim,
-        lhs.tile_arg(rank, &global_space, 1, check_m || check_k),
-        rhs.tile_arg(rank, &global_space, v, check_k || check_n),
-        out.tile_arg(rank, &global_space, v, check_m || check_n),
+        TileArgLaunch::source(lhs.into_data())
+            .space(&global_space)
+            .subspace(&[M, K])
+            .batches(&out_batch_axes[rank - lhs_batches.len()..])
+            .checked(check_m || check_k)
+            .build(),
+        TileArgLaunch::source(rhs.into_data())
+            .space(&global_space)
+            .subspace(&[K, N])
+            .batches(&out_batch_axes[rank - rhs_batches.len()..])
+            .vectorize(v)
+            .checked(check_k || check_n)
+            .build(),
+        TileArgLaunch::source(out)
+            .space(&global_space)
+            .subspace(&[M, N])
+            .batches(&out_batch_axes)
+            .vectorize(v)
+            .checked(check_m || check_n)
+            .build(),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
@@ -199,73 +252,4 @@ pub fn launch_ref<R: Runtime>(
     );
 
     Ok(())
-}
-
-/// One operand's identity, independent of any launch: its data, the [`InnerLayout`] that reads
-/// it, its batch shape, and the two `matrix` axes that close the projection
-/// (`[M,K]`/`[K,N]`/`[M,N]`). [`tile_arg`](Operand::tile_arg) situates it in a specific launch.
-struct Operand<'a, R: Runtime> {
-    binding: TensorBinding<R>,
-    layout: &'a InnerLayout,
-    batches: &'a [usize],
-    matrix: [Axis; 2],
-}
-
-impl<'a, R: Runtime> Operand<'a, R> {
-    fn new(
-        binding: TensorBinding<R>,
-        layout: &'a InnerLayout,
-        batches: &'a [usize],
-        matrix: [Axis; 2],
-    ) -> Self {
-        Operand {
-            binding,
-            layout,
-            batches,
-            matrix,
-        }
-    }
-
-    /// Project the operand into a launch and build its [`TileArgLaunch`]: the tensor arg, the
-    /// [`Space`] it projects, and its [`Storage`] (line size `v`, bounds-checked per `check`).
-    /// Broadcasting is omission — the operand drops each batch dim it keeps at size 1 (both the
-    /// buffer dim and the axis), so a dim of `batches` survives only when `> 1`. Its axis is
-    /// `batch_axis(p)` at the operand's *padded* batch position `p` (left-aligned to the output
-    /// `rank`), matching the binding's own leading dims; `matrix` closes out the projection.
-    fn tile_arg<E: Numeric, V: Size>(
-        self,
-        rank: usize,
-        space: &Space,
-        v: usize,
-        check: bool,
-    ) -> TileArgLaunch<'static, E, V, R> {
-        let Operand {
-            mut binding,
-            layout,
-            batches,
-            matrix,
-        } = self;
-        let pad = rank - batches.len();
-
-        let mut axes = Vec::new();
-        let mut shape = Vec::new();
-        let mut strides = Vec::new();
-        for (j, &b) in batches.iter().enumerate() {
-            if b > 1 {
-                axes.push(batch_axis(pad + j));
-                shape.push(binding.shape[j]);
-                strides.push(binding.strides[j]);
-            }
-        }
-        // The matrix (and, for a tiled buffer, its grid/tile) dims follow the batch prefix.
-        shape.extend_from_slice(&binding.shape[batches.len()..]);
-        strides.extend_from_slice(&binding.strides[batches.len()..]);
-        axes.extend(matrix);
-
-        binding.shape = shape[..].into();
-        binding.strides = strides[..].into();
-
-        let (arg, storage) = layout.tensor_arg(binding, v);
-        TileArgLaunch::new(arg, space.project(&axes), storage.checked(check))
-    }
 }

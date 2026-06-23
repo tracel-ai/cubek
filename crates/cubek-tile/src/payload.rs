@@ -9,8 +9,11 @@ use super::*;
 /// demand.
 #[derive(CubeType)]
 pub enum Payload<T: CubePrimitive> {
-    Gmem(MemData<T>),
+    Gmem(GmemData<T>),
     Smem(MemData<T>),
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
+    /// A TMA tensor-map source: not element-addressable, can only be the source of a
+    /// [`stage`](Tile::stage) into shared memory, which lowers to a hardware bulk copy.
+    TmaGmem(TmaData<T>),
 }

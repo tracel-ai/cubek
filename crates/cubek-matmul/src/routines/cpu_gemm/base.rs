@@ -2,9 +2,9 @@
 //!
 //! # Supported layouts
 //!
-//! Each operand carries its own [`InnerLayout`](crate::definition::InnerLayout), and the
-//! kernel reads it through a layout-agnostic view — so the three operands may differ. The
-//! supported set (per operand, independently):
+//! Each operand carries its own physical layout (row/col-major rides in its strides, storage-tiling
+//! depth in its `levels`), and the kernel reads it through a layout-agnostic view — so the three
+//! operands may differ. The supported set (per operand, independently):
 //!
 //! - **Row-major** (`cols` contiguous) — the only layout that takes the vectorized N path
 //!   (rhs *and* output must both be row-major to vectorize; otherwise scalar).
@@ -265,34 +265,23 @@ impl CpuGemmRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::definition::InnerLayout;
+    use cubek_tile::{ConcreteLayout, PhysicalAxis};
+
+    // A 16×16 matrix laid out physical major-to-minor over `[outer, inner]` (inner contiguous).
+    fn physical(outer: Axis, inner: Axis) -> ConcreteLayout {
+        ConcreteLayout::new(&[PhysicalAxis::new(outer, 16), PhysicalAxis::new(inner, 16)])
+    }
 
     #[test]
     fn cpu_gemm_prefers_n_innermost_on_rhs_and_out() {
         let req = CpuGemmStrategy::layout_request();
 
-        // The preferred wish is met exactly when N is contiguous, mirroring the kernel's
-        // vectorize-vs-scalar condition on rhs and out.
-        assert_eq!(
-            req.rhs
-                .preference(&InnerLayout::RowMajor.to_concrete([K, N], 16, 16)),
-            1
-        );
-        assert_eq!(
-            req.rhs
-                .preference(&InnerLayout::ColMajor.to_concrete([K, N], 16, 16)),
-            0
-        );
-        assert_eq!(
-            req.out
-                .preference(&InnerLayout::RowMajor.to_concrete([M, N], 16, 16)),
-            1
-        );
-        assert_eq!(
-            req.out
-                .preference(&InnerLayout::ColMajor.to_concrete([M, N], 16, 16)),
-            0
-        );
+        // The preferred wish is met exactly when N is contiguous (innermost), mirroring the
+        // kernel's vectorize-vs-scalar condition on rhs and out.
+        assert_eq!(req.rhs.preference(&physical(K, N)), 1);
+        assert_eq!(req.rhs.preference(&physical(N, K)), 0);
+        assert_eq!(req.out.preference(&physical(M, N)), 1);
+        assert_eq!(req.out.preference(&physical(N, M)), 0);
 
         // lhs is broadcast scalar: no layout wish.
         assert!(req.lhs.constraints.is_empty());

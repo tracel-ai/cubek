@@ -1,11 +1,12 @@
 #![allow(non_snake_case)]
 
+use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive,
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
-use cubek_matmul::definition::{InnerLayout, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{MatmulElems, MatmulProblem};
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::cpu_gemm::{
     CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref,
@@ -29,8 +30,8 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<E, Const<1>>,
+    dst: &TileArg<E, Const<1>>,
     #[define(E)] _dtype: StorageType,
 ) {
     let src = src.tile();
@@ -124,12 +125,9 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
 /// The operand's launchable `TileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric, V: Size>(
-    op: &Operand,
-    space: Space,
-) -> TileArgLaunch<'static, E, V, TestRuntime> {
+fn tile_arg<E: Numeric, V: Size>(op: &Operand, space: Space) -> TileArgLaunch<E, V, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    TileArgLaunch::new(tensor, space, storage)
+    TileArgLaunch::strided(tensor, space, storage)
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.
@@ -210,15 +208,15 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
         &client,
         WithLayout {
             binding: InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),
-            layout: lhs.layout.clone(),
+            levels: lhs.layout.levels(),
         },
         WithLayout {
             binding: InputBinding::Normal(physical_binding(&rhs), dtypes.rhs_global),
-            layout: rhs.layout.clone(),
+            levels: rhs.layout.levels(),
         },
         WithLayout {
             binding: physical_binding(&out),
-            layout: out.layout.clone(),
+            levels: out.layout.levels(),
         },
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: Instruction {

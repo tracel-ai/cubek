@@ -1,6 +1,7 @@
 //! The axis-agnostic tile DSL engine
 #![allow(dead_code)]
 
+mod load;
 mod matmul;
 mod partitioner;
 mod payload;
@@ -13,6 +14,7 @@ mod view;
 // The layout-request vocabulary and `Axis`/`MAX_AXES` live in the leaf `cubek-layout` crate,
 // re-exported here so tile-engine code and clients keep using `cubek_tile::{Axis, ...}`.
 pub use cubek_layout::*;
+pub use load::*;
 pub use partitioner::*;
 pub use payload::*;
 pub use quantization::*;

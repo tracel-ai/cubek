@@ -16,7 +16,7 @@ const UNROLL_BLOCK: usize = 64;
 /// trailing axes (`nr` in `N`-lines); `kc` is scalar `K`, read off `rhs` (whose `K` is unlined).
 #[cube]
 pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
-    acc: &mut MemData<Vector<E, V>>,
+    acc: &mut Tile<Vector<E, V>>,
     lhs: &Tile<Vector<EL, L>>,
     rhs: &Tile<Vector<ER, V>>,
     #[comptime] space: Space,
@@ -40,7 +40,7 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric, L: Size,
     for j in 0..matrices {
         let l = lhs.matrix(j);
         let r = rhs.matrix(j);
-        let mut a = acc.matrix_mut(j, comptime!(space.clone()));
+        let mut a = acc.matrix_mut(j);
         mma_register::<E, EL, ER, L, V>(&l, &r, &mut a, mr, nr, kc);
     }
 }

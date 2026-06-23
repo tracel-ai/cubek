@@ -1,3 +1,4 @@
+mod inner_layout;
 mod layouts;
 
 use crate::matmul::test_matmul_strategy;

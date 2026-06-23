@@ -2,6 +2,7 @@
 //! [`Space`] it projects.
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
+    prelude::barrier::Barrier,
     prelude::*,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
@@ -48,26 +49,99 @@ impl Storage {
     }
 }
 
-/// The launchable form of a [`Tile`]: a `&Tensor` plus the comptime [`Space`] and
-/// [`Storage`]. The kernel turns it into a `Tile` with [`tile`](TileArg::tile).
+/// How an operand's buffer maps to its logical space, comptime. One role — the per-operand
+/// physical-delivery descriptor — picking which in-kernel [`Payload`] the shared [`View`] becomes:
+/// - `Strided` — element-addressable global memory; the [`View`]'s layout (a launch-built
+///   `TiledViewLayout`) already does the `[pre…, grid…, tile…]` addressing. Carries only the
+///   bounds-check flag ([`Storage`]); the tile *size* lives in the [`Space`]/partitioner.
+/// - `Tma` — a tensor-map descriptor the hardware bulk-copies a `rows × cols` box at a time;
+///   `transposed` flags a col-major operand. Global shape/strides/swizzle live in the descriptor.
+///
+/// Both deliveries ride the *same* runtime carrier — a `ViewMut<.., CoordsDyn>` whose `ViewArg`
+/// picks `Tensor` (strided) vs `TensorMapTiled` (TMA) at launch — so there is one [`TileArg`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Delivery {
+    Strided(Storage),
+    Tma {
+        rows: u32,
+        cols: u32,
+        transposed: bool,
+    },
+}
+
+/// The launchable form of a [`Tile`]: a single cubecl [`ViewMut`] carrier plus the comptime
+/// [`Space`] it projects and its [`Delivery`]. The `ViewArg` behind the view is a plain tensor
+/// (strided, via `TiledViewLayout`) or a tensor-map (TMA) — chosen at launch — and the comptime
+/// `delivery` tells [`tile`](TileArg::tile) which [`Payload`] to build. Strided and TMA share this
+/// one type; `CoordsDyn` is axis-agnostic and subsumes the TMA `(batch, row, col)`.
 #[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric, V: Size> {
-    pub tensor: &'a Tensor<Vector<E, V>>,
+pub struct TileArg<E: Numeric, V: Size> {
+    pub view: ViewMut<'static, Vector<E, V>, CoordsDyn>,
     #[cube(comptime)]
     pub space: Space,
     #[cube(comptime)]
-    pub storage: Storage,
+    pub delivery: Delivery,
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+impl<E: Numeric, V: Size> TileArg<E, V> {
     pub fn tile(&self) -> Tile<Vector<E, V>> {
-        Tile::from_tensor(
-            self.tensor,
-            comptime!(self.space.clone()),
-            comptime!(self.storage),
-        )
+        let delivery = comptime!(self.delivery);
+        match delivery {
+            Delivery::Strided(storage) => Tile::from_view(
+                self.view.clone(),
+                comptime!(self.space.clone()),
+                comptime!(storage.check_bounds),
+            ),
+            Delivery::Tma {
+                rows,
+                cols,
+                transposed,
+            } => Tile::from_tensor_map(
+                self.view.clone(),
+                comptime!(self.space.clone()),
+                comptime!(rows),
+                comptime!(cols),
+                comptime!(transposed),
+            ),
+        }
     }
+}
+
+/// A strided global-memory tile: a launch-built [`ViewMut`] whose `TiledViewLayout` already maps
+/// logical [`CoordsDyn`] to the buffer (replacing the old in-kernel stride dot), plus the current
+/// window (`origin`/`extent`) and the logical `bound` for overhang masking. `at` shifts `origin`;
+/// the view is `Copy` so it rides along untouched.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct GmemData<T: CubePrimitive> {
+    view: ViewMut<'static, T, CoordsDyn>,
+    origin: CoordsDyn,
+    extent: CoordsDyn,
+    bound: CoordsDyn,
+    #[cube(comptime)]
+    check: bool,
+}
+
+/// A TMA tensor-map source: a hardware bulk-copy descriptor (the [`ViewMut`]) plus the global
+/// window this tile currently addresses. Not element-addressable — its only operation is being the
+/// source of a [`stage`](Tile::stage) into shared memory, which issues `tensor_map_load`.
+///
+/// `pos`/`bound` are `(batch, row, col)` as the leading entries of a [`CoordsDyn`], matching the
+/// view's coordinates. `pos` advances on [`at`](Tile::at); `bound` (the global shape) rides through
+/// `at` unchanged so loop counts can read off it like a gmem tile.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct TmaData<T: CubePrimitive> {
+    view: ViewMut<'static, T, CoordsDyn>,
+    pos: CoordsDyn,
+    bound: CoordsDyn,
+    #[cube(comptime)]
+    box_rows: u32,
+    #[cube(comptime)]
+    box_cols: u32,
+    #[cube(comptime)]
+    transposed: bool,
 }
 
 /// One operand's data: the runtime [`Payload`] and the comptime [`Space`] it projects.
@@ -90,10 +164,9 @@ pub struct CmmaData<T: CubePrimitive> {
     pub layout: MatrixLayout,
 }
 
-/// The lifetime-erased buffer plus the physical shape/strides and tiling spec to
-/// rebuild its [`GmemLayout`]. Fixed at construction, never recomputed from the
-/// `Space`, so a staged smem sub-tile keeps addressing its whole buffer after
-/// [`at`](Tile::at) windows it down.
+/// The lifetime-erased shared-memory buffer plus the physical shape/strides and tiling spec to
+/// rebuild its [`GmemLayout`] in-kernel. Smem is allocated in-kernel, so (unlike gmem's launch
+/// [`View`]) it can't carry a `'static` view — it keeps the boxed buffer and re-views on demand.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct MemData<T: CubePrimitive> {
@@ -124,42 +197,25 @@ pub struct MemData<T: CubePrimitive> {
 
 #[cube]
 impl<T: CubePrimitive> Tile<T> {
-    /// Wrap a launched [`Tensor`] into a whole `Gmem` tile. The borrow is erased
-    /// into a `Box`.
-    pub fn from_tensor(
-        tensor: &Tensor<T>,
+    /// Wrap a launch-built [`ViewMut`] into a whole `Gmem` tile. The view's `TiledViewLayout`
+    /// already maps logical [`CoordsDyn`] to the buffer, so the `bound` is just its logical
+    /// `shape()` (correct for tiled operands too — the physical padding lives inside the layout).
+    pub fn from_view(
+        view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
-        #[comptime] storage: Storage,
+        #[comptime] check: bool,
     ) -> Tile<T> {
-        let start_axis = comptime!(storage.start_axis);
-        let num_tiled = comptime!(space.rank() - storage.start_axis);
-        let levels = comptime!(storage.levels);
-        let mut physical_shape = CoordsDyn::new();
-        let mut physical_strides = CoordsDyn::new();
-        #[unroll]
-        for i in 0..comptime!(start_axis + (levels + 1) * num_tiled) {
-            physical_shape.push(tensor.shape(i) as u32);
-            physical_strides.push(tensor.stride(i) as u32);
-        }
-        let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
-        // Logical bound folded from the physical shape, so it's correct for tiled
-        // operands too (the physical buffer is padded; the logical extent is not).
-        let bound = logical_bound(&physical_shape, start_axis, num_tiled, levels);
+        let bound = view.shape();
         // The whole-tile window. A `Dynamic` axis takes its runtime size from `bound`, so the
         // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
         let (origin, extent) = top_window(comptime!(space.clone()), &bound);
         Tile::<T> {
-            payload: Payload::new_Gmem(MemData::<T> {
-                buffer,
-                physical_shape,
-                physical_strides,
+            payload: Payload::new_Gmem(GmemData::<T> {
+                view,
                 origin,
                 extent,
                 bound,
-                start_axis,
-                num_tiled,
-                levels,
-                check: comptime!(storage.check_bounds),
+                check: comptime!(check),
             }),
             space: comptime!(space),
         }
@@ -212,13 +268,45 @@ impl<T: CubePrimitive> Tile<T> {
         }
     }
 
+    /// Wrap a TMA tensor-map [`View`] (built on the client side) as a `TmaGmem` tile. The global
+    /// `(batch, row, col)` bound is read off the view; `pos` starts at the origin and advances on
+    /// [`at`](Tile::at). Element addressing is unavailable — its only sink is a
+    /// [`stage`](Tile::stage) into shared memory.
+    pub fn from_tensor_map(
+        view: ViewMut<'static, T, CoordsDyn>,
+        #[comptime] space: Space,
+        #[comptime] box_rows: u32,
+        #[comptime] box_cols: u32,
+        #[comptime] transposed: bool,
+    ) -> Tile<T> {
+        let bound = view.shape();
+        let mut pos = CoordsDyn::new();
+        #[unroll]
+        for _ in 0..comptime!(space.rank()) {
+            pos.push(0u32);
+        }
+        Tile::<T> {
+            payload: Payload::new_TmaGmem(TmaData::<T> {
+                view,
+                pos,
+                bound,
+                box_rows,
+                box_cols,
+                transposed,
+            }),
+            space: comptime!(space),
+        }
+    }
+
     /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData) folded
     /// from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's tile count, so
     /// one kernel serves any shape. A cmma fragment has no buffer extent.
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let p = comptime!(self.space.position(axis));
         match &self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => g.bound[p] as usize,
+            Payload::Gmem(g) => g.bound[p] as usize,
+            Payload::Smem(g) => g.bound[p] as usize,
+            Payload::TmaGmem(t) => t.bound[p] as usize,
             Payload::Cmma(_) => panic!("Tile::runtime_extent: a cmma fragment has no extent"),
         }
     }
@@ -241,25 +329,23 @@ impl<T: CubePrimitive> Tile<T> {
     /// [`Window`].
     pub fn view(&self) -> View<'_, T, CoordsDyn> {
         match &self.payload {
-            Payload::Gmem(g) => g.buffer.view(g.base()).view(g.window()),
+            Payload::Gmem(g) => g.view.clone().as_read().view(g.window()),
             Payload::Smem(g) => g.buffer.view(g.base()).view(g.window()),
             Payload::Cmma(_) => panic!("Tile::view: a cmma fragment has no memory view"),
+            Payload::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
         }
     }
 
     pub fn view_mut(&mut self) -> ViewMut<'_, T, CoordsDyn> {
         match &mut self.payload {
-            Payload::Gmem(g) => {
-                let base = g.base();
-                let window = g.window();
-                g.buffer.view_mut(base).view_mut(window)
-            }
+            Payload::Gmem(g) => g.view.clone().view_mut(g.window()),
             Payload::Smem(g) => {
                 let base = g.base();
                 let window = g.window();
                 g.buffer.view_mut(base).view_mut(window)
             }
             Payload::Cmma(_) => panic!("Tile::view_mut: a cmma fragment has no memory view"),
+            Payload::TmaGmem(_) => panic!("Tile::view_mut: a tma source has no element view"),
         }
     }
 
@@ -270,6 +356,9 @@ impl<T: CubePrimitive> Tile<T> {
         let payload = match &self.payload {
             Payload::Gmem(g) => Payload::new_Gmem(g.at(region, comptime!(self.space.clone()))),
             Payload::Smem(g) => Payload::new_Smem(g.at(region, comptime!(self.space.clone()))),
+            Payload::TmaGmem(t) => {
+                Payload::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
+            }
             Payload::Cmma(_) => panic!("Tile::at: a cmma fragment cannot be located by view"),
         };
         Tile::<T> {
@@ -295,12 +384,49 @@ impl<T: CubePrimitive> Tile<T> {
             Payload::Cmma(_) => true,
             _ => false,
         };
+        #[allow(clippy::match_like_matches_macro)]
+        let tma_src = match &src.payload {
+            Payload::TmaGmem(_) => true,
+            _ => false,
+        };
         if frag_dst {
             self.cmma_load(src);
         } else if frag_src {
             self.cmma_store(src);
+        } else if tma_src {
+            self.stage_from_tma(src);
         } else {
             self.stage_from_memory(src);
+        }
+    }
+
+    /// Hardware bulk-copy `src` (a TMA tensor-map source) into this shared-memory tile: issue one
+    /// `tensor_map_load` of the whole stage, gated by a freshly-armed `mbarrier`. Synchronous (the
+    /// barrier is waited on before returning); pipelined / double-buffered TMA would hoist the
+    /// barrier out of this call.
+    fn stage_from_tma(&mut self, src: &Tile<T>) {
+        match &src.payload {
+            Payload::TmaGmem(s) => match &mut self.payload {
+                Payload::Smem(d) => {
+                    let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
+                    sync_async_proxy_shared();
+                    let elem_bytes = comptime!(T::type_size() as u32);
+                    let num_bytes = d.buffer.len() as u32 * elem_bytes;
+                    s.view
+                        .tensor_map_load(&barrier, d.buffer.downcast_mut(), s.pos.clone());
+                    let expected = select(UNIT_POS == 0, num_bytes, 0);
+                    let token = barrier.arrive_and_expect_tx(1, expected);
+                    barrier.wait(token);
+                }
+                // TMA only ever targets shared memory; the other sinks are unreachable.
+                Payload::Gmem(_) => (),
+                Payload::Cmma(_) => (),
+                Payload::TmaGmem(_) => (),
+            },
+            // Unreachable: `stage` routes here only when `src` is a tma source.
+            Payload::Gmem(_) => (),
+            Payload::Smem(_) => (),
+            Payload::Cmma(_) => (),
         }
     }
 
@@ -311,15 +437,11 @@ impl<T: CubePrimitive> Tile<T> {
         let stride = comptime!(self.space.extent(self.space.axis_at(self.space.rank() - 1)) as u32);
         match &mut self.payload {
             Payload::Cmma(d) => match &src.payload {
-                Payload::Gmem(s) => match comptime!(d.ident) {
-                    MatrixIdent::Accumulator => cmma::load_with_layout(
-                        &mut d.matrix,
-                        &s.buffer,
-                        stride,
-                        comptime!(d.layout),
-                    ),
-                    _ => cmma::load(&mut d.matrix, &s.buffer, stride),
-                },
+                // Global tiles feed cmma only via shared memory (a strided gmem window has no
+                // contiguous slice for `cmma::load`); stage gmem → smem → fragment.
+                Payload::Gmem(_) => {
+                    panic!("Tile::stage: cmma load from gmem not wired; stage through smem")
+                }
                 Payload::Smem(s) => match comptime!(d.ident) {
                     MatrixIdent::Accumulator => cmma::load_with_layout(
                         &mut d.matrix,
@@ -330,10 +452,14 @@ impl<T: CubePrimitive> Tile<T> {
                     _ => cmma::load(&mut d.matrix, &s.buffer, stride),
                 },
                 Payload::Cmma(_) => panic!("Tile::stage: cmma→cmma cast not yet wired"),
+                Payload::TmaGmem(_) => {
+                    panic!("Tile::stage: cmma load straight from a tma source not wired")
+                }
             },
             // Unreachable: `stage` routes here only when `self` is a fragment.
             Payload::Gmem(_) => (),
             Payload::Smem(_) => (),
+            Payload::TmaGmem(_) => (),
         }
     }
 
@@ -343,18 +469,22 @@ impl<T: CubePrimitive> Tile<T> {
         let stride = comptime!(self.space.extent(self.space.axis_at(self.space.rank() - 1)) as u32);
         match &src.payload {
             Payload::Cmma(s) => match &mut self.payload {
-                Payload::Gmem(d) => {
-                    cmma::store(&mut d.buffer, &s.matrix, stride, comptime!(s.layout))
+                // A fragment drains to gmem only via shared memory (the strided gmem window is not
+                // a contiguous `cmma::store` target); stage fragment → smem → gmem.
+                Payload::Gmem(_) => {
+                    panic!("Tile::stage: cmma store to gmem not wired; stage through smem")
                 }
                 Payload::Smem(d) => {
                     cmma::store(&mut d.buffer, &s.matrix, stride, comptime!(s.layout))
                 }
                 // Unreachable: `stage` routes here only when `self` is memory.
                 Payload::Cmma(_) => (),
+                Payload::TmaGmem(_) => (),
             },
             // Unreachable: `stage` routes here only when `src` is a fragment.
             Payload::Gmem(_) => (),
             Payload::Smem(_) => (),
+            Payload::TmaGmem(_) => (),
         }
     }
 
@@ -439,30 +569,6 @@ impl<T: CubePrimitive> MemData<T> {
         )
     }
 
-    /// The `i`-th batch matrix as a 2-D view. Mirrors [`Tile::matrix_mut`] for callers that
-    /// hold the payload rather than the whole tile, so the `space` is passed in.
-    pub(crate) fn matrix_mut(
-        &mut self,
-        i: usize,
-        #[comptime] space: Space,
-    ) -> MatrixViewMut<'_, T> {
-        let rank = comptime!(space.rank());
-        let rows = comptime!(space.extent_at(rank - 2));
-        let cols = comptime!(space.extent_at(rank - 1));
-        let shape = self.buffer.view(self.base()).view(self.window()).shape();
-        let mut batches = CoordsDyn::new();
-        #[unroll]
-        for p in 0..rank - 2 {
-            let mut weight = 1;
-            #[unroll]
-            for q in comptime!(p + 1)..rank - 2 {
-                weight *= shape[q];
-            }
-            batches.push((i as u32 / weight) % shape[p]);
-        }
-        self.masked_mut(BatchMatrix::new(batches, rows, cols))
-    }
-
     /// Window down to `region`: shift the origin by the region's tile coordinate
     /// times the sub-tile edge, crop each axis to that edge, re-box the same buffer.
     /// `bound` (the absolute valid extent) is carried through unchanged — only `origin`
@@ -496,31 +602,108 @@ impl<T: CubePrimitive> MemData<T> {
     }
 }
 
-/// The operand's logical extent per axis, folded from its physical `[pre…, grid…, tile…]`
-/// shape: passthrough axes pass through, each tiled axis multiplies its per-level factors.
-/// Reduces to `physical_shape` for an untiled (strided) operand.
 #[cube]
-fn logical_bound(
-    physical_shape: &CoordsDyn,
-    #[comptime] start_axis: usize,
-    #[comptime] num_tiled: usize,
-    #[comptime] levels: usize,
-) -> CoordsDyn {
-    let mut bound = CoordsDyn::new();
-    #[unroll]
-    for i in 0..start_axis {
-        bound.push(physical_shape[i]);
+impl<T: CubePrimitive> GmemData<T> {
+    fn window(&self) -> Window {
+        Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
-    #[unroll]
-    for a in 0..num_tiled {
-        let mut prod = 1u32;
+
+    /// Re-view through `layout` as a [`MatrixView`], carrying the `check` flag so the leaf masks
+    /// without being asked. The view's `TiledViewLayout` is already baked in, so only the
+    /// [`Window`] and the matrix `layout` compose on top.
+    pub(crate) fn masked(&self, layout: BatchMatrix) -> MatrixView<'_, T> {
+        MaskedView::new(
+            self.view.clone().as_read().view(self.window()).view(layout),
+            comptime!(self.check),
+        )
+    }
+
+    /// The mutable twin of [`masked`](GmemData::masked).
+    pub(crate) fn masked_mut(&mut self, layout: BatchMatrix) -> MatrixViewMut<'_, T> {
+        let window = self.window();
+        MaskedViewMut::new(
+            self.view.clone().view_mut(window).view_mut(layout),
+            comptime!(self.check),
+        )
+    }
+
+    /// A flat 1-D [`FlatView`] over the [`Window`] extent.
+    pub(crate) fn flat(&self) -> FlatView<'_, T> {
+        FlatView::new(
+            self.view
+                .clone()
+                .as_read()
+                .view(self.window())
+                .view(FlatLayout::new(self.extent.clone())),
+            comptime!(self.check),
+        )
+    }
+
+    /// The mutable twin of [`flat`](GmemData::flat).
+    pub(crate) fn flat_mut(&mut self) -> FlatViewMut<'_, T> {
+        let window = self.window();
+        let extent = self.extent.clone();
+        FlatViewMut::new(
+            self.view
+                .clone()
+                .view_mut(window)
+                .view_mut(FlatLayout::new(extent)),
+            comptime!(self.check),
+        )
+    }
+
+    /// Window down to `region`: shift `origin` by the region's tile coordinate times the sub-tile
+    /// edge, crop each axis to that edge. The view (`Copy`) and `bound` ride through unchanged, so
+    /// the leaf masks `origin + pos < bound` at any nesting depth.
+    fn at(&self, region: &Region, #[comptime] space: Space) -> GmemData<T> {
+        let mut origin = CoordsDyn::new();
+        let mut extent = CoordsDyn::new();
+
         #[unroll]
-        for l in 0..comptime!(levels + 1) {
-            prod *= physical_shape[comptime!(start_axis) + l * num_tiled + a];
+        for p in 0..space.rank() {
+            let axis = space.axis_at(p);
+            let edge = space.partitioner().edge(axis);
+            let index = region.coord(axis);
+
+            origin.push(self.origin[p] + (index * edge) as u32);
+            extent.push(edge as u32);
         }
-        bound.push(prod);
+
+        GmemData::<T> {
+            view: self.view.clone(),
+            origin,
+            extent,
+            bound: self.bound.clone(),
+            check: comptime!(self.check),
+        }
     }
-    bound
+}
+
+#[cube]
+impl<T: CubePrimitive> TmaData<T> {
+    /// Window down to `region`: advance the global origin by each axis's tile coordinate times its
+    /// sub-tile edge. The descriptor and bound carry through unchanged — only `pos` moves — so the
+    /// next `tensor_map_load` copies the windowed box.
+    fn at(&self, region: &Region, #[comptime] space: Space) -> TmaData<T> {
+        let mut pos = CoordsDyn::new();
+
+        #[unroll]
+        for p in 0..space.rank() {
+            let axis = space.axis_at(p);
+            let edge = space.partitioner().edge(axis);
+            let index = region.coord(axis);
+            pos.push(self.pos[p] + (index * edge) as u32);
+        }
+
+        TmaData::<T> {
+            view: self.view.clone(),
+            pos,
+            bound: self.bound.clone(),
+            box_rows: comptime!(self.box_rows),
+            box_cols: comptime!(self.box_cols),
+            transposed: comptime!(self.transposed),
+        }
+    }
 }
 
 /// The whole-tile window: `origin = 0`, `extent =` the space's per-axis extents.
