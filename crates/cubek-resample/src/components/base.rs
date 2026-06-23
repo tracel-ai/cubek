@@ -1,6 +1,7 @@
 use crate::components::coordinates::{compute_anchors, cube_absolute_coord, tile_absolute_coord};
 use crate::components::{resample_instruction::ResampleInstruction, tap_resolver::TapResolver};
-use crate::definition::{Accumulator, Resample, ResampleArgs, TileSize, in_bounds};
+use crate::definition::{Accumulator, Resample, ResampleArgs, in_bounds};
+use cubecl::std::{FastDivmod, FastDivmodExpand};
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::CoordsDynI},
@@ -11,8 +12,10 @@ use cubecl::{
 pub fn resample_kernel<F: Float, N: Size>(
     input: &View<'_, Vector<F, N>, CoordsDynI>,
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDynI>,
-    tile_size: TileSize,
-    cube_size: TileSize,
+    tile_shape: Sequence<FastDivmod<usize>>,
+    tile_strides: Sequence<FastDivmod<usize>>,
+    cube_shape: Sequence<FastDivmod<usize>>,
+    cube_strides: Sequence<FastDivmod<usize>>,
     args: ResampleArgs,
     #[comptime] config: Resample,
     #[comptime] vectorized_axis: usize,
@@ -22,12 +25,12 @@ pub fn resample_kernel<F: Float, N: Size>(
 
     let cube_pos = CUBE_POS;
 
-    let cube_coord = cube_absolute_coord(&cube_size, cube_pos);
+    let cube_coord = cube_absolute_coord(&cube_shape, &cube_strides, cube_pos);
 
     let unit_pos = UNIT_POS as usize;
     let cube_dim = CUBE_DIM as usize;
 
-    let num_iterations = (tile_size.area() - unit_pos).div_ceil(cube_dim);
+    let num_iterations = (sequence_area(&tile_shape) - unit_pos).div_ceil(cube_dim);
 
     for iteration in 0..num_iterations {
         let unit_pos = unit_pos + iteration * cube_dim;
@@ -37,7 +40,8 @@ pub fn resample_kernel<F: Float, N: Size>(
             output,
             &cube_coord,
             unit_pos,
-            &tile_size,
+            &tile_shape,
+            &tile_strides,
             &args,
             &config,
             vectorized_axis,
@@ -53,14 +57,16 @@ fn resample_unit<F: Float, N: Size>(
     output: &mut ViewMut<'_, Vector<F, N>, CoordsDynI>,
     cube_coord: &CoordsDynI,
     unit_pos: usize,
-    tile_size: &TileSize,
+    tile_shape: &Sequence<FastDivmod<usize>>,
+    tile_strides: &Sequence<FastDivmod<usize>>,
     args: &ResampleArgs,
     #[comptime] config: &Resample,
     #[comptime] vectorized_axis: usize,
     #[comptime] vector_size: usize,
 ) {
     let out_coord = tile_absolute_coord(
-        tile_size,
+        tile_shape,
+        tile_strides,
         cube_coord,
         unit_pos,
         vectorized_axis,
@@ -152,4 +158,26 @@ fn accumulate_tap<F: Float, N: Size>(
     ResampleInstruction::combine(&mut value, weight, tap_idx, config);
 
     ResampleInstruction::accumulate(accumulator, value, weight, tap_idx, config);
+}
+
+/// Compute the area of a sequence of FastDivmod.
+#[cube]
+pub fn sequence_area(shape: &Sequence<FastDivmod<usize>>) -> usize {
+    let mut area = 1;
+
+    #[unroll]
+    for i in 0..shape.len() {
+        area *= fast_div_mod_value(&shape[i]);
+    }
+
+    area
+}
+
+/// Get the value of a FastDivmod.
+#[cube]
+pub fn fast_div_mod_value(div_mod: &FastDivmod<usize>) -> usize {
+    match div_mod {
+        FastDivmod::Fast { divisor, .. } => *divisor,
+        FastDivmod::Fallback { divisor } => *divisor,
+    }
 }
