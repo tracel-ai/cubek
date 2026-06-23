@@ -99,6 +99,7 @@ fn vectorize<R: Runtime>(
     (1, rank.saturating_sub(1))
 }
 
+/// Computes the tile shape for the given output shape, cube dimension, vectorized axis, and vector size.
 fn compute_tile_shape(
     output_shape: &Shape,
     cube_dim: &CubeDim,
@@ -129,6 +130,7 @@ fn compute_tile_shape(
     tile_shape
 }
 
+/// Computes the cube shape for the given output shape, tile shape, vectorized axis, and vector size.
 fn compute_cube_shape(
     output_shape: &Shape,
     tile_shape: &Shape,
