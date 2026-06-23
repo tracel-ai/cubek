@@ -80,12 +80,10 @@ fn validate_strategy<R: Runtime>(
 
     // If the client is running on a CPU, we need to validate the strategy
     match strategy {
-        InterpolateStrategy::GlobalMemoryStrategy(_) => return Ok(()),
-        InterpolateStrategy::SharedMemoryStrategy(_) => {
-            return Err(InterpolateError::UnsupportedMode(
-                "interpolation shared memory strategy is not supported on CPU".to_string(),
-            ));
-        }
+        InterpolateStrategy::GlobalMemoryStrategy(_) => Ok(()),
+        InterpolateStrategy::SharedMemoryStrategy(_) => Err(InterpolateError::UnsupportedMode(
+            "interpolation shared memory strategy is not supported on CPU".to_string(),
+        )),
     }
 }
 
