@@ -1,38 +1,9 @@
-//! Host-side stand-in for `cubek_quant`'s `quantize`/`dequantize` kernels.
-//!
-//! Reimplements the symmetric quantization surface those kernels support so
-//! `cubek-test-utils` doesn't have to depend on `cubek-quant`:
-//!
-//! * values  — integer `Q8`/`Q4`/`Q2` (full or symmetric range) and the
-//!   8-bit floating-point formats `E4M3`/`E5M2`;
-//! * stores  — [`QuantStore::Native`] (1:1, `i8` for `Q8*`, fp8 bits for
-//!   `E4M3`/`E5M2`) and [`QuantStore::PackedU32`] (several quants bit-packed
-//!   into a `u32`, innermost dimension);
-//! * levels  — [`QuantLevel::Tensor`] and [`QuantLevel::Block`];
-//! * modes   — [`QuantMode::Symmetric`].
-//!
-//! Like the real kernels, quantization always rounds to an integer
-//! (`round(value / scale)`): the value type only decides the clamp range and
-//! the storage encoding. The companion `out_scale` buffer the quantize kernel
-//! writes is simply the input scales cast to the param precision, so it isn't
-//! produced here — the caller already has the scales it passed in.
-
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
     e4m3, e5m2,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
 };
 
-/// Quantize `values` into the packed/native output buffer bytes, mirroring
-/// `cubek_quant::quantize::launch_ref` for the schemes listed in the module
-/// docs.
-///
-/// * `values` — logical, row-major input data.
-/// * `shape` — logical shape of `values`.
-/// * `scales` — one scale per block, row-major over the block grid (a single
-///   element for [`QuantLevel::Tensor`]).
-/// * `block_dims` — per-dimension block extent (the full dimension for
-///   tensor-level quantization). Must divide `shape` element-wise.
 pub fn quantize(
     values: &[f32],
     shape: &[usize],
@@ -50,13 +21,6 @@ pub fn quantize(
     }
 }
 
-/// Dequantize the packed/native buffer `bytes` back into logical, row-major
-/// `f32` values, mirroring `cubek_quant::dequantize::launch_ref`.
-///
-/// `shape`/`scales`/`block_dims` describe the *dequantized* tensor, exactly as
-/// they were passed to [`quantize`].
-///
-/// Provided for parity with `cubek_quant::dequantize`; not all callers need it.
 #[allow(dead_code)]
 pub fn dequantize(
     bytes: &[u8],
@@ -76,9 +40,6 @@ pub fn dequantize(
     dequantized_values(&quants, scales, shape, block_dims, &scales_shape, scheme)
 }
 
-/// Quantize each value to an integer-valued float: `round(value / scale)`
-/// clamped to the value type's range. The per-element scale is looked up from
-/// its block.
 fn quantized_values(
     values: &[f32],
     shape: &[usize],
@@ -135,7 +96,7 @@ fn encode_native(quantized: &[f32], value: QuantValue) -> Vec<u8> {
     }
 }
 
-#[allow(dead_code)] // used by `dequantize`
+#[allow(dead_code)]
 fn decode_native(bytes: &[u8], value: QuantValue) -> Vec<f32> {
     match value {
         QuantValue::Q8F | QuantValue::Q8S => bytes.iter().map(|&b| b as i8 as f32).collect(),
@@ -167,7 +128,7 @@ fn encode_packed_u32(quantized: &[f32], scheme: &QuantScheme) -> Vec<u8> {
 
 /// Inverse of [`encode_packed_u32`]: unpack each `u32` into `num_quants`
 /// sign-extended quant values, matching `unpack_q`.
-#[allow(dead_code)] // used by `dequantize`
+#[allow(dead_code)]
 fn decode_packed_u32(bytes: &[u8], scheme: &QuantScheme) -> Vec<f32> {
     let size_quant = scheme.size_bits_value();
     let num_quants = scheme.num_quants();
