@@ -75,7 +75,7 @@ fn dequantized_values(
         QuantMode::Symmetric => quantized
             .iter()
             .enumerate()
-            .map(|(i, &q)| q * scales[scale_index(i, shape, block_dims, &scales_shape)])
+            .map(|(i, &q)| q * scales[scale_index(i, shape, block_dims, scales_shape)])
             .collect(),
     }
 }

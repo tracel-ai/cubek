@@ -58,8 +58,11 @@ pub(crate) fn apply_quantization(
     let shape: Vec<usize> = original_shape.iter().copied().collect();
     let values = logical_values_f32(&tensor.host);
     let output_bytes = quantize(&values, &shape, &scales_data, &block_dims, &scheme);
-    let output_handle =
-        TensorHandle::new_contiguous(quant_shape, client.create_from_slice(&output_bytes), output_storage_type);
+    let output_handle = TensorHandle::new_contiguous(
+        quant_shape,
+        client.create_from_slice(&output_bytes),
+        output_storage_type,
+    );
 
     let scale_dtype = StorageType::Scalar(ElemType::from_quant_param(scheme.param));
     let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
