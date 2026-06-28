@@ -56,7 +56,7 @@ use cubecl::calculate_cube_count_elemwise;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
 
 // ---------------------------------------------------------------------------
@@ -64,12 +64,12 @@ use cubek_std::InputBinding;
 // ---------------------------------------------------------------------------
 #[cube(launch_unchecked)]
 fn householder_kernel<F: Float>(
-    r: &Array<F>,
+    r: &[F],
     r_offset: u32,
     dim: u32,
     full_rows: u32,
-    v: &mut Array<F>,
-    beta: &mut Array<F>,
+    v: &mut [F],
+    beta: &mut [F],
     beta_offset: u32,
     #[comptime] shared_size: usize,
 ) {
@@ -86,7 +86,7 @@ fn householder_kernel<F: Float>(
     }
     sync_cube();
 
-    let mut product = SharedMemory::<F>::new(shared_size);
+    let mut product = Shared::<[F]>::new_slice(shared_size);
     product[tdx_usize] = zero;
     sync_cube();
 
@@ -164,8 +164,8 @@ fn left_update_r_kernel<F: Float + CubeElement>(
     row_offset: u32,
     col_offset: u32,
     r: &mut Tensor<F>,
-    v: &Array<F>,
-    beta: &Array<F>,
+    v: &[F],
+    beta: &[F],
     beta_offset: u32,
     #[comptime] shared_size: usize,
 ) {
@@ -176,7 +176,7 @@ fn left_update_r_kernel<F: Float + CubeElement>(
     let r_base = (col_offset * rows + row_offset) as usize;
     let n_rows = rows - row_offset;
 
-    let mut shv = SharedMemory::<F>::new(shared_size);
+    let mut shv = Shared::<[F]>::new_slice(shared_size);
     let mut clear_idx = tdx as usize;
     let cube_dim_x = CUBE_DIM_X as usize;
     while clear_idx < shared_size {
@@ -225,8 +225,8 @@ fn left_update_r_kernel<F: Float + CubeElement>(
 
 #[cube(launch_unchecked)]
 fn copy_v_to_buf_column_major_kernel<F: Float + CubeElement>(
-    input: &Array<F>,
-    output: &mut Array<F>,
+    input: &[F],
+    output: &mut [F],
     j: u32,
     row_offset: u32,
     n: u32,
@@ -243,16 +243,16 @@ fn copy_v_to_buf_column_major_kernel<F: Float + CubeElement>(
 fn compute_next_w_column_major_kernel<F: Float + CubeElement>(
     rows: u32,
     j: u32,
-    beta: &Array<F>,
-    v_buf: &Array<F>,
-    w_buf: &mut Array<F>,
+    beta: &[F],
+    v_buf: &[F],
+    w_buf: &mut [F],
     #[comptime] shared_size: usize,
 ) {
     let tdx = UNIT_POS_X;
     let i = ABSOLUTE_POS;
     let zero = F::from_int(0);
 
-    let mut dots = SharedMemory::<F>::new(shared_size);
+    let mut dots = Shared::<[F]>::new_slice(shared_size);
     dots[tdx as usize] = zero;
     sync_cube();
 
@@ -306,7 +306,7 @@ fn compute_next_w_column_major_kernel<F: Float + CubeElement>(
 }
 
 #[cube(launch_unchecked)]
-fn clear_buffer_kernel<F: Float + CubeElement>(buffer: &mut Array<F>, n: u32) {
+fn clear_buffer_kernel<F: Float + CubeElement>(buffer: &mut [F], n: u32) {
     if ABSOLUTE_POS < n as usize {
         buffer[ABSOLUTE_POS] = F::from_int(0);
     }
@@ -318,7 +318,7 @@ fn update_trailing_r_final_kernel<F: Float + CubeElement>(
     cols: u32,
     col_start_trailing: u32,
     r: &mut Tensor<F>,
-    z_buf: &Array<F>,
+    z_buf: &[F],
 ) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
@@ -335,7 +335,7 @@ fn update_trailing_r_final_kernel<F: Float + CubeElement>(
 fn update_qt_from_z_kernel<F: Float + CubeElement>(
     rows: u32,
     qt: &mut Tensor<F>,
-    z_buf: &Array<F>,
+    z_buf: &[F],
 ) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
@@ -350,8 +350,8 @@ fn update_qt_final_kernel<F: Float + CubeElement>(
     rows: u32,
     current_tile: u32,
     qt: &mut Tensor<F>,
-    v_buf: &Array<F>,
-    s_buf: &Array<F>,
+    v_buf: &[F],
+    s_buf: &[F],
 ) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
@@ -374,8 +374,8 @@ fn compute_qt_w_kernel<F: Float + CubeElement>(
     rows: u32,
     current_tile: u32,
     qt: &Tensor<F>,
-    w_buf: &Array<F>,
-    s_buf: &mut Array<F>,
+    w_buf: &[F],
+    s_buf: &mut [F],
 ) {
     let j = ABSOLUTE_POS_X; // row index
     let k = ABSOLUTE_POS_Y; // tile index
@@ -457,14 +457,14 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                 client,
                 cc_clear.clone(),
                 cd_clear,
-                ArrayArg::from_raw_parts(v_buf_global.handle.clone(), n_clear as usize),
+                BufferArg::from_raw_parts(v_buf_global.handle.clone(), n_clear as usize),
                 n_clear,
             );
             clear_buffer_kernel::launch_unchecked::<E, R>(
                 client,
                 cc_clear,
                 cd_clear,
-                ArrayArg::from_raw_parts(w_buf_global.handle.clone(), n_clear as usize),
+                BufferArg::from_raw_parts(w_buf_global.handle.clone(), n_clear as usize),
                 n_clear,
             );
         }
@@ -481,12 +481,12 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     client,
                     cc,
                     cd,
-                    ArrayArg::from_raw_parts(r_handle.handle.clone(), (rows * cols) as usize),
+                    BufferArg::from_raw_parts(r_handle.handle.clone(), (rows * cols) as usize),
                     r_offset as u32,
                     rows_below,
                     rows - col,
-                    ArrayArg::from_raw_parts(v_tmp.handle.clone(), rows as usize),
-                    ArrayArg::from_raw_parts(beta.handle.clone(), tile as usize),
+                    BufferArg::from_raw_parts(v_tmp.handle.clone(), rows as usize),
+                    BufferArg::from_raw_parts(beta.handle.clone(), tile as usize),
                     j,
                     max_cube_dim as usize,
                 );
@@ -506,8 +506,8 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                         col,
                         col,
                         r_handle.clone().into_arg(),
-                        ArrayArg::from_raw_parts(v_tmp.handle.clone(), (rows - col) as usize),
-                        ArrayArg::from_raw_parts(beta.handle.clone(), tile as usize),
+                        BufferArg::from_raw_parts(v_tmp.handle.clone(), (rows - col) as usize),
+                        BufferArg::from_raw_parts(beta.handle.clone(), tile as usize),
                         j,
                         max_cube_dim as usize,
                     );
@@ -521,8 +521,8 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     client,
                     cc_copy,
                     cd_copy,
-                    ArrayArg::from_raw_parts(v_tmp.handle.clone(), rows as usize),
-                    ArrayArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize),
+                    BufferArg::from_raw_parts(v_tmp.handle.clone(), rows as usize),
+                    BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize),
                     j,
                     col,
                     rows - col,
@@ -539,9 +539,9 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     cd_w,
                     rows,
                     j,
-                    ArrayArg::from_raw_parts(beta.handle.clone(), tile as usize),
-                    ArrayArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize),
-                    ArrayArg::from_raw_parts(w_buf.handle.clone(), (rows * current_tile) as usize),
+                    BufferArg::from_raw_parts(beta.handle.clone(), tile as usize),
+                    BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize),
+                    BufferArg::from_raw_parts(w_buf.handle.clone(), (rows * current_tile) as usize),
                     max_cube_dim as usize,
                 );
             }
@@ -619,7 +619,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     cols,
                     col_start + current_tile,
                     r_handle.clone().into_arg(),
-                    ArrayArg::from_raw_parts(
+                    BufferArg::from_raw_parts(
                         z_view.handle.clone(),
                         (rows * trailing_cols) as usize,
                     ),
@@ -683,7 +683,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                 cube_dim_2d,
                 rows,
                 q_handle.clone().into_arg(),
-                ArrayArg::from_raw_parts(z_qt.handle.clone(), (rows * rows) as usize),
+                BufferArg::from_raw_parts(z_qt.handle.clone(), (rows * rows) as usize),
             );
         }
     }

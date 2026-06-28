@@ -2,12 +2,12 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::calculate_cube_count_elemwise;
 use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::launch::Strategy;
+use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
 
 #[cube(launch_unchecked)]
 fn clear_buffer_kernel<F: Float + CubeElement>(
-    buf: &mut Array<F>,
+    buf: &mut [F],
     n: u32,
 ) {
     let idx = ABSOLUTE_POS_X;
@@ -18,11 +18,11 @@ fn clear_buffer_kernel<F: Float + CubeElement>(
 
 #[cube(launch_unchecked)]
 fn householder_kernel<F: Float + CubeElement>(
-    r: &Array<F>,
+    r: &[F],
     r_offset: u32,
     dim: u32,
-    v_tmp: &mut Array<F>,
-    beta_vec: &mut Array<F>,
+    v_tmp: &mut [F],
+    beta_vec: &mut [F],
     j: u32,
 ) {
     let tdx = UNIT_POS_X;
@@ -65,8 +65,8 @@ fn apply_householder_kernel<F: Float + CubeElement>(
     cols: u32,
     col: u32,
     r: &mut Tensor<F>,
-    v: &Array<F>,
-    beta_vec: &Array<F>,
+    v: &[F],
+    beta_vec: &[F],
     j: u32,
 ) {
     let tid = ABSOLUTE_POS_X;
@@ -98,8 +98,8 @@ fn apply_householder_kernel<F: Float + CubeElement>(
 
 #[cube(launch_unchecked)]
 fn copy_v_to_buf_kernel<F: Float + CubeElement>(
-    v_tmp: &Array<F>,
-    v_buf: &mut Array<F>,
+    v_tmp: &[F],
+    v_buf: &mut [F],
     j: u32,
     col: u32,
     dim: u32,
@@ -116,9 +116,9 @@ fn copy_v_to_buf_kernel<F: Float + CubeElement>(
 fn build_t_tsqr_kernel<F: Float + CubeElement>(
     tile: u32,
     current_tile: u32,
-    gram: &Array<F>,
-    beta_vec: &Array<F>,
-    t_mat: &mut Array<F>,
+    gram: &[F],
+    beta_vec: &[F],
+    t_mat: &mut [F],
 ) {
     let tdx = UNIT_POS_X;
     if tdx == 0 {
@@ -151,7 +151,7 @@ fn update_trailing_r_kernel<F: Float + CubeElement>(
     cols: u32,
     col_start_trailing: u32,
     r: &mut Tensor<F>,
-    z_buf: &Array<F>,
+    z_buf: &[F],
 ) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
@@ -167,7 +167,7 @@ fn update_trailing_r_kernel<F: Float + CubeElement>(
 fn update_qt_from_z_kernel<F: Float + CubeElement>(
     rows: u32,
     qt: &mut Tensor<F>,
-    z_buf: &Array<F>,
+    z_buf: &[F],
 ) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
@@ -226,7 +226,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
         let cd_clear = CubeDim::new_1d(max_cube_dim);
         let cc_clear = calculate_cube_count_elemwise(client, n_clear as usize, cd_clear);
         unsafe {
-            clear_buffer_kernel::launch_unchecked::<E, R>(client, cc_clear.clone(), cd_clear, ArrayArg::from_raw_parts(v_buf_global.handle.clone(), n_clear as usize), n_clear);
+            clear_buffer_kernel::launch_unchecked::<E, R>(client, cc_clear.clone(), cd_clear, BufferArg::from_raw_parts(v_buf_global.handle.clone(), n_clear as usize), n_clear);
         }
 
         for j in 0..current_tile {
@@ -235,7 +235,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
             let r_offset = col * rows + col;
 
             unsafe {
-                householder_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(1), ArrayArg::from_raw_parts(r_handle.handle.clone(), (rows * cols) as usize), r_offset, dim, ArrayArg::from_raw_parts(v_tmp.handle.clone(), rows as usize), ArrayArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j);
+                householder_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(1), BufferArg::from_raw_parts(r_handle.handle.clone(), (rows * cols) as usize), r_offset, dim, BufferArg::from_raw_parts(v_tmp.handle.clone(), rows as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j);
             }
 
             let n_upd = (current_tile - j) as usize;
@@ -243,14 +243,14 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                 let cd_upd = CubeDim::new_1d((n_upd as u32).min(max_cube_dim));
                 let cc_upd = calculate_cube_count_elemwise(client, n_upd, cd_upd);
                 unsafe {
-                    apply_householder_kernel::launch_unchecked::<E, R>(client, cc_upd, cd_upd, rows, col_start + current_tile, col, r_handle.clone().into_arg(), ArrayArg::from_raw_parts(v_tmp.handle.clone(), dim as usize), ArrayArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j);
+                    apply_householder_kernel::launch_unchecked::<E, R>(client, cc_upd, cd_upd, rows, col_start + current_tile, col, r_handle.clone().into_arg(), BufferArg::from_raw_parts(v_tmp.handle.clone(), dim as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j);
                 }
             }
 
             let cd_copy = CubeDim::new_1d(dim.min(max_cube_dim));
             let cc_copy = calculate_cube_count_elemwise(client, dim as usize, cd_copy);
             unsafe {
-                copy_v_to_buf_kernel::launch_unchecked::<E, R>(client, cc_copy, cd_copy, ArrayArg::from_raw_parts(v_tmp.handle.clone(), dim as usize), ArrayArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize), j, col, dim, rows);
+                copy_v_to_buf_kernel::launch_unchecked::<E, R>(client, cc_copy, cd_copy, BufferArg::from_raw_parts(v_tmp.handle.clone(), dim as usize), BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize), j, col, dim, rows);
             }
         }
 
@@ -259,7 +259,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
         launch_matmul(&strategy_gram, v_t_gram, InputBinding::Normal(v_buf.clone().binding(), storage_dtype), TensorHandle::<R>::new(gram_buf_global.handle.clone(), vec![current_tile as usize, current_tile as usize], vec![tile as usize, 1], dtype).binding(), &mut matmul_dtypes);
 
         unsafe {
-            build_t_tsqr_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(1), tile, current_tile, ArrayArg::from_raw_parts(gram_buf_global.handle.clone(), (tile * tile) as usize), ArrayArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), ArrayArg::from_raw_parts(t_buf_global.handle.clone(), (tile * tile) as usize));
+            build_t_tsqr_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(1), tile, current_tile, BufferArg::from_raw_parts(gram_buf_global.handle.clone(), (tile * tile) as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), BufferArg::from_raw_parts(t_buf_global.handle.clone(), (tile * tile) as usize));
         }
 
         let t_buf = TensorHandle::<R>::new(t_buf_global.handle.clone(), vec![current_tile as usize, current_tile as usize], vec![1, tile as usize], dtype);
@@ -279,7 +279,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
             launch_matmul(&strategy_tall, InputBinding::Normal(v_buf.clone().binding(), storage_dtype), InputBinding::Normal(s_r.clone().binding(), storage_dtype), z_r.clone().binding(), &mut matmul_dtypes);
             let cc_r = CubeCount::new_2d(rows.div_ceil(thread_block_size), trailing_cols.div_ceil(thread_block_size));
             unsafe {
-                update_trailing_r_kernel::launch_unchecked::<E, R>(client, cc_r, cube_dim_2d, rows, cols, col_start + current_tile, r_handle.clone().into_arg(), ArrayArg::from_raw_parts(z_r.handle.clone(), (rows * trailing_cols) as usize));
+                update_trailing_r_kernel::launch_unchecked::<E, R>(client, cc_r, cube_dim_2d, rows, cols, col_start + current_tile, r_handle.clone().into_arg(), BufferArg::from_raw_parts(z_r.handle.clone(), (rows * trailing_cols) as usize));
             }
         }
 
@@ -291,7 +291,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
         launch_matmul(&strategy_tall, InputBinding::Normal(v_buf.clone().binding(), storage_dtype), InputBinding::Normal(s_tile_qt.clone().binding(), storage_dtype), z_qt.clone().binding(), &mut matmul_dtypes);
         let cc_q = CubeCount::new_2d(rows.div_ceil(thread_block_size), rows.div_ceil(thread_block_size));
         unsafe {
-            update_qt_from_z_kernel::launch_unchecked::<E, R>(client, cc_q, cube_dim_2d, rows, q_handle.clone().into_arg(), ArrayArg::from_raw_parts(z_qt.handle.clone(), (rows * rows) as usize));
+            update_qt_from_z_kernel::launch_unchecked::<E, R>(client, cc_q, cube_dim_2d, rows, q_handle.clone().into_arg(), BufferArg::from_raw_parts(z_qt.handle.clone(), (rows * rows) as usize));
         }
     }
 }
