@@ -3,7 +3,8 @@ use std::fmt::Display;
 use cubecl::{TestRuntime, prelude::*, std::tensor::{TensorHandle, into_contiguous}};
 
 use crate::suite::utils::{
-    assert_equals_approx, tensorhandler_from_data, tensorhandler_from_data_col_major,
+    assert_equals_approx, dtype_unsupported, tensorhandler_from_data,
+    tensorhandler_from_data_col_major,
 };
 
 /// Run into_contiguous on a tensor and read the resulting tight row-major bytes.
@@ -45,6 +46,9 @@ fn reconstruct_qr<F: Float + CubeElement>(
 
 pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
     let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
     let dim_usize = dim as usize;
 
     let shape = vec![dim_usize, dim_usize];
@@ -90,6 +94,9 @@ pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
 
 pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
     let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
     let rows_usize = rows as usize;
     let cols_usize = cols as usize;
 
@@ -140,6 +147,9 @@ pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32)
 
 pub fn test_qr_tsqr<F: Float + CubeElement + Display>(dim: u32) {
     let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
     let dim_usize = dim as usize;
 
     let shape = vec![dim_usize, dim_usize];
@@ -184,6 +194,9 @@ pub fn test_qr_tsqr<F: Float + CubeElement + Display>(dim: u32) {
 
 pub fn test_qr_tsqr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
     let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
     let rows_usize = rows as usize;
     let cols_usize = cols as usize;
 

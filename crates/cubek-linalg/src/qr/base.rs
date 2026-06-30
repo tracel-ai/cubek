@@ -1,8 +1,8 @@
 use cubecl::prelude::*;
-use cubecl::std::tensor::TensorHandle;
+use cubecl::std::tensor::{TensorHandle, identity};
 
 use crate::qr::QRSetupError;
-use crate::qr::{baht, baht_tsqr, cgr};
+use crate::qr::{baht, baht_tsqr, cgr, mgs};
 
 type QRTuple<R> = (TensorHandle<R>, TensorHandle<R>);
 
@@ -16,6 +16,9 @@ pub enum QRStrategy {
     /// Performs the QR decomposition using Givens rotations.
     /// Better for sparse matrices and less numerically stable than Householder transformations.
     CommonGivensRotations,
+    /// Modified Gram-Schmidt orthogonalization. Single persistent-cube kernel per
+    /// column with no GEMM dispatch overhead — best for small matrices.
+    ModifiedGramSchmidt,
     /// Automatically choose the best strategy.
     #[default]
     Auto,
@@ -33,36 +36,21 @@ fn initialize<R: Runtime, F: Float + CubeElement>(
     let (m, _n) = (shape[0], shape[1]);
 
     // Allocate Q as identity (col-major [rows, rows]).
-    // IMPORTANT: TensorHandle::zeros may return a GPU-padded buffer (e.g. pitch 4
-    // for a 3-row matrix).  The BAHT kernels index Q^T with flat `col*rows+row`
-    // arithmetic that assumes NO pitch padding.  We therefore build the identity
-    // CPU-side and upload it via create_from_slice, which always produces a tight
-    // (non-padded) buffer.
+    // IMPORTANT: TensorHandle::zeros / ::empty may return a GPU-padded buffer
+    // (e.g. pitch 4 for a 3-row matrix).  The BAHT kernels index Q^T with flat
+    // `col*rows+row` arithmetic that assumes NO pitch padding.  We therefore
+    // reserve a tight (non-padded) buffer via `client.empty` and fill it on the
+    // GPU with cubecl's `identity` kernel — no host round-trip, any float type.
+    //
+    // The identity kernel derives the diagonal stride from `strides[0]`, so we
+    // hand it standard row-major strides `[m, 1]`.  The identity matrix is
+    // symmetric, so the resulting tight buffer is simultaneously the col-major
+    // `[1, m]` identity the QR kernels consume.
     let q_shape = vec![m, m];
     let elem_size = dtype.size();
-    let mut identity_bytes = vec![0u8; m * m * elem_size];
-    // Write 1.0 at each diagonal position in col-major order (col*m+row = col*m+col for diag).
-    for i in 0..m {
-        let byte_offset = (i * m + i) * elem_size;
-        // Write the float 1.0 in the element's native byte representation.
-        // We do this by writing the bytes of F::from_int(1) — but since we only have
-        // a generic `StorageType` here, use the known IEEE 754 bit pattern for 1.0:
-        //   f32: 0x3F80_0000  f64: 0x3FF0_0000_0000_0000
-        match elem_size {
-            4 => {
-                let one: u32 = 0x3F80_0000;
-                identity_bytes[byte_offset..byte_offset + 4].copy_from_slice(&one.to_le_bytes());
-            }
-            8 => {
-                let one: u64 = 0x3FF0_0000_0000_0000;
-                identity_bytes[byte_offset..byte_offset + 8].copy_from_slice(&one.to_le_bytes());
-            }
-            _ => {
-                panic!("Unsupported element size {elem_size} for identity init");
-            }
-        }
-    }
-    let q_handle = client.create_from_slice(&identity_bytes);
+    let q_handle = client.empty(m * m * elem_size);
+    let q_contig = TensorHandle::<R>::new(q_handle.clone(), q_shape.clone(), vec![m, 1], dtype);
+    identity::launch::<R>(client, &q_contig);
     let q = TensorHandle::<R>::new(q_handle, q_shape, vec![1, m], dtype);
 
     // Build R as a tight col-major copy of A.  We must NOT use into_contiguous here
@@ -102,6 +90,9 @@ impl QRStrategy {
             }
             QRStrategy::CommonGivensRotations => {
                 cgr::launch::<R, EG>(client, &q, &r);
+            }
+            QRStrategy::ModifiedGramSchmidt => {
+                mgs::launch::<R, EG>(client, &q, &r);
             }
             QRStrategy::Auto => {
                 baht::launch::<R, EG>(client, &q, &r);

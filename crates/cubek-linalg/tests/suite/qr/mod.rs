@@ -1,5 +1,6 @@
 mod cgr;
 pub mod house;
+mod mgs;
 pub mod solve;
 
 #[macro_export]
@@ -94,6 +95,52 @@ mod test_house {
     testgen_qr_house!([f32, f64]);
 }
 
+#[macro_export]
+macro_rules! testgen_qr_mgs {
+   ($float:ident) => {
+            pub type FloatT = $float;
+
+            #[test]
+            pub fn test_tiny() {
+                crate::suite::qr::mgs::test_qr_mgs::<FloatT>(3);
+            }
+
+            #[test]
+            pub fn test_small() {
+                crate::suite::qr::mgs::test_qr_mgs::<FloatT>(47);
+            }
+
+            #[test]
+            pub fn test_medium() {
+                crate::suite::qr::mgs::test_qr_mgs::<FloatT>(157);
+            }
+
+            #[test]
+            pub fn test_big() {
+                crate::suite::qr::mgs::test_qr_mgs::<FloatT>(517);
+            }
+
+            #[test]
+            pub fn test_rect() {
+                crate::suite::qr::mgs::test_qr_mgs_rect::<FloatT>(517, 157);
+            }
+
+    };
+    ([$($float:ident),*]) => {
+        mod mgs {
+            ::paste::paste! {
+                $(mod [<$float _ty>] {
+                    $crate::testgen_qr_mgs!($float);
+                })*
+            }
+        }
+    };
+}
+
+mod test_mgs {
+    testgen_qr_mgs!([f32, f64]);
+}
+
 
 #[macro_export]
 macro_rules! testgen_solve {
@@ -118,6 +165,16 @@ macro_rules! testgen_solve {
             #[test]
             pub fn test_solve_rect_givens() {
                 crate::suite::qr::solve::test_solve_rect::<FloatT>(32, 16, cubek_linalg::QRStrategy::CommonGivensRotations);
+            }
+
+            #[test]
+            pub fn test_solve_square_mgs() {
+                crate::suite::qr::solve::test_solve_square::<FloatT>(16, cubek_linalg::QRStrategy::ModifiedGramSchmidt);
+            }
+
+            #[test]
+            pub fn test_solve_rect_mgs() {
+                crate::suite::qr::solve::test_solve_rect::<FloatT>(32, 16, cubek_linalg::QRStrategy::ModifiedGramSchmidt);
             }
     };
     ([$($float:ident),*]) => {

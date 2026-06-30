@@ -55,6 +55,7 @@
 use cubecl::calculate_cube_count_elemwise;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
+use cubecl::ir::{ElemType, FloatKind};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
@@ -429,7 +430,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     let max_cube_dim = client.properties().hardware.max_cube_dim.0.min(256);
     let mut matmul_dtypes = MatmulElems::from_single_dtype(dtype);
     let cube_dim_2d = CubeDim::new_2d(thread_block_size, thread_block_size);
-    let is_f64 = dtype.size() == 8;
+    let is_f64 = dtype == Type::Scalar(StorageType::Scalar(ElemType::Float(FloatKind::F64)));
     let strategy = if is_f64 { Strategy::Auto } else { Strategy::SimpleUnit(Default::default()) };
 
     for k in 0..num_tiles {

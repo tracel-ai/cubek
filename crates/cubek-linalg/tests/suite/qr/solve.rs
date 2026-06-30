@@ -1,5 +1,6 @@
 use crate::suite::utils::{
-    assert_equals_approx, tensorhandler_from_data, tensorhandler_from_data_col_major,
+    assert_equals_approx, dtype_unsupported, tensorhandler_from_data,
+    tensorhandler_from_data_col_major,
 };
 use cubecl::{TestRuntime, prelude::*};
 use cubek_linalg::QRStrategy;
@@ -7,6 +8,9 @@ use std::fmt::Display;
 
 pub fn test_solve_square<F: Float + CubeElement + Display>(dim: u32, strategy: QRStrategy) {
     let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
     let dim_usize = dim as usize;
 
     let is_col_major = true;
@@ -82,6 +86,9 @@ pub fn test_solve_rect<F: Float + CubeElement + Display>(
     strategy: QRStrategy,
 ) {
     let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
     let rows_usize = rows as usize;
     let cols_usize = cols as usize;
 

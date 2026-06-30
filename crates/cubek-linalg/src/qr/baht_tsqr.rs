@@ -1,6 +1,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::calculate_cube_count_elemwise;
+use cubecl::ir::{ElemType, FloatKind};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
@@ -206,7 +207,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
 
     let cube_dim_2d = CubeDim::new_2d(thread_block_size, thread_block_size);
     let mut matmul_dtypes = MatmulElems::from_single_dtype(dtype);
-    let is_f64 = dtype.size() == 8;
+    let is_f64 = dtype == Type::Scalar(StorageType::Scalar(ElemType::Float(FloatKind::F64)));
     let strategy_gram = if is_f64 { Strategy::Auto } else { Strategy::SimpleVecMat(Default::default()) };
     let strategy_w = if is_f64 { Strategy::Auto } else { Strategy::DoubleUnit(Default::default()) };
     let strategy_tall = if is_f64 { Strategy::Auto } else { Strategy::SimpleUnit(Default::default()) };

@@ -7,7 +7,7 @@ use crate::suite::utils::{
     tensorhandler_from_data_col_major, transpose_matrix,
 };
 
-pub fn test_qr_cgr<F: Float + CubeElement + Display>(dim: u32) {
+pub fn test_qr_mgs<F: Float + CubeElement + Display>(dim: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -23,7 +23,7 @@ pub fn test_qr_cgr<F: Float + CubeElement + Display>(dim: u32) {
         pos += dim_usize - 1;
     }
 
-    // CGR (like BAHT) processes R internally as col-major; use col-major input.
+    // MGS (like BAHT/CGR) processes R internally as col-major; use col-major input.
     let a = tensorhandler_from_data_col_major(
         &client,
         shape.clone(),
@@ -32,21 +32,13 @@ pub fn test_qr_cgr<F: Float + CubeElement + Display>(dim: u32) {
     );
 
     let (mut q_t, r) =
-        match cubek_linalg::launch::<TestRuntime, F>(&cubek_linalg::QRStrategy::CommonGivensRotations, &client, &a) {
+        match cubek_linalg::launch::<TestRuntime, F>(&cubek_linalg::QRStrategy::ModifiedGramSchmidt, &client, &a) {
             Ok((q_t, r)) => (q_t, r),
             Err(_) => (
                 TensorHandle::empty(&client, shape.clone(), a.dtype),
                 TensorHandle::empty(&client, shape.clone(), a.dtype),
             ),
         };
-
-    let bytes = client.read_one(q_t.handle.clone()).unwrap();
-    let output = F::from_bytes(&bytes);
-    println!("Q Output => {output:?}");
-
-    let bytes = client.read_one(r.handle.clone()).unwrap();
-    let output = F::from_bytes(&bytes);
-    println!("R Output => {output:?}");
 
     // transpose_matrix already calls into_contiguous internally, giving row-major Q.
     // Q[i,k] = q_vals[i * dim + k]  ✓
@@ -73,14 +65,13 @@ pub fn test_qr_cgr<F: Float + CubeElement + Display>(dim: u32) {
     }
 
     let out = tensorhandler_from_data(&client, shape.clone(), &out_data, F::as_type_native_unchecked());
-    println!("Result Output => {out_data:?}");
 
     if let Err(e) = assert_equals_approx(&client, &out, &data, 2e-3) {
         panic!("{}", e);
     }
 }
 
-pub fn test_qr_cgr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
+pub fn test_qr_mgs_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -112,7 +103,7 @@ pub fn test_qr_cgr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) 
     );
 
     let (mut q_t, r) =
-        match cubek_linalg::launch::<TestRuntime, F>(&cubek_linalg::QRStrategy::CommonGivensRotations, &client, &a) {
+        match cubek_linalg::launch::<TestRuntime, F>(&cubek_linalg::QRStrategy::ModifiedGramSchmidt, &client, &a) {
             Ok((q_t, r)) => (q_t, r),
             Err(e) => panic!("QR launch failed: {:?}", e),
         };
