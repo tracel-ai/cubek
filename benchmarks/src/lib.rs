@@ -5,6 +5,7 @@ pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_convolution::eval::benchmarks as conv2d;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
+pub use cubek_linalg::eval::benchmarks as qr;
 pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
 pub use cubek_matmul::eval::benchmarks::gemv;
@@ -34,6 +35,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::interpolate::Category,
         &crate::memcpy_async::Category,
         &crate::pool::Category,
+        &crate::qr::Category,
         &crate::quantized_matmul::Category,
         &crate::reduce::Category,
         &crate::unary::Category,

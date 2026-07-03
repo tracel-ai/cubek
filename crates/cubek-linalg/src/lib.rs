@@ -10,6 +10,7 @@
 
 pub mod components;
 pub mod definition;
+pub mod eval;
 pub mod launch;
 pub mod routines;
 
