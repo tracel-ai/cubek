@@ -55,10 +55,10 @@
 use cubecl::calculate_cube_count_elemwise;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::ir::{ElemType, FloatKind};
 use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
+
+use crate::routines::{BahtBlueprint, BahtLaunchSettings};
 
 // ---------------------------------------------------------------------------
 // Basic Kernels
@@ -72,8 +72,9 @@ fn householder_kernel<F: Float>(
     v: &mut [F],
     beta: &mut [F],
     beta_offset: u32,
-    #[comptime] shared_size: usize,
+    #[comptime] blueprint: BahtBlueprint,
 ) {
+    let shared_size = blueprint.shared_size;
     let tdx = UNIT_POS_X;
     let tdx_usize = tdx as usize;
     let zero = F::from_int(0);
@@ -168,8 +169,9 @@ fn left_update_r_kernel<F: Float + CubeElement>(
     v: &[F],
     beta: &[F],
     beta_offset: u32,
-    #[comptime] shared_size: usize,
+    #[comptime] blueprint: BahtBlueprint,
 ) {
+    let shared_size = blueprint.shared_size;
     let tdx = UNIT_POS_X;
     let col_idx = ABSOLUTE_POS_X;
     let n_update = cols - col_offset;
@@ -247,8 +249,9 @@ fn compute_next_w_column_major_kernel<F: Float + CubeElement>(
     beta: &[F],
     v_buf: &[F],
     w_buf: &mut [F],
-    #[comptime] shared_size: usize,
+    #[comptime] blueprint: BahtBlueprint,
 ) {
+    let shared_size = blueprint.shared_size;
     let tdx = UNIT_POS_X;
     let i = ABSOLUTE_POS;
     let zero = F::from_int(0);
@@ -333,11 +336,7 @@ fn update_trailing_r_final_kernel<F: Float + CubeElement>(
 
 /// Elementwise Q^T += z_buf (both are [rows, rows] Column-Major).
 #[cube(launch_unchecked)]
-fn update_qt_from_z_kernel<F: Float + CubeElement>(
-    rows: u32,
-    qt: &mut Tensor<F>,
-    z_buf: &[F],
-) {
+fn update_qt_from_z_kernel<F: Float + CubeElement>(rows: u32, qt: &mut Tensor<F>, z_buf: &[F]) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
     if row < rows && col < rows {
@@ -346,80 +345,32 @@ fn update_qt_from_z_kernel<F: Float + CubeElement>(
     }
 }
 
-#[cube(launch_unchecked)]
-fn update_qt_final_kernel<F: Float + CubeElement>(
-    rows: u32,
-    current_tile: u32,
-    qt: &mut Tensor<F>,
-    v_buf: &[F],
-    s_buf: &[F],
-) {
-    let row = ABSOLUTE_POS_X;
-    let col = ABSOLUTE_POS_Y;
-    if row < rows && col < rows {
-        let mut update = 0.0f64;
-        for k in 0..current_tile {
-            // V is Column-Major: [rows, current_tile]. (row, k) -> k * rows + row
-            let v_val = f64::cast_from(v_buf[(k * rows + row) as usize]);
-            // S is Row-Major: [current_tile, rows]. (k, col) -> k * rows + col
-            let s_val = f64::cast_from(s_buf[(k * rows + col) as usize]);
-            update = fma(v_val, s_val, update);
-        }
-        // Qt is Column-Major: [rows, rows]. (row, col) -> col * rows + row
-        qt[(col * rows + row) as usize] += F::cast_from(update);
-    }
-}
-
-#[cube(launch_unchecked)]
-fn compute_qt_w_kernel<F: Float + CubeElement>(
-    rows: u32,
-    current_tile: u32,
-    qt: &Tensor<F>,
-    w_buf: &[F],
-    s_buf: &mut [F],
-) {
-    let j = ABSOLUTE_POS_X; // row index
-    let k = ABSOLUTE_POS_Y; // tile index
-    if j < rows && k < current_tile {
-        let mut sum = 0.0f64;
-        for l in 0..rows {
-            // Qt is Column-Major: [rows, rows]. (l, j) -> j * rows + l
-            let qt_val = f64::cast_from(qt[(j * rows + l) as usize]);
-            // W is Column-Major: [rows, current_tile]. (l, k) -> k * rows + l
-            let w_val = f64::cast_from(w_buf[(k * rows + l) as usize]);
-            sum = fma(qt_val, w_val, sum);
-        }
-        // S is Row-Major: [current_tile, rows]. (k, j) -> k * rows + j
-        s_buf[(k * rows + j) as usize] = F::cast_from(sum);
-    }
-}
-
+/// Launch QR decomposition using the blocked Householder kernels and GEMM updates.
 pub fn launch<R: Runtime, E: Float + CubeElement>(
     client: &ComputeClient<R>,
     q_handle: &TensorHandle<R>,
     r_handle: &TensorHandle<R>,
+    blueprint: BahtBlueprint,
+    settings: BahtLaunchSettings,
 ) {
     let rows = r_handle.shape()[0] as u32;
     let cols = r_handle.shape()[1] as u32;
 
-    let hardware = &client.properties().hardware;
-    let shared_mem_limit = hardware.max_shared_memory_size;
-    let thread_block_size = (hardware.max_cube_dim.0 as f64).sqrt() as u32;
+    let BahtLaunchSettings {
+        tile,
+        max_cube_dim,
+        thread_block_size,
+        cube_dim_2d,
+        matmul_strategy: strategy,
+    } = settings;
+
     let bytes_per_elem = core::mem::size_of::<E>();
-
-    let max_tile_from_shared = ((shared_mem_limit / bytes_per_elem) as f64).sqrt() as u32;
-    let mut tile = 1u32;
-    while tile * 2 <= max_tile_from_shared {
-        tile *= 2;
-    }
-    let tile = tile.min(cols);
-
     let num_tiles = cols.div_ceil(tile);
     let dtype = E::as_type_native_unchecked();
     let storage_dtype = dtype.storage_type();
 
-    let beta         = TensorHandle::<R>::zeros(client, vec![tile as usize], dtype);
-    let v_tmp        = TensorHandle::<R>::zeros(client, vec![rows as usize], dtype);
+    let beta = TensorHandle::<R>::zeros(client, vec![tile as usize], dtype);
+    let v_tmp = TensorHandle::<R>::zeros(client, vec![rows as usize], dtype);
     let v_buf_global = TensorHandle::<R>::zeros(client, vec![rows as usize, tile as usize], dtype);
     let w_buf_global = TensorHandle::<R>::zeros(client, vec![rows as usize, tile as usize], dtype);
     let s_tile_global = TensorHandle::<R>::zeros(client, vec![tile as usize, rows as usize], dtype);
@@ -427,11 +378,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     // z_buf_global must hold both [rows × trailing_cols] (R update) and [rows × rows] (Q^T update).
     let z_buf_global = TensorHandle::<R>::zeros(client, vec![rows as usize, rows as usize], dtype);
 
-    let max_cube_dim = client.properties().hardware.max_cube_dim.0.min(256);
     let mut matmul_dtypes = MatmulElems::from_single_dtype(dtype);
-    let cube_dim_2d = CubeDim::new_2d(thread_block_size, thread_block_size);
-    let is_f64 = dtype == Type::Scalar(StorageType::Scalar(ElemType::Float(FloatKind::F64)));
-    let strategy = if is_f64 { Strategy::Auto } else { Strategy::SimpleUnit(Default::default()) };
 
     for k in 0..num_tiles {
         let col_start = k * tile;
@@ -489,7 +436,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     BufferArg::from_raw_parts(v_tmp.handle.clone(), rows as usize),
                     BufferArg::from_raw_parts(beta.handle.clone(), tile as usize),
                     j,
-                    max_cube_dim as usize,
+                    blueprint,
                 );
             }
 
@@ -510,7 +457,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                         BufferArg::from_raw_parts(v_tmp.handle.clone(), (rows - col) as usize),
                         BufferArg::from_raw_parts(beta.handle.clone(), tile as usize),
                         j,
-                        max_cube_dim as usize,
+                        blueprint,
                     );
                 }
             }
@@ -543,7 +490,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     BufferArg::from_raw_parts(beta.handle.clone(), tile as usize),
                     BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize),
                     BufferArg::from_raw_parts(w_buf.handle.clone(), (rows * current_tile) as usize),
-                    max_cube_dim as usize,
+                    blueprint,
                 );
             }
         }

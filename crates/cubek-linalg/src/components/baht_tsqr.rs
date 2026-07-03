@@ -1,16 +1,21 @@
+//! # TSQR-inspired blocked Householder QR
+//!
+//! Variant of [BAHT](super::baht) that factorizes the whole panel with
+//! minimal kernel dispatches (one single-unit kernel per column), builds the
+//! block reflector's T matrix from a V^T·V Gram GEMM, and applies the
+//! trailing updates through GEMMs.
+
+use cubecl::calculate_cube_count_elemwise;
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
-use cubecl::calculate_cube_count_elemwise;
-use cubecl::ir::{ElemType, FloatKind};
 use cubek_matmul::definition::MatmulElems;
 use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
 
+use crate::routines::BahtTsqrLaunchSettings;
+
 #[cube(launch_unchecked)]
-fn clear_buffer_kernel<F: Float + CubeElement>(
-    buf: &mut [F],
-    n: u32,
-) {
+fn clear_buffer_kernel<F: Float + CubeElement>(buf: &mut [F], n: u32) {
     let idx = ABSOLUTE_POS_X;
     if idx < n {
         buf[idx as usize] = F::cast_from(0.0);
@@ -140,7 +145,8 @@ fn build_t_tsqr_kernel<F: Float + CubeElement>(
                         sum,
                     );
                 }
-                t_mat[(j * tile + i) as usize] = F::cast_from(f64::cast_from(beta_vec[j as usize]) * sum);
+                t_mat[(j * tile + i) as usize] =
+                    F::cast_from(f64::cast_from(beta_vec[j as usize]) * sum);
             }
         }
     }
@@ -165,11 +171,7 @@ fn update_trailing_r_kernel<F: Float + CubeElement>(
 }
 
 #[cube(launch_unchecked)]
-fn update_qt_from_z_kernel<F: Float + CubeElement>(
-    rows: u32,
-    qt: &mut Tensor<F>,
-    z_buf: &[F],
-) {
+fn update_qt_from_z_kernel<F: Float + CubeElement>(rows: u32, qt: &mut Tensor<F>, z_buf: &[F]) {
     let row = ABSOLUTE_POS_X;
     let col = ABSOLUTE_POS_Y;
     if row < rows && col < rows {
@@ -178,19 +180,26 @@ fn update_qt_from_z_kernel<F: Float + CubeElement>(
     }
 }
 
+/// Launch QR decomposition using the TSQR-inspired kernels and GEMM updates.
 pub fn launch<R: Runtime, E: Float + CubeElement>(
     client: &ComputeClient<R>,
     q_handle: &TensorHandle<R>,
     r_handle: &TensorHandle<R>,
+    settings: BahtTsqrLaunchSettings,
 ) {
     let rows = r_handle.shape()[0] as u32;
     let cols = r_handle.shape()[1] as u32;
 
-    let hardware = &client.properties().hardware;
-    let thread_block_size = (hardware.max_cube_dim.0 as f64).sqrt() as u32;
-    let max_cube_dim = hardware.max_cube_dim.0.min(256) as u32;
+    let BahtTsqrLaunchSettings {
+        tile,
+        max_cube_dim,
+        thread_block_size,
+        cube_dim_2d,
+        strategy_gram,
+        strategy_w,
+        strategy_tall,
+    } = settings;
 
-    let tile = 32u32.min(cols).min(max_cube_dim);
     let num_tiles = cols.div_ceil(tile);
     let dtype = E::as_type_native_unchecked();
     let storage_dtype = dtype.storage_type();
@@ -205,12 +214,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     let s_tile_global = TensorHandle::<R>::zeros(client, vec![tile as usize, rows as usize], dtype);
     let z_buf_global = TensorHandle::<R>::zeros(client, vec![rows as usize, rows as usize], dtype);
 
-    let cube_dim_2d = CubeDim::new_2d(thread_block_size, thread_block_size);
     let mut matmul_dtypes = MatmulElems::from_single_dtype(dtype);
-    let is_f64 = dtype == Type::Scalar(StorageType::Scalar(ElemType::Float(FloatKind::F64)));
-    let strategy_gram = if is_f64 { Strategy::Auto } else { Strategy::SimpleVecMat(Default::default()) };
-    let strategy_w = if is_f64 { Strategy::Auto } else { Strategy::DoubleUnit(Default::default()) };
-    let strategy_tall = if is_f64 { Strategy::Auto } else { Strategy::SimpleUnit(Default::default()) };
 
     let launch_matmul = |strategy: &Strategy, lhs: InputBinding<R>, rhs: InputBinding<R>, out: TensorBinding<R>, dtypes: &mut MatmulElems| {
         cubek_matmul::launch::launch_ref(strategy, client, lhs, rhs, out, dtypes).unwrap();

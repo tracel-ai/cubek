@@ -36,20 +36,21 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 
+use crate::routines::{MgsBlueprint, MgsLaunchSettings};
+
 #[cube(launch_unchecked)]
 fn mgs_column_kernel<F: Float + CubeElement>(
     rows: u32,
     j: u32,
     r: &mut Tensor<F>,
     qt: &mut Tensor<F>,
-    #[comptime] v_size: usize,
-    #[comptime] reduce_size: usize,
+    #[comptime] blueprint: MgsBlueprint,
 ) {
     let tdx = UNIT_POS_X;
     let cube_dim_x = CUBE_DIM_X;
     let zero = F::from_int(0);
 
-    let mut v = Shared::<[F]>::new_slice(v_size);
+    let mut v = Shared::<[F]>::new_slice(blueprint.v_len);
     let mut k = tdx;
     while k < rows {
         v[k as usize] = r[(j * rows + k) as usize];
@@ -57,7 +58,7 @@ fn mgs_column_kernel<F: Float + CubeElement>(
     }
     sync_cube();
 
-    let mut reduce = Shared::<[F]>::new_slice(reduce_size);
+    let mut reduce = Shared::<[F]>::new_slice(blueprint.reduce_len);
 
     for i in 0..j {
         let mut local = 0.0f64;
@@ -143,27 +144,23 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     client: &ComputeClient<R>,
     q_handle: &TensorHandle<R>,
     r_handle: &TensorHandle<R>,
+    blueprint: MgsBlueprint,
+    settings: MgsLaunchSettings,
 ) {
     let rows = r_handle.shape()[0] as u32;
     let cols = r_handle.shape()[1] as u32;
-
-    let max_cube_dim = client.properties().hardware.max_cube_dim.0;
-    let cube_dim_x = rows.min(max_cube_dim).max(1);
-    let cd = CubeDim::new_1d(cube_dim_x);
-    let cc = CubeCount::new_1d(1);
 
     for j in 0..cols {
         unsafe {
             mgs_column_kernel::launch_unchecked::<E, R>(
                 client,
-                cc.clone(),
-                cd,
+                settings.cube_count.clone(),
+                settings.cube_dim,
                 rows,
                 j,
                 r_handle.clone().into_arg(),
                 q_handle.clone().into_arg(),
-                rows as usize,
-                cube_dim_x as usize,
+                blueprint,
             );
         }
     }

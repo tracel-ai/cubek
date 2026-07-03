@@ -237,3 +237,43 @@ macro_rules! testgen_qr_tsqr {
 mod test_tsqr {
     testgen_qr_tsqr!([f32, f64]);
 }
+
+#[macro_export]
+macro_rules! testgen_qr_auto {
+   ($float:ident) => {
+            pub type FloatT = $float;
+
+            #[test]
+            pub fn test_tiny() {
+                crate::suite::qr::house::test_qr_auto::<FloatT>(3);
+            }
+
+            #[test]
+            pub fn test_medium() {
+                crate::suite::qr::house::test_qr_auto::<FloatT>(157);
+            }
+
+            #[test]
+            pub fn test_rect() {
+                crate::suite::qr::house::test_qr_auto_rect::<FloatT>(517, 157);
+            }
+
+            #[test]
+            pub fn test_solve() {
+                crate::suite::qr::solve::test_solve_rect::<FloatT>(32, 16, cubek_linalg::QRStrategy::Auto);
+            }
+    };
+    ([$($float:ident),*]) => {
+        mod auto {
+            ::paste::paste! {
+                $(mod [<$float _ty>] {
+                    $crate::testgen_qr_auto!($float);
+                })*
+            }
+        }
+    };
+}
+
+mod test_auto {
+    testgen_qr_auto!([f32, f64]);
+}

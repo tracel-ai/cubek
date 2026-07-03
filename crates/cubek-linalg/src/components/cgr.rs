@@ -1,9 +1,12 @@
-use cubecl::calculate_cube_count_elemwise;
+//! # Common Givens Rotations QR (CGR)
+//!
+//! Follows the algorithm described in pages 2 and 3 of
+//! <https://thesai.org/Downloads/Volume11No5/Paper_78-Parallel_QR_Factorization_using_Givens_Rotations.pdf>
+
 use cubecl::prelude::*;
 use cubecl::std::tensor::TensorHandle;
 
-// Followed algorithm described in page 2 and 3 in
-// https://thesai.org/Downloads/Volume11No5/Paper_78-Parallel_QR_Factorization_using_Givens_Rotations.pdf
+use crate::routines::CgrLaunchSettings;
 
 // Fill vector l with the col_index from matrix r.
 #[cube(launch, launch_unchecked)]
@@ -81,23 +84,21 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     client: &ComputeClient<R>,
     q: &TensorHandle<R>,
     r: &TensorHandle<R>,
+    settings: CgrLaunchSettings,
 ) {
     let n_rows = r.shape()[0];
     let n_cols = r.shape()[1];
     let l = TensorHandle::<R>::zeros(client, vec![n_rows], r.dtype);
-    let max_cube_dim = client.properties().hardware.max_cube_dim.0;
 
     for col in 0..(n_cols.min(n_rows - 1)) {
         let col_u32 = col as u32;
 
         // 1. Copy reference column to l
-        let cube_dim_l = CubeDim::new_1d((n_rows as u32).min(max_cube_dim));
-        let cube_count_l = calculate_cube_count_elemwise(client, n_rows, cube_dim_l);
         unsafe {
             get_column_from_matrix::launch_unchecked::<E, R>(
                 client,
-                cube_count_l,
-                cube_dim_l,
+                settings.cube_count.clone(),
+                settings.cube_dim,
                 col_u32,
                 r.clone().into_arg(),
                 l.clone().into_arg(),
@@ -105,14 +106,11 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
         }
 
         // 2. Perform parallel Givens rotation pass
-        let cube_dim = CubeDim::new_1d((n_rows as u32).min(max_cube_dim));
-        let cube_count = calculate_cube_count_elemwise(client, n_rows, cube_dim);
-
         unsafe {
             qr_column_parallel::launch_unchecked::<E, R>(
                 client,
-                cube_count,
-                cube_dim,
+                settings.cube_count.clone(),
+                settings.cube_dim,
                 col_u32,
                 l.clone().into_arg(),
                 q.clone().into_arg(),

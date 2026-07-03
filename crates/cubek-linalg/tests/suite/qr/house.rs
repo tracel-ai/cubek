@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use cubecl::{TestRuntime, prelude::*, std::tensor::{TensorHandle, into_contiguous}};
+use cubek_linalg::QRStrategy;
 
 use crate::suite::utils::{
     assert_equals_approx, dtype_unsupported, tensorhandler_from_data,
@@ -44,7 +45,7 @@ fn reconstruct_qr<F: Float + CubeElement>(
     out.iter().map(|&v| <F as num_traits::NumCast>::from(v).unwrap()).collect()
 }
 
-pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
+fn run_qr_square<F: Float + CubeElement + Display>(strategy: QRStrategy, dim: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -67,11 +68,7 @@ pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
         F::as_type_native_unchecked(),
     );
 
-    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(
-        &cubek_linalg::QRStrategy::BlockedAcceleratedHouseHolder,
-        &client,
-        &a,
-    ) {
+    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(&strategy, &client, &a) {
         Ok((q_t, r)) => (q_t, r),
         Err(_) => (
             TensorHandle::empty(&client, shape.clone(), a.dtype),
@@ -92,7 +89,7 @@ pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
     }
 }
 
-pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
+fn run_qr_rect<F: Float + CubeElement + Display>(strategy: QRStrategy, rows: u32, cols: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -122,11 +119,7 @@ pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32)
         F::as_type_native_unchecked(),
     );
 
-    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(
-        &cubek_linalg::QRStrategy::BlockedAcceleratedHouseHolder,
-        &client,
-        &a,
-    ) {
+    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(&strategy, &client, &a) {
         Ok((q_t, r)) => (q_t, r),
         Err(e) => panic!("QR launch failed: {:?}", e),
     };
@@ -145,100 +138,26 @@ pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32)
     }
 }
 
+pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
+    run_qr_square::<F>(QRStrategy::BlockedAcceleratedHouseHolder, dim);
+}
+
+pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
+    run_qr_rect::<F>(QRStrategy::BlockedAcceleratedHouseHolder, rows, cols);
+}
+
 pub fn test_qr_tsqr<F: Float + CubeElement + Display>(dim: u32) {
-    let client = TestRuntime::client(&Default::default());
-    if dtype_unsupported::<F>(&client) {
-        return;
-    }
-    let dim_usize = dim as usize;
-
-    let shape = vec![dim_usize, dim_usize];
-    let num_elements = shape.iter().product();
-    let mut data = vec![F::from_int(1); num_elements];
-    let mut pos = dim_usize - 1;
-    for _i in 0..dim {
-        data[pos] = F::from_int(2);
-        pos += dim_usize - 1;
-    }
-
-    let a = tensorhandler_from_data_col_major(
-        &client,
-        shape.clone(),
-        &data,
-        F::as_type_native_unchecked(),
-    );
-
-    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(
-        &cubek_linalg::QRStrategy::BahtTsqr,
-        &client,
-        &a,
-    ) {
-        Ok((q_t, r)) => (q_t, r),
-        Err(_) => (
-            TensorHandle::empty(&client, shape.clone(), a.dtype),
-            TensorHandle::empty(&client, shape.clone(), a.dtype),
-        ),
-    };
-
-    let (q_t_vals, _) = read_contig::<F>(&client, &q_t);
-    let (r_vals_out, _) = read_contig::<F>(&client, &r);
-
-    let out_data = reconstruct_qr(&q_t_vals, &r_vals_out, dim_usize, dim_usize, dim_usize, dim_usize);
-
-    let out = tensorhandler_from_data(&client, shape.clone(), &out_data, F::as_type_native_unchecked());
-
-    if let Err(e) = assert_equals_approx(&client, &out, &data, 2e-3) {
-        panic!("{}", e);
-    }
+    run_qr_square::<F>(QRStrategy::BahtTsqr, dim);
 }
 
 pub fn test_qr_tsqr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
-    let client = TestRuntime::client(&Default::default());
-    if dtype_unsupported::<F>(&client) {
-        return;
-    }
-    let rows_usize = rows as usize;
-    let cols_usize = cols as usize;
+    run_qr_rect::<F>(QRStrategy::BahtTsqr, rows, cols);
+}
 
-    let shape = vec![rows_usize, cols_usize];
-    let num_elements = rows_usize * cols_usize;
+pub fn test_qr_auto<F: Float + CubeElement + Display>(dim: u32) {
+    run_qr_square::<F>(QRStrategy::Auto, dim);
+}
 
-    let mut row_major_data = vec![F::from_int(1); num_elements];
-    for i in 0..rows_usize.min(cols_usize) {
-        row_major_data[i * cols_usize + i] = F::from_int(2);
-    }
-
-    let mut col_major_data = vec![F::from_int(0); num_elements];
-    for i in 0..rows_usize {
-        for j in 0..cols_usize {
-            col_major_data[j * rows_usize + i] = row_major_data[i * cols_usize + j];
-        }
-    }
-
-    let a = tensorhandler_from_data_col_major(
-        &client,
-        shape.clone(),
-        &col_major_data,
-        F::as_type_native_unchecked(),
-    );
-
-    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(
-        &cubek_linalg::QRStrategy::BahtTsqr,
-        &client,
-        &a,
-    ) {
-        Ok((q_t, r)) => (q_t, r),
-        Err(e) => panic!("QR launch failed: {:?}", e),
-    };
-
-    let (q_t_vals, qt_shape) = read_contig::<F>(&client, &q_t);
-    let (r_vals_out, _) = read_contig::<F>(&client, &r);
-
-    let out_data = reconstruct_qr(&q_t_vals, &r_vals_out, rows_usize, cols_usize, qt_shape[0], qt_shape[1]);
-
-    let out = tensorhandler_from_data(&client, shape.clone(), &out_data, F::as_type_native_unchecked());
-
-    if let Err(e) = assert_equals_approx(&client, &out, &row_major_data, 2e-3) {
-        panic!("{}", e);
-    }
+pub fn test_qr_auto_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
+    run_qr_rect::<F>(QRStrategy::Auto, rows, cols);
 }
