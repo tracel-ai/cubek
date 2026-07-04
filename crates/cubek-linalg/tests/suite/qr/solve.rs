@@ -3,10 +3,9 @@ use crate::suite::utils::{
     tensorhandler_from_data_col_major,
 };
 use cubecl::{TestRuntime, prelude::*};
-use cubek_linalg::QRStrategy;
 use std::fmt::Display;
 
-pub fn test_solve_square<F: Float + CubeElement + Display>(dim: u32, strategy: QRStrategy) {
+pub fn test_solve_square<F: Float + CubeElement + Display>(dim: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -75,16 +74,12 @@ pub fn test_solve_square<F: Float + CubeElement + Display>(dim: u32, strategy: Q
         F::as_type_native_unchecked(),
     );
 
-    let x = cubek_linalg::solve::<TestRuntime, F>(&strategy, &client, &a, &b).unwrap();
+    let x = cubek_linalg::solve::<TestRuntime, F>(&client, &a, &b).unwrap();
 
     assert_equals_approx(&client, &x, &x_true_data, 5e-2).unwrap();
 }
 
-pub fn test_solve_rect<F: Float + CubeElement + Display>(
-    rows: u32,
-    cols: u32,
-    strategy: QRStrategy,
-) {
+pub fn test_solve_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -154,7 +149,7 @@ pub fn test_solve_rect<F: Float + CubeElement + Display>(
         F::as_type_native_unchecked(),
     );
 
-    let x = cubek_linalg::solve::<TestRuntime, F>(&strategy, &client, &a, &b).unwrap();
+    let x = cubek_linalg::solve::<TestRuntime, F>(&client, &a, &b).unwrap();
 
     assert_equals_approx(&client, &x, &x_true_data, 5e-2).unwrap();
 }

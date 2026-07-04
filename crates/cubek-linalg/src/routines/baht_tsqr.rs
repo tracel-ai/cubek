@@ -1,10 +1,17 @@
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubek_matmul::strategy::Strategy;
 
 use crate::{
     definition::{QRProblem, QRSetupError},
-    routines::{BlueprintStrategy, QRRoutine, baht::is_f64},
+    routines::{BlueprintStrategy, QRRoutine},
 };
+
+/// Whether the element type is f64, for which the specialized unit matmul
+/// routines are not supported; fall back to auto-selection in that case.
+fn is_f64(problem: &QRProblem) -> bool {
+    problem.dtype == StorageType::Scalar(ElemType::Float(FloatKind::F64))
+}
 
 /// TSQR-inspired blocked Householder QR: the whole panel is factorized with
 /// minimal dispatches, then the block reflector is applied through GEMMs.

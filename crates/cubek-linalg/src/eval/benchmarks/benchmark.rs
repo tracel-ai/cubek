@@ -13,10 +13,9 @@ use cubek_test_utils::{RunSamples, StridedLayout, TestInput};
 
 use crate::eval::benchmarks::problem::QrProblem;
 use crate::eval::benchmarks::strategy::QrStrategy;
-use crate::launch::QRStrategy;
 
 pub fn bench(
-    strategy: &QrStrategy,
+    _strategy: &QrStrategy,
     problem: &QrProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -26,7 +25,6 @@ pub fn bench(
     let bench = QrBench::<f32> {
         m: problem.m,
         n: problem.n,
-        strategy: strategy.0.clone(),
         device,
         client,
         samples: num_samples,
@@ -44,7 +42,6 @@ pub fn bench(
 struct QrBench<E> {
     m: usize,
     n: usize,
-    strategy: QRStrategy,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     samples: usize,
@@ -67,7 +64,7 @@ impl<E: Float + CubeElement> Benchmark for QrBench<E> {
     }
 
     fn execute(&self, a: Self::Input) -> Result<(), String> {
-        crate::launch::launch::<TestRuntime, E>(&self.strategy, &self.client, &a)
+        crate::launch::qr::<TestRuntime, E>(&self.client, &a)
             .map(|_| ())
             .map_err(|err| format!("{err:?}"))
     }
@@ -78,9 +75,8 @@ impl<E: Float + CubeElement> Benchmark for QrBench<E> {
 
     fn name(&self) -> String {
         format!(
-            "qr-{}-{:?}-{}x{}",
+            "qr-{}-baht_tsqr-{}x{}",
             E::as_type_native_unchecked(),
-            self.strategy,
             self.m,
             self.n,
         )

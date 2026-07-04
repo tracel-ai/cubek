@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use cubecl::features::TypeUsage;
 use cubecl::{TestRuntime, prelude::*};
-use cubecl::std::tensor::{TensorHandle, into_contiguous};
+use cubecl::std::tensor::TensorHandle;
 
 /// Returns `true` (and prints a skip notice) when the active backend can't do
 /// reliable arithmetic in `F`, so the precision-sensitive QR tests would fail
@@ -64,20 +64,6 @@ pub(crate) fn tensorhandler_from_data_col_major<R: Runtime, F: Float + CubeEleme
         strides[i] = strides[i - 1] * shape[i - 1];
     }
     TensorHandle::new(handle, shape, strides, dtype)
-}
-
-pub(crate) fn transpose_matrix<R: Runtime>(
-    client: &ComputeClient<R>,
-    matrix: &mut TensorHandle<R>,
-) -> TensorHandle<R> {
-    let mut strides = matrix.strides().to_vec();
-    let mut shape = matrix.shape().to_vec();
-    strides.swap(1, 0);
-    shape.swap(1, 0);
-
-    let transposed = TensorHandle::new(matrix.handle.clone(), shape, strides, matrix.dtype);
-
-    into_contiguous::<R>(client, transposed.binding(), matrix.dtype)
 }
 
 /// Compares the content of a handle to a given slice of f32.

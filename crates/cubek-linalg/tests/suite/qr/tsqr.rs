@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
 use cubecl::{TestRuntime, prelude::*, std::tensor::{TensorHandle, into_contiguous}};
-use cubek_linalg::QRStrategy;
 
 use crate::suite::utils::{
     assert_equals_approx, dtype_unsupported, tensorhandler_from_data,
@@ -45,7 +44,7 @@ fn reconstruct_qr<F: Float + CubeElement>(
     out.iter().map(|&v| <F as num_traits::NumCast>::from(v).unwrap()).collect()
 }
 
-fn run_qr_square<F: Float + CubeElement + Display>(strategy: QRStrategy, dim: u32) {
+fn run_qr_square<F: Float + CubeElement + Display>(dim: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -68,7 +67,7 @@ fn run_qr_square<F: Float + CubeElement + Display>(strategy: QRStrategy, dim: u3
         F::as_type_native_unchecked(),
     );
 
-    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(&strategy, &client, &a) {
+    let (q_t, r) = match cubek_linalg::qr::<TestRuntime, F>(&client, &a) {
         Ok((q_t, r)) => (q_t, r),
         Err(_) => (
             TensorHandle::empty(&client, shape.clone(), a.dtype),
@@ -89,7 +88,7 @@ fn run_qr_square<F: Float + CubeElement + Display>(strategy: QRStrategy, dim: u3
     }
 }
 
-fn run_qr_rect<F: Float + CubeElement + Display>(strategy: QRStrategy, rows: u32, cols: u32) {
+fn run_qr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -119,7 +118,7 @@ fn run_qr_rect<F: Float + CubeElement + Display>(strategy: QRStrategy, rows: u32
         F::as_type_native_unchecked(),
     );
 
-    let (q_t, r) = match cubek_linalg::launch::<TestRuntime, F>(&strategy, &client, &a) {
+    let (q_t, r) = match cubek_linalg::qr::<TestRuntime, F>(&client, &a) {
         Ok((q_t, r)) => (q_t, r),
         Err(e) => panic!("QR launch failed: {:?}", e),
     };
@@ -138,26 +137,10 @@ fn run_qr_rect<F: Float + CubeElement + Display>(strategy: QRStrategy, rows: u32
     }
 }
 
-pub fn test_qr_baht<F: Float + CubeElement + Display>(dim: u32) {
-    run_qr_square::<F>(QRStrategy::BlockedAcceleratedHouseHolder, dim);
+pub fn test_qr<F: Float + CubeElement + Display>(dim: u32) {
+    run_qr_square::<F>(dim);
 }
 
-pub fn test_qr_baht_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
-    run_qr_rect::<F>(QRStrategy::BlockedAcceleratedHouseHolder, rows, cols);
-}
-
-pub fn test_qr_tsqr<F: Float + CubeElement + Display>(dim: u32) {
-    run_qr_square::<F>(QRStrategy::BahtTsqr, dim);
-}
-
-pub fn test_qr_tsqr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
-    run_qr_rect::<F>(QRStrategy::BahtTsqr, rows, cols);
-}
-
-pub fn test_qr_auto<F: Float + CubeElement + Display>(dim: u32) {
-    run_qr_square::<F>(QRStrategy::Auto, dim);
-}
-
-pub fn test_qr_auto_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
-    run_qr_rect::<F>(QRStrategy::Auto, rows, cols);
+pub fn test_qr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
+    run_qr_rect::<F>(rows, cols);
 }

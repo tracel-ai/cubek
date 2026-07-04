@@ -1,30 +1,8 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::launch::QRStrategy;
-
-pub struct QrStrategy(pub QRStrategy);
+/// Marker type: `cubek-linalg` only implements the `baht_tsqr` QR strategy.
+pub struct QrStrategy;
 
 pub fn strategies() -> Vec<CatalogEntry<QrStrategy>> {
-    vec![
-        CatalogEntry::new(
-            "baht_tsqr",
-            "BahtTsqr",
-            QrStrategy(QRStrategy::BahtTsqr),
-        ),
-        CatalogEntry::new(
-            "baht",
-            "BAHT",
-            QrStrategy(QRStrategy::BlockedAcceleratedHouseHolder),
-        ),
-        CatalogEntry::new(
-            "cgr",
-            "CGR",
-            QrStrategy(QRStrategy::CommonGivensRotations),
-        ),
-        CatalogEntry::new(
-            "mgs",
-            "MGS",
-            QrStrategy(QRStrategy::ModifiedGramSchmidt),
-        ),
-    ]
+    vec![CatalogEntry::new("baht_tsqr", "BahtTsqr", QrStrategy)]
 }

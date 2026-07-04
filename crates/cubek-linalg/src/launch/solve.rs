@@ -5,12 +5,10 @@ use cubecl::std::tensor::TensorHandle;
 use crate::{
     components::solve::{back_substitution_kernel, q_already_t_b_kernel},
     definition::QRSetupError,
-    launch::QRStrategy,
 };
 
 /// Solve Ax = b using QR decomposition.
 pub fn solve<R: Runtime, E: Float + CubeElement>(
-    strategy: &QRStrategy,
     client: &ComputeClient<R>,
     a: &TensorHandle<R>,
     b: &TensorHandle<R>,
@@ -30,7 +28,7 @@ pub fn solve<R: Runtime, E: Float + CubeElement>(
     }
 
     // 1. A = QR
-    let (q, r) = strategy.launch::<R, E>(client, a)?;
+    let (q, r) = crate::launch::qr::<R, E>(client, a)?;
 
     // 2. y = Q^T * b
     let y = TensorHandle::zeros(client, vec![m], a.dtype);

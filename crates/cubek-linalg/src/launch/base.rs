@@ -4,8 +4,7 @@ use cubecl::std::tensor::{TensorHandle, identity};
 use crate::{
     components,
     definition::{QRProblem, QRSetupError},
-    launch::QRStrategy,
-    routines::{BahtRoutine, BahtTsqrRoutine, BlueprintStrategy, CgrRoutine, MgsRoutine, QRRoutine},
+    routines::{BahtTsqrRoutine, BlueprintStrategy, QRRoutine},
 };
 
 /// The `(Q, R)` pair produced by a QR decomposition.
@@ -55,58 +54,24 @@ fn initialize<R: Runtime>(
     (q, r)
 }
 
-/// It launches a QR decomposition over a m x n matrix a.
+/// It launches a QR decomposition over a m x n matrix a using the TSQR-inspired
+/// blocked Householder routine ([`BahtTsqrRoutine`]).
 ///
-/// Specify a strategy for the QR decomposition, the client and the matrix a to decompose.
-/// In case of success it will return a tuple with the matrix Q and the matrix R in this order.
-pub fn launch<R: Runtime, EG: Float + CubeElement>(
-    strategy: &QRStrategy,
+/// Specify the client and the matrix a to decompose. In case of success it
+/// will return a tuple with the matrix Q and the matrix R in this order.
+pub fn qr<R: Runtime, EG: Float + CubeElement>(
     client: &ComputeClient<R>,
     a: &TensorHandle<R>,
 ) -> Result<QRTuple<R>, QRSetupError> {
     let problem = QRProblem::from_shape(a.shape(), a.dtype)?;
     let (q, r) = initialize::<R>(client, a, &problem);
 
-    let strategy = match strategy {
-        QRStrategy::Auto => crate::launch::select_strategy(&problem),
-        concrete => concrete.clone(),
-    };
-
-    match &strategy {
-        QRStrategy::Auto => unreachable!("Auto was resolved by select_strategy"),
-        QRStrategy::BlockedAcceleratedHouseHolder => {
-            let (blueprint, settings) = BahtRoutine::prepare(
-                client,
-                &problem,
-                BlueprintStrategy::Inferred(Default::default()),
-            )?;
-            components::baht::launch::<R, EG>(client, &q, &r, blueprint, settings);
-        }
-        QRStrategy::BahtTsqr => {
-            let (_blueprint, settings) = BahtTsqrRoutine::prepare(
-                client,
-                &problem,
-                BlueprintStrategy::Inferred(Default::default()),
-            )?;
-            components::baht_tsqr::launch::<R, EG>(client, &q, &r, settings);
-        }
-        QRStrategy::CommonGivensRotations => {
-            let (_blueprint, settings) = CgrRoutine::prepare(
-                client,
-                &problem,
-                BlueprintStrategy::Inferred(Default::default()),
-            )?;
-            components::cgr::launch::<R, EG>(client, &q, &r, settings);
-        }
-        QRStrategy::ModifiedGramSchmidt => {
-            let (blueprint, settings) = MgsRoutine::prepare(
-                client,
-                &problem,
-                BlueprintStrategy::Inferred(Default::default()),
-            )?;
-            components::mgs::launch::<R, EG>(client, &q, &r, blueprint, settings);
-        }
-    };
+    let (_blueprint, settings) = BahtTsqrRoutine::prepare(
+        client,
+        &problem,
+        BlueprintStrategy::Inferred(Default::default()),
+    )?;
+    components::baht_tsqr::launch::<R, EG>(client, &q, &r, settings);
 
     Ok((q, r))
 }
