@@ -82,16 +82,16 @@ fn apply_householder_kernel<F: Float + CubeElement>(
         let target_col = col + tid;
         let dim = rows - col;
 
-        let mut dot = f64::cast_from(r[target_col as usize * rows as usize + col as usize]);
+        let mut dot = r[target_col as usize * rows as usize + col as usize];
         let mut k = 1u32;
         while k < dim {
             let v_elem = v[k as usize];
             let r_elem = r[target_col as usize * rows as usize + (col + k) as usize];
-            dot = fma(f64::cast_from(v_elem), f64::cast_from(r_elem), dot);
+            dot = fma(v_elem, r_elem, dot);
             k += 1;
         }
 
-        let dot_f = F::cast_from(dot * f64::cast_from(beta_vec[j as usize]));
+        let dot_f = dot * beta_vec[j as usize];
         r[target_col as usize * rows as usize + col as usize] += dot_f;
         let mut k2 = 1u32;
         while k2 < dim {
@@ -137,16 +137,15 @@ fn build_t_tsqr_kernel<F: Float + CubeElement>(
         for j in 0u32..current_tile {
             t_mat[(j * tile + j) as usize] = beta_vec[j as usize];
             for i in 0..j {
-                let mut sum = 0.0f64;
+                let mut sum = zero;
                 for k in i..j {
                     sum = fma(
-                        f64::cast_from(t_mat[(k * tile + i) as usize]),
-                        f64::cast_from(gram[(k * tile + j) as usize]),
+                        t_mat[(k * tile + i) as usize],
+                        gram[(k * tile + j) as usize],
                         sum,
                     );
                 }
-                t_mat[(j * tile + i) as usize] =
-                    F::cast_from(f64::cast_from(beta_vec[j as usize]) * sum);
+                t_mat[(j * tile + i) as usize] = beta_vec[j as usize] * sum;
             }
         }
     }
