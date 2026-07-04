@@ -1,9 +1,9 @@
 //! # TSQR-inspired blocked Householder QR
 //!
-//! Variant of [BAHT](super::baht) that factorizes the whole panel with
-//! minimal kernel dispatches (one single-unit kernel per column), builds the
-//! block reflector's T matrix from a V^T·V Gram GEMM, and applies the
-//! trailing updates through GEMMs.
+//! Factorizes the whole panel with two kernel dispatches per column — a
+//! reflector build and a panel update, both parallel across a full cube with
+//! shared-memory tree reductions — builds the block reflector's T matrix from
+//! a V^T·V Gram GEMM, and applies the trailing updates through GEMMs.
 
 use cubecl::calculate_cube_count_elemwise;
 use cubecl::prelude::*;
@@ -22,102 +22,139 @@ fn clear_buffer_kernel<F: Float + CubeElement>(buf: &mut [F], n: u32) {
     }
 }
 
+/// Compute the Householder reflector for one panel column and write it
+/// directly into column `j` of `v_buf` (col-major `[rows, tile]`, cleared at
+/// the start of the tile) with the conventional implicit-1 head:
+/// `v_buf[j*rows + col] = 1`, tail `= r[k]/v0`.
+///
+/// One cube; the `sigma = ||r_tail||²` reduction is tree-reduced in shared
+/// memory and the normalization is parallel over the cube.
 #[cube(launch_unchecked)]
 fn householder_kernel<F: Float + CubeElement>(
     r: &[F],
     r_offset: u32,
     dim: u32,
-    v_tmp: &mut [F],
+    rows: u32,
+    col: u32,
+    v_buf: &mut [F],
     beta_vec: &mut [F],
     j: u32,
+    #[comptime] shared_size: usize,
 ) {
     let tdx = UNIT_POS_X;
-    if tdx == 0 {
-        let zero = F::cast_from(0.0);
-        let one = F::cast_from(1.0);
-        let two = F::cast_from(2.0);
+    let cube_dim_x = CUBE_DIM_X;
+    let zero = F::cast_from(0.0);
+    let one = F::cast_from(1.0);
+    let two = F::cast_from(2.0);
 
-        let mut sigma = zero;
-        let mut i = 1u32;
-        while i < dim {
-            let v = r[r_offset as usize + i as usize];
-            sigma = fma(v, v, sigma);
-            i += 1;
+    let mut reduce = Shared::<[F]>::new_slice(shared_size);
+    let mut local = zero;
+    let mut i = tdx + 1;
+    while i < dim {
+        let v = r[(r_offset + i) as usize];
+        local = fma(v, v, local);
+        i += cube_dim_x;
+    }
+    reduce[tdx as usize] = local;
+    sync_cube();
+
+    let mut pow2 = 1u32;
+    while pow2 < cube_dim_x {
+        if (tdx as usize).is_multiple_of((pow2 as usize) * 2) && (tdx + pow2 < cube_dim_x) {
+            let val = reduce[(tdx + pow2) as usize];
+            reduce[tdx as usize] += val;
         }
+        pow2 *= 2;
+        sync_cube();
+    }
+    let sigma = reduce[0];
 
-        let r0 = r[r_offset as usize];
+    if tdx == 0 {
         if sigma == zero {
             beta_vec[j as usize] = zero;
-            v_tmp[0] = one;
+            reduce[0] = one;
         } else {
+            let r0 = r[r_offset as usize];
             let mu = F::sqrt(fma(r0, r0, sigma));
             let v0 = if r0 <= zero { r0 - mu } else { -sigma / (r0 + mu) };
             let v0sq = v0 * v0;
             beta_vec[j as usize] = -two * v0sq / (v0sq + sigma);
-            v_tmp[0] = v0;
+            reduce[0] = v0;
         }
+    }
+    sync_cube();
+    let v0 = reduce[0];
 
-        let mut k = 1u32;
-        while k < dim {
-            v_tmp[k as usize] = r[r_offset as usize + k as usize] / v_tmp[0];
-            k += 1;
+    let v_base = (j * rows + col) as usize;
+    let mut k = tdx;
+    while k < dim {
+        if k == 0 {
+            v_buf[v_base] = one;
+        } else {
+            v_buf[v_base + k as usize] = r[(r_offset + k) as usize] / v0;
         }
+        k += cube_dim_x;
     }
 }
 
+/// Apply the reflector held in `v_buf` column `j` to the remaining panel
+/// columns of R. One cube per target column: the `v·r` dot product is
+/// tree-reduced in shared memory, then the rank-1 update runs parallel over
+/// the cube. The reflector head is the explicit 1 written by
+/// [`householder_kernel`], so the dot spans the full `dim` range uniformly.
 #[cube(launch_unchecked)]
 fn apply_householder_kernel<F: Float + CubeElement>(
     rows: u32,
-    cols: u32,
     col: u32,
     r: &mut Tensor<F>,
-    v: &[F],
+    v_buf: &[F],
+    v_offset: u32,
     beta_vec: &[F],
     j: u32,
+    #[comptime] shared_size: usize,
 ) {
-    let tid = ABSOLUTE_POS_X;
-    let n_upd = cols - col;
+    let tdx = UNIT_POS_X;
+    let cube_dim_x = CUBE_DIM_X;
+    let target_col = col + CUBE_POS_X;
+    let dim = rows - col;
+    let r_base = (target_col * rows + col) as usize;
 
-    if tid < n_upd {
-        let target_col = col + tid;
-        let dim = rows - col;
+    let mut reduce = Shared::<[F]>::new_slice(shared_size);
+    let mut local = F::cast_from(0.0);
+    let mut k = tdx;
+    while k < dim {
+        local = fma(
+            v_buf[(v_offset + k) as usize],
+            r[r_base + k as usize],
+            local,
+        );
+        k += cube_dim_x;
+    }
+    reduce[tdx as usize] = local;
+    sync_cube();
 
-        let mut dot = r[target_col as usize * rows as usize + col as usize];
-        let mut k = 1u32;
-        while k < dim {
-            let v_elem = v[k as usize];
-            let r_elem = r[target_col as usize * rows as usize + (col + k) as usize];
-            dot = fma(v_elem, r_elem, dot);
-            k += 1;
+    let mut pow2 = 1u32;
+    while pow2 < cube_dim_x {
+        if (tdx as usize).is_multiple_of((pow2 as usize) * 2) && (tdx + pow2 < cube_dim_x) {
+            let val = reduce[(tdx + pow2) as usize];
+            reduce[tdx as usize] += val;
         }
+        pow2 *= 2;
+        sync_cube();
+    }
+    let dot_f = reduce[0] * beta_vec[j as usize];
 
-        let dot_f = dot * beta_vec[j as usize];
-        r[target_col as usize * rows as usize + col as usize] += dot_f;
-        let mut k2 = 1u32;
-        while k2 < dim {
-            let v_elem = v[k2 as usize];
-            r[target_col as usize * rows as usize + (col + k2) as usize] += v_elem * dot_f;
-            k2 += 1;
-        }
+    let mut k2 = tdx;
+    while k2 < dim {
+        r[r_base + k2 as usize] += v_buf[(v_offset + k2) as usize] * dot_f;
+        k2 += cube_dim_x;
     }
 }
 
-#[cube(launch_unchecked)]
-fn copy_v_to_buf_kernel<F: Float + CubeElement>(
-    v_tmp: &[F],
-    v_buf: &mut [F],
-    j: u32,
-    col: u32,
-    dim: u32,
-    rows: u32,
-) {
-    let tid = ABSOLUTE_POS_X;
-    if tid < dim {
-        let val = if tid == 0 { F::cast_from(1.0) } else { v_tmp[tid as usize] };
-        v_buf[(j * rows + (col + tid)) as usize] = val;
-    }
-}
-
+/// Build the block reflector's T matrix from the Gram matrix. Columns of T
+/// depend on all previous columns, so `j` advances sequentially with a cube
+/// sync per step, but the rows `i < j` within a column are independent and
+/// are computed in parallel across the cube.
 #[cube(launch_unchecked)]
 fn build_t_tsqr_kernel<F: Float + CubeElement>(
     tile: u32,
@@ -127,27 +164,35 @@ fn build_t_tsqr_kernel<F: Float + CubeElement>(
     t_mat: &mut [F],
 ) {
     let tdx = UNIT_POS_X;
-    if tdx == 0 {
-        let zero = F::cast_from(0.0);
-        for j in 0..tile {
-            for i in 0..tile {
-                t_mat[(j * tile + i) as usize] = zero;
-            }
-        }
-        for j in 0u32..current_tile {
+    let cube_dim_x = CUBE_DIM_X;
+    let zero = F::cast_from(0.0);
+
+    let total = tile * tile;
+    let mut idx = tdx;
+    while idx < total {
+        t_mat[idx as usize] = zero;
+        idx += cube_dim_x;
+    }
+    sync_cube();
+
+    for j in 0u32..current_tile {
+        if tdx == 0 {
             t_mat[(j * tile + j) as usize] = beta_vec[j as usize];
-            for i in 0..j {
-                let mut sum = zero;
-                for k in i..j {
-                    sum = fma(
-                        t_mat[(k * tile + i) as usize],
-                        gram[(k * tile + j) as usize],
-                        sum,
-                    );
-                }
-                t_mat[(j * tile + i) as usize] = beta_vec[j as usize] * sum;
-            }
         }
+        let mut i = tdx;
+        while i < j {
+            let mut sum = zero;
+            for k in i..j {
+                sum = fma(
+                    t_mat[(k * tile + i) as usize],
+                    gram[(k * tile + j) as usize],
+                    sum,
+                );
+            }
+            t_mat[(j * tile + i) as usize] = beta_vec[j as usize] * sum;
+            i += cube_dim_x;
+        }
+        sync_cube();
     }
 }
 
@@ -204,7 +249,6 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     let storage_dtype = dtype.storage_type();
 
     let beta_vec = TensorHandle::<R>::zeros(client, vec![tile as usize], dtype);
-    let v_tmp = TensorHandle::<R>::zeros(client, vec![rows as usize], dtype);
     let v_buf_global = TensorHandle::<R>::zeros(client, vec![rows as usize, tile as usize], dtype);
     let w_buf_global = TensorHandle::<R>::zeros(client, vec![rows as usize, tile as usize], dtype);
     let gram_buf_global = TensorHandle::<R>::zeros(client, vec![tile as usize, tile as usize], dtype);
@@ -233,28 +277,22 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
             clear_buffer_kernel::launch_unchecked::<E, R>(client, cc_clear.clone(), cd_clear, BufferArg::from_raw_parts(v_buf_global.handle.clone(), n_clear as usize), n_clear);
         }
 
+        let cd_panel = CubeDim::new_1d(max_cube_dim);
+        let shared_size = max_cube_dim as usize;
+
         for j in 0..current_tile {
             let col = col_start + j;
             let dim = rows - col;
             let r_offset = col * rows + col;
 
             unsafe {
-                householder_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(1), BufferArg::from_raw_parts(r_handle.handle.clone(), (rows * cols) as usize), r_offset, dim, BufferArg::from_raw_parts(v_tmp.handle.clone(), rows as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j);
+                householder_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), cd_panel, BufferArg::from_raw_parts(r_handle.handle.clone(), (rows * cols) as usize), r_offset, dim, rows, col, BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j, shared_size);
             }
 
-            let n_upd = (current_tile - j) as usize;
-            if n_upd > 0 {
-                let cd_upd = CubeDim::new_1d((n_upd as u32).min(max_cube_dim));
-                let cc_upd = calculate_cube_count_elemwise(client, n_upd, cd_upd);
-                unsafe {
-                    apply_householder_kernel::launch_unchecked::<E, R>(client, cc_upd, cd_upd, rows, col_start + current_tile, col, r_handle.clone().into_arg(), BufferArg::from_raw_parts(v_tmp.handle.clone(), dim as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j);
-                }
-            }
-
-            let cd_copy = CubeDim::new_1d(dim.min(max_cube_dim));
-            let cc_copy = calculate_cube_count_elemwise(client, dim as usize, cd_copy);
+            // One cube per remaining panel column, cube-wide reduction inside.
+            let n_upd = current_tile - j;
             unsafe {
-                copy_v_to_buf_kernel::launch_unchecked::<E, R>(client, cc_copy, cd_copy, BufferArg::from_raw_parts(v_tmp.handle.clone(), dim as usize), BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize), j, col, dim, rows);
+                apply_householder_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(n_upd), cd_panel, rows, col, r_handle.clone().into_arg(), BufferArg::from_raw_parts(v_buf.handle.clone(), (rows * current_tile) as usize), j * rows + col, BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), j, shared_size);
             }
         }
 
@@ -263,7 +301,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
         launch_matmul(&strategy_gram, v_t_gram, InputBinding::Normal(v_buf.clone().binding(), storage_dtype), TensorHandle::<R>::new(gram_buf_global.handle.clone(), vec![current_tile as usize, current_tile as usize], vec![tile as usize, 1], dtype).binding(), &mut matmul_dtypes);
 
         unsafe {
-            build_t_tsqr_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(1), tile, current_tile, BufferArg::from_raw_parts(gram_buf_global.handle.clone(), (tile * tile) as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), BufferArg::from_raw_parts(t_buf_global.handle.clone(), (tile * tile) as usize));
+            build_t_tsqr_kernel::launch_unchecked::<E, R>(client, CubeCount::new_1d(1), CubeDim::new_1d(tile), tile, current_tile, BufferArg::from_raw_parts(gram_buf_global.handle.clone(), (tile * tile) as usize), BufferArg::from_raw_parts(beta_vec.handle.clone(), tile as usize), BufferArg::from_raw_parts(t_buf_global.handle.clone(), (tile * tile) as usize));
         }
 
         let t_buf = TensorHandle::<R>::new(t_buf_global.handle.clone(), vec![current_tile as usize, current_tile as usize], vec![1, tile as usize], dtype);

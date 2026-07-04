@@ -64,13 +64,20 @@ impl QRRoutine for BahtTsqrRoutine {
         let max_cube_dim = hardware.max_cube_dim.0.min(256);
         let tile = 32u32.min(problem.cols as u32).min(max_cube_dim);
 
+        // Full-precision strategies only: `Strategy::Auto` resolves to a
+        // tensor-core (CMMA) matmul whose f32 path silently downgrades the
+        // stage/register types to tf32 (see `cubek_matmul::definition::
+        // adjust_dtypes`), which loses ~13 mantissa bits and breaks the QR
+        // reconstruction tolerance. The unit routines don't support f64, so
+        // f64 uses Auto — safe there because no f64 CMMA exists and Auto
+        // falls back to the full-precision SimpleUnit.
         let (strategy_gram, strategy_w, strategy_tall) = if is_f64(problem) {
             (Strategy::Auto, Strategy::Auto, Strategy::Auto)
         } else {
             (
                 Strategy::SimpleVecMat(Default::default()),
                 Strategy::DoubleUnit(Default::default()),
-                Strategy::SimpleUnit(Default::default()),
+                Strategy::DoubleUnit(Default::default()),
             )
         };
 
