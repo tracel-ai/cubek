@@ -1,8 +1,8 @@
-//! The per-axis comptime map keyed on [`Axis`] (re-exported from `cubek-layout`).
+//! The per-axis comptime map keyed on [`Axis`].
 
 use cubecl::zspace::SmallVec;
 
-use cubek_layout::{Axis, MAX_AXES};
+use crate::{Axis, MAX_AXES};
 
 /// A comptime map from [`Axis`] to a value, in declared order. This is the
 /// canonical axis order and the order a [`Region`](super::Region)'s coordinates come in.
