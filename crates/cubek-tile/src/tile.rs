@@ -418,10 +418,50 @@ impl<T: CubePrimitive> Tile<T> {
         }
     }
 
+    /// Bytes this shared-memory tile's buffer spans — the transaction count a TMA fill lands.
+    /// Runtime (the buffer length), mirroring the synchronous [`stage_from_tma`]. Zero for the
+    /// non-smem payloads, which are never TMA fill targets.
+    pub fn buffer_bytes(&self) -> u32 {
+        match &self.payload {
+            Payload::Smem(d) => d.buffer.len() as u32 * comptime!(T::type_size() as u32),
+            Payload::Gmem(_) => 0,
+            Payload::Cmma(_) => 0,
+            Payload::TmaGmem(_) => 0,
+        }
+    }
+
+    /// Push a hardware bulk copy of `src` (a TMA tensor-map source) into this shared-memory tile
+    /// onto `barrier`, without waiting. The pipelined counterpart of [`stage_from_tma`]: the
+    /// caller's [`Stream`] hoists the arrive/wait so the copy overlaps compute. Delivery kind is
+    /// read off the payload here, so `Stream::produce` passes no flag.
+    pub fn stage_tma(&mut self, src: &Tile<T>, barrier: &Shared<Barrier>) {
+        match &src.payload {
+            Payload::TmaGmem(s) => match &mut self.payload {
+                Payload::Smem(d) => {
+                    // The bulk copy is issued by one elected unit only (as in cubek-matmul's
+                    // `async_full_tma`); the transaction count declared in `Stream::consume` is the
+                    // elected unit's alone, so more issuers would over-count and corrupt the stage.
+                    if UNIT_POS == 0 {
+                        s.view
+                            .tensor_map_load(barrier, d.buffer.downcast_mut(), s.pos.clone());
+                    }
+                }
+                // TMA only ever targets shared memory; the other sinks are unreachable.
+                Payload::Gmem(_) => (),
+                Payload::Cmma(_) => (),
+                Payload::TmaGmem(_) => (),
+            },
+            // Unreachable: `produce` routes here only when `src` is a tma source.
+            Payload::Gmem(_) => (),
+            Payload::Smem(_) => (),
+            Payload::Cmma(_) => (),
+        }
+    }
+
     /// Hardware bulk-copy `src` (a TMA tensor-map source) into this shared-memory tile: issue one
     /// `tensor_map_load` of the whole stage, gated by a freshly-armed `mbarrier`. Synchronous (the
-    /// barrier is waited on before returning); pipelined / double-buffered TMA would hoist the
-    /// barrier out of this call.
+    /// barrier is waited on before returning); the double-buffered path uses
+    /// [`stage_tma`](Tile::stage_tma) + [`Stream`] instead to hoist the barrier out of this call.
     fn stage_from_tma(&mut self, src: &Tile<T>) {
         match &src.payload {
             Payload::TmaGmem(s) => match &mut self.payload {
@@ -430,8 +470,12 @@ impl<T: CubePrimitive> Tile<T> {
                     sync_async_proxy_shared();
                     let elem_bytes = comptime!(T::type_size() as u32);
                     let num_bytes = d.buffer.len() as u32 * elem_bytes;
-                    s.view
-                        .tensor_map_load(&barrier, d.buffer.downcast_mut(), s.pos.clone());
+                    // One elected issuer only, matching the declared transaction count below (as in
+                    // cubek-matmul's `async_full_tma`); more issuers would over-count the stage.
+                    if UNIT_POS == 0 {
+                        s.view
+                            .tensor_map_load(&barrier, d.buffer.downcast_mut(), s.pos.clone());
+                    }
                     let expected = select(UNIT_POS == 0, num_bytes, 0);
                     let token = barrier.arrive_and_expect_tx(1, expected);
                     barrier.wait(token);

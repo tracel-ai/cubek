@@ -8,6 +8,7 @@ mod payload;
 mod quantization;
 mod ring;
 mod space;
+mod stream;
 mod tile;
 mod view;
 
@@ -20,5 +21,6 @@ pub use payload::*;
 pub use quantization::*;
 pub use ring::*;
 pub use space::*;
+pub use stream::*;
 pub use tile::*;
 pub use view::*;
