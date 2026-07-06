@@ -32,7 +32,11 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
         if comptime!(self.check) {
             self.view.read_checked(pos)
         } else {
-            self.view.read(pos)
+            // `check == false` means the launch proved this access in-bounds, so the inner
+            // view's memory-safety index clamp (`index.min(len)`) is redundant. Dropping it
+            // via `read_unchecked` removes a per-read clamp from the hot leaf loop and lets the
+            // address strength-reduce.
+            self.view.read_unchecked(pos)
         }
     }
 
@@ -60,7 +64,7 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
         if comptime!(self.check) {
             self.view.read_checked(pos)
         } else {
-            self.view.read(pos)
+            self.view.read_unchecked(pos)
         }
     }
 
