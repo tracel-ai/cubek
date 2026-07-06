@@ -9,27 +9,20 @@ use cubecl::prelude::*;
 
 use crate::{matmul::instruction::register::mma_register_memory, *};
 
-/// The leaf contraction, keyed on the accumulator's element so the generic lowering can name the
-/// bound (`Acc: Mma<Lhs, Rhs>`).
+/// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
+/// storage config
 #[cube]
-pub trait Mma<Lhs: CubePrimitive, Rhs: CubePrimitive>: CubePrimitive {
-    fn mma(acc: &mut Tile<Self>, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>);
-}
-
-/// The accumulator's storage picks the backend, and both arms are leaves: a cmma fragment to the
-/// tensor-core instruction, plain memory to the register microkernel run in place over the
-/// backing `MemData` with no sub-tiling below.
-#[cube]
-impl<E: Numeric, EL: Numeric, ER: Numeric, V: Size, L: Size> Mma<Vector<EL, L>, Vector<ER, V>>
-    for Vector<E, V>
-{
-    fn mma(acc: &mut Tile<Vector<E, V>>, lhs: &Tile<Vector<EL, L>>, rhs: &Tile<Vector<ER, V>>) {
-        let space = comptime!(acc.space.clone());
-        match &mut acc.payload {
-            Payload::Cmma(d) => d.mma(lhs, rhs),
-            Payload::Gmem(_) | Payload::Smem(_) | Payload::TmaGmem(_) => {
-                mma_register_memory::<E, EL, ER, L, V>(acc, lhs, rhs, space);
-            }
+pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
+    acc: &mut Tile<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+) {
+    let space = comptime!(acc.space.clone());
+    let tile_kind = &mut acc.tile_kind;
+    match tile_kind {
+        TileKind::Cmma(d) => d.mma(lhs, rhs),
+        TileKind::Gmem(g) | TileKind::Smem(g) => {
+            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
     }
 }

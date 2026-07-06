@@ -5,11 +5,11 @@ mod layout;
 mod load;
 mod matmul;
 mod partitioner;
-mod payload;
 mod quantization;
 mod ring;
 mod space;
 mod tile;
+mod tile_kind;
 mod view;
 
 // `Axis`/`MAX_AXES` and `ConcreteLayout` are the storage-layout vocabulary; clients reach them
@@ -17,9 +17,9 @@ mod view;
 pub use layout::*;
 pub use load::*;
 pub use partitioner::*;
-pub use payload::*;
 pub use quantization::*;
 pub use ring::*;
 pub use space::*;
 pub use tile::*;
+pub use tile_kind::*;
 pub use view::*;

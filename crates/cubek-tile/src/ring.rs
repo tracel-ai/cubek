@@ -6,12 +6,12 @@ use super::*;
 
 /// A ring of staged buffer [`Tile`]s.
 #[derive(CubeType)]
-pub struct Ring<T: CubePrimitive> {
+pub struct Ring<T: Numeric> {
     buffers: Sequence<Tile<T>>,
 }
 
 #[cube]
-impl<T: CubePrimitive> Ring<T> {
+impl<T: Numeric> Ring<T> {
     pub fn new(buffers: Sequence<Tile<T>>) -> Ring<T> {
         Ring::<T> { buffers }
     }

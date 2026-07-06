@@ -33,19 +33,23 @@ pub fn launch_ref<R: Runtime>(
 
     let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
-    let input_tilearg =
-        TileArgLaunch::strided(input.into_tensor_arg(), input_space.clone(), input_storage);
+    let input_tilearg = TileArgLaunch::strided(
+        input.into_tensor_arg(),
+        1,
+        input_space.clone(),
+        input_storage,
+    );
 
     // per-tensor scale: rank-1 [1] tensor, no reshape needed
     let scale_space = sequential_space(&[(M, 1usize)]);
     let scale_storage = Storage::of(scales.shape.len(), scale_space.rank());
     let scale_tilearg =
-        TileArgLaunch::strided(scales.into_tensor_arg(), scale_space, scale_storage);
+        TileArgLaunch::strided(scales.into_tensor_arg(), 1, scale_space, scale_storage);
 
     let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
     let output_storage = Storage::of(output.shape.len(), output_space.rank());
     let output_tilearg =
-        TileArgLaunch::strided(output.into_tensor_arg(), output_space, output_storage);
+        TileArgLaunch::strided(output.into_tensor_arg(), 1, output_space, output_storage);
 
     let cube_count = input_space.cube_count();
     let cube_dim = input_space.cube_dim(client);
@@ -63,9 +67,6 @@ pub fn launch_ref<R: Runtime>(
         input_dtype,
         scale_dtype,
         output_dtype,
-        1usize,
-        1usize,
-        1usize,
     );
 
     Ok(())
@@ -107,16 +108,13 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 /// input: the quantized input tensor
 /// scales: the scale grid
 /// output: the dequantized output tensor
-pub fn dequantize<I: Numeric, S: Numeric, O: Numeric, IN: Size, SN: Size, ON: Size>(
-    input: &TileArg<I, IN>,
-    scales: &TileArg<S, SN>,
-    output: &TileArg<O, ON>,
+pub fn dequantize<I: Numeric, S: Numeric, O: Numeric>(
+    input: &TileArg<'_, I>,
+    scales: &TileArg<'_, S>,
+    output: &TileArg<'_, O>,
     #[define(I)] _input_dtype: StorageType,
     #[define(S)] _scale_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
-    #[define(IN)] _input_size: usize,
-    #[define(SN)] _scale_size: usize,
-    #[define(ON)] _output_size: usize,
 ) {
     let input = input.tile();
     let scales = scales.tile();

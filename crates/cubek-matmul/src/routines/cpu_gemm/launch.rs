@@ -255,7 +255,6 @@ pub fn launch_ref<R: Runtime>(
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
-        v,
     );
 
     Ok(())
