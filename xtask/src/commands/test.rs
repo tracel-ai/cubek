@@ -24,7 +24,6 @@ pub(crate) fn handle_command(
                 "cubek-convolution",
                 "cubek-fft",
                 "cubek-interpolate",
-                "cubek-layout",
                 "cubek-matmul",
                 "cubek-pool",
                 "cubek-quant",
