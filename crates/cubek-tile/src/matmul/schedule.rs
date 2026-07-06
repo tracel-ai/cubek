@@ -38,8 +38,8 @@ pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc>(
     // physical width, so the scalar slice holds `tile_size * width` entries.
     let a_sub = comptime!(lhs.space.divide());
     let b_sub = comptime!(rhs.space.divide());
-    let a_width = comptime!(lhs.width);
-    let b_width = comptime!(rhs.width);
+    let a_width = comptime!(lhs.vector_size);
+    let b_width = comptime!(rhs.vector_size);
     let a_smem = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
     let b_smem = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
     let mut a_tile = Tile::smem(&a_smem, a_sub, a_width);
@@ -67,8 +67,8 @@ pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc>(
     // buffer is staged at its source operand's physical width (`tile_size * width` scalar entries).
     let a_sub = comptime!(lhs.space.divide());
     let b_sub = comptime!(rhs.space.divide());
-    let a_width = comptime!(lhs.width);
-    let b_width = comptime!(rhs.width);
+    let a_width = comptime!(lhs.vector_size);
+    let b_width = comptime!(rhs.vector_size);
     let a0 = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
     let a1 = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
     let b0 = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);

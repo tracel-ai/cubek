@@ -30,8 +30,8 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let src = src.tile();
@@ -125,9 +125,9 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
 /// The operand's launchable `TileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric, V: Size>(op: &Operand, space: Space) -> TileArgLaunch<E, V, TestRuntime> {
+fn tile_arg<E: Numeric>(op: &Operand, space: Space) -> TileArgLaunch<'static, E, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    TileArgLaunch::strided(tensor, space, storage)
+    TileArgLaunch::strided(tensor, 1, space, storage)
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.

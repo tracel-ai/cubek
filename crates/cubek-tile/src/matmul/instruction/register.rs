@@ -37,8 +37,8 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
         count
     };
 
-    let lw = comptime!(lhs.width);
-    let size!(V) = comptime!(rhs.width);
+    let lw = comptime!(lhs.vector_size);
+    let size!(V) = comptime!(rhs.vector_size);
     let size!(L) = lw;
 
     for j in 0..matrices {

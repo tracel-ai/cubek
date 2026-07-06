@@ -16,7 +16,7 @@ impl From<&ConcreteLayout> for Storage {
     }
 }
 
-impl<E: Numeric, V: Size, R: Runtime> TileArgLaunch<'static, E, V, R> {
+impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
     /// Start describing a strided tile kernel argument sourced from `binding` — a [`TileSource`]
     /// builder. Set the two required parts — the [`space`](TileSource::space) it projects from and the
     /// [`subspace`](TileSource::subspace) block it iterates (`build` won't compile until both are set) —
@@ -24,7 +24,7 @@ impl<E: Numeric, V: Size, R: Runtime> TileArgLaunch<'static, E, V, R> {
     /// [`vectorize`](TileSource::vectorize) line size, or opt out of the bounds-check
     /// ([`checked`](TileSource::checked)). Optional defaults are the safe ones — scalar, batchless,
     /// checked — so a forgotten *optional* setter degrades performance, never correctness.
-    pub fn source<'a>(binding: TensorBinding<R>) -> TileSource<'a, Unset, Unset, E, V, R> {
+    pub fn source<'a>(binding: TensorBinding<R>) -> TileSource<'a, Unset, Unset, E, R> {
         TileSource {
             data: TileSourceData {
                 binding,
@@ -41,40 +41,36 @@ impl<E: Numeric, V: Size, R: Runtime> TileArgLaunch<'static, E, V, R> {
 
     /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned axes
     /// ([`distinct_axes`](ConcreteLayout::distinct_axes)) and the tiling [`Storage`] from the layout,
-    /// line the innermost (`cols`) axis by `v`, and project `space` onto those axes. The
-    /// matmul-agnostic loader — the `layout`'s axes are in the binding's dim order (its `Coordinates`
-    /// match the buffer dim-for-dim), so a client just builds the operand's layout and hands it here.
+    /// and project `space` onto those axes. The innermost (`cols`) axis is served as `Vector<E, v>`
+    /// lines — the re-lining happens in-kernel from the comptime `vector_size`, so the scalar
+    /// buffer's shape/strides pass through untouched. The matmul-agnostic loader — the `layout`'s axes are in
+    /// the binding's dim order — so a client just builds the operand's layout and hands it here.
     pub fn from_concrete(
-        mut binding: TensorBinding<R>,
+        binding: TensorBinding<R>,
         layout: &ConcreteLayout,
         space: &Space,
         v: usize,
         check: bool,
     ) -> Self {
-        // Re-line the buffer as `Vector<E, v>`: the contiguous innermost stride stays 1, every
-        // coarser stride and the `cols` extent shrink by `v` (a no-op at `v == 1`, e.g. tiled).
-        let n = binding.strides.len();
-        let mut shape = binding.shape.to_vec();
-        let mut strides = binding.strides.to_vec();
-        shape[n - 1] /= v;
-        for s in &mut strides[..n - 1] {
-            *s /= v;
-        }
-        binding.shape = shape[..].into();
-        binding.strides = strides[..].into();
-
         Self::strided(
             binding.into_tensor_arg(),
+            v,
             space.project(&layout.distinct_axes()),
             Storage::from(layout).checked(check),
         )
     }
 
-    /// Load a strided global tensor as a tile. Its `[pre…, grid…, tile…]` buffer is tiled in-kernel
-    /// over `space` (the [`Tile`](crate::Tile) reads the physical shape/strides off the tensor). The
-    /// [`Storage`] carries the tiling depth and the overhang bounds-check.
-    pub fn strided(tensor: TensorArg<R>, space: Space, storage: Storage) -> Self {
-        Self::new(tensor, space, storage)
+    /// Load a strided global tensor as a tile served in `vector_size`-wide lines. Its
+    /// `[pre…, grid…, tile…]` buffer is tiled in-kernel over `space` (the [`Tile`](crate::Tile) reads
+    /// the physical shape/strides off the tensor). The [`Storage`] carries the tiling depth and the
+    /// overhang bounds-check.
+    pub fn strided(
+        tensor: TensorArg<R>,
+        vector_size: usize,
+        space: Space,
+        storage: Storage,
+    ) -> Self {
+        Self::new(tensor, vector_size, space, storage)
     }
 }
 
@@ -84,14 +80,14 @@ pub struct Set;
 pub struct Unset;
 
 /// The fields an [`TileSource`] accumulates; the typestate lives in the wrapper, not here.
-struct TileSourceData<'a, E, V, R: Runtime> {
+struct TileSourceData<'a, E, R: Runtime> {
     binding: TensorBinding<R>,
     space: Option<&'a Space>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
     v: usize,
     check: bool,
-    _ty: PhantomData<(E, V)>,
+    _ty: PhantomData<E>,
 }
 
 /// Typestate builder for a strided tile kernel argument, started with [`TileArgLaunch::source`]. The
@@ -102,14 +98,14 @@ struct TileSourceData<'a, E, V, R: Runtime> {
 /// broadcast omission). The binding is set at construction; the `Sp`/`Sub` markers track the two
 /// remaining required setters, so [`build`](Self::build) exists only once both [`space`](Self::space)
 /// and [`subspace`](Self::subspace) are [`Set`]. Borrows the axis slices + `space` for the chain.
-pub struct TileSource<'a, Sp, Sub, E, V, R: Runtime> {
-    data: TileSourceData<'a, E, V, R>,
+pub struct TileSource<'a, Sp, Sub, E, R: Runtime> {
+    data: TileSourceData<'a, E, R>,
     _state: PhantomData<(Sp, Sub)>,
 }
 
-impl<'a, Sp, Sub, E, V, R: Runtime> TileSource<'a, Sp, Sub, E, V, R> {
+impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
     /// The global iteration space this argument projects from (required).
-    pub fn space(mut self, space: &'a Space) -> TileSource<'a, Set, Sub, E, V, R> {
+    pub fn space(mut self, space: &'a Space) -> TileSource<'a, Set, Sub, E, R> {
         self.data.space = Some(space);
         TileSource {
             data: self.data,
@@ -119,7 +115,7 @@ impl<'a, Sp, Sub, E, V, R: Runtime> TileSource<'a, Sp, Sub, E, V, R> {
 
     /// The inner block of axes the operand iterates — its `[row, col]` for a matmul (required,
     /// non-empty). Complementary to [`batches`](Self::batches), the outer dims.
-    pub fn subspace(mut self, axes: &'a [Axis]) -> TileSource<'a, Sp, Set, E, V, R> {
+    pub fn subspace(mut self, axes: &'a [Axis]) -> TileSource<'a, Sp, Set, E, R> {
         self.data.subspace = axes;
         TileSource {
             data: self.data,
@@ -149,11 +145,11 @@ impl<'a, Sp, Sub, E, V, R: Runtime> TileSource<'a, Sp, Sub, E, V, R> {
     }
 }
 
-impl<'a, E: Numeric, V: Size, R: Runtime> TileSource<'a, Set, Set, E, V, R> {
+impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
     /// Build the operand's [`ConcreteLayout`] from its labeled dims and load it via
     /// [`from_concrete`](TileArgLaunch::from_concrete). Available only once space and subspace are
     /// both set, so the `unwrap` below cannot fire.
-    pub fn build(self) -> TileArgLaunch<'static, E, V, R> {
+    pub fn build(self) -> TileArgLaunch<'static, E, R> {
         let TileSourceData {
             mut binding,
             space,

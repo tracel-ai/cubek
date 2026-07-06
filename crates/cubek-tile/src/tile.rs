@@ -48,11 +48,18 @@ impl Storage {
     }
 }
 
-/// The launchable form of a [`Tile`]: a `&Tensor` plus the comptime [`Space`] and
-/// [`Storage`]. The kernel turns it into a `Tile` with [`tile`](TileArg::tile).
+/// The launchable form of a [`Tile`]: a scalar `&Tensor` plus its comptime line
+/// [`vector_size`](Self::vector_size), [`Space`] and [`Storage`]. The kernel turns it into a `Tile`
+/// with [`tile`](TileArg::tile). The physical vectorization is a plain comptime value (the
+/// `vector_size` field), not a type parameter — the buffer is served scalar and re-grouped into
+/// `Vector<E, vector_size>` lines in-kernel.
 #[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric, V: Size> {
-    pub tensor: &'a Tensor<Vector<E, V>>,
+pub struct TileArg<'a, E: Numeric> {
+    pub tensor: &'a Tensor<E>,
+    /// Physical vectorization (`Vector<E, vector_size>` line size) of the operand's contiguous
+    /// innermost axis; `1` is scalar.
+    #[cube(comptime)]
+    pub vector_size: usize,
     #[cube(comptime)]
     pub space: Space,
     #[cube(comptime)]
@@ -60,10 +67,11 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+impl<'a, E: Numeric> TileArg<'a, E> {
     pub fn tile(&self) -> Tile<E> {
         Tile::from_tensor(
             self.tensor,
+            comptime!(self.vector_size),
             comptime!(self.space.clone()),
             comptime!(self.storage),
         )
@@ -76,11 +84,11 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 #[derive(CubeType)]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
-    /// Physical vectorization (line width) of the backing store: the launched operand's vector
-    /// size, `1` for an unvectorized store or a cmma fragment. A storage detail the leaf
-    /// reconstructs `Vector<T, width>` from; held comptime so `size!` can read it.
+    /// Physical vectorization (`Vector<T, vector_size>` line size) of the backing store: the launched
+    /// operand's vector size, `1` for an unvectorized store or a cmma fragment. A storage detail the
+    /// leaf reconstructs `Vector<T, vector_size>` from; held comptime so `size!` can read it.
     #[cube(comptime)]
-    pub width: usize,
+    pub vector_size: usize,
     #[cube(comptime)]
     pub space: Space,
 }
@@ -105,7 +113,7 @@ pub struct CmmaData<T: Numeric> {
 #[expand(derive(Clone))]
 pub struct MemData<T: Numeric> {
     /// Scalar-typed backing store. Its physical vectorization is erased from the type and held on
-    /// the owning [`Tile`](Tile::width); buffer access re-groups it into `Vector<T, W>` lines (the
+    /// the owning [`Tile`](Tile::vector_size); buffer access re-groups it into `Vector<T, W>` lines (the
     /// width passed by the caller) so the line-unit strides/extents still address it.
     buffer: Box<[T]>,
     physical_shape: CoordsDyn,
@@ -134,34 +142,40 @@ pub struct MemData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Wrap a launched [`Tensor`] into a whole `Gmem` tile. The borrow is erased into a `Box`, and
-    /// the operand's physical vectorization `V` is recorded as the store's [`width`](MemData::width)
-    /// while the buffer is reinterpreted to its scalar element `T` (line-unit strides still address
-    /// it once the leaf re-groups it into `Vector<T, V>`).
-    pub fn from_tensor<V: Size>(
-        tensor: &Tensor<Vector<T, V>>,
+    /// Wrap a launched scalar [`Tensor`] into a whole `Gmem` tile. The borrow is erased into a `Box`
+    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). The tensor's
+    /// shape/strides are scalar-unit; re-express them as `Vector<T, vector_size>` lines along the
+    /// contiguous innermost axis — its extent and every coarser stride shrink by `vector_size` (a
+    /// no-op at `vector_size == 1`) — so the line-unit layout addresses the buffer once the leaf
+    /// re-groups it into `Vector<T, vector_size>`.
+    pub fn from_tensor(
+        tensor: &Tensor<T>,
+        #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
     ) -> Tile<T> {
         let start_axis = comptime!(storage.start_axis);
         let num_tiled = comptime!(space.rank() - storage.start_axis);
         let levels = comptime!(storage.levels);
+        let rank = comptime!(start_axis + (levels + 1) * num_tiled);
+        let last = comptime!(rank - 1);
+        let w = comptime!(vector_size as u32);
         let mut physical_shape = CoordsDyn::new();
         let mut physical_strides = CoordsDyn::new();
         #[unroll]
-        for i in 0..comptime!(start_axis + (levels + 1) * num_tiled) {
-            physical_shape.push(tensor.shape(i) as u32);
-            physical_strides.push(tensor.stride(i) as u32);
+        for i in 0..rank {
+            let extent = tensor.shape(i) as u32;
+            let stride = tensor.stride(i) as u32;
+            if comptime!(i == last) {
+                // Innermost (contiguous, stride 1): its extent counts scalars → count lines.
+                physical_shape.push(extent / w);
+                physical_strides.push(stride);
+            } else {
+                physical_shape.push(extent);
+                physical_strides.push(stride / w);
+            }
         }
-        // Erase the launched vectorization from the type: regroup the `Vector<T, V>` slice into
-        // scalar `T`, recording `V` as the store's width for later reconstruction.
-        let buffer = unsafe {
-            tensor
-                .as_slice()
-                .with_vector_size::<Const<1>>()
-                .downcast_unchecked::<T>()
-                .as_boxed_unchecked()
-        };
+        let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
         // Logical bound folded from the physical shape, so it's correct for tiled
         // operands too (the physical buffer is padded; the logical extent is not).
         let bound = logical_bound(&physical_shape, start_axis, num_tiled, levels);
@@ -181,15 +195,19 @@ impl<T: Numeric> Tile<T> {
                 levels,
                 check: comptime!(storage.check_bounds),
             }),
-            width: comptime!(V::value()),
+            vector_size: comptime!(vector_size),
             space: comptime!(space),
         }
     }
 
     /// Wrap a shared-memory buffer as a whole `Smem` tile. Row-major over `space`; the borrow is
-    /// erased into a `Box`. `width` is the buffer's physical vectorization (the staged operand's
-    /// line width); the scalar-element slice has `space.tile_size() * width` entries.
-    pub fn smem(smem: &Shared<[T]>, #[comptime] space: Space, #[comptime] width: usize) -> Tile<T> {
+    /// erased into a `Box`. `vector_size` is the buffer's physical vectorization (the staged operand's
+    /// line size); the scalar-element slice has `space.tile_size() * vector_size` entries.
+    pub fn smem(
+        smem: &Shared<[T]>,
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+    ) -> Tile<T> {
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
         let (physical_shape, physical_strides) = row_major(comptime!(space.clone()));
         let (origin, extent) = full_window(comptime!(space.clone()));
@@ -209,7 +227,7 @@ impl<T: Numeric> Tile<T> {
                 levels: comptime!(0usize),
                 check: comptime!(false),
             }),
-            width,
+            vector_size,
             space: comptime!(space),
         }
     }
@@ -232,7 +250,7 @@ impl<T: Numeric> Tile<T> {
                 layout,
             }),
             // A cmma fragment is MMA-unit-resident, not a lined memory store.
-            width: comptime!(1usize),
+            vector_size: comptime!(1usize),
             space: comptime!(space),
         }
     }
@@ -264,7 +282,7 @@ impl<T: Numeric> Tile<T> {
 
     /// A read [`View`] over `Vector<T, W>` lines: the scalar buffer re-grouped into its physical
     /// width, then re-viewed through the base layout and [`Window`]. `W` is the line width
-    /// (`self.width()`); pass `Const<1>` when only the (width-invariant) leading shape is needed.
+    /// (`self.vector_size`); pass `Const<1>` when only the (width-invariant) leading shape is needed.
     pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) => g.lines::<W>().view(g.base()).view(g.window()),
@@ -300,7 +318,7 @@ impl<T: Numeric> Tile<T> {
         };
         Tile::<T> {
             tile_kind,
-            width: comptime!(self.width),
+            vector_size: comptime!(self.vector_size),
             space: comptime!(self.space.divide()),
         }
     }
@@ -389,7 +407,7 @@ impl<T: Numeric> Tile<T> {
     /// share `self`'s width (smem is staged at the source operand's width), so the copy moves whole
     /// `Vector<T, W>` lines.
     fn stage_from_memory(&mut self, src: &Tile<T>) {
-        let size!(W) = comptime!(self.width);
+        let size!(W) = comptime!(self.vector_size);
         let matrices = self.matrix_count();
         for j in 0..matrices {
             let s = src.matrix::<W>(j);
@@ -418,7 +436,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The scalar buffer re-grouped into `Vector<T, W>` lines, so the line-unit base/window layouts
-    /// address it. `W` is the store's physical [`width`](MemData::width).
+    /// address it. `W` is the store's physical [`vector_size`](Tile::vector_size).
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.buffer.as_vectorized().with_vector_size::<W>()
     }
