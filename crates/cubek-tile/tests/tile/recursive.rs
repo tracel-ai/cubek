@@ -33,8 +33,8 @@ fn recursive_two_level_tiled_view() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::new(input.tensor_arg(1), input.space(), input.storage()),
-        TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
+        TileArgLaunch::strided(input.tensor_arg(1), input.space(), input.storage()),
+        TileArgLaunch::strided(output.tensor_arg(1), output.space(), output.storage()),
         f32::as_type_native_unchecked().storage_type(),
     );
 

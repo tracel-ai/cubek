@@ -34,16 +34,18 @@ pub fn launch_ref<R: Runtime>(
     let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
     let input_tilearg =
-        TileArgLaunch::new(input.into_tensor_arg(), input_space.clone(), input_storage);
+        TileArgLaunch::strided(input.into_tensor_arg(), input_space.clone(), input_storage);
 
     // per-tensor scale: rank-1 [1] tensor, no reshape needed
     let scale_space = sequential_space(&[(M, 1usize)]);
     let scale_storage = Storage::of(scales.shape.len(), scale_space.rank());
-    let scale_tilearg = TileArgLaunch::new(scales.into_tensor_arg(), scale_space, scale_storage);
+    let scale_tilearg =
+        TileArgLaunch::strided(scales.into_tensor_arg(), scale_space, scale_storage);
 
     let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
     let output_storage = Storage::of(output.shape.len(), output_space.rank());
-    let output_tilearg = TileArgLaunch::new(output.into_tensor_arg(), output_space, output_storage);
+    let output_tilearg =
+        TileArgLaunch::strided(output.into_tensor_arg(), output_space, output_storage);
 
     let cube_count = input_space.cube_count();
     let cube_dim = input_space.cube_dim(client);
