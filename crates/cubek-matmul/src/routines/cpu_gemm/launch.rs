@@ -74,11 +74,12 @@ fn fold_logical(shape: &[usize], levels: usize) -> (Vec<usize>, usize, usize) {
     (shape[..split].to_vec(), rows, cols)
 }
 
-/// Whether a strided operand vectorizes along `N`: an untiled buffer whose innermost (`cols`) axis
-/// is contiguous, so a kernel reading `Vector<E, V>` lands on whole lines. Tiled or col-major falls
-/// back to scalar.
-fn vectorizes_n(strides: &[usize], levels: usize) -> bool {
-    levels == 0 && strides.last() == Some(&1)
+/// Whether an operand vectorizes along `N`: its innermost physical axis is contiguous, so a kernel
+/// reading `Vector<E, V>` lands on whole lines. That axis is `cols` for a plain row-major buffer and
+/// the `N` leaf tile for a packed one — a tiled operand qualifies exactly like a strided one, the
+/// vector just lands within a leaf block. Col-major (rows contiguous) does not.
+fn vectorizes_n(strides: &[usize]) -> bool {
+    strides.last() == Some(&1)
 }
 
 #[allow(clippy::result_large_err)]
@@ -92,7 +93,7 @@ pub fn launch_ref<R: Runtime>(
 ) -> Result<(), MatmulSetupError> {
     let (lhs, lhs_levels) = (lhs.binding, lhs.levels);
     let (rhs, rhs_levels) = (rhs.binding, rhs.levels);
-    let (out, out_levels) = (out.binding, out.levels);
+    let out = out.binding;
     let sz = dtypes.acc_global.size();
 
     if matches!(lhs, InputBinding::Quantized { .. })
@@ -147,20 +148,26 @@ pub fn launch_ref<R: Runtime>(
 
     let blueprint = CpuGemmRoutine::blueprint(strategy, &problem, &device_settings)?;
 
-    // Vectorize `N` only when both `rhs` and the output keep it contiguous (both
-    // row-major): then a kernel reading `Vector<E, V>` lands on whole lines. Any
-    // other layout — col-major or tiled — falls back to scalar (`V = 1`). `lhs` is
-    // always scalar (broadcast per `K`), so its layout never matters here.
-    let v = (vectorizes_n(&rhs.data().strides, rhs_levels)
-        && vectorizes_n(&out.strides, out_levels))
-    .then_some(())
-    .and_then(|_| {
-        client
-            .io_optimized_vector_sizes(sz)
-            .filter(|&v| n.is_multiple_of(v) && blueprint.instruction.n.is_multiple_of(v))
-            .max()
-    })
-    .unwrap_or(1);
+    // Vectorize `N` only when both `rhs` and the output are `N`-contiguous (innermost stride 1):
+    // a plain row-major buffer, or a packed one whose `N` leaf tile is contiguous. Then a kernel
+    // reading `Vector<E, V>` lands on whole lines. Col-major falls back to scalar (`V = 1`), as does
+    // a width that doesn't divide the innermost extent — the logical `N` when strided, the leaf tile
+    // edge when packed. `lhs` is always scalar (broadcast per `K`), so its layout never matters.
+    let rhs_inner = *rhs.shape().last().unwrap();
+    let out_inner = *out.shape.last().unwrap();
+    let v = (vectorizes_n(&rhs.data().strides) && vectorizes_n(&out.strides))
+        .then(|| {
+            client
+                .io_optimized_vector_sizes(sz)
+                .filter(|&v| {
+                    rhs_inner.is_multiple_of(v)
+                        && out_inner.is_multiple_of(v)
+                        && blueprint.instruction.n.is_multiple_of(v)
+                })
+                .max()
+        })
+        .flatten()
+        .unwrap_or(1);
 
     // Output batch dims that survive (extent > 1).
     let batch: Vec<usize> = (0..out_batches.len())
