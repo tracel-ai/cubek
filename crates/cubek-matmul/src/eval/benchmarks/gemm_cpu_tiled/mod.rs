@@ -30,11 +30,7 @@ use crate::routines::cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid, WithLa
 
 /// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` microkernel (no
 /// spill), so the only variable across a `strided_pN`/`tiled_pN` pair is the storage packing.
-const LEAF: Instruction = Instruction {
-    m: 2,
-    n: 32,
-    k: 64,
-};
+const LEAF: Instruction = Instruction { m: 2, n: 32, k: 64 };
 
 /// Storage-tile edge for the packed variants: square `64 × 64` blocks (16 KiB in f32, L1-resident)
 /// that divide every benchmarked shape. A sweep of 16²→256² was flat, so one representative edge is
@@ -197,8 +193,7 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
-    let flops =
-        2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
+    let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
     let bench = TiledBench {
         problem: *problem,
@@ -235,9 +230,7 @@ const PLANE_LADDER: &[(&str, PlaneGrid)] = &[
 pub fn problems() -> Vec<CatalogEntry<TiledProblem>> {
     SHAPES
         .iter()
-        .map(|&(tag, label, b, m, n, k)| {
-            CatalogEntry::new(tag, label, TiledProblem { b, m, n, k })
-        })
+        .map(|&(tag, label, b, m, n, k)| CatalogEntry::new(tag, label, TiledProblem { b, m, n, k }))
         .collect()
 }
 
