@@ -1,105 +1,95 @@
-//! The double-buffered `mma` pipeline: two slots, each pairing both operands' staged tiles under
-//! one barrier, so a slot costs a single collective rather than one per operand.
+//! A stream is one lane of the double-buffered `mma` pipeline: it owns its slot's staged lhs/rhs
+//! tiles and the barrier(s) that sequence its fill against its read. The schedule drives two
+//! streams, calling `load` then `mma` on each in turn — the wait is not a call the schedule makes,
+//! it lives inside `load`/`mma`.
 //!
-//! The synchronization is not a call the schedule makes: [`produce`](Stream::produce) pushes a
-//! slot's fill, and [`consume`](Stream::consume) is where its tiles cross from the fill stream to
-//! the compute — that crossing is the one place the wait appears. A cube rendezvous both waits the
-//! fill (RAW) and fences the previous reader so the next `produce` can overwrite (WAR); one per
-//! slot keeps a single collective per region, matching the old `sync_cube` count.
+//! Two fill kinds, picked by the barriers the stream holds (nothing is inferred from the operands):
 //!
-//! Two fills, decided once from the operands' [`Payload`] kind (which is comptime — so the match
-//! folds and the mbarrier type is emitted only on the TMA build, never on the strided one or on
-//! backends without mbarrier support such as Metal):
-//! - strided — a cooperative element copy; the rendezvous is a portable [`sync_cube`].
-//! - TMA — a hardware bulk copy onto a slot mbarrier; the rendezvous also waits the transaction
-//!   count, so the DMA overlaps the caller's compute.
+//! - **strided** (no barriers): a cooperative element copy rendezvoused on the one cube-wide
+//!   `sync_cube`. The sync sits in `load` (before the refill), where a single collective per phase
+//!   covers both hazards — the fill→read (RAW) of this lane and the read→refill (WAR) of the other.
+//!   This is the portable path (e.g. Metal, which has no mbarrier).
 //!
-//! The kind lives only in the payload; a populated `barriers` sequence (length per slot) is what
-//! [`produce`](Stream::produce)/[`consume`](Stream::consume) read to pick the fill — no separate
-//! flag shadows it.
+//! - **TMA** (a `full`/`empty` mbarrier pair, after CUTLASS): a hardware bulk copy, producer and
+//!   consumer decoupled so the copy overlaps compute. `full` (producer→consumer, arrival count 1)
+//!   flips when the elected unit has issued the loads and declared their transaction bytes; `empty`
+//!   (consumer→producer, arrival count `CUBE_DIM`) flips when every unit has finished reading and
+//!   released the slot. `load` waits `empty` (WAR) then issues the copy and arrives `full`; `mma`
+//!   waits `full` (RAW) then reads and arrives `empty`. A per-lane `phase` bit tracks the parity.
+//!
+//! TMA is dormant — no launch path builds a tma source yet — so in practice both lanes run strided.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 
 use super::*;
 
-/// The two-slot double buffer. Each slot pairs both operands' staged tiles under one barrier.
-/// Buffers live in `Sequence`s (like [`Ring`]) so their lifetime-erased shared-memory handles
-/// survive being stored. `barriers` holds one per slot for a TMA fill, and is empty for a strided
-/// fill — its presence *is* the fill kind.
+/// One lane of the double buffer: its staged operands, a phase bit, and the barrier(s) sequencing
+/// fill vs read. `barriers` is empty for a strided lane or holds `[full, empty]` for a TMA lane —
+/// its presence *is* the fill kind, so nothing is inferred from the source operands.
 #[derive(CubeType)]
-pub struct Stream<Lhs: CubePrimitive, Rhs: CubePrimitive> {
-    a: Sequence<Tile<Lhs>>,
-    b: Sequence<Tile<Rhs>>,
+pub struct Stream<Lhs: Numeric, Rhs: Numeric> {
+    a: Tile<Lhs>,
+    b: Tile<Rhs>,
     barriers: Sequence<Shared<Barrier>>,
+    /// mbarrier parity for this lane's `wait_parity`; flips once per `mma`. Unused on the strided
+    /// path.
+    phase: u32,
 }
 
 #[cube]
-impl<Lhs: CubePrimitive, Rhs: CubePrimitive> Stream<Lhs, Rhs> {
-    /// Build the double buffer over `a`/`b`, reading the fill kind off the operands `lhs`/`rhs`.
-    /// The payload matches fold (comptime-variant enum), so the mbarrier is created only when both
-    /// operands are TMA sources.
+impl<Lhs: Numeric, Rhs: Numeric> Stream<Lhs, Rhs> {
+    /// Build one lane over its staged `a`/`b` slot buffers and its `barriers` (empty = strided,
+    /// `[full, empty]` = TMA). The caller owns the fill-kind decision; the stream just carries it.
     pub fn new(
-        a: Sequence<Tile<Lhs>>,
-        b: Sequence<Tile<Rhs>>,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
+        a: Tile<Lhs>,
+        b: Tile<Rhs>,
+        barriers: Sequence<Shared<Barrier>>,
     ) -> Stream<Lhs, Rhs> {
-        #[allow(clippy::match_like_matches_macro)]
-        let lhs_tma = match &lhs.payload {
-            Payload::TmaGmem(_) => true,
-            _ => false,
-        };
-        #[allow(clippy::match_like_matches_macro)]
-        let rhs_tma = match &rhs.payload {
-            Payload::TmaGmem(_) => true,
-            _ => false,
-        };
-        let mut barriers = Sequence::<Shared<Barrier>>::new();
-        // Uniform delivery, as in cubek-matmul; a mixed pair takes the strided rendezvous.
-        if lhs_tma && rhs_tma {
-            barriers.push(Barrier::shared(CUBE_DIM, UNIT_POS == 0));
-            barriers.push(Barrier::shared(CUBE_DIM, UNIT_POS == 0));
-            // Bulk copy writes through the async proxy; fence the barrier inits before any load.
-            sync_async_proxy_shared();
-        }
-        Stream::<Lhs, Rhs> { a, b, barriers }
-    }
-
-    /// Push slot `slot`'s fill: stage both operands. TMA issues the bulk copies (async, returns
-    /// immediately, overlaps whatever the caller computes next); the strided path copies
-    /// element-wise. Never waits — that is [`consume`](Stream::consume)'s job.
-    pub fn produce(&mut self, #[comptime] slot: usize, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        if comptime!(self.barriers.len() > 0) {
-            let barrier = self.barriers.index(slot);
-            self.a.index_mut(slot).stage_tma(lhs, barrier);
-            self.b.index_mut(slot).stage_tma(rhs, barrier);
-        } else {
-            self.a.index_mut(slot).stage(lhs);
-            self.b.index_mut(slot).stage(rhs);
+        Stream::<Lhs, Rhs> {
+            a,
+            b,
+            barriers,
+            phase: 0,
         }
     }
 
-    /// Wait until slot `slot`'s fill has landed and fence the previous reader, then its tiles are
-    /// readable. TMA waits the transaction count (the DMA in flight during the caller's last
-    /// compute); the strided path is a portable cube rendezvous.
-    pub fn consume(&self, #[comptime] slot: usize) {
+    /// Fill this lane from `lhs`/`rhs` at `region`. Strided: rendezvous first (frees the lane after
+    /// its prior read and publishes the sibling's fill), then a cooperative element copy. TMA: wait
+    /// the lane is free (`empty`, WAR), issue the async bulk copy onto `full`, then arrive `full`
+    /// with the whole-stage transaction bytes (elected unit only). Never blocks on the fill itself —
+    /// that wait is `mma`'s.
+    pub fn load(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: Region) {
         if comptime!(self.barriers.len() > 0) {
-            let barrier = self.barriers.index(slot);
-            let bytes = self.a.index(slot).buffer_bytes() + self.b.index(slot).buffer_bytes();
-            let expected = select(UNIT_POS == 0, bytes, 0);
-            let token = barrier.arrive_and_expect_tx(1, expected);
-            barrier.wait(token);
+            let full = self.barriers.index(0);
+            let empty = self.barriers.index(1);
+            empty.wait_parity(self.phase ^ 1);
+            self.a.stage_tma(&lhs.at(&region), full);
+            self.b.stage_tma(&rhs.at(&region), full);
+            let bytes = self.a.buffer_bytes() + self.b.buffer_bytes();
+            if UNIT_POS == 0 {
+                full.arrive_and_expect_tx(1, bytes);
+            }
         } else {
             sync_cube();
+            self.a.stage(&lhs.at(&region));
+            self.b.stage(&rhs.at(&region));
         }
     }
 
-    pub fn a(&self, #[comptime] slot: usize) -> &Tile<Lhs> {
-        self.a.index(slot)
-    }
-
-    pub fn b(&self, #[comptime] slot: usize) -> &Tile<Rhs> {
-        self.b.index(slot)
+    /// Contract this lane into `out` at `region`. TMA waits the lane's fill (`full`, RAW), reads,
+    /// then releases the slot (`empty`) and flips the phase; the strided lane already rendezvoused
+    /// in `load`, so it reads straight through.
+    pub fn mma<Acc: Numeric>(&mut self, out: &mut Tile<Acc>, region: Region) {
+        if comptime!(self.barriers.len() > 0) {
+            let full = self.barriers.index(0);
+            let empty = self.barriers.index(1);
+            full.wait_parity(self.phase);
+            out.at(&region).mma(&self.a, &self.b);
+            empty.arrive();
+            self.phase = self.phase ^ 1;
+        } else {
+            out.at(&region).mma(&self.a, &self.b);
+        }
     }
 }

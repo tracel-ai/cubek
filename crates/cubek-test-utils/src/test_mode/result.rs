@@ -21,7 +21,23 @@
 //!    - Call [`TestDecision::enforce`] to actually fail the test.
 
 use crate::test_mode::base::decide;
+use cubecl::{TestRuntime, prelude::ComputeClient};
 use std::fmt::Display;
+
+/// CPU-only routines (e.g. `cpu_gemm`, where a plane is a thread) compute the wrong result
+/// on a GPU backend. Records a `Skipped` outcome and returns `true` when `client` is not a
+/// CPU backend (`num_cpu_cores` is `None`), so the caller can bail out of the test.
+#[track_caller]
+pub fn skip_unless_cpu(client: &ComputeClient<TestRuntime>) -> bool {
+    if client.properties().hardware.num_cpu_cores.is_none() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "needs a CPU backend; this runtime reports no CPU cores".to_string(),
+        ))
+        .enforce();
+        return true;
+    }
+    false
+}
 
 #[derive(Debug)]
 /// Whether a kernel was executed (without regard to correctness)

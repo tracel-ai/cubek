@@ -3,11 +3,7 @@ use cubecl::prelude::*;
 use crate::{dequantize::Dequantize, *};
 
 #[cube]
-pub(crate) fn dequantize_direct<
-    I: CubePrimitive,
-    S: CubePrimitive,
-    O: CubePrimitive + Dequantize<I, S>,
->(
+pub(crate) fn dequantize_direct<I: Numeric, S: Numeric, O: Numeric + Dequantize<I, S>>(
     input: &Tile<I>,
     scales: &Tile<S>,
     output: &mut Tile<O>,

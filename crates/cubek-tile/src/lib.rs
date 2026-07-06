@@ -4,12 +4,11 @@
 mod load;
 mod matmul;
 mod partitioner;
-mod payload;
 mod quantization;
-mod ring;
 mod space;
 mod stream;
 mod tile;
+mod tile_kind;
 mod view;
 
 // The layout-request vocabulary and `Axis`/`MAX_AXES` live in the leaf `cubek-layout` crate,
@@ -17,10 +16,9 @@ mod view;
 pub use cubek_layout::*;
 pub use load::*;
 pub use partitioner::*;
-pub use payload::*;
 pub use quantization::*;
-pub use ring::*;
 pub use space::*;
 pub use stream::*;
 pub use tile::*;
+pub use tile_kind::*;
 pub use view::*;
