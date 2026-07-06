@@ -7,11 +7,8 @@ use crate::{dequantize::schedule::dequantize_direct, *};
 #[cube]
 impl<O: Numeric> Tile<O> {
     /// naive implementation only for per tensor native
-    pub fn dequantize<I: Numeric, S: Numeric>(
-        &mut self,
-        input: &Tile<I>,
-        scales: &Tile<S>,
-    ) where
+    pub fn dequantize<I: Numeric, S: Numeric>(&mut self, input: &Tile<I>, scales: &Tile<S>)
+    where
         O: Dequantize<I, S>,
     {
         match comptime!(self.space.partitioner()) {

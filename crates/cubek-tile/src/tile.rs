@@ -432,7 +432,10 @@ impl<T: Numeric> MemData<T> {
     /// so the leaf masks without being asked.
     pub(crate) fn masked<W: Size>(&self, layout: BatchMatrix) -> MatrixView<'_, Vector<T, W>> {
         MaskedView::new(
-            self.lines::<W>().view(self.base()).view(self.window()).view(layout),
+            self.lines::<W>()
+                .view(self.base())
+                .view(self.window())
+                .view(layout),
             comptime!(self.check),
         )
     }
@@ -446,7 +449,10 @@ impl<T: Numeric> MemData<T> {
         let window = self.window();
         let check = comptime!(self.check);
         MaskedViewMut::new(
-            self.lines_mut::<W>().view_mut(base).view_mut(window).view_mut(layout),
+            self.lines_mut::<W>()
+                .view_mut(base)
+                .view_mut(window)
+                .view_mut(layout),
             check,
         )
     }
@@ -490,7 +496,11 @@ impl<T: Numeric> MemData<T> {
         let rows = comptime!(space.extent_at(rank - 2));
         let cols = comptime!(space.extent_at(rank - 1));
         // Leading (batch) extents are width-invariant, so a `Const<1>` regroup gives the right shape.
-        let shape = self.lines::<Const<1>>().view(self.base()).view(self.window()).shape();
+        let shape = self
+            .lines::<Const<1>>()
+            .view(self.base())
+            .view(self.window())
+            .shape();
         let mut batches = CoordsDyn::new();
         #[unroll]
         for p in 0..rank - 2 {

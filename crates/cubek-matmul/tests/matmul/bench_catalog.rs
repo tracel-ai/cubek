@@ -6,7 +6,9 @@ use cubecl::Runtime;
 use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, GemmProblem};
 use cubek_matmul::eval::benchmarks::gemv::{GemvCorrectness, GemvProblem};
 use cubek_matmul::strategy::Strategy;
-use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx, skip_unless_cpu};
+use cubek_test_utils::{
+    CatalogEntry, Correctness, TestOutcome, assert_equals_approx, skip_unless_cpu,
+};
 
 const SEEDS: [u64; 2] = [12, 34];
 
