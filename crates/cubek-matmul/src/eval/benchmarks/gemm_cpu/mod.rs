@@ -5,15 +5,29 @@ use cubek_test_utils::{CatalogEntry, RunSamples};
 use crate::eval::benchmarks::gemm::{self, GemmProblem};
 use crate::strategy::Strategy;
 
-/// CpuGemm vs the simple-unit baseline, plus the forced-tile mask probes. The forced
-/// tiles are diagnostic on the 512 square: `t64`/`t32` divide 512 (maskless), `t48`
-/// does not (masked).
-const STRATEGIES: &[&str] = &["simple_unit_min", "simple_unit_max", "cpu_gemm"];
+/// CpuGemm (auto plane grid) against the simple-unit baseline, plus the fast-core scaling
+/// probes (`fast_p1`→`fast_p16`) that fix the register-fit leaf (no spill) and fan out
+/// 1→16 worker threads — the multi-core study this category exists for: how the *fast*
+/// single-core instruction spreads across threads.
+const STRATEGIES: &[&str] = &[
+    "simple_unit_max",
+    "cpu_gemm",
+    "cpu_gemm_fast_p1",
+    "cpu_gemm_fast_p4",
+    "cpu_gemm_fast_p8",
+    "cpu_gemm_fast_p16",
+];
 
-/// Base shapes; the catalog expands each over all four layouts (rr/rc/cr/cc) and both
-/// precisions (f32/f16). The 512 square keeps the CPU reference cheap while still
-/// exercising the vectorized (row-major) and scalar (col-major) paths under masking.
-const SHAPES: &[&str] = &["rect_1x512x512x512"];
+/// Base shapes, restricted below to the row/row layout — the only layout CpuGemm
+/// vectorizes (rhs and output both N-contiguous), so the only one whose throughput is
+/// representative. The 512 square keeps the CPU reference cheap; `square_2x1024` gives the
+/// plane fan-out enough work to scale past launch overhead; `square_1x1536` is non-power-of-two
+/// so its plane grid divides evenly across a 12-core machine (the power-of-two squares can't).
+const SHAPES: &[&str] = &["rect_1x512x512x512", "square_2x1024", "square_1x1536"];
+
+/// The optimal (vectorized) layout: row-major lhs *and* rhs. The catalog encodes it as the
+/// `_rr_` segment of a problem id.
+const LAYOUT: &str = "_rr_";
 
 pub struct Category;
 
@@ -32,6 +46,7 @@ impl cubek_test_utils::Category for Category {
     fn problems(&self) -> Vec<CatalogEntry<GemmProblem>> {
         gemm::problems()
             .into_iter()
+            .filter(|p| p.id.contains(LAYOUT))
             .filter(|p| SHAPES.iter().any(|s| p.id.starts_with(&format!("{s}_"))))
             .collect()
     }

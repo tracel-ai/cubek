@@ -189,6 +189,16 @@ const SHAPES: &[ShapeSpec] = &[
         n: 512,
         k: 512,
     },
+    // Non-power-of-two square (= 512·3): its grid carries a factor of 3, so the CPU plane
+    // grid can split evenly across a 12-core machine where the power-of-two squares cannot.
+    ShapeSpec {
+        tag: "square_1x1536",
+        label: "Square (b=1 1536³)",
+        b: 1,
+        m: 1536,
+        n: 1536,
+        k: 1536,
+    },
     // Edge cases (degenerate dims).
     ShapeSpec {
         tag: "outer_2x8192x8192x1",
