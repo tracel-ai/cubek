@@ -1,4 +1,6 @@
-//! The concrete physical layout a [`LayoutRequest`](super::LayoutRequest) is tested against.
+//! The concrete physical layout of a stored buffer: its axes in major-to-minor order, with a
+//! storage-tiled axis contributing several fragments. Built from a real tensor and its
+//! [`Storage`](crate::Storage) at realization; constructed directly in tests.
 
 use cubecl::zspace::SmallVec;
 
@@ -86,47 +88,5 @@ impl ConcreteLayout {
             .iter()
             .position(|a| self.axes.iter().filter(|b| b.axis == a.axis).count() > 1)
             .unwrap_or(0)
-    }
-
-    pub(super) fn innermost(&self) -> Option<Axis> {
-        self.axes.last().map(|a| a.axis)
-    }
-
-    /// Labels of the largest physical suffix all of whose axes pass `keep`, innermost first.
-    /// The innermost contiguous block, used to test the [`Minor`](super::Facet::Minor) facet.
-    pub(super) fn inner_block(&self, keep: impl Fn(Axis) -> bool) -> SmallVec<[Axis; MAX_AXES]> {
-        let mut block = SmallVec::new();
-        for a in self.axes.iter().rev() {
-            if !keep(a.axis) {
-                break;
-            }
-            block.push(a.axis);
-        }
-        block
-    }
-
-    /// The leaf (innermost-fragment) extent of `axis` when it is storage-tiled, i.e. it
-    /// contributes more than one physical axis; `None` for a plain single-fragment axis.
-    pub(super) fn leaf_edge(&self, axis: Axis) -> Option<usize> {
-        let frags: SmallVec<[usize; MAX_AXES]> = self
-            .axes
-            .iter()
-            .filter(|a| a.axis == axis)
-            .map(|a| a.extent)
-            .collect();
-        // Untiled (one fragment) is not storage-tiled; the leaf is the innermost (last) one.
-        (frags.len() > 1).then(|| *frags.last().unwrap())
-    }
-
-    /// Logical extent of `axis`: the product of its physical fragments.
-    pub(super) fn extent(&self, axis: Axis) -> usize {
-        let mut found = false;
-        let mut extent = 1;
-        for a in self.axes.iter().filter(|a| a.axis == axis) {
-            found = true;
-            extent *= a.extent;
-        }
-        assert!(found, "ConcreteLayout::extent: axis not present");
-        extent
     }
 }

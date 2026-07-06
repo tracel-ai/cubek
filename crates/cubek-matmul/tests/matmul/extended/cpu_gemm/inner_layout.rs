@@ -199,37 +199,6 @@ impl From<MatrixLayout> for InnerLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubek_tile::{AxisSet, Constraint, Facet, LayoutRequest};
-
-    const A: Axis = Axis(0); // matrix row axis
-    const B: Axis = Axis(1); // matrix col axis
-
-    fn wants_innermost(axis: Axis) -> LayoutRequest {
-        LayoutRequest::new().with(Constraint::required(Facet::Innermost(AxisSet::one(axis))))
-    }
-
-    #[test]
-    fn row_major_puts_col_innermost() {
-        let layout = InnerLayout::RowMajor.to_concrete([A, B], 8, 4);
-        assert!(wants_innermost(B).feasible(&layout));
-        assert!(!wants_innermost(A).feasible(&layout));
-    }
-
-    #[test]
-    fn col_major_puts_row_innermost() {
-        let layout = InnerLayout::ColMajor.to_concrete([A, B], 8, 4);
-        assert!(wants_innermost(A).feasible(&layout));
-        assert!(!wants_innermost(B).feasible(&layout));
-    }
-
-    #[test]
-    fn tiled_keeps_col_innermost_and_records_tiling() {
-        let layout = InnerLayout::square_tiled(4).to_concrete([A, B], 16, 16);
-        assert!(wants_innermost(B).feasible(&layout));
-        let wants_tiled =
-            LayoutRequest::new().with(Constraint::required(Facet::Tiled { axis: B, edge: 4 }));
-        assert!(wants_tiled.feasible(&layout));
-    }
 
     #[test]
     fn deduces_row_major_from_contiguous_cols() {
