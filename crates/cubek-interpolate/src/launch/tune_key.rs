@@ -1,3 +1,4 @@
+use crate::definition::InterpolateMode;
 use cubecl::{AutotuneKey, ir::ElemType};
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct InterpolateAutotuneKey {
     elem_input: ElemType,
     elem_output: ElemType,
+    mode: InterpolateMode,
 
     /// Whether the number of channels is a power of 4, which allows for more efficient vectorized processing.
     ///
@@ -43,6 +45,7 @@ impl InterpolateAutotuneKey {
     pub fn generate(
         elem_input: ElemType,
         elem_output: ElemType,
+        mode: InterpolateMode,
         input_shape: &[usize],
         output_size: &[usize; 2],
     ) -> Self {
@@ -56,6 +59,7 @@ impl InterpolateAutotuneKey {
         InterpolateAutotuneKey::new(
             elem_input,
             elem_output,
+            mode,
             channels_power_of_4,
             channels,
             output_height,
