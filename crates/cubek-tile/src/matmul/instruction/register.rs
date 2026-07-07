@@ -119,7 +119,10 @@ fn outer_product<E: Numeric, EL: Numeric, ER: Numeric, L: Size, V: Size>(
         let a = Vector::<E, V>::cast_from(scalar);
         #[unroll(unroll)]
         for j in 0..nr {
-            c[i * nr + j] += a * b[j];
+            // Explicit fused multiply-add: `+= a * b` lowers to a separate mul + dependent add
+            // (no fast-math contraction on the CPU backend), which doubles the FP instruction
+            // count and serializes the accumulate. `fma` emits one fused op (`fmla`).
+            c[i * nr + j] = fma(a, b[j], c[i * nr + j]);
         }
     }
 }
