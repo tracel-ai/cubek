@@ -153,9 +153,18 @@ pub fn launch_ref<R: Runtime>(
     // reading `Vector<E, V>` lands on whole lines. Col-major falls back to scalar (`V = 1`), as does
     // a width that doesn't divide the innermost extent — the logical `N` when strided, the leaf tile
     // edge when packed. `lhs` is always scalar (broadcast per `K`), so its layout never matters.
+    //
+    // Also require an exactly-divisible tiling (no overhang). A `Vector<E, V>` tile is served by
+    // re-lining the scalar buffer, and that line view reports its length in *lines* (`scalars / V`)
+    // while the leaf addresses it with scalar-unit strides. The unchecked (divisible) path never
+    // consults that length, but a masked (overhang) access does and would wrongly clip valid rows —
+    // so the edge-masked path stays scalar and vectorization is the divisible fast path.
+    let no_overhang = m.is_multiple_of(blueprint.planes.m * blueprint.instruction.m)
+        && n.is_multiple_of(blueprint.planes.n * blueprint.instruction.n)
+        && k.is_multiple_of(blueprint.instruction.k);
     let rhs_inner = *rhs.shape().last().unwrap();
     let out_inner = *out.shape.last().unwrap();
-    let v = (vectorizes_n(&rhs.data().strides) && vectorizes_n(&out.strides))
+    let v = (no_overhang && vectorizes_n(&rhs.data().strides) && vectorizes_n(&out.strides))
         .then(|| {
             client
                 .io_optimized_vector_sizes(sz)

@@ -162,11 +162,10 @@ pub struct TmaData<T: Numeric> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Wrap a launched scalar [`Tensor`] into a whole `Gmem` tile. The borrow is erased into a `Box`
-    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). The tensor's
-    /// shape/strides are scalar-unit; re-express them as `Vector<T, vector_size>` lines along the
-    /// contiguous innermost axis — its extent and every coarser stride shrink by `vector_size` (a
-    /// no-op at `vector_size == 1`) — so the line-unit layout addresses the buffer once the leaf
-    /// re-groups it into `Vector<T, vector_size>`.
+    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). The leaf reads
+    /// a `Vector<T, vector_size>` at the strides' *scalar* offset, so strides stay scalar-unit: only
+    /// the contiguous innermost axis changes — its extent counts lines (`/ vector_size`) and its step
+    /// widens to `vector_size` scalars per line (all a no-op at `vector_size == 1`).
     pub fn from_tensor(
         tensor: &Tensor<T>,
         #[comptime] vector_size: usize,
@@ -186,12 +185,14 @@ impl<T: Numeric> Tile<T> {
             let extent = tensor.shape(i) as u32;
             let stride = tensor.stride(i) as u32;
             if comptime!(i == last) {
-                // Innermost (contiguous, stride 1): its extent counts scalars → count lines.
+                // Innermost (contiguous, stride 1): its extent counts lines (`extent / w`) and one
+                // line step is `w` scalars. The leaf reads a `Vector<T, w>` at the strides' scalar
+                // offset, so strides stay in scalar units — the innermost step widens to `w`.
                 physical_shape.push(extent / w);
-                physical_strides.push(stride);
+                physical_strides.push(stride * w);
             } else {
                 physical_shape.push(extent);
-                physical_strides.push(stride / w);
+                physical_strides.push(stride);
             }
         }
         let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
@@ -219,14 +220,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Wrap a shared-memory buffer as a whole `Smem` tile. Row-major over `space`; the borrow is
-    /// erased into a `Box`. `vector_size` is the buffer's physical vectorization (the staged operand's
-    /// line size); the scalar-element slice has `space.tile_size() * vector_size` entries.
-    pub fn smem(
-        smem: &Shared<[T]>,
-        #[comptime] space: Space,
-        #[comptime] vector_size: usize,
-    ) -> Tile<T> {
+    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `self`, at the
+    /// same physical width. The one-liner staging schedules reach for — `lhs.smem_like()` instead of
+    /// hand-rolling a `Shared` slice, its size, and a `Tile::smem`.
+    pub fn smem_like(&self) -> Tile<T> {
+        Tile::smem(comptime!(self.space.divide()), comptime!(self.vector_size))
+    }
+
+    /// Allocate a shared-memory tile row-major over `space`, at physical `vector_size`. The scalar
+    /// slice (`space.tile_size() * vector_size` entries) is allocated here and erased into a `Box`.
+    pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
+        let smem = Shared::<[T]>::new_slice(space.tile_size() * vector_size);
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
         let (physical_shape, physical_strides) = row_major(comptime!(space.clone()));
         let (origin, extent) = full_window(comptime!(space.clone()));
@@ -306,46 +310,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The barrier pairs sequencing a two-lane double buffer that fills this tile and `rhs`. TMA on
-    /// both sides → each lane a `full`/`empty` mbarrier pair (`full` one producer arrival, `empty`
-    /// one per unit), sealed by a proxy fence before any bulk copy; strided on both → empty pairs,
-    /// and the lanes rendezvous on `sync_cube` instead. The delivery decision never leaves the tile
-    /// — the caller is told the barriers, not asked the kind.
-    ///
-    /// Delivery must be uniform: a mixed pair (exactly one TMA source) would silently collapse to
-    /// per-region synchronous staging, so it is rejected at comptime instead.
-    pub fn double_buffer_barriers<U: Numeric>(
-        &self,
-        rhs: &Tile<U>,
-    ) -> (Sequence<Shared<Barrier>>, Sequence<Shared<Barrier>>) {
-        #[allow(clippy::match_like_matches_macro)]
-        let lhs_tma = match &self.tile_kind {
-            TileKind::TmaGmem(_) => true,
-            _ => false,
-        };
-        #[allow(clippy::match_like_matches_macro)]
-        let rhs_tma = match &rhs.tile_kind {
-            TileKind::TmaGmem(_) => true,
-            _ => false,
-        };
-        if lhs_tma != rhs_tma {
-            panic!(
-                "double_buffer_barriers: mixed delivery — both operands must be TMA sources or neither"
-            );
-        }
-        let mut bar0 = Sequence::<Shared<Barrier>>::new();
-        let mut bar1 = Sequence::<Shared<Barrier>>::new();
-        if lhs_tma && rhs_tma {
-            bar0.push(Barrier::shared(1, UNIT_POS == 0));
-            bar0.push(Barrier::shared(CUBE_DIM, UNIT_POS == 0));
-            bar1.push(Barrier::shared(1, UNIT_POS == 0));
-            bar1.push(Barrier::shared(CUBE_DIM, UNIT_POS == 0));
-            sync_async_proxy_shared();
-            sync_cube();
-        }
-        (bar0, bar1)
-    }
-
     /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData) folded
     /// from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's tile count, so
     /// one kernel serves any shape. A cmma fragment has no buffer extent.
@@ -420,10 +384,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Transit `src` into `self` across a level. A fragment goes through cmma
-    /// load/store, memory to memory is an element copy. Moves data (unlike
+    /// Whether this operand is delivered by TMA (an async hardware bulk-copy source) rather than a
+    /// strided element copy. Comptime (the tile kind is fixed at trace); drives the staging sync.
+    #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
+    pub fn is_tma(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::TmaGmem(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Copy `src` into `self` across a level. A fragment goes through cmma load/store, a TMA source
+    /// through a hardware bulk copy, memory to memory is an element copy. Moves data (unlike
     /// [`at`](Tile::at)); sync after.
-    pub fn stage(&mut self, src: &Tile<T>) {
+    pub fn copy_from(&mut self, src: &Tile<T>) {
         // Read both tile-kind variants first, then branch, to avoid nesting a self-method
         // call inside a tile_kind borrow.
         // `matches!` isn't supported inside `#[cube]`, so spell out the match.
@@ -646,8 +620,11 @@ impl<T: Numeric> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
-    /// The scalar buffer re-grouped into `Vector<T, W>` lines, so the line-unit base/window layouts
-    /// address it. `W` is the store's physical [`vector_size`](Tile::vector_size).
+    /// The scalar buffer re-grouped into `Vector<T, W>` lines, so the base/window layouts address it.
+    /// `W` is the store's physical [`vector_size`](Tile::vector_size). The leaf dots the scalar-unit
+    /// strides for the offset and reads a `Vector<T, W>` at that scalar position; the re-grouped view
+    /// reports its length in *lines* (`scalars / W`), so an unchecked read is fine but a checked one
+    /// clips against the line count — hence vectorization is gated to the no-overhang path in launch.
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.buffer.as_vectorized().with_vector_size::<W>()
     }

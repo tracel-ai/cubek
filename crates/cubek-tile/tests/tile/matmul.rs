@@ -901,11 +901,9 @@ fn cmma_roundtrip<E: Numeric>(
 ) {
     let a = input.tile();
     let space = comptime!(a.space.clone());
-    let size = comptime!(space.tile_size());
 
-    let smem_in = Shared::<[E]>::new_slice(size);
-    let mut a_smem = Tile::smem(&smem_in, comptime!(space.clone()), 1usize);
-    a_smem.stage(&a);
+    let mut a_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    a_smem.copy_from(&a);
     sync_cube();
 
     let mut frag = Tile::<E>::cmma_fragment(
@@ -916,15 +914,14 @@ fn cmma_roundtrip<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(space.clone()),
     );
-    frag.stage(&a_smem);
+    frag.copy_from(&a_smem);
 
-    let smem_out = Shared::<[E]>::new_slice(size);
-    let mut c_smem = Tile::smem(&smem_out, comptime!(space.clone()), 1usize);
-    c_smem.stage(&frag);
+    let mut c_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    c_smem.copy_from(&frag);
     sync_cube();
 
     let mut c = output.tile();
-    c.stage(&c_smem);
+    c.copy_from(&c_smem);
 }
 
 /// A real 8×8×8 matmul through tensor cores: `C = A · B`, contracted by `cmma::execute`
@@ -985,17 +982,14 @@ fn cmma_matmul<E: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
 
-    let a_smem = Shared::<[E]>::new_slice(comptime!(a.space.tile_size()));
-    let mut a_smem_tile = Tile::smem(&a_smem, comptime!(a.space.clone()), 1usize);
-    a_smem_tile.stage(&a);
+    let mut a_smem_tile = Tile::smem(comptime!(a.space.clone()), 1usize);
+    a_smem_tile.copy_from(&a);
 
-    let b_smem = Shared::<[E]>::new_slice(comptime!(b.space.tile_size()));
-    let mut b_smem_tile = Tile::smem(&b_smem, comptime!(b.space.clone()), 1usize);
-    b_smem_tile.stage(&b);
+    let mut b_smem_tile = Tile::smem(comptime!(b.space.clone()), 1usize);
+    b_smem_tile.copy_from(&b);
 
-    let c_smem = Shared::<[E]>::new_slice(comptime!(c.space.tile_size()));
-    let mut c_smem_tile = Tile::smem(&c_smem, comptime!(c.space.clone()), 1usize);
-    c_smem_tile.stage(&c);
+    let mut c_smem_tile = Tile::smem(comptime!(c.space.clone()), 1usize);
+    c_smem_tile.copy_from(&c);
     sync_cube();
 
     let mut a_frag = Tile::<E>::cmma_fragment(
@@ -1006,7 +1000,7 @@ fn cmma_matmul<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(a.space.clone()),
     );
-    a_frag.stage(&a_smem_tile);
+    a_frag.copy_from(&a_smem_tile);
 
     let mut b_frag = Tile::<E>::cmma_fragment(
         MatrixIdent::B,
@@ -1016,7 +1010,7 @@ fn cmma_matmul<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(b.space.clone()),
     );
-    b_frag.stage(&b_smem_tile);
+    b_frag.copy_from(&b_smem_tile);
 
     let mut acc = Tile::<E>::cmma_fragment(
         MatrixIdent::Accumulator,
@@ -1026,11 +1020,11 @@ fn cmma_matmul<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(c.space.clone()),
     );
-    acc.stage(&c_smem_tile);
+    acc.copy_from(&c_smem_tile);
 
     acc.mma(&a_frag, &b_frag);
 
-    c_smem_tile.stage(&acc);
+    c_smem_tile.copy_from(&acc);
     sync_cube();
-    c.stage(&c_smem_tile);
+    c.copy_from(&c_smem_tile);
 }
