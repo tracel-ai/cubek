@@ -2,10 +2,13 @@
 
 #![cfg(feature = "benchmarks")]
 
+use cubecl::Runtime;
 use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, GemmProblem};
 use cubek_matmul::eval::benchmarks::gemv::{GemvCorrectness, GemvProblem};
 use cubek_matmul::strategy::Strategy;
-use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
+use cubek_test_utils::{
+    CatalogEntry, Correctness, TestOutcome, assert_equals_approx, skip_unless_cpu,
+};
 
 const SEEDS: [u64; 2] = [12, 34];
 
@@ -80,6 +83,10 @@ fn gemm_square_1x6144_rr_f16() {
 /// path). `vecmat` keeps the CPU reference cheap (`m = 1`).
 #[test]
 fn gemm_cpu_gemm_vecmat_2x1x4096x4096_rr_f32() {
+    let client = cubecl::TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     run_gemm("cpu_gemm", "vecmat_2x1x4096x4096_rr_f32");
 }
 

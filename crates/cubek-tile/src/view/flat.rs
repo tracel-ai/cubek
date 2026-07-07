@@ -75,24 +75,21 @@ impl Layout for FlatLayout {
 }
 
 #[cube]
-impl<T: CubePrimitive> Tile<T> {
-    /// A flat 1-D masked view: a row-major scan over the tile's window, masking the overhang
-    /// per its comptime `check` flag. The elementwise twin of [`matrix`](Tile::matrix).
-    pub fn flat(&self) -> FlatView<'_, T> {
-        match &self.payload {
-            Payload::Gmem(g) => g.flat(),
-            Payload::Smem(g) => g.flat(),
-            Payload::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
-            Payload::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
+impl<T: Numeric> Tile<T> {
+    /// A flat 1-D masked view over `Vector<T, W>` lines (`W` = [`width`](Tile::width)): a row-major
+    /// scan over the tile's window, masking the overhang per its comptime `check` flag. The
+    /// elementwise twin of [`matrix`](Tile::matrix).
+    pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat::<W>(),
+            TileKind::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
         }
     }
 
-    pub fn flat_mut(&mut self) -> FlatViewMut<'_, T> {
-        match &mut self.payload {
-            Payload::Gmem(g) => g.flat_mut(),
-            Payload::Smem(g) => g.flat_mut(),
-            Payload::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
-            Payload::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
+    pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
+            TileKind::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
         }
     }
 }

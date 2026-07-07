@@ -1,13 +1,12 @@
 use cubecl::{
     TestRuntime,
-    client::ComputeClient,
-    ir::{ElemType, StorageType},
-    prelude::CubePrimitive,
+    ir::ElemType,
+    prelude::*,
+    quant::scheme::QuantStore,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
 use cubecl_common::quant::scheme::QuantScheme;
-use cubek_quant::scheme::QuantStore;
 
 use crate::test_tensor::{
     arange::build_arange,

@@ -19,15 +19,26 @@ fn cpu_gemm_forced(
     plane_m: usize,
     plane_n: usize,
 ) -> CatalogEntry<Strategy> {
+    cpu_gemm_leaf(tag, label, tile, tile, tile, plane_m, plane_n)
+}
+
+/// Forced CpuGemm with an explicit (non-square) leaf and plane grid. Used for the fast-core
+/// scaling study: fix the register-fit leaf and vary the worker-thread count.
+#[allow(clippy::too_many_arguments)]
+fn cpu_gemm_leaf(
+    tag: &'static str,
+    label: &'static str,
+    m: usize,
+    n: usize,
+    k: usize,
+    plane_m: usize,
+    plane_n: usize,
+) -> CatalogEntry<Strategy> {
     CatalogEntry::new(
         tag,
         label,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
-                m: tile,
-                n: tile,
-                k: tile,
-            },
+            instruction: Instruction { m, n, k },
             planes: PlaneGrid {
                 m: plane_m,
                 n: plane_n,
@@ -161,5 +172,43 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
         cpu_gemm_forced("cpu_gemm_p2", "CpuGemm (64³, 2 planes)", 64, 2, 1),
         cpu_gemm_forced("cpu_gemm_p4", "CpuGemm (64³, 4 planes)", 64, 2, 2),
         cpu_gemm_forced("cpu_gemm_p8", "CpuGemm (64³, 8 planes)", 64, 4, 2),
+        // Fast-core scaling: fix the register-fit leaf (2×32×64, no spill — the optimized
+        // instruction) and scale the worker threads 1 → 16. Measures how the *fast* core spreads.
+        cpu_gemm_leaf(
+            "cpu_gemm_fast_p1",
+            "CpuGemm (fast leaf, 1 thread)",
+            2,
+            32,
+            64,
+            1,
+            1,
+        ),
+        cpu_gemm_leaf(
+            "cpu_gemm_fast_p4",
+            "CpuGemm (fast leaf, 4 threads)",
+            2,
+            32,
+            64,
+            2,
+            2,
+        ),
+        cpu_gemm_leaf(
+            "cpu_gemm_fast_p8",
+            "CpuGemm (fast leaf, 8 threads)",
+            2,
+            32,
+            64,
+            4,
+            2,
+        ),
+        cpu_gemm_leaf(
+            "cpu_gemm_fast_p16",
+            "CpuGemm (fast leaf, 16 threads)",
+            2,
+            32,
+            64,
+            8,
+            2,
+        ),
     ]
 }

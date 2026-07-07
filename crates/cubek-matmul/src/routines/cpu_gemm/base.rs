@@ -27,7 +27,7 @@
 use std::fmt::Display;
 
 use cubecl::Runtime;
-use cubek_tile::{Axis, AxisSet, Constraint, Facet, LayoutRequest};
+use cubek_tile::Axis;
 
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
@@ -144,31 +144,6 @@ impl Display for CpuGemmStrategy {
     }
 }
 
-/// The per-operand layout wishes a matmul strategy declares. Burn pairs a relayout with the
-/// strategy to satisfy these; the kernel still runs on whatever it is handed.
-#[allow(dead_code)]
-pub struct MatmulLayoutRequest {
-    pub lhs: LayoutRequest,
-    pub rhs: LayoutRequest,
-    pub out: LayoutRequest,
-}
-
-impl CpuGemmStrategy {
-    /// CpuGemm vectorizes over `N`, so it wants `N` innermost (contiguous) on `rhs` and the
-    /// output. `lhs` is broadcast scalar, so its layout is free. Preferred, not required: the
-    /// kernel falls back to scalar when a delivered operand puts another axis innermost.
-    #[allow(dead_code)]
-    pub fn layout_request() -> MatmulLayoutRequest {
-        let n_innermost =
-            || LayoutRequest::new().with(Constraint::preferred(Facet::Innermost(AxisSet::one(N))));
-        MatmulLayoutRequest {
-            lhs: LayoutRequest::new(),
-            rhs: n_innermost(),
-            out: n_innermost(),
-        }
-    }
-}
-
 /// Pairs the [`CpuGemmStrategy`] knob with the [`CpuGemmBlueprint`] plan.
 pub struct CpuGemmRoutine;
 
@@ -262,31 +237,5 @@ impl CpuGemmRoutine {
             instruction,
             planes,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cubek_tile::{ConcreteLayout, PhysicalAxis};
-
-    // A 16×16 matrix laid out physical major-to-minor over `[outer, inner]` (inner contiguous).
-    fn physical(outer: Axis, inner: Axis) -> ConcreteLayout {
-        ConcreteLayout::new(&[PhysicalAxis::new(outer, 16), PhysicalAxis::new(inner, 16)])
-    }
-
-    #[test]
-    fn cpu_gemm_prefers_n_innermost_on_rhs_and_out() {
-        let req = CpuGemmStrategy::layout_request();
-
-        // The preferred wish is met exactly when N is contiguous (innermost), mirroring the
-        // kernel's vectorize-vs-scalar condition on rhs and out.
-        assert_eq!(req.rhs.preference(&physical(K, N)), 1);
-        assert_eq!(req.rhs.preference(&physical(N, K)), 0);
-        assert_eq!(req.out.preference(&physical(M, N)), 1);
-        assert_eq!(req.out.preference(&physical(N, M)), 0);
-
-        // lhs is broadcast scalar: no layout wish.
-        assert!(req.lhs.constraints.is_empty());
     }
 }

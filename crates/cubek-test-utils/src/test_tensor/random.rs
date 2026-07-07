@@ -4,8 +4,13 @@ use cubecl::{
     zspace::{Shape, Strides},
     {TestRuntime, prelude::*},
 };
+use rand::{SeedableRng, rngs::StdRng};
 
-use crate::{BaseInputSpec, Distribution, test_tensor::strides::physical_extent};
+use crate::{
+    BaseInputSpec, Distribution,
+    stubs::random::random_data,
+    test_tensor::{custom::cast_f32_to_dtype, strides::physical_extent},
+};
 
 fn random_tensor_handle(
     client: &ComputeClient<TestRuntime>,
@@ -21,30 +26,19 @@ fn random_tensor_handle(
     // strides — not just `shape.product()`. Jumpy strides (e.g. a slice that
     // steps over padding) need more room; broadcast strides (0) need less.
     let physical_len = physical_extent(&Shape::from(tensor_shape.to_vec()), &Strides::new(strides));
-    let tensor_handle = TensorHandle::empty(client, vec![physical_len], dtype);
 
-    // Hold the random-seed guard across the seed-set and the kernel launch so
-    // tests running in parallel can't stomp on each other's seeded state.
-    cubek_random::with_seed(seed, || match distribution {
-        Distribution::Uniform(lower, upper) => cubek_random::random_uniform(
-            client,
-            lower,
-            upper,
-            tensor_handle.clone().binding(),
-            dtype,
-        )
-        .unwrap(),
-        Distribution::Bernoulli(prob) => {
-            cubek_random::random_bernoulli(client, prob, tensor_handle.clone().binding(), dtype)
-                .unwrap()
-        }
-        Distribution::Normal { mean, std } => {
-            cubek_random::random_normal(client, mean, std, tensor_handle.clone().binding(), dtype)
-                .unwrap()
-        }
-    });
+    let mut rng = StdRng::seed_from_u64(seed);
+    let data = random_data(&mut rng, distribution, physical_len);
 
-    tensor_handle
+    let bytes = cast_f32_to_dtype(&data, dtype);
+    let handle = client.create_from_slice(&bytes);
+
+    TensorHandle::new(
+        handle,
+        Shape::from(vec![physical_len]),
+        Strides::new(&[1]),
+        dtype,
+    )
 }
 
 pub(crate) fn build_random(

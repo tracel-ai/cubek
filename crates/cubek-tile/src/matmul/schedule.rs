@@ -5,17 +5,17 @@
 
 use cubecl::prelude::*;
 
-use crate::{matmul::instruction::Mma, *};
+use crate::*;
 
 /// `Direct`: no staging
 #[cube]
-pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
+pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
 ) where
-    Acc: CubePrimitive + Mma<Lhs, Rhs>,
+    Acc: Numeric,
 {
     for region in Walk::over(space) {
         out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
@@ -25,22 +25,25 @@ pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
 /// `Staged`: stage each operand sub-tile into shared memory, then recurse. Each buffer keeps
 /// its own served type.
 #[cube]
-pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
+pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
 ) where
-    Acc: CubePrimitive + Mma<Lhs, Rhs>,
+    Acc: Numeric,
 {
     // The buffer's space is this level's divide, so it mirrors what `at` produces and
-    // carries any remaining finer levels.
+    // carries any remaining finer levels. Each smem buffer is staged at its source operand's
+    // physical width, so the scalar slice holds `tile_size * width` entries.
     let a_sub = comptime!(lhs.space.divide());
     let b_sub = comptime!(rhs.space.divide());
-    let a_smem = Shared::<[Lhs]>::new_slice(a_sub.tile_size());
-    let b_smem = Shared::<[Rhs]>::new_slice(b_sub.tile_size());
-    let mut a_tile = Tile::smem(&a_smem, a_sub);
-    let mut b_tile = Tile::smem(&b_smem, b_sub);
+    let a_width = comptime!(lhs.vector_size);
+    let b_width = comptime!(rhs.vector_size);
+    let a_smem = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
+    let b_smem = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
+    let mut a_tile = Tile::smem(&a_smem, a_sub, a_width);
+    let mut b_tile = Tile::smem(&b_smem, b_sub, b_width);
 
     for region in Walk::over(space) {
         a_tile.stage(&lhs.at(&region));
@@ -52,27 +55,30 @@ pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
 /// `DoubleBuffered`: two staged buffers per operand, prefetching the next region into the idle
 /// slot while computing the current one.
 #[cube]
-pub(crate) fn mma_double<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
+pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
 ) where
-    Acc: CubePrimitive + Mma<Lhs, Rhs>,
+    Acc: Numeric,
 {
-    // Allocated here in caller scope because a view-backed buffer must outlive the ring.
+    // Allocated here in caller scope because a view-backed buffer must outlive the ring. Each smem
+    // buffer is staged at its source operand's physical width (`tile_size * width` scalar entries).
     let a_sub = comptime!(lhs.space.divide());
     let b_sub = comptime!(rhs.space.divide());
-    let a0 = Shared::<[Lhs]>::new_slice(a_sub.tile_size());
-    let a1 = Shared::<[Lhs]>::new_slice(a_sub.tile_size());
-    let b0 = Shared::<[Rhs]>::new_slice(b_sub.tile_size());
-    let b1 = Shared::<[Rhs]>::new_slice(b_sub.tile_size());
+    let a_width = comptime!(lhs.vector_size);
+    let b_width = comptime!(rhs.vector_size);
+    let a0 = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
+    let a1 = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
+    let b0 = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
+    let b1 = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
     let mut a_buf = Sequence::new();
-    a_buf.push(Tile::smem(&a0, comptime!(a_sub.clone())));
-    a_buf.push(Tile::smem(&a1, comptime!(a_sub.clone())));
+    a_buf.push(Tile::smem(&a0, comptime!(a_sub.clone()), a_width));
+    a_buf.push(Tile::smem(&a1, comptime!(a_sub.clone()), a_width));
     let mut b_buf = Sequence::new();
-    b_buf.push(Tile::smem(&b0, comptime!(b_sub.clone())));
-    b_buf.push(Tile::smem(&b1, comptime!(b_sub.clone())));
+    b_buf.push(Tile::smem(&b0, comptime!(b_sub.clone()), b_width));
+    b_buf.push(Tile::smem(&b1, comptime!(b_sub.clone()), b_width));
     let mut a = Ring::new(a_buf);
     let mut b = Ring::new(b_buf);
 

@@ -8,6 +8,7 @@ pub use cubek_interpolate::eval::benchmarks as interpolate;
 pub use cubek_linalg::eval::benchmarks as qr;
 pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
+pub use cubek_matmul::eval::benchmarks::gemm_cpu_tiled;
 pub use cubek_matmul::eval::benchmarks::gemv;
 pub use cubek_matmul::eval::benchmarks::quantized_matmul;
 pub use cubek_pool::eval::benchmarks as pool;
@@ -31,6 +32,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::fft::Category,
         &crate::gemm::Category,
         &crate::gemm_cpu::Category,
+        &crate::gemm_cpu_tiled::Category,
         &crate::gemv::Category,
         &crate::interpolate::Category,
         &crate::memcpy_async::Category,
