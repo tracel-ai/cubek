@@ -318,9 +318,9 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => t.bound[p] as usize,
             TileKind::Cmma(_) => panic!("Tile::runtime_extent: a cmma fragment has no extent"),
         };
-        // `Space` is conceptual, but `bound` is a line count on the vectorized innermost axis (folded
-        // from the lined physical shape). The walk divides this by conceptual edges, so return the
-        // conceptual extent: line count × width. A no-op off the innermost axis and at width 1.
+        // `bound` is a line count on the vectorized innermost axis (folded from the lined physical
+        // shape); the walk divides by conceptual edges, so return line count × width. No-op off the
+        // innermost axis and at width 1.
         let last = comptime!(self.space.rank() - 1);
         let w = self.vector_size();
         comptime!(if p == last { w } else { 1usize }) * raw
@@ -746,7 +746,7 @@ impl<T: Numeric> MemData<T> {
         #[unroll]
         for p in 0..space.rank() {
             let axis = space.axis_at(p);
-            // `Space` is conceptual; the innermost (vectorized) axis's edge is a line count, `/ width`.
+            // The innermost (vectorized) axis's edge is a line count, so `/ width`.
             let edge = comptime!(if p == last {
                 space.partitioner().edge(axis) / self.vector_size
             } else {
@@ -836,8 +836,8 @@ fn top_window(
     for p in 0..space.rank() {
         origin.push(0);
         let axis = comptime!(space.axis_at(p));
-        // `Space` is conceptual; the innermost (vectorized) axis is a line count, `/ vector_size`. A
-        // `Dynamic` axis reads its size from `bound`, already lined from the physical shape.
+        // The innermost (vectorized) axis is a line count, `/ vector_size`. A `Dynamic` axis reads
+        // its size from `bound`, already lined from the physical shape.
         let size = match comptime!(space.extent_raw(axis)) {
             Extent::Static(e) => {
                 (comptime!(if p == last { e / vector_size } else { e }) as u32).runtime()
@@ -851,9 +851,9 @@ fn top_window(
 }
 
 /// Row-major physical shape/strides over `space`'s per-axis extents, stored in the smem [`MemData`]
-/// so it survives `at`'s space division. `Space` is conceptual: the innermost (vectorized) axis's
-/// extent is a line count (`/ vector_size`) and strides stay scalar-unit (its line step is
-/// `vector_size` scalars) — all a no-op at `vector_size == 1`.
+/// so it survives `at`'s space division. The innermost (vectorized) axis's extent is a line count
+/// (`/ vector_size`) and strides stay scalar-unit (its line step is `vector_size` scalars); all a
+/// no-op at `vector_size == 1`.
 #[cube]
 fn row_major(#[comptime] space: Space, #[comptime] vector_size: usize) -> (CoordsDyn, CoordsDyn) {
     let rank = space.rank();

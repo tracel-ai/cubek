@@ -43,12 +43,9 @@ pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     }
 }
 
-/// `DoubleBuffered`: two [`Staging`] slots, each a `(Tile<Lhs>, Tile<Rhs>)` payload. The schedule
-/// drives them `write`/`read`, `write`/`read`, alternating slots so one slot's fill overlaps the
-/// other's compute — `write` fills a slot's two buffers (`pipe.fill(&mut s.0, src)` per operand),
-/// `read` hands the staged pair to the mma. Each slot's synchronization (the `full`/`empty` mbarriers
-/// for an async fill, a cube-wide `sync_cube` for a strided one) is wrapped inside `write`/`read`, not
-/// here.
+/// `DoubleBuffered`: two [`Staging`] slots, each a `(Tile<Lhs>, Tile<Rhs>)` payload, driven
+/// `fill`/`consume` on alternating slots so one slot's fill overlaps the other's compute. Each slot's
+/// synchronization is wrapped inside `fill`/`consume`, not here.
 #[cube]
 pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,

@@ -187,7 +187,7 @@ pub fn launch_ref<R: Runtime>(
     // owns one leaf.
     let leaf = blueprint.instruction;
     let planes = blueprint.planes;
-    // `Space` is conceptual (scalar); the storage width `v` is applied inside the tile, never here.
+    // The storage width `v` is applied inside the tile, never here.
     let cube_m = planes.m * leaf.m;
     let cube_n = planes.n * leaf.n;
 

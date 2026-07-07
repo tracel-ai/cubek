@@ -1,19 +1,18 @@
 //! [`Staging`]: a matmul-agnostic double-buffer slot. It owns a payload `T` (for matmul, a
-//! `(Tile<Lhs>, Tile<Rhs>)` tuple) and a [`Pipeline`] that sequences the payload's fill against its
-//! read, and exposes exactly two scoped methods: [`write`](Staging::write) (producer) and
-//! [`read`](Staging::read) (consumer). Each acquires the slot, runs a closure over the payload, then
-//! releases — the rendezvous is never a call the caller makes, and no raw barrier ever escapes.
+//! `(Tile<Lhs>, Tile<Rhs>)` tuple) and a [`Pipeline`] sequencing the payload's fill against its read.
+//! `fill`/`consume` each acquire the slot, run a closure over the payload, then release: the caller
+//! never makes the rendezvous call, and no raw barrier escapes.
 //!
 //! The [`Barrier`](Sync::Barrier) strategy is the reference design (mirrors cubek-matmul's
 //! `specialized/matmul.rs`): a `full`/`empty` mbarrier pair with a `phase` parity, producer and
 //! consumer decoupled so a hardware bulk copy overlaps compute. `write` waits `empty` (WAR), the
 //! fill pushes an async copy onto `full`, `write` arrives `full`; `read` waits `full` (RAW), the
-//! body reads, `read` arrives `empty` and flips the phase. [`Cube`](Sync::Cube) (portable strided,
-//! one `sync_cube`) and [`Solo`](Sync::Solo) (single unit, no collective) are degenerate cases.
+//! body reads, `read` arrives `empty` and flips the phase. [`Cube`](Sync::Cube) (strided, one
+//! `sync_cube`) and [`Solo`](Sync::Solo) (single unit, no collective) are degenerate cases.
 //!
 //! A `Guard` with `Drop` would be the natural spelling, but a `Drop` can't emit a barrier op in
 //! cubecl (it never receives a `Scope`), so the release is emitted by the wrapper right after the
-//! closure body. And because `#[cube]` rejects `impl Trait` kernel args, `read`/`write` are
+//! closure body. And because `#[cube]` rejects `impl Trait` kernel args, `fill`/`consume` are
 //! hand-written expand methods (mirroring `ComptimeOption::map`) delegating to the [`Pipeline`].
 
 use cubecl::prelude::barrier::Barrier;
@@ -28,9 +27,8 @@ use crate::{Tile, TileExpand};
 pub enum Sync {
     /// One unit fills and reads its own slot: no collective (single-plane / CPU).
     Solo,
-    /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. Portable
-    /// (Metal has no mbarrier); the sync sits in `write` and covers both this slot's fill→read and
-    /// the sibling's read→refill.
+    /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
+    /// in `write` and covers both this slot's fill→read and the sibling's read→refill.
     Cube,
     /// Hardware async bulk copy (TMA): `full`/`empty` mbarrier pair with a `phase` parity, producer
     /// and consumer decoupled so the copy overlaps compute.
@@ -57,9 +55,8 @@ impl Sync {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum Pipeline {
-    /// Synchronous element copy. `collective` → rendezvous on one `sync_cube` per phase (portable;
-    /// Metal has no mbarrier); otherwise a single unit fills its own slot with no collective at all.
-    /// (`collective` is uniform across the cube, so the `sync_cube` guard is a warp-uniform branch.)
+    /// Synchronous element copy. `collective` → rendezvous on one `sync_cube` per phase; otherwise a
+    /// single unit fills its own slot with no collective at all.
     Cube { collective: bool },
     /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase` parity, so
     /// the fill overlaps compute. TMA is the fill that motivates it (the bulk copy lands the `full`
