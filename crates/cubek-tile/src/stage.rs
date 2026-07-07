@@ -39,7 +39,7 @@ pub enum Sync {
 
 impl Sync {
     /// Deduce the strategy from the operands' delivery: both async (TMA) → `Barrier`, both strided →
-    /// `Cube`. A mix would silently mis-stage, so it is rejected.
+    /// `Cube`. A mix is rejected.
     pub fn of(lhs_tma: bool, rhs_tma: bool) -> Sync {
         assert!(
             lhs_tma == rhs_tma,
