@@ -155,7 +155,15 @@ pub fn launch_ref<R: Runtime>(
     // edge when packed. `lhs` is always scalar (broadcast per `K`), so its layout never matters.
     let rhs_inner = *rhs.shape().last().unwrap();
     let out_inner = *out.shape.last().unwrap();
-    let v = (vectorizes_n(&rhs.data().strides) && vectorizes_n(&out.strides))
+    // Only the divisible (unchecked) path vectorizes: a masked read compares the computed
+    // *scalar* offset against the slice length, which `with_vector_size` reports in *lines*,
+    // so the guard clips valid rows/`K`-steps. An overhang in any axis flips a `check` flag on
+    // `rhs`/`out`, so we gate the whole line width on no overhang and let edge-masked shapes
+    // fall back to the scalar path.
+    let no_overhang = m.is_multiple_of(blueprint.planes.m * blueprint.instruction.m)
+        && n.is_multiple_of(blueprint.planes.n * blueprint.instruction.n)
+        && k.is_multiple_of(blueprint.instruction.k);
+    let v = (no_overhang && vectorizes_n(&rhs.data().strides) && vectorizes_n(&out.strides))
         .then(|| {
             client
                 .io_optimized_vector_sizes(sz)

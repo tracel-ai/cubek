@@ -143,11 +143,11 @@ pub struct MemData<T: Numeric> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Wrap a launched scalar [`Tensor`] into a whole `Gmem` tile. The borrow is erased into a `Box`
-    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). The tensor's
-    /// shape/strides are scalar-unit; re-express them as `Vector<T, vector_size>` lines along the
-    /// contiguous innermost axis — its extent and every coarser stride shrink by `vector_size` (a
-    /// no-op at `vector_size == 1`) — so the line-unit layout addresses the buffer once the leaf
-    /// re-groups it into `Vector<T, vector_size>`.
+    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). Strides stay
+    /// scalar-unit (the leaf addresses the buffer with scalar offsets); only the contiguous innermost
+    /// axis re-expresses as `Vector<T, vector_size>` lines — its extent shrinks to a line count
+    /// (`extent / w`) and its step grows to `w` scalars (`stride * w`). All a no-op at
+    /// `vector_size == 1`.
     pub fn from_tensor(
         tensor: &Tensor<T>,
         #[comptime] vector_size: usize,
@@ -167,12 +167,14 @@ impl<T: Numeric> Tile<T> {
             let extent = tensor.shape(i) as u32;
             let stride = tensor.stride(i) as u32;
             if comptime!(i == last) {
-                // Innermost (contiguous, stride 1): its extent counts scalars → count lines.
+                // Innermost (contiguous, stride 1): count lines (extent / w), each a `w`-scalar
+                // step (stride * w). The offset stays scalar-unit; the leaf loads a `w`-wide line.
                 physical_shape.push(extent / w);
-                physical_strides.push(stride);
+                physical_strides.push(stride * w);
             } else {
+                // Coarser axes keep their scalar strides.
                 physical_shape.push(extent);
-                physical_strides.push(stride / w);
+                physical_strides.push(stride);
             }
         }
         let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
@@ -435,8 +437,9 @@ impl<T: Numeric> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
-    /// The scalar buffer re-grouped into `Vector<T, W>` lines, so the line-unit base/window layouts
-    /// address it. `W` is the store's physical [`vector_size`](Tile::vector_size).
+    /// The scalar buffer re-grouped into `Vector<T, W>` lines. The base/window layouts index it with
+    /// scalar offsets (a line is loaded as the `W`-wide read starting at that scalar), so the
+    /// physical strides stay scalar-unit. `W` is the store's physical [`vector_size`](Tile::vector_size).
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.buffer.as_vectorized().with_vector_size::<W>()
     }
