@@ -21,10 +21,14 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
     #[comptime] space: Space,
 ) {
+    // `Space` is conceptual (scalar); vectorization is a storage detail. `nr` is a line count — how
+    // many `Vector<V>` span the conceptual `N` — so it divides `N` by the accumulator width `V`. `mr`
+    // (rows) and `kc` (scalar `K`, off `rhs`) are unvectorized.
+    let vw = rhs.vector_size();
     let (mr, nr, kc) = comptime! {
         (
             space.extent_at(space.rank() - 2),
-            space.extent_at(space.rank() - 1),
+            space.extent_at(space.rank() - 1) / vw,
             rhs.space.extent_at(rhs.space.rank() - 2)
         )
     };
@@ -37,8 +41,8 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
         count
     };
 
-    let lw = comptime!(lhs.vector_size);
-    let size!(V) = comptime!(rhs.vector_size);
+    let lw = lhs.vector_size();
+    let size!(V) = vw;
     let size!(L) = lw;
 
     for j in 0..matrices {

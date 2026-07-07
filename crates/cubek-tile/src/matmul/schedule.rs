@@ -68,7 +68,7 @@ pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
 
     // prologue: prime slot 0 with region 0.
     let first = walk.region(0);
-    s0.write(|s, pipe| {
+    s0.fill(|s, pipe| {
         pipe.fill(&mut s.0, &lhs.at(&first));
         pipe.fill(&mut s.1, &rhs.at(&first));
     });
@@ -80,23 +80,23 @@ pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
         // prefetch the odd region into slot 1 (its fill overlaps the compute below), then compute
         // the even region on slot 0.
         let odd_region = walk.region(odd);
-        s1.write(|s, pipe| {
+        s1.fill(|s, pipe| {
             pipe.fill(&mut s.0, &lhs.at(&odd_region));
             pipe.fill(&mut s.1, &rhs.at(&odd_region));
         });
         let even_region = walk.region(even);
-        s0.read(|a, b| out.at(&even_region).mma(a, b));
+        s0.consume(|a, b| out.at(&even_region).mma(a, b));
 
         // prefetch the next even region back into slot 0 (if it exists), then compute the odd
         // region on slot 1.
         if odd + 1 < n {
             let next_even = walk.region(odd + 1);
-            s0.write(|s, pipe| {
+            s0.fill(|s, pipe| {
                 pipe.fill(&mut s.0, &lhs.at(&next_even));
                 pipe.fill(&mut s.1, &rhs.at(&next_even));
             });
         }
         let odd_region = walk.region(odd);
-        s1.read(|a, b| out.at(&odd_region).mma(a, b));
+        s1.consume(|a, b| out.at(&odd_region).mma(a, b));
     }
 }

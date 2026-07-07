@@ -48,8 +48,8 @@ impl<I: Numeric, S: Numeric, O: Numeric> Dequantize<I, S> for O {
     fn dequantize(input: &Tile<I>, scales: &Tile<S>, output: &mut Tile<O>) {
         // The physical widths are storage detail; reconstruct each operand's lines. Input and
         // output share the logical shape, so they scan at the same width.
-        let size!(W) = comptime!(output.vector_size);
-        let size!(SW) = comptime!(scales.vector_size);
+        let size!(W) = output.vector_size();
+        let size!(SW) = scales.vector_size();
 
         // per-tensor: one scale at flat position 0, broadcast across the output line.
         let scale = Vector::<O, W>::cast_from(scales.view::<SW>().read(seq![0]));

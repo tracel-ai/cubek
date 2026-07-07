@@ -85,7 +85,9 @@ impl<T: Numeric> Tile<T> {
         let rank = comptime!(self.space.rank());
         let shape = self.view::<Const<1>>().shape();
         let rows = comptime!(self.space.extent_at(rank - 2));
-        let cols = comptime!(self.space.extent_at(rank - 1));
+        // `Space` is conceptual; `cols` is a line count, so divide the innermost extent by the width.
+        let w = self.vector_size();
+        let cols = comptime!(self.space.extent_at(rank - 1) / w);
 
         let mut batches = CoordsDyn::new();
 

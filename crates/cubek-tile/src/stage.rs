@@ -61,8 +61,9 @@ pub enum Pipeline {
     /// Metal has no mbarrier); otherwise a single unit fills its own slot with no collective at all.
     /// (`collective` is uniform across the cube, so the `sync_cube` guard is a warp-uniform branch.)
     Cube { collective: bool },
-    /// Hardware async bulk copy (TMA): producer/consumer decoupled over a `full`/`empty` mbarrier pair
-    /// with a `phase` parity, so the copy overlaps compute.
+    /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase` parity, so
+    /// the fill overlaps compute. TMA is the fill that motivates it (the bulk copy lands the `full`
+    /// transaction), but the barrier itself is delivery-agnostic — see [`Tile::stage_from`].
     Barrier {
         /// Producer→consumer (one producer arrival): flips once the fill's transaction bytes land.
         full: Shared<Barrier>,
@@ -92,18 +93,12 @@ impl Pipeline {
         }
     }
 
-    /// Fill staged `dst` from `src`, the one operation a `write` body performs. An async fill declares
-    /// `dst`'s transaction bytes (`expect_tx`, elected unit) and pushes a bulk copy onto `full`
-    /// ([`stage_tma`](Tile::stage_tma), wait hoisted to the consumer); a `Cube` fill is a plain element
-    /// [`copy_from`](Tile::copy_from).
+    /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot stages
+    /// under its `full` mbarrier ([`stage_from`](Tile::stage_from), which itself picks TMA vs a plain
+    /// copy off the source); a `Cube` slot is a plain element [`copy_from`](Tile::copy_from).
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         match self {
-            Pipeline::Barrier { full, .. } => {
-                if UNIT_POS == 0 {
-                    full.expect_tx(dst.buffer_bytes());
-                }
-                dst.stage_tma(src, full);
-            }
+            Pipeline::Barrier { full, .. } => dst.stage_from(src, full),
             Pipeline::Cube { .. } => dst.copy_from(src),
         }
     }
@@ -191,27 +186,27 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     }
 }
 
-// `read`/`write` take closures so the body stays caller-defined (fill each buffer however, run the
+// `fill`/`consume` take closures so the body stays caller-defined (fill each buffer however, run the
 // mma). They're provided for the `(Tile<Lhs>, Tile<Rhs>)` payload (not generic `T`): closure-parameter
 // inference can't resolve the projection `&mut T::ExpandType` through a generic `T`, but resolves the
 // spelled-out tiles fine.
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Producer: wait the slot is free, run `fill` over its two staged buffers, then publish. `fill`
     /// gets the buffers and the slot's [`Pipeline`]; call [`Pipeline::fill`] per operand and one body
-    /// serves every [`Sync`]. See [`StagingExpand::__expand_write_method`].
-    pub fn write(&mut self, _fill: impl FnOnce(&mut (Tile<Lhs>, Tile<Rhs>), &Pipeline)) {
+    /// serves every [`Sync`]. See [`StagingExpand::__expand_fill_method`].
+    pub fn fill(&mut self, _fill: impl FnOnce(&mut (Tile<Lhs>, Tile<Rhs>), &Pipeline)) {
         unexpanded!()
     }
 
     /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
-    /// See [`StagingExpand::__expand_read_method`].
-    pub fn read(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+    /// See [`StagingExpand::__expand_consume_method`].
+    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
 }
 
 impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
-    pub fn __expand_write_method<F>(&mut self, scope: &Scope, fill: F)
+    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
     where
         F: FnOnce(&Scope, &mut (TileExpand<Lhs>, TileExpand<Rhs>), &PipelineExpand),
     {
@@ -220,7 +215,7 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         self.__expand_release_write_method(scope);
     }
 
-    pub fn __expand_read_method<F>(&mut self, scope: &Scope, compute: F)
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
     where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {

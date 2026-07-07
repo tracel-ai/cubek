@@ -187,14 +187,14 @@ pub fn launch_ref<R: Runtime>(
     // owns one leaf.
     let leaf = blueprint.instruction;
     let planes = blueprint.planes;
-    let tile_n_lines = leaf.n / v;
+    // `Space` is conceptual (scalar); the storage width `v` is applied inside the tile, never here.
     let cube_m = planes.m * leaf.m;
-    let cube_n_lines = planes.n * tile_n_lines;
+    let cube_n = planes.n * leaf.n;
 
     let batch_axes: Vec<_> = batch.iter().map(|&p| batch_axis(p)).collect();
     let extents: Vec<_> = (batch_axes.iter().zip(&batch))
         .map(|(&a, &p)| (a, out_batches[p]))
-        .chain([(M, m), (N, n / v), (K, k)])
+        .chain([(M, m), (N, n), (K, k)])
         .collect();
 
     // One level per decomposition, coarse→fine: the cube grid (a serial loop on CPU), then the
@@ -205,13 +205,13 @@ pub fn launch_ref<R: Runtime>(
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, cube_m))
-                .axis(N, Cut::cube(CubeAxis::Y, cube_n_lines))
+                .axis(N, Cut::cube(CubeAxis::Y, cube_n))
                 .axis(K, Cut::sequential(k))
         })
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::plane(leaf.m))
-                .axis(N, Cut::plane(tile_n_lines))
+                .axis(N, Cut::plane(leaf.n))
                 .axis(K, Cut::sequential(leaf.k))
         })
         .build();
