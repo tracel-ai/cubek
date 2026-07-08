@@ -19,8 +19,8 @@ version = "0.3.0-pre.1"
 # cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "7eb48d06ed55ed0446b09a2ae00be9d9c89822b8", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "7eb48d06ed55ed0446b09a2ae00be9d9c89822b8", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "232b29dd605c63cb7bea6e9ac7735703d642e03f", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "232b29dd605c63cb7bea6e9ac7735703d642e03f", default-features = false }
 ### For releases ###
 # cubecl = { version = "0.10.0", default-features = false }
 # cubecl-common = { version = "0.10.0", default-features = false }
@@ -65,10 +65,3 @@ opt-level = 0
 
 [profile.dev.build-override]
 opt-level = 3
-
-# TEMPORARY: cubecl main + the cubecl-cpu Index-unit fix (visit_index must index in
-# units of the accessed item, like the C++ backends), pending upstream — ../cubecl on
-# branch fix/cpu-index-unit.
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { path = "../cubecl/crates/cubecl" }
-cubecl-common = { path = "../cubecl/crates/cubecl-common" }
