@@ -567,24 +567,6 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
-    let uses_planes = space.axes().any(|axis| {
-        matches!(
-            partitioner.distribution(axis),
-            Distribution::Spatial {
-                scope: ComputeScope::Plane,
-                ..
-            }
-        )
-    });
-    let plane_size = client.properties().hardware.plane_size_max;
-    if uses_planes && plane_size != 1 {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "plane spreading needs plane length 1; backend plane_size = {plane_size}"
-        )))
-        .enforce();
-        return;
-    }
-
     let tile_edge = partitioner.edge(M);
     let dtype = f32::as_type_native_unchecked().storage_type();
 
@@ -962,6 +944,87 @@ fn cmma_matmul_8x8x8() {
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let expected = references::tiled_matmul(8, 8, 8, 8);
     let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// A matmul through tensor cores with a K walk: `Leaf::Cmma` makes the lowering hoist the
+/// accumulator into a resident fragment at the boundary, walk the staged K regions
+/// accumulating into it, and drain it back to gmem after. Tensor-core only — run with
+/// `cargo test-metal`.
+#[test]
+fn cmma_matmul_staged_k_walk() {
+    check_cmma_matmul_k_walk(16, Schedule::Staged);
+}
+
+/// The double-buffered variant: four K regions rotating through two smem slots, the
+/// accumulator fragment resident across all of them.
+#[test]
+fn cmma_matmul_double_buffered_k_walk() {
+    check_cmma_matmul_k_walk(32, Schedule::DoubleBuffered);
+}
+
+fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no cmma (tensor-core) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, edge) = (8usize, 8usize, 8usize);
+    let builder = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    );
+    let partitioner = match schedule {
+        Schedule::Staged => builder.staged(),
+        Schedule::DoubleBuffered => builder.double_buffered(),
+        Schedule::Direct => builder.direct(),
+    };
+    let space = Space::new(&[(M, m), (N, n), (K, k)])
+        .with_partitioner(partitioner)
+        .with_leaf(Leaf::Cmma);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
         .custom(expected)
         .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)

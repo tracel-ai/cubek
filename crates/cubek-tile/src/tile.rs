@@ -92,7 +92,9 @@ pub struct Tile<T: Numeric> {
 /// A tensor-core fragment plus its comptime config. `cmma::load` picks
 /// load-vs-`load_with_layout` by `ident`, and `store`/`cast` need the layout. The
 /// fragment's `m`/`n`/`k` and the slice stride come from the tile's [`Space`].
-#[derive(CubeType)]
+/// `Clone` duplicates the handle, not the fragment — a clone is the same matrix.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct CmmaData<T: Numeric> {
     pub matrix: Matrix<T>,
     #[cube(comptime)]
@@ -379,7 +381,10 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
             }
-            TileKind::Cmma(_) => panic!("Tile::at: a cmma fragment cannot be located by view"),
+            // A resident fragment passes through unchanged: the boundary hoist
+            // ([`cmma_acc`](crate::matmul)) guarantees one final tile per instance, so every
+            // region an instance visits selects this same fragment.
+            TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
         };
         Tile::<T> {
             tile_kind,
@@ -393,6 +398,16 @@ impl<T: Numeric> Tile<T> {
     pub fn is_tma(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
             TileKind::TmaGmem(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether this tile is a plain memory store (gmem or smem) — the kinds the cmma
+    /// boundary hoist converts to a resident fragment. Comptime.
+    #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
+    pub fn is_mem(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) => true,
             _ => false,
         }
     }
@@ -514,31 +529,25 @@ impl<T: Numeric> Tile<T> {
         barrier.wait(token);
     }
 
-    /// Fill this fragment from `src`'s memory buffer: `A`/`B` use `cmma::load`, an
-    /// `Accumulator` uses `load_with_layout`. The stride is the matrix row width
-    /// (last-axis extent) from the space.
+    /// Fill this fragment from `src`'s memory *window*: `A`/`B` use `cmma::load`, an
+    /// `Accumulator` uses `load_with_layout`. The slice starts at the window's origin
+    /// and rows step by the store's physical row stride, so a window into a larger
+    /// stage loads as well as a whole buffer.
     fn cmma_load(&mut self, src: &Tile<T>) {
-        let stride = comptime!(self.space.extent(self.space.axis_at(self.space.rank() - 1)) as u32);
         match &mut self.tile_kind {
             TileKind::Cmma(d) => match &src.tile_kind {
-                TileKind::Gmem(s) => match comptime!(d.ident) {
-                    MatrixIdent::Accumulator => cmma::load_with_layout(
-                        &mut d.matrix,
-                        &s.buffer,
-                        stride,
-                        comptime!(d.layout),
-                    ),
-                    _ => cmma::load(&mut d.matrix, &s.buffer, stride),
-                },
-                TileKind::Smem(s) => match comptime!(d.ident) {
-                    MatrixIdent::Accumulator => cmma::load_with_layout(
-                        &mut d.matrix,
-                        &s.buffer,
-                        stride,
-                        comptime!(d.layout),
-                    ),
-                    _ => cmma::load(&mut d.matrix, &s.buffer, stride),
-                },
+                TileKind::Gmem(s) | TileKind::Smem(s) => {
+                    let stride = s.row_stride();
+                    match comptime!(d.ident) {
+                        MatrixIdent::Accumulator => cmma::load_with_layout(
+                            &mut d.matrix,
+                            s.window_slice(),
+                            stride,
+                            comptime!(d.layout),
+                        ),
+                        _ => cmma::load(&mut d.matrix, s.window_slice(), stride),
+                    }
+                }
                 TileKind::Cmma(_) => panic!("Tile::copy_from: cmma→cmma cast not yet wired"),
                 TileKind::TmaGmem(_) => {
                     panic!("Tile::copy_from: cmma load straight from a tma source not wired")
@@ -551,17 +560,14 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Drain `src` (a `Cmma` fragment) into this memory tile's buffer. Stride is the
-    /// matrix row width from the space.
+    /// Drain `src` (a `Cmma` fragment) into this memory tile's *window* (origin offset,
+    /// physical row stride).
     fn cmma_store(&mut self, src: &Tile<T>) {
-        let stride = comptime!(self.space.extent(self.space.axis_at(self.space.rank() - 1)) as u32);
         match &src.tile_kind {
             TileKind::Cmma(s) => match &mut self.tile_kind {
-                TileKind::Gmem(d) => {
-                    cmma::store(&mut d.buffer, &s.matrix, stride, comptime!(s.layout))
-                }
-                TileKind::Smem(d) => {
-                    cmma::store(&mut d.buffer, &s.matrix, stride, comptime!(s.layout))
+                TileKind::Gmem(d) | TileKind::Smem(d) => {
+                    let stride = d.row_stride();
+                    cmma::store(d.window_slice_mut(), &s.matrix, stride, comptime!(s.layout))
                 }
                 // Unreachable: `copy_from` routes here only when `self` is memory.
                 TileKind::Cmma(_) => (),
@@ -645,6 +651,48 @@ impl<T: Numeric> MemData<T> {
     /// The mutable twin of [`lines`](MemData::lines).
     fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.buffer.as_vectorized_mut().with_vector_size_mut::<W>()
+    }
+
+    /// The scalar buffer from this window's origin on — the base a cmma load/store
+    /// addresses, with rows stepping by [`row_stride`](MemData::row_stride). Requires an
+    /// untiled, unmasked store: a cmma transaction can neither split rows across storage
+    /// tiles nor mask an overhang.
+    pub(crate) fn window_slice(&self) -> &[T] {
+        let offset = self.window_offset();
+        self.buffer.slice(offset, self.buffer.len())
+    }
+
+    /// The mutable twin of [`window_slice`](MemData::window_slice).
+    pub(crate) fn window_slice_mut(&mut self) -> &mut [T] {
+        let offset = self.window_offset();
+        let end = self.buffer.len();
+        self.buffer.slice_mut(offset, end)
+    }
+
+    /// Scalar offset of the window origin: the origin dotted with the physical strides
+    /// (the innermost origin counts lines; its stride is already the per-line scalar step).
+    fn window_offset(&self) -> usize {
+        comptime!(assert!(
+            self.levels == 0,
+            "MemData::window_offset: cmma cannot address a tiled store"
+        ));
+        comptime!(assert!(
+            !self.check,
+            "MemData::window_offset: cmma cannot mask an overhang"
+        ));
+        let mut offset = 0u32;
+        #[unroll]
+        for i in 0..self.physical_strides.len() {
+            offset += self.origin[i] * self.physical_strides[i];
+        }
+        offset as usize
+    }
+
+    /// Scalar stride between matrix rows: the physical stride of the second-to-last axis.
+    /// Untiled stores only (`levels == 0`, so the physical rank is the space's).
+    pub(crate) fn row_stride(&self) -> u32 {
+        let rows = comptime!(self.start_axis + self.num_tiled - 2);
+        self.physical_strides[rows]
     }
 
     /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag

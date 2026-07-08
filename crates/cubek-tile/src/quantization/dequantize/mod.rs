@@ -12,7 +12,7 @@ impl<O: Numeric> Tile<O> {
         O: Dequantize<I, S>,
     {
         match comptime!(self.space.partitioner()) {
-            Partitioner::Final => Dequantize::dequantize(input, scales, self),
+            Partitioner::Final(_) => Dequantize::dequantize(input, scales, self),
             Partitioner::Level(level) => match level.schedule() {
                 Schedule::Direct => dequantize_direct(input, scales, self),
                 _ => {

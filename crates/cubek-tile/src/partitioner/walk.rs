@@ -190,9 +190,10 @@ fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
             };
             cube_pos as usize
         }
-        ComputeScope::Plane => UNIT_POS as usize,
-        ComputeScope::Unit => {
-            panic!("hardware_pos: Unit spreading is an inner-level seam, not yet implemented")
-        }
+        // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, the flat
+        // position is the unit index. Lanes of a plane agree on UNIT_POS_Y, so a
+        // plane-scoped axis makes them cooperate on the same regions.
+        ComputeScope::Plane => UNIT_POS_Y as usize,
+        ComputeScope::Unit => UNIT_POS as usize,
     }
 }
