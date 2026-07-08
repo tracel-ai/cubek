@@ -95,6 +95,13 @@ pub fn launch_ref<R: Runtime>(
     let blueprint = CyclicCmmaRoutine::blueprint(strategy, &problem, &device_settings)?;
     let (i, p) = (blueprint.instruction, blueprint.planes);
     let (stage_m, stage_n) = (p.m * i.m, p.n * i.n);
+    // Stage depth: the deepest `c·i.k` dividing `k` (c ≤ 8) — fewer, fatter K stages
+    // amortize the fill rendezvous; within a stage each plane walks `c` leaf sub-tiles.
+    let stage_k = (1..=8usize)
+        .rev()
+        .map(|c| c * i.k)
+        .find(|&sk| k.is_multiple_of(sk))
+        .unwrap_or(i.k);
 
     // Output batch dims that survive (extent > 1) ride one-per-cube on Z.
     let batch: Vec<usize> = (0..out_batches.len())
@@ -114,7 +121,7 @@ pub fn launch_ref<R: Runtime>(
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, stage_m))
                 .axis(N, Cut::cube(CubeAxis::Y, stage_n))
-                .axis(K, Cut::sequential(i.k))
+                .axis(K, Cut::sequential(stage_k))
         })
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axes(&batch_axes, Cut::sequential(1))

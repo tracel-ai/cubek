@@ -975,6 +975,10 @@ fn cmma_matmul_double_buffered_odd_k_walk() {
 }
 
 fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
+    check_cmma_matmul_k_walk_v(k, schedule, 1)
+}
+
+fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if client.properties().features.matmul.cmma.is_empty() {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -1017,9 +1021,9 @@ fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
         dtype,
     );
 
@@ -1177,3 +1181,5 @@ fn cmma_matmul<E: Numeric>(
     sync_cube();
     c.copy_from(&c_smem_tile);
 }
+
+

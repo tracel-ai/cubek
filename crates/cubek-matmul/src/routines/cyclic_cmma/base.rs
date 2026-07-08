@@ -173,8 +173,9 @@ impl CyclicCmmaRoutine {
             ))?;
 
         // Plane grid: fill the units-per-cube budget along m then n, snapped to divisors
-        // of the tile grid so the stage never overhangs (cmma cannot mask).
-        let max_units = (client.properties().hardware.max_units_per_cube as usize).min(256);
+        // of the tile grid so the stage never overhangs (cmma cannot mask). One fragment
+        // per plane keeps registers light, so more planes than the legacy 256-unit cap.
+        let max_units = (client.properties().hardware.max_units_per_cube as usize).min(512);
         let budget = (max_units / plane_dim).max(1);
         let (grid_m, grid_n) = (problem.m / im.max(1), problem.n / inn.max(1));
         let planes_m = divisor_at_most(grid_m.max(1), budget.min(MAX_PLANES_PER_AXIS));
