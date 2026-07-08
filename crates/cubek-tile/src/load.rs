@@ -8,7 +8,9 @@ use cubecl::prelude::*;
 
 use cubecl::quant::scheme::QuantScheme;
 
-use crate::{Axis, ConcreteLayout, PhysicalAxis, QuantArgLaunch, Space, Storage, TileArgLaunch};
+use crate::{
+    Axis, ConcreteLayout, PhysicalAxis, QuantArgLaunch, Space, Storage, TileArgLaunch, VecTensorArg,
+};
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
 /// is `start_axis`, its storage-tiling depth is `levels`.
@@ -66,10 +68,11 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         )
     }
 
-    /// Load a strided global tensor as a tile served in `vector_size`-wide lines. Its
-    /// `[pre…, grid…, tile…]` buffer is tiled in-kernel over `space` (the [`Tile`](crate::Tile) reads
-    /// the physical shape/strides off the tensor). The [`Storage`] carries the tiling depth and the
-    /// overhang bounds-check.
+    /// Load a strided global tensor as a tile served in `vector_size`-wide lines (the binding is
+    /// typed `Vector<E, vector_size>`, see [`VecTensor`](crate::VecTensor)). Its
+    /// `[pre…, grid…, tile…]` buffer is tiled in-kernel over `space` (the [`Tile`](crate::Tile)
+    /// reads the physical shape/strides off the tensor). The [`Storage`] carries the tiling depth
+    /// and the overhang bounds-check.
     pub fn strided(
         tensor: TensorArg<R>,
         vector_size: usize,
@@ -77,7 +80,7 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         storage: Storage,
     ) -> Self {
         Self::new(
-            tensor,
+            VecTensorArg::new(tensor, vector_size),
             vector_size,
             space,
             storage,

@@ -85,20 +85,21 @@ impl Storage {
     }
 }
 
-/// The launchable form of a [`Tile`]: a scalar `&Tensor` plus its comptime line
+/// The launchable form of a [`Tile`]: a [`VecTensor`] plus its comptime line
 /// [`vector_size`](Self::vector_size), [`Space`] and [`Storage`]. The kernel turns it into a `Tile`
 /// with [`tile`](TileArg::tile). The physical vectorization is a plain comptime value (the
-/// `vector_size` field), not a type parameter — the buffer is served scalar and re-grouped into
-/// `Vector<E, vector_size>` lines in-kernel.
+/// `vector_size` field), not a type parameter; the binding element type is
+/// `Vector<E, vector_size>` (see [`VecTensor`]), so the in-kernel re-group into lines is a no-op.
 ///
 /// `E` is the element physically in the tensor. For a quantized operand
 /// ([`quantized`](TileArgLaunch::quantized) attaches the scales), `E` is the storage element and
 /// [`tile_dequant`](TileArg::tile_dequant) picks the served type.
 #[derive(CubeType, CubeLaunch)]
 pub struct TileArg<'a, E: Numeric> {
-    pub tensor: &'a Tensor<E>,
+    pub tensor: &'a VecTensor<E>,
     /// Physical vectorization (`Vector<E, vector_size>` line size) of the operand's contiguous
-    /// innermost axis; `1` is scalar.
+    /// innermost axis; `1` is scalar. Always equals the binding's width
+    /// ([`Tile::from_tensor`] asserts it).
     #[cube(comptime)]
     pub vector_size: usize,
     #[cube(comptime)]

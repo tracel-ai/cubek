@@ -62,10 +62,13 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The transaction byte count a TMA fill into this shared-memory tile lands (its buffer
-    /// length, runtime). Zero for the non-smem kinds, which are never TMA fill targets.
+    /// length in native lines, runtime, widened to bytes). Zero for the non-smem kinds, which
+    /// are never TMA fill targets.
     pub(crate) fn tma_transaction_bytes(&self) -> u32 {
         match &self.tile_kind {
-            TileKind::Smem(d) => d.buffer.len() as u32 * comptime!(T::type_size() as u32),
+            TileKind::Smem(d) => {
+                d.buffer.len() as u32 * comptime!(T::type_size() as u32 * d.vector_size as u32)
+            }
             TileKind::Gmem(_) => 0,
             TileKind::Cmma(_) => 0,
             TileKind::CmmaPartition(_) => 0,

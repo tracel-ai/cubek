@@ -65,11 +65,17 @@ impl Layout for BatchMatrix {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The leading axes are pinned to `i` unraveled over their extents. Only the (width-invariant)
-    /// leading shape is read, so a `Const<1>` regroup suffices.
+    /// The leading axes are pinned to `i` unraveled over their extents. Only the
+    /// (width-invariant) leading shape is read, off the window extent.
     fn batch_matrix(&self, i: usize) -> BatchMatrix {
         let rank = comptime!(self.space.rank());
-        let shape = self.view::<Const<1>>().shape();
+        let shape = match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.extent(),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("Tile::matrix: a cmma fragment has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
+        };
         let rows = comptime!(self.space.extent_at(rank - 2));
         // `cols` is a line count, so divide the innermost extent by the width.
         let w = self.vector_size();
