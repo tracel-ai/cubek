@@ -29,7 +29,8 @@ impl<O: Numeric> Tile<O> {
         scalar: S,
         region: &Region,
     ) {
-        self.at(region).add_scalar::<I, S>(&input.at(region), scalar);
+        self.at(region)
+            .add_scalar::<I, S>(&input.at(region), scalar);
     }
 }
 

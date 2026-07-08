@@ -4,10 +4,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{
-    Axis, ByAxis, Distribution, Partitioner, QuantArgLaunch, QuantTileArg, QuantTileArgLaunch,
-    Space, Storage, TileArg, TileArgLaunch,
-};
+use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArg, TileArgLaunch};
 
 // Input axes
 const M: Axis = Axis(0);
@@ -42,13 +39,13 @@ pub fn launch_ref<R: Runtime>(
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
     // The quantized operand: the storage-typed tensor plus its scale + scheme, attached at the
     // payload so the kernel's reads dequantize transparently.
-    let input_tilearg = QuantTileArgLaunch::new(
+    let input_tilearg = TileArgLaunch::strided(
         input.into_tensor_arg(),
-        ComptimeOptionArgs::Some(QuantArgLaunch::new(scales.into_tensor_arg(), *scheme)),
         1,
         input_space.clone(),
         input_storage,
-    );
+    )
+    .quantized(scales.into_tensor_arg(), *scheme);
 
     let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
     let output_storage = Storage::of(output.shape.len(), output_space.rank());
@@ -112,12 +109,12 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 /// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
 /// storage element) is only threaded so the read leaf can downcast the buffer.
 pub fn dequantize<I: Numeric, O: Numeric>(
-    input: &QuantTileArg<'_, I>,
+    input: &TileArg<'_, I>,
     output: &TileArg<'_, O>,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = input.tile::<O>();
+    let input = input.tile_dequant::<O>();
     let mut output = output.tile();
     output.dequantize::<I>(&input);
 }

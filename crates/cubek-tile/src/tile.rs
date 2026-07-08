@@ -55,6 +55,10 @@ impl Storage {
 /// with [`tile`](TileArg::tile). The physical vectorization is a plain comptime value (the
 /// `vector_size` field), not a type parameter — the buffer is served scalar and re-grouped into
 /// `Vector<E, vector_size>` lines in-kernel.
+///
+/// `E` is the element physically in the tensor. For a quantized operand
+/// ([`quantized`](TileArgLaunch::quantized) attaches the scales), `E` is the storage element and
+/// [`tile_dequant`](TileArg::tile_dequant) picks the served type.
 #[derive(CubeType, CubeLaunch)]
 pub struct TileArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<E>,
@@ -66,16 +70,48 @@ pub struct TileArg<'a, E: Numeric> {
     pub space: Space,
     #[cube(comptime)]
     pub storage: Storage,
+    /// Quantization side-channel, `None` for a plain operand (every constructor's default;
+    /// [`quantized`](TileArgLaunch::quantized) opts in).
+    pub quant: ComptimeOption<QuantArg>,
 }
 
 #[cube]
 impl<'a, E: Numeric> TileArg<'a, E> {
+    /// Serve the tensor's own element type. The plain path — a quantized operand must go through
+    /// [`tile_dequant`](Self::tile_dequant) to name its served type.
     pub fn tile(&self) -> Tile<E> {
+        if comptime!(self.quant.is_some()) {
+            panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
+        }
         Tile::from_tensor(
             self.tensor,
             comptime!(self.vector_size),
             comptime!(self.space.clone()),
             comptime!(self.storage),
+        )
+    }
+
+    /// Serve `O` from a storage-typed operand: `quant = Some` attaches the scale + scheme so reads
+    /// dequantize `E → O` transparently; `quant = None` is the plain path (the launch binds
+    /// `E == O`). For kernels that thread both types via `#[define]` and run quantized or not.
+    pub fn tile_dequant<O: Numeric>(&self) -> Tile<O> {
+        // `#[comptime]`: whether the operand is quantized is a trace-time fact, so the match
+        // resolves at expand and the plain path pays nothing.
+        let quant = #[comptime]
+        match &self.quant {
+            // Per-tensor native: a single scale at flat index 0.
+            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
+                scale: q.scales[0],
+                scheme: comptime!(q.scheme),
+            }),
+            ComptimeOption::None => ComptimeOption::new_None(),
+        };
+        Tile::<O>::from_tensor_quant::<E>(
+            self.tensor,
+            comptime!(self.vector_size),
+            comptime!(self.space.clone()),
+            comptime!(self.storage),
+            quant,
         )
     }
 }
@@ -92,7 +128,7 @@ pub struct QuantInfo {
     pub scheme: QuantScheme,
 }
 
-/// The quantization side-channel of a [`QuantTileArg`]: the scale grid plus the comptime
+/// The quantization side-channel of a [`TileArg`]: the scale grid plus the comptime
 /// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
 /// quantized or not (the tile dequantizes on read).
 #[derive(CubeType, CubeLaunch)]
@@ -101,47 +137,6 @@ pub struct QuantArg {
     pub scales: OwnedTensor<f32>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
-}
-
-/// A [`TileArg`] whose tensor is storage-typed: `I` is the element physically in the buffer.
-/// [`tile`](QuantTileArg::tile) picks the served type `O`; `quant = Some` attaches the scale +
-/// scheme so reads dequantize `I → O` transparently, `quant = None` is the plain path (`I == O`).
-/// Kept separate from [`TileArg`] so quant stays a thin add-on that doesn't churn non-quant call
-/// sites.
-#[derive(CubeType, CubeLaunch)]
-pub struct QuantTileArg<'a, I: Numeric> {
-    pub tensor: &'a Tensor<I>,
-    pub quant: ComptimeOption<QuantArg>,
-    #[cube(comptime)]
-    pub vector_size: usize,
-    #[cube(comptime)]
-    pub space: Space,
-    #[cube(comptime)]
-    pub storage: Storage,
-}
-
-#[cube]
-impl<'a, I: Numeric> QuantTileArg<'a, I> {
-    pub fn tile<O: Numeric>(&self) -> Tile<O> {
-        // `#[comptime]`: whether the operand is quantized is a trace-time fact, so the match
-        // resolves at expand and the plain path pays nothing.
-        let quant = #[comptime]
-        match &self.quant {
-            // Per-tensor native: a single scale at flat index 0.
-            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
-                scale: q.scales[0],
-                scheme: comptime!(q.scheme),
-            }),
-            ComptimeOption::None => ComptimeOption::new_None(),
-        };
-        Tile::<O>::from_tensor_quant::<I>(
-            self.tensor,
-            comptime!(self.vector_size),
-            comptime!(self.space.clone()),
-            comptime!(self.storage),
-            quant,
-        )
-    }
 }
 
 /// One operand's data: the runtime [`TileKind`] and the comptime [`Space`] it projects. The
@@ -252,7 +247,7 @@ impl<T: Numeric> Tile<T> {
 
     /// [`from_tensor`](Tile::from_tensor) from a storage-typed tensor: the buffer physically holds
     /// `I` while the tile serves `T`, dequantizing on read per `quant`. The plain path is `I == T`
-    /// with `quant == None`; [`QuantTileArg`] is the launch-side constructor.
+    /// with `quant == None`; [`TileArg::tile_dequant`] is the kernel-side constructor.
     pub fn from_tensor_quant<I: Numeric>(
         tensor: &Tensor<I>,
         #[comptime] vector_size: usize,
@@ -285,7 +280,12 @@ impl<T: Numeric> Tile<T> {
         }
         // Re-typing the buffer to the served `T` is only a static coercion — a quantized store
         // truly holds `I` bytes; the transparent read view downcasts back (`MemData::flat_storage`).
-        let buffer = unsafe { tensor.as_slice().downcast_unchecked::<T>().as_boxed_unchecked() };
+        let buffer = unsafe {
+            tensor
+                .as_slice()
+                .downcast_unchecked::<T>()
+                .as_boxed_unchecked()
+        };
         // Logical bound folded from the physical shape, so it's correct for tiled
         // operands too (the physical buffer is padded; the logical extent is not).
         let bound = logical_bound(&physical_shape, start_axis, num_tiled, levels);
@@ -438,7 +438,9 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(g) => {
                 if comptime!(g.quant.is_some()) {
-                    panic!("Tile::view: a quantized tile only serves dequantized reads (Tile::flat)")
+                    panic!(
+                        "Tile::view: a quantized tile only serves dequantized reads (Tile::flat)"
+                    )
                 }
                 g.lines::<W>().view(g.base()).view(g.window())
             }

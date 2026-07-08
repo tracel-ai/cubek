@@ -3,9 +3,7 @@ use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, Quant
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TileInput, assert_equals_approx,
 };
-use cubek_tile::{
-    Axis, QuantArgLaunch, QuantTileArg, QuantTileArgLaunch, Space, Storage, TileArg, TileArgLaunch,
-};
+use cubek_tile::{Axis, Space, Storage, TileArg, TileArgLaunch};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -32,13 +30,13 @@ fn scalar_add_quantized_matches_reference() {
 /// scalar: the scalar to add
 /// output: the output tensor
 pub fn scalar_add<I: Numeric, O: Numeric>(
-    input: &QuantTileArg<'_, I>,
+    input: &TileArg<'_, I>,
     scalar: f32,
     output: &TileArg<'_, O>,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = input.tile::<O>();
+    let input = input.tile_dequant::<O>();
     let mut output = output.tile();
     output.add_scalar::<I, f32>(&input, scalar);
 }
@@ -58,15 +56,9 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        QuantTileArgLaunch::new(
-            input.tensor_arg(1),
-            ComptimeOptionArgs::None,
-            1,
-            input.space(),
-            input.storage(),
-        ),
+        TileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
         scalar,
-        TileArgLaunch::new(output.tensor_arg(1), 1, output.space(), output.storage()),
+        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         dtype,
         dtype,
     );
@@ -128,18 +120,10 @@ fn run_quantized(m: usize, n: usize, scalar: f32) {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        QuantTileArgLaunch::new(
-            input.binding().into_tensor_arg(),
-            ComptimeOptionArgs::Some(QuantArgLaunch::new(
-                scales.binding().into_tensor_arg(),
-                scheme,
-            )),
-            1,
-            space,
-            storage,
-        ),
+        TileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
         scalar,
-        TileArgLaunch::new(output.tensor_arg(1), 1, output.space(), output.storage()),
+        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         input_dtype,
         out_dtype,
     );
