@@ -120,12 +120,20 @@ impl<T: Numeric> Tile<T> {
         Tile::smem(comptime!(self.space.divide()), self.vector_size())
     }
 
-    /// Allocate a shared-memory tile row-major over `space`, at physical `vector_size`. The scalar
+    /// Allocate a shared-memory tile over `space`, at physical `vector_size`. The scalar
     /// slice (`space.tile_size()` entries) is allocated here and erased into a `Box`.
+    /// A stage bound for the cmma instruction is storage-tiled at the final tile
+    /// (`[grid…, tile…]`, one contiguous block per fragment — the same scheme as tiled
+    /// gmem storage) so the cmma transaction reads it unstrided; anything else is plain
+    /// row-major.
     pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
+        let levels = comptime!(
+            (!space.is_final() && space.partitioner().leaf() == Leaf::Cmma) as usize
+        );
         let smem = Shared::<[T]>::new_slice(space.tile_size());
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
-        let (physical_shape, physical_strides) = row_major(comptime!(space.clone()), vector_size);
+        let (physical_shape, physical_strides) =
+            storage_layout(comptime!(space.clone()), vector_size, levels);
         let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
         // Smem is its own full buffer — never overhangs — so the bound is the extent and
         // checks are off.
@@ -141,7 +149,7 @@ impl<T: Numeric> Tile<T> {
                 bound,
                 start_axis: comptime!(0usize),
                 num_tiled: comptime!(space.rank()),
-                levels: comptime!(0usize),
+                levels,
                 check: comptime!(false),
             }),
             space: comptime!(space),
@@ -237,8 +245,8 @@ impl<T: Numeric> MemData<T> {
 
     /// The scalar buffer from this window's origin on — the base a cmma load/store
     /// addresses, with rows stepping by [`row_stride`](MemData::row_stride). Requires an
-    /// untiled, unmasked store: a cmma transaction can neither split rows across storage
-    /// tiles nor mask an overhang.
+    /// unmasked store whose window doesn't split rows across storage tiles (a whole
+    /// storage tile, or any window of an untiled store).
     pub(crate) fn window_slice(&self) -> &[T] {
         let offset = self.window_offset();
         self.buffer.slice(offset, self.buffer.len())
@@ -251,30 +259,23 @@ impl<T: Numeric> MemData<T> {
         self.buffer.slice_mut(offset, end)
     }
 
-    /// Scalar offset of the window origin: the origin dotted with the (line-unit) physical
-    /// strides, widened back to scalars — what a cmma transaction addresses.
+    /// Scalar offset of the window origin: the origin through the base layout (the plain
+    /// line-unit dot at `levels == 0`, the tiled split above), widened back to scalars —
+    /// what a cmma transaction addresses. On a tiled store the window must lie within one
+    /// storage tile (true by construction when the compute and storage tiles agree).
     fn window_offset(&self) -> usize {
-        comptime!(assert!(
-            self.levels == 0,
-            "MemData::window_offset: cmma cannot address a tiled store"
-        ));
         comptime!(assert!(
             !self.check,
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
-        let mut offset = 0u32;
-        #[unroll]
-        for i in 0..self.physical_strides.len() {
-            offset += self.origin[i] * self.physical_strides[i];
-        }
-        (offset as usize) * comptime!(self.vector_size)
+        self.base().to_source_pos(self.origin.clone()) * comptime!(self.vector_size)
     }
 
-    /// Scalar stride between matrix rows: the (line-unit) physical stride of the
-    /// second-to-last axis, widened back to scalars. Untiled stores only (`levels == 0`,
-    /// so the physical rank is the space's).
+    /// Scalar stride between matrix rows: the (line-unit) physical stride of the leaf
+    /// tile's row axis (the second-to-last physical axis at any tiling depth), widened
+    /// back to scalars.
     pub(crate) fn row_stride(&self) -> u32 {
-        let rows = comptime!(self.start_axis + self.num_tiled - 2);
+        let rows = comptime!(self.start_axis + (self.levels + 1) * self.num_tiled - 2);
         self.physical_strides[rows] * comptime!(self.vector_size as u32)
     }
 
@@ -481,34 +482,54 @@ fn top_window(
     (origin, extent)
 }
 
-/// Row-major physical shape/strides over `space`'s per-axis extents, stored in the smem [`MemData`]
-/// so it survives `at`'s space division. Line-unit like [`Tile::from_tensor`]: the innermost
-/// (vectorized) axis counts lines (`/ vector_size`) and every stride is a row-major weight over
-/// the *line* shape; all a no-op at `vector_size == 1`.
+/// The smem physical shape/strides over `space`, stored in the [`MemData`] so they survive
+/// `at`'s space division. Line-unit like [`Tile::from_tensor`]: the innermost (vectorized)
+/// physical axis counts lines (`/ vector_size`) and every stride is a row-major weight over
+/// the *line* shape. `levels == 0` is a plain row-major buffer; `levels == 1` is the
+/// `[grid…, tile…]` storage tiling at the space's final tile, each tile a contiguous block.
 #[cube]
-fn row_major(#[comptime] space: Space, #[comptime] vector_size: usize) -> (CoordsDyn, CoordsDyn) {
-    let rank = space.rank();
-    let last = comptime!(rank - 1);
-    let mut shape = CoordsDyn::new();
-
-    #[unroll]
-    for p in 0..rank {
-        let e = comptime!(space.extent(space.axis_at(p)));
-        shape.push(comptime!(if p == last { e / vector_size } else { e }) as u32);
-    }
-
-    let mut strides = CoordsDyn::new();
-
-    #[unroll]
-    for p in 0..rank {
-        let weight = comptime! {
-            let mut acc = 1;
-            for q in (p + 1)..rank {
-                let e = space.extent(space.axis_at(q));
-                acc *= if q == last { e / vector_size } else { e };
+fn storage_layout(
+    #[comptime] space: Space,
+    #[comptime] vector_size: usize,
+    #[comptime] levels: usize,
+) -> (CoordsDyn, CoordsDyn) {
+    // The physical line extents, comptime: `[extents…]` flat, or `[grid…, tile…]`.
+    let extents = comptime! {
+        let rank = space.rank();
+        let mut extents = Vec::new();
+        match levels {
+            0 => {
+                for p in 0..rank {
+                    extents.push(space.extent_at(p));
+                }
             }
-            acc
-        };
+            1 => {
+                let fin = space.final_space();
+                for p in 0..rank {
+                    let (e, t) = (space.extent_at(p), fin.extent_at(p));
+                    assert!(
+                        e.is_multiple_of(t),
+                        "Tile::smem: the final tile must divide the staged space"
+                    );
+                    extents.push(e / t);
+                }
+                for p in 0..rank {
+                    extents.push(fin.extent_at(p));
+                }
+            }
+            _ => panic!("Tile::smem: one storage-tiling level at most"),
+        }
+        let last = extents.len() - 1;
+        extents[last] /= vector_size;
+        extents
+    };
+
+    let mut shape = CoordsDyn::new();
+    let mut strides = CoordsDyn::new();
+    #[unroll]
+    for p in 0..comptime!(extents.len()) {
+        shape.push(comptime!(extents[p]) as u32);
+        let weight = comptime!(extents[p + 1..].iter().product::<usize>());
         strides.push(weight as u32);
     }
 
