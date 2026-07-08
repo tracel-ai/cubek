@@ -89,15 +89,26 @@ pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
         s0.consume(|a, b| out.at(&even_region).mma(a, b));
 
         // prefetch the next even region back into slot 0 (if it exists), then compute the odd
-        // region on slot 1.
+        // region on slot 1. A fill is published by the *next* fill's rendezvous; when none
+        // follows, publish explicitly before consuming.
         if odd + 1 < n {
             let next_even = walk.region(odd + 1);
             s0.fill(|s, pipe| {
                 pipe.fill(&mut s.0, &lhs.at(&next_even));
                 pipe.fill(&mut s.1, &rhs.at(&next_even));
             });
+        } else {
+            s1.publish();
         }
         let odd_region = walk.region(odd);
         s1.consume(|a, b| out.at(&odd_region).mma(a, b));
+    }
+
+    // An odd total leaves the last region primed in slot 0 (by the final prefetch above, or
+    // the prologue when `n == 1`) with no consumer in the loop; publish and drain it.
+    if n % 2 == 1 {
+        s0.publish();
+        let last = walk.region(n - 1);
+        s0.consume(|a, b| out.at(&last).mma(a, b));
     }
 }

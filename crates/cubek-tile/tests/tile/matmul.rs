@@ -967,6 +967,13 @@ fn cmma_matmul_double_buffered_k_walk() {
     check_cmma_matmul_k_walk(32, Schedule::DoubleBuffered);
 }
 
+/// An odd region total (three K stages): the loop leaves the last region primed in slot 0;
+/// the epilogue must publish and consume it.
+#[test]
+fn cmma_matmul_double_buffered_odd_k_walk() {
+    check_cmma_matmul_k_walk(24, Schedule::DoubleBuffered);
+}
+
 fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if client.properties().features.matmul.cmma.is_empty() {

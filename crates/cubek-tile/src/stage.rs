@@ -165,6 +165,21 @@ impl<T: CubeType> Staging<T> {
             Pipeline::Cube { .. } => {}
         }
     }
+
+    /// Publish this slot's last fill when no successor fill's rendezvous will: a collective
+    /// `Cube` slot relies on the *next* `fill`'s `sync_cube` to make a fill visible, so a
+    /// fill consumed with no fill in between (the walk's final regions) needs this explicit
+    /// rendezvous. A `Barrier` slot's consume already waits `full`; `Solo` has one unit.
+    pub fn publish(&self) {
+        match &self.pipeline {
+            Pipeline::Cube { collective } => {
+                if *collective {
+                    sync_cube();
+                }
+            }
+            Pipeline::Barrier { .. } => {}
+        }
+    }
 }
 
 #[cube]
