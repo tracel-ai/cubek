@@ -209,7 +209,7 @@ pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
 
 /// The whole remaining walk's fragment grid for one instance: `(1, 1)` when every level
 /// is an instance level, else the single partition level's tile counts.
-pub(crate) fn partition_shape(space: &Space) -> (usize, usize) {
+fn partition_shape(space: &Space) -> (usize, usize) {
     let mut shape = (1usize, 1usize);
     let mut level = space.clone();
     while !level.is_final() {

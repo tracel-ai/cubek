@@ -1,10 +1,10 @@
 //! The CyclicCmma routine: the classic simple matmul (plane-partitioned stage, cooperative
 //! cyclic loading, tensor-core leaf) ported onto the tile DSL.
 //!
-//! Each cube owns a `planes.m·instruction.m × planes.n·instruction.n` stage; a
-//! double-buffered walk rotates `instruction.k`-deep smem slots along `K`, filled
-//! cooperatively (cyclic across the cube's units). Within the stage each plane owns one
-//! `instruction`-sized cmma fragment, resident across the whole `K` walk.
+//! Each cube owns a `planes·partition·instruction`-sized stage along `m`/`n`; a
+//! double-buffered walk rotates smem slots along `K` (depth smem-budgeted), filled
+//! cooperatively (cyclic across the cube's units). Within the stage each plane owns a
+//! [`Partition`] of instruction-sized cmma fragments, resident across the whole `K` walk.
 //!
 //! # Rejected (returns [`MatmulSetupError`])
 //!
