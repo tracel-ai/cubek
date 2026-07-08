@@ -66,9 +66,9 @@ opt-level = 0
 [profile.dev.build-override]
 opt-level = 3
 
-# TEMPORARY: the pinned rev + the cubecl-cpu Index-unit fix (visit_index must index in
-# units of the accessed item, like the C++ backends), pending upstream. See
-# ../cubecl branch fix/cpu-index-unit.
+# TEMPORARY: cubecl main + the cubecl-cpu Index-unit fix (visit_index must index in
+# units of the accessed item, like the C++ backends), pending upstream — ../cubecl on
+# branch fix/cpu-index-unit.
 [patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { path = "../cubecl-cpu-fix/crates/cubecl" }
-cubecl-common = { path = "../cubecl-cpu-fix/crates/cubecl-common" }
+cubecl = { path = "../cubecl/crates/cubecl" }
+cubecl-common = { path = "../cubecl/crates/cubecl-common" }
