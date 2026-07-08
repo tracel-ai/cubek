@@ -13,6 +13,10 @@ pub enum TileKind<T: Numeric> {
     Smem(MemData<T>),
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
+    /// An instance's resident accumulator partition: `m_tiles × n_tiles` cmma fragments,
+    /// comptime-indexed. Built only by the boundary hoist; contraction is the partition
+    /// microkernel.
+    CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, can only be the source of a
     /// [`stage_from`](Tile::stage_from) into shared memory, which lowers to a hardware bulk copy.
     /// Built but dormant — no launch-side constructor wires it yet (see [`Tile::from_tensor_map`]).

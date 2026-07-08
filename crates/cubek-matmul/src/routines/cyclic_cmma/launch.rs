@@ -93,14 +93,17 @@ pub fn launch_ref<R: Runtime>(
     };
 
     let blueprint = CyclicCmmaRoutine::blueprint(strategy, &problem, &device_settings)?;
-    let (i, p) = (blueprint.instruction, blueprint.planes);
-    let (stage_m, stage_n) = (p.m * i.m, p.n * i.n);
-    // Stage depth: the deepest `c·i.k` dividing `k` (c ≤ 8) — fewer, fatter K stages
-    // amortize the fill rendezvous; within a stage each plane walks `c` leaf sub-tiles.
+    let (i, c) = (blueprint.instruction, blueprint.partition);
+    let (stage_m, stage_n) = blueprint.stage();
+    // Stage depth: the deepest `d·i.k` dividing `k` (d ≤ 8) whose two double-buffered
+    // slots still fit shared memory — fewer, fatter K stages amortize the fill
+    // rendezvous; within a stage each plane walks `d` leaf sub-tiles per fragment.
+    let smem_budget = 32 * 1024;
+    let row_bytes = stage_m * dtypes.lhs_global.size() + stage_n * dtypes.rhs_global.size();
     let stage_k = (1..=8usize)
         .rev()
-        .map(|c| c * i.k)
-        .find(|&sk| k.is_multiple_of(sk))
+        .map(|d| d * i.k)
+        .find(|&sk| k.is_multiple_of(sk) && 2 * sk * row_bytes <= smem_budget)
         .unwrap_or(i.k);
 
     // Output batch dims that survive (extent > 1) ride one-per-cube on Z.
@@ -113,8 +116,9 @@ pub fn launch_ref<R: Runtime>(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // Two levels: the cube grid whose double-buffered walk rotates `i.k`-deep smem stages
-    // along `K` (filled cooperatively), then one `instruction`-sized fragment per plane.
+    // Three levels: the cube grid whose double-buffered walk rotates `stage_k`-deep smem
+    // stages along `K` (filled cooperatively); the stage split one partition per plane;
+    // the partition level the microkernel contracts with resident fragments.
     let space = Tiling::new()
         .extents(&extents)
         .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
@@ -125,8 +129,14 @@ pub fn launch_ref<R: Runtime>(
         })
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
-                .axis(M, Cut::plane(i.m))
-                .axis(N, Cut::plane(i.n))
+                .axis(M, Cut::plane(c.m * i.m))
+                .axis(N, Cut::plane(c.n * i.n))
+                .axis(K, Cut::sequential(stage_k))
+        })
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axes(&batch_axes, Cut::sequential(1))
+                .axis(M, Cut::sequential(i.m))
+                .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k))
         })
         .build()

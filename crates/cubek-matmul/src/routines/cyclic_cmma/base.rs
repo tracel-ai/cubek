@@ -41,27 +41,46 @@ pub(crate) fn batch_axis(i: usize) -> Axis {
 /// blowing the cube dim.
 const MAX_PLANES_PER_AXIS: usize = 4;
 
-/// A fully-resolved plan: the tensor-core [`Instruction`] each plane executes and how many
-/// planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]).
+/// Tiles per plane along `m`/`n` — the plane's resident fragment partition. `A` fragments
+/// are reused across the `n` tiles and `B` across the `m` tiles, so fragment loads per
+/// execute fall as `(m + n) / (m·n)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Partition {
+    pub m: usize,
+    pub n: usize,
+}
+
+/// A fully-resolved plan: the tensor-core [`Instruction`], each plane's fragment
+/// [`Partition`], and how many planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CyclicCmmaBlueprint {
     pub instruction: Instruction,
+    pub partition: Partition,
     pub planes: PlaneGrid,
 }
 
 impl CyclicCmmaBlueprint {
+    /// The cube's stage edges along `m`/`n`.
+    pub(crate) fn stage(&self) -> (usize, usize) {
+        (
+            self.planes.m * self.partition.m * self.instruction.m,
+            self.planes.n * self.partition.n * self.instruction.n,
+        )
+    }
+
     /// Reject a plan this routine cannot run: a degenerate cuboid, or a shape the cmma
     /// transport would have to mask.
     #[allow(clippy::result_large_err)]
     pub fn validate(&self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
-        let (i, p) = (self.instruction, self.planes);
-        if i.m == 0 || i.n == 0 || i.k == 0 || p.m == 0 || p.n == 0 {
+        let (i, c, p) = (self.instruction, self.partition, self.planes);
+        if i.m == 0 || i.n == 0 || i.k == 0 || c.m == 0 || c.n == 0 || p.m == 0 || p.n == 0 {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "CyclicCmma blueprint must be non-zero, got instruction {}x{}x{} planes {}x{}",
-                i.m, i.n, i.k, p.m, p.n
+                "CyclicCmma blueprint must be non-zero, got instruction {}x{}x{} \
+                 partition {}x{} planes {}x{}",
+                i.m, i.n, i.k, c.m, c.n, p.m, p.n
             ))));
         }
-        let (stage_m, stage_n) = (p.m * i.m, p.n * i.n);
+        let (stage_m, stage_n) = self.stage();
         if !problem.m.is_multiple_of(stage_m)
             || !problem.n.is_multiple_of(stage_n)
             || !problem.k.is_multiple_of(i.k)
@@ -172,20 +191,36 @@ impl CyclicCmmaRoutine {
                 MatmulAvailabilityError::TileSizeNotFound,
             ))?;
 
-        // Plane grid: fill the units-per-cube budget along m then n, snapped to divisors
-        // of the tile grid so the stage never overhangs (cmma cannot mask). One fragment
-        // per plane keeps registers light, so more planes than the legacy 256-unit cap.
-        let max_units = (client.properties().hardware.max_units_per_cube as usize).min(512);
-        let budget = (max_units / plane_dim).max(1);
+        // Each plane's partition: deep along n (A-fragment reuse), a couple of rows along
+        // m (B reuse), snapped to divisors of the tile grid so the stage never overhangs
+        // (cmma cannot mask). The legacy shape: partition_n ≈ 8, rows 2.
         let (grid_m, grid_n) = (problem.m / im.max(1), problem.n / inn.max(1));
-        let planes_m = divisor_at_most(grid_m.max(1), budget.min(MAX_PLANES_PER_AXIS));
-        let planes_n = divisor_at_most(grid_n.max(1), (budget / planes_m).min(MAX_PLANES_PER_AXIS));
+        let part_n = divisor_at_most(grid_n.max(1), 8);
+        let part_m = divisor_at_most(grid_m.max(1), 2);
+
+        // Plane grid over the remaining partition grid, filling the units-per-cube budget.
+        // Capped at 256 units like the legacy selector: past it Metal rejects the cube dim
+        // at pipeline creation, which surfaces as a silently zeroed output.
+        let max_units = (client.properties().hardware.max_units_per_cube as usize).min(256);
+        let budget = (max_units / plane_dim).max(1);
+        let planes_m = divisor_at_most(
+            (grid_m / part_m).max(1),
+            budget.min(MAX_PLANES_PER_AXIS),
+        );
+        let planes_n = divisor_at_most(
+            (grid_n / part_n).max(1),
+            (budget / planes_m).min(MAX_PLANES_PER_AXIS),
+        );
 
         Ok(CyclicCmmaBlueprint {
             instruction: Instruction {
                 m: im,
                 n: inn,
                 k: ik,
+            },
+            partition: Partition {
+                m: part_m,
+                n: part_n,
             },
             planes: PlaneGrid {
                 m: planes_m,

@@ -121,3 +121,13 @@ fn gemm_cyclic_cmma_timing_vs_legacy() {
         );
     }
 }
+
+/// Print the backend's cmma configs (debugging aid).
+#[test]
+#[ignore = "debug probe"]
+fn print_cmma_configs() {
+    let client = cubecl::TestRuntime::client(&Default::default());
+    for c in client.properties().features.matmul.cmma.iter() {
+        println!("{:?}", c);
+    }
+}

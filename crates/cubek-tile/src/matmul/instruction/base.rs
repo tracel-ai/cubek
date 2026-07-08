@@ -21,6 +21,15 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
         TileKind::Cmma(d) => d.mma(lhs, rhs),
+        // A partition that reaches a final tile carries exactly one fragment (a wider one
+        // is consumed earlier by the partition microkernel).
+        TileKind::CmmaPartition(p) => {
+            comptime!(assert!(
+                p.m_tiles == 1 && p.n_tiles == 1,
+                "mma_leaf: a multi-tile partition must be contracted at its partition level"
+            ));
+            p.at(0usize, 0usize).mma(lhs, rhs)
+        }
         TileKind::Gmem(g) | TileKind::Smem(g) => {
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
