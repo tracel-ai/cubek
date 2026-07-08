@@ -29,11 +29,8 @@ impl<A: Numeric> CmmaData<A> {
                 let k = comptime!(lhs.space.extent_at(lhs.space.rank() - 1));
                 let n = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
 
-                // The stage fill precedes this call with no rendezvous of its own: writes
-                // must be visible before the plane's cooperative load, and every lane must
-                // have loaded before the next fill overwrites the stage. Uniform: every
-                // instance walks the same region count (asserted at the boundary hoist).
-                sync_cube();
+                // The rendezvous with the stage fill belongs to the schedule that filled it;
+                // here the operands are simply readable memory.
                 let mut a_frag = unsafe {
                     Matrix::<L>::uninitialized(MatrixIdent::A, m, n, k, MatrixLayout::RowMajor)
                 };
@@ -42,7 +39,6 @@ impl<A: Numeric> CmmaData<A> {
                     Matrix::<R>::uninitialized(MatrixIdent::B, m, n, k, MatrixLayout::RowMajor)
                 };
                 cmma::load(&mut b_frag, b.window_slice(), b.row_stride());
-                sync_cube();
 
                 cmma::execute(&a_frag, &b_frag, &self.matrix, &self.matrix);
             }

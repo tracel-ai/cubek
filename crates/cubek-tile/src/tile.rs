@@ -580,16 +580,24 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Memory transport leaf: copy each 2-D matrix of `src` into `self` element-wise. Both tiles
-    /// share `self`'s width (smem is staged at the source operand's width), so the copy moves whole
-    /// `Vector<T, W>` lines.
+    /// Memory transport leaf: cooperative cyclic copy of `src` into `self`. The cube's units
+    /// split the flat line space with an interleaved stride — unit `u` moves lines `u`,
+    /// `u + CUBE_DIM`, … (`coord_of`'s `Interleaved` deal, at line granularity) — so one pass
+    /// of the whole cube fills the tile. Both tiles share `self`'s width (smem is staged at
+    /// the source operand's width), so the copy moves whole `Vector<T, W>` lines. The caller
+    /// owns the rendezvous: a `sync_cube` must separate this fill from its readers.
     fn mem_copy(&mut self, src: &Tile<T>) {
         let size!(W) = self.vector_size();
-        let matrices = self.matrix_count();
-        for j in 0..matrices {
-            let s = src.matrix::<W>(j);
-            let mut d = self.matrix_mut::<W>(j);
-            copy_2d::<Vector<T, W>>(&mut d, &s);
+        let s = src.flat::<W>();
+        let mut d = self.flat_mut::<W>();
+        let total = d.shape();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            // `src` zeroes reads past its logical bound (the partial-tile overhang); the
+            // staged buffer is unchecked, so the full padded cell is still written.
+            d.write(i, s.read(i));
+            i += workers;
         }
     }
 }

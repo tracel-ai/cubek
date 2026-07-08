@@ -39,7 +39,11 @@ pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     for region in Walk::over(space) {
         a_tile.copy_from(&lhs.at(&region));
         b_tile.copy_from(&rhs.at(&region));
+        // The fill is cooperative (each unit moves an interleaved share), so a rendezvous
+        // brackets the compute: fills visible before any read, reads done before the refill.
+        sync_cube();
         out.at(&region).mma(&a_tile, &b_tile);
+        sync_cube();
     }
 }
 
