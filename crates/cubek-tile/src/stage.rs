@@ -1,25 +1,17 @@
-//! [`Staging`]: a matmul-agnostic double-buffer slot. It owns a payload `T` (for matmul, a
-//! `(Tile<Lhs>, Tile<Rhs>)` tuple) and a [`Pipeline`] sequencing the payload's fill against its read.
-//! `fill`/`consume` each acquire the slot, run a closure over the payload, then release: the caller
-//! never makes the rendezvous call, and no raw barrier escapes.
+//! [`Staging`]: a matmul-agnostic double-buffer slot — a payload `T` plus a [`Pipeline`]
+//! sequencing its fill against its read. `fill`/`consume` acquire, run a closure, release; no
+//! raw barrier escapes. The [`Barrier`](Sync::Barrier) strategy (a `full`/`empty` mbarrier pair
+//! with a `phase` parity, mirroring cubek-matmul's `specialized/matmul.rs`) is the reference
+//! design; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are degenerate cases.
 //!
-//! The [`Barrier`](Sync::Barrier) strategy is the reference design (mirrors cubek-matmul's
-//! `specialized/matmul.rs`): a `full`/`empty` mbarrier pair with a `phase` parity, producer and
-//! consumer decoupled so a hardware bulk copy overlaps compute. `write` waits `empty` (WAR), the
-//! fill pushes an async copy onto `full`, `write` arrives `full`; `read` waits `full` (RAW), the
-//! body reads, `read` arrives `empty` and flips the phase. [`Cube`](Sync::Cube) (strided, one
-//! `sync_cube`) and [`Solo`](Sync::Solo) (single unit, no collective) are degenerate cases.
-//!
-//! A `Guard` with `Drop` would be the natural spelling, but a `Drop` can't emit a barrier op in
-//! cubecl (it never receives a `Scope`), so the release is emitted by the wrapper right after the
-//! closure body. And because `#[cube]` rejects `impl Trait` kernel args, `fill`/`consume` are
-//! hand-written expand methods (mirroring `ComptimeOption::map`) delegating to the [`Pipeline`].
+//! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
+//! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Tile, TileExpand};
+use crate::{Tile, TileExpand, TileKind, TileKindExpand};
 
 /// How a slot rendezvouses its fill against its read. Comptime — fixed at construction from the
 /// operands' delivery, never inferred at the call site.
@@ -47,11 +39,8 @@ impl Sync {
     }
 }
 
-/// The rendezvous for one slot, and every barrier it owns. Only [`Barrier`](Pipeline::Barrier) carries
-/// an mbarrier or a phase — [`Cube`](Pipeline::Cube) carries just the comptime flag distinguishing a
-/// `sync_cube` fill from a lone-unit one. The acquire/release operations live on [`Staging`] (matched
-/// off `&self.pipeline`, the way `Tile` operations match off its `tile_kind`); [`fill`](Pipeline::fill)
-/// is the one op a `write` body reaches for directly.
+/// The rendezvous for one slot, and every barrier it owns. The acquire/release operations live
+/// on [`Staging`]; [`fill`](Pipeline::fill) is the one op a `write` body reaches for directly.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum Pipeline {
@@ -60,7 +49,7 @@ pub enum Pipeline {
     Cube { collective: bool },
     /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase` parity, so
     /// the fill overlaps compute. TMA is the fill that motivates it (the bulk copy lands the `full`
-    /// transaction), but the barrier itself is delivery-agnostic — see [`Tile::stage_from`].
+    /// transaction), but the barrier itself is delivery-agnostic — see [`Pipeline::fill`].
     Barrier {
         /// Producer→consumer (one producer arrival): flips once the fill's transaction bytes land.
         full: Shared<Barrier>,
@@ -90,12 +79,22 @@ impl Pipeline {
         }
     }
 
-    /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot stages
-    /// under its `full` mbarrier ([`stage_from`](Tile::stage_from), which itself picks TMA vs a plain
-    /// copy off the source); a `Cube` slot is a plain element [`copy_from`](Tile::copy_from).
+    /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
+    /// stages under its `full` mbarrier; a `Cube` slot is a plain blocking
+    /// [`copy_from`](Tile::copy_from).
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         match self {
-            Pipeline::Barrier { full, .. } => dst.stage_from(src, full),
+            Pipeline::Barrier { full, .. } => match (&mut dst.tile_kind, &src.tile_kind) {
+                (TileKind::Smem(d), TileKind::TmaGmem(s)) => {
+                    if UNIT_POS == 0 {
+                        full.expect_tx(d.size_bytes());
+                    }
+                    s.stage_into(d, full);
+                }
+                // A strided source under a barrier is a plain synchronous copy.
+                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s),
+                _ => panic!("Pipeline::fill: unsupported kind pairing"),
+            },
             Pipeline::Cube { .. } => dst.copy_from(src),
         }
     }
@@ -166,12 +165,9 @@ impl<T: CubeType> Staging<T> {
         }
     }
 
-    /// Publish this slot's last fill when no successor fill's rendezvous will: a collective
-    /// `Cube` slot relies on the *next* `fill`'s `sync_cube` to make a fill visible, so a
-    /// fill consumed with no fill in between (the walk's final regions) needs this explicit
-    /// rendezvous. A `Barrier` slot's consume already waits `full`; `Solo` has one unit.
-    /// Internal: reached only through [`consume_final`](Staging::consume_final), so the schedule
-    /// never emits a bare rendezvous.
+    /// Publish this slot's last fill when no successor fill's rendezvous will (the walk's final
+    /// regions). Only a collective `Cube` slot needs it; reached only through
+    /// [`consume_final`](Staging::consume_final).
     fn publish(&self) {
         match &self.pipeline {
             Pipeline::Cube { collective } => {
@@ -186,11 +182,9 @@ impl<T: CubeType> Staging<T> {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build a double-buffer slot staging the gmem operands `lhs`/`rhs` into fresh shared memory.
-    /// The [`Sync`] strategy is deduced from the operands' delivery — both TMA sources → async
-    /// `Barrier`, otherwise strided `Cube`; mixed delivery is rejected at comptime. Each smem buffer
-    /// is sized from its operand (row-major over the level's divide, at the operand's physical width,
-    /// so the scalar slice holds `tile_size * width`).
+    /// Build a double-buffer slot staging the gmem operands `lhs`/`rhs` into fresh shared
+    /// memory, each smem buffer sized from its operand. The [`Sync`] strategy is deduced from
+    /// the operands' delivery — both TMA sources → async `Barrier`, otherwise strided `Cube`.
     pub fn new(lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_tma = lhs.is_tma();
         let rhs_tma = rhs.is_tma();
@@ -250,8 +244,6 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
         self.__expand_publish_method(scope);
-        self.__expand_acquire_read_method(scope);
-        compute(scope, &self.data.0, &self.data.1);
-        self.__expand_release_read_method(scope);
+        self.__expand_consume_method(scope, compute);
     }
 }

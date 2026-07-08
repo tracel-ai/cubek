@@ -114,14 +114,11 @@ struct TileSourceData<'a, E, R: Runtime> {
     _ty: PhantomData<E>,
 }
 
-/// Typestate builder for a strided tile kernel argument, started with [`TileArgLaunch::source`]. The
-/// argument occupies a subspace of the global space, named by two complementary axis groups: the
-/// inner [`subspace`](Self::subspace) block (the tile it iterates — its trailing buffer dims,
-/// storage-tiled so labels repeat level-major: dim `i` is `subspace[i % subspace.len()]`) and the
-/// outer [`batches`](Self::batches) (the output's batch axes, right-aligned to its leading dims,
-/// size-1 dims dropped — numpy broadcast). The binding is set at construction; the `Sp`/`Sub` markers track the two
-/// remaining required setters, so [`build`](Self::build) exists only once both [`space`](Self::space)
-/// and [`subspace`](Self::subspace) are [`Set`]. Borrows the axis slices + `space` for the chain.
+/// Typestate builder for a strided tile kernel argument, started with [`TileArgLaunch::source`]:
+/// the inner [`subspace`](Self::subspace) block (the trailing buffer dims, labels repeating
+/// level-major) plus the outer [`batches`](Self::batches) (right-aligned to the leading dims,
+/// size-1 dropped — numpy broadcast). The `Sp`/`Sub` markers make [`build`](Self::build) exist
+/// only once both required setters are [`Set`].
 pub struct TileSource<'a, Sp, Sub, E, R: Runtime> {
     data: TileSourceData<'a, E, R>,
     _state: PhantomData<(Sp, Sub)>,

@@ -1,6 +1,6 @@
 //! The [`Tile`]: one operand's data, a [`TileKind`] backing store plus the comptime
 //! [`Space`] it projects. This module holds the tile-level surface — the launch arg, the
-//! kind/class enums, and the operations that dispatch on the kind; each backing store's
+//! kind enum, and the operations that dispatch on the kind; each backing store's
 //! own data and leaves live in its file ([`mem`], [`cmma`], [`tma`]).
 
 mod cmma;
@@ -11,23 +11,9 @@ pub use cmma::*;
 pub use mem::*;
 pub use tma::*;
 
-use cubecl::{prelude::barrier::Barrier, prelude::*, quant::scheme::QuantScheme};
+use cubecl::{prelude::*, quant::scheme::QuantScheme};
 
 use crate::*;
-
-/// A tile's comptime storage class — what dispatch keys on when only the *kind* of
-/// store matters, not its data. Read via [`Tile::class`](crate::Tile::class).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TileClass {
-    /// Addressable memory (gmem or smem).
-    Mem,
-    /// A single mma fragment.
-    Cmma,
-    /// A resident partition of mma fragments.
-    CmmaPartition,
-    /// A TMA tensor-map source.
-    Tma,
-}
 
 /// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a
 /// [`cmma::Matrix`](cubecl::cmma::Matrix)); [`view`](Tile::view) rebuilds a borrowed view on
@@ -42,9 +28,9 @@ pub enum TileKind<T: Numeric> {
     /// comptime-indexed. Built only by [`mma_resident`](crate::matmul); contraction is the
     /// partition microkernel.
     CmmaPartition(CmmaPartition<T>),
-    /// A TMA tensor-map source: not element-addressable, can only be the source of a
-    /// [`stage_from`](Tile::stage_from) into shared memory, which lowers to a hardware bulk copy.
-    /// Built but dormant — no launch-side constructor wires it yet (see [`Tile::from_tensor_map`]).
+    /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
+    /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
+    /// (see [`Tile::from_tensor_map`]).
     TmaGmem(TmaData<T>),
 }
 
@@ -86,13 +72,8 @@ impl Storage {
 }
 
 /// The launchable form of a [`Tile`]: a scalar `&Tensor` plus its comptime line
-/// [`vector_size`](Self::vector_size), [`Space`] and [`Storage`]. The kernel turns it into a `Tile`
-/// with [`tile`](TileArg::tile). The physical vectorization is a plain comptime value (the
-/// `vector_size` field), not a type parameter — the buffer is served scalar and re-grouped into
-/// `Vector<E, vector_size>` lines in-kernel.
-///
-/// `E` is the element physically in the tensor. For a quantized operand
-/// ([`quantized`](TileArgLaunch::quantized) attaches the scales), `E` is the storage element and
+/// [`vector_size`](Self::vector_size), [`Space`] and [`Storage`]; [`tile`](TileArg::tile) turns
+/// it into a `Tile` in-kernel. For a quantized operand, `E` is the storage element and
 /// [`tile_dequant`](TileArg::tile_dequant) picks the served type.
 #[derive(CubeType, CubeLaunch)]
 pub struct TileArg<'a, E: Numeric> {
@@ -152,9 +133,8 @@ impl<'a, E: Numeric> TileArg<'a, E> {
 }
 
 /// The quantization a tile's backing store carries so reads dequantize transparently: a runtime
-/// `scale` (per-tensor for now) plus the comptime [`QuantScheme`]. Lives on [`MemData`], not the
-/// [`Tile`] — the tile serves `T`; that the buffer secretly holds quantized data is a storage
-/// detail its consumers need not know.
+/// `scale` (per-tensor for now) plus the comptime [`QuantScheme`]. Lives on [`MemData`] — the
+/// tile serves `T`; the quantized buffer is a storage detail.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
@@ -186,16 +166,6 @@ pub struct Tile<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// This tile's comptime storage [`TileClass`] — the one classifier dispatch keys on.
-    pub fn class(&self) -> comptime_type!(TileClass) {
-        match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) => TileClass::Mem,
-            TileKind::Cmma(_) => TileClass::Cmma,
-            TileKind::CmmaPartition(_) => TileClass::CmmaPartition,
-            TileKind::TmaGmem(_) => TileClass::Tma,
-        }
-    }
-
     /// Whether this operand is delivered by TMA (an async hardware bulk-copy source) rather than a
     /// strided element copy. Comptime (the tile kind is fixed at trace); drives the staging sync.
     #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
@@ -273,56 +243,21 @@ impl<T: Numeric> Tile<T> {
         Space::with_sizes(space, sizes)
     }
 
-    /// Blocking copy of `src` into `self` across a level, dispatched by the two tiles' kinds to a
-    /// transport leaf: a fragment goes through cmma [`load`](Tile::cmma_load)/[`store`](Tile::cmma_store),
-    /// a TMA source through a self-contained bulk copy ([`tma_load`](Tile::tma_load)), memory to memory
-    /// is an element [`copy`](Tile::mem_copy). The pipelined (barrier-hoisted) counterpart is
-    /// [`stage_from`](Tile::stage_from). Moves data (unlike [`at`](Tile::at)); returns once the data has landed.
+    /// Blocking copy of `src` into `self` across a level, each kind pairing dispatched to its
+    /// transport leaf. Moves data (unlike [`at`](Tile::at)); returns once the data has landed.
+    /// The pipelined counterpart is [`Pipeline::fill`](crate::Pipeline::fill).
     pub fn copy_from(&mut self, src: &Tile<T>) {
-        // Read both tile-kind variants first, then branch, to avoid nesting a self-method
-        // call inside a tile_kind borrow.
-        // `matches!` isn't supported inside `#[cube]`, so spell out the match.
-        #[allow(clippy::match_like_matches_macro)]
-        let frag_dst = match &self.tile_kind {
-            TileKind::Cmma(_) => true,
-            _ => false,
-        };
-        #[allow(clippy::match_like_matches_macro)]
-        let frag_src = match &src.tile_kind {
-            TileKind::Cmma(_) => true,
-            _ => false,
-        };
-        #[allow(clippy::match_like_matches_macro)]
-        let tma_src = match &src.tile_kind {
-            TileKind::TmaGmem(_) => true,
-            _ => false,
-        };
-        if frag_dst {
-            self.cmma_load(src);
-        } else if frag_src {
-            self.cmma_store(src);
-        } else if tma_src {
-            self.tma_load(src);
-        } else {
-            self.mem_copy(src);
-        }
-    }
-
-    /// Pipelined (barrier-hoisted) copy of `src` into this staged tile under `barrier`, the
-    /// double-buffered counterpart of [`copy_from`](Tile::copy_from). The barrier sequences producer vs
-    /// consumer; how the fill moves the bytes is read off the source, so the caller passes no flag. A TMA
-    /// source declares its transaction bytes (`expect_tx`, elected unit) and pushes an async bulk copy
-    /// onto `barrier` ([`tma_stage`](Tile::tma_stage), wait hoisted to the consumer); any other source is
-    /// a plain synchronous element [`copy_from`](Tile::copy_from) — TMA is just one way to fill under a
-    /// barrier.
-    pub fn stage_from(&mut self, src: &Tile<T>, barrier: &Shared<Barrier>) {
-        if src.is_tma() {
-            if UNIT_POS == 0 {
-                barrier.expect_tx(self.tma_transaction_bytes());
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
+            (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
+                d.fill_from(s)
             }
-            self.tma_stage(src, barrier);
-        } else {
-            self.copy_from(src);
+            (TileKind::Cmma(_), TileKind::Cmma(_) | TileKind::CmmaPartition(_)) => {
+                panic!("Tile::copy_from: cmma→cmma cast not wired")
+            }
+            _ => panic!("Tile::copy_from: unsupported kind pairing"),
         }
     }
 }

@@ -47,11 +47,9 @@ impl<A: Numeric> CmmaData<A> {
     }
 }
 
-/// Contract an instance's whole fragment partition against its operand windows — the
-/// legacy plane-partitioned loop nesting, fully comptime: per `ki`, `A` fragments load
-/// once per row tile and are reused across the `n` loop; each `B` fragment loads once and
-/// is reused across the `m` loop. Fragment loads per execute drop from `2` to
-/// `(m_tiles + n_tiles) / (m_tiles · n_tiles)`.
+/// Contract an instance's whole fragment partition against its operand windows — the legacy
+/// plane-partitioned loop nesting, fully comptime: per `ki`, `A` fragments are reused across
+/// the `n` loop and each `B` fragment across the `m` loop.
 #[cube]
 pub(crate) fn mma_partition<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
     acc: &mut Tile<Acc>,

@@ -113,32 +113,4 @@ impl<T: Numeric> Tile<T> {
             space: comptime!(space),
         }
     }
-
-    /// Fill this fragment from `src`'s memory *window* (see [`CmmaData::load_window`]). `copy_from`
-    /// routes here only with a `Cmma` destination; any other pairing is a dispatch bug, not a
-    /// silent no-op.
-    pub(crate) fn cmma_load(&mut self, src: &Tile<T>) {
-        match (&mut self.tile_kind, &src.tile_kind) {
-            (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
-            (TileKind::Cmma(_), TileKind::Cmma(_) | TileKind::CmmaPartition(_)) => {
-                panic!("Tile::copy_from: cmma→cmma cast not yet wired")
-            }
-            (TileKind::Cmma(_), TileKind::TmaGmem(_)) => {
-                panic!("Tile::copy_from: cmma load straight from a tma source not wired")
-            }
-            _ => panic!("Tile::copy_from: cmma_load requires a fragment destination"),
-        }
-    }
-
-    /// Drain `src` (a `Cmma` fragment) into this memory tile's *window* (see
-    /// [`CmmaData::store_window`]). `copy_from` routes here only with a fragment source and memory
-    /// destination.
-    pub(crate) fn cmma_store(&mut self, src: &Tile<T>) {
-        match (&src.tile_kind, &mut self.tile_kind) {
-            (TileKind::Cmma(s), TileKind::Gmem(d) | TileKind::Smem(d)) => s.store_window(d),
-            _ => panic!(
-                "Tile::copy_from: cmma_store requires a fragment source and memory destination"
-            ),
-        }
-    }
 }

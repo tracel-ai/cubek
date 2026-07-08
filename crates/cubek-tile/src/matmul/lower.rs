@@ -1,7 +1,7 @@
-//! Lowering `c.mma(a, b)`: each call classifies itself comptime ([`Lowering::of`]) from the
-//! accumulator's storage class and its space, then takes exactly one step — the leaf
-//! instruction, the resident-accumulator lifecycle, the partition microkernel, or a level
-//! walk under this level's [`Schedule`].
+//! Lowering `c.mma(a, b)`: each call classifies itself comptime ([`Tile::lowering`]) from the
+//! accumulator's kind and its space, then takes exactly one step — the leaf instruction, the
+//! resident-accumulator lifecycle, the partition microkernel, or a level walk under this
+//! level's [`Schedule`].
 
 use cubecl::prelude::*;
 
@@ -25,13 +25,26 @@ enum Lowering {
 }
 
 impl Lowering {
-    fn of(class: TileClass, space: &Space) -> Lowering {
+    /// A memory accumulator: hoist to a resident partition when the leaf is cmma.
+    fn mem(space: &Space) -> Lowering {
         match space.partitioner() {
             Partitioner::Final(_) => Lowering::Leaf,
             Partitioner::Level(level) => {
-                if class == TileClass::Mem && space.partitioner().leaf() == Leaf::Cmma {
+                if space.partitioner().leaf() == Leaf::Cmma {
                     Lowering::Resident
-                } else if class == TileClass::CmmaPartition && partition_level(space).is_some() {
+                } else {
+                    Lowering::Walk(level.schedule())
+                }
+            }
+        }
+    }
+
+    /// A fragment partition: the comptime microkernel at its partition level.
+    fn partition(space: &Space) -> Lowering {
+        match space.partitioner() {
+            Partitioner::Final(_) => Lowering::Leaf,
+            Partitioner::Level(level) => {
+                if partition_level(space).is_some() {
                     Lowering::Partition
                 } else {
                     Lowering::Walk(level.schedule())
@@ -39,14 +52,32 @@ impl Lowering {
             }
         }
     }
+
+    /// A plain fragment: leaf or walk.
+    fn plain(space: &Space) -> Lowering {
+        match space.partitioner() {
+            Partitioner::Final(_) => Lowering::Leaf,
+            Partitioner::Level(level) => Lowering::Walk(level.schedule()),
+        }
+    }
 }
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// The [`Lowering`] step this accumulator takes: each kind tells its own.
+    fn lowering(&self) -> comptime_type!(Lowering) {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Lowering::mem(&self.space)),
+            TileKind::CmmaPartition(_) => comptime!(Lowering::partition(&self.space)),
+            TileKind::Cmma(_) => comptime!(Lowering::plain(&self.space)),
+            TileKind::TmaGmem(_) => comptime!(panic!("mma: a tma source is not an accumulator")),
+        }
+    }
+
     /// `c.mma(a, b)`: take this call's [`Lowering`] step.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let class = self.class();
-        match comptime!(Lowering::of(class, &self.space)) {
+        let lowering = self.lowering();
+        match comptime!(lowering) {
             Lowering::Leaf => mma_leaf(self, lhs, rhs),
             Lowering::Resident => mma_resident(self, lhs, rhs),
             Lowering::Partition => mma_partition(self, lhs, rhs),
