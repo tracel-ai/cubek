@@ -1,22 +1,32 @@
-//! The cmma boundary hoist: a memory accumulator bound for the [`Leaf::Cmma`] instruction
-//! becomes an instance-resident fragment partition *before* the level walk — initialized
-//! from this instance's windows, accumulated across the whole contraction, drained back
-//! after. Fragments cannot be indexed at runtime, so residency is handled once here (and
-//! the partition's own walk is the comptime microkernel), not per schedule.
+//! The resident accumulator: a memory accumulator bound for the [`Leaf::Cmma`]
+//! instruction runs the contraction in fragments — initialized from this instance's
+//! windows once, accumulated across the whole walk, drained back once (the classic
+//! global matmul's `init_accumulator` / epilogue). Fragments cannot be indexed at
+//! runtime, so residency is handled once here at the outermost level, not per schedule.
 
 use cubecl::{cmma::MatrixIdent, prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
-/// Hoist `out` (a memory tile) into a resident [`CmmaPartition`], each fragment
-/// initialized from its final window so the contraction accumulates onto the delivered
-/// values. The partition carries `out`'s space, so the schedules walk it exactly like the
-/// tile it replaces; [`Tile::at`] passes it through unchanged.
+/// Run `out`'s contraction on a resident accumulator: [`init`] the fragment partition
+/// from its windows, recurse `mma` on it (the partition carries `out`'s space, so the
+/// schedules walk it exactly like the tile it replaces and [`Tile::at`] passes it
+/// through unchanged), then [`drain`] it back.
 #[cube]
-pub(crate) fn cmma_acc<Acc: Numeric, Lhs: Numeric>(
+pub(crate) fn mma_resident<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
     out: &mut Tile<Acc>,
     lhs: &Tile<Lhs>,
-) -> Tile<Acc> {
+    rhs: &Tile<Rhs>,
+) {
+    let mut acc = init(out, lhs);
+    acc.mma(lhs, rhs);
+    drain(out, &acc);
+}
+
+/// The resident [`CmmaPartition`] for `out`, each fragment initialized from its final
+/// window so the contraction accumulates onto the delivered values.
+#[cube]
+fn init<Acc: Numeric, Lhs: Numeric>(out: &mut Tile<Acc>, lhs: &Tile<Lhs>) -> Tile<Acc> {
     let space = comptime!(out.space.clone());
     let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
     let fin = comptime!(space.final_space());
@@ -34,7 +44,7 @@ pub(crate) fn cmma_acc<Acc: Numeric, Lhs: Numeric>(
             match &window.tile_kind {
                 TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
                 TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                    panic!("cmma_acc: the accumulator source must be memory")
+                    panic!("resident accumulator: the source must be memory")
                 }
             }
             frags.push(frag);
@@ -52,7 +62,7 @@ pub(crate) fn cmma_acc<Acc: Numeric, Lhs: Numeric>(
 
 /// Drain the resident partition back into this instance's final windows of `out`.
 #[cube]
-pub(crate) fn cmma_drain<Acc: Numeric>(out: &mut Tile<Acc>, acc: &Tile<Acc>) {
+fn drain<Acc: Numeric>(out: &mut Tile<Acc>, acc: &Tile<Acc>) {
     match &acc.tile_kind {
         TileKind::CmmaPartition(p) => {
             #[unroll]
@@ -64,14 +74,14 @@ pub(crate) fn cmma_drain<Acc: Numeric>(out: &mut Tile<Acc>, acc: &Tile<Acc>) {
                     match &mut window.tile_kind {
                         TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
                         TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                            panic!("cmma_drain: the accumulator sink must be memory")
+                            panic!("resident accumulator: the sink must be memory")
                         }
                     }
                 }
             }
         }
         TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-            panic!("cmma_drain: not a fragment-partition accumulator")
+            panic!("resident accumulator: drain expects the fragment partition")
         }
     }
 }

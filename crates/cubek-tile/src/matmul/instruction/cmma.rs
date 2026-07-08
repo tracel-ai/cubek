@@ -9,7 +9,7 @@ use cubecl::{
     prelude::*,
 };
 
-use crate::matmul::acc::{contracted_axis, region_at};
+use crate::matmul::resident::{contracted_axis, region_at};
 use crate::*;
 
 #[cube]
