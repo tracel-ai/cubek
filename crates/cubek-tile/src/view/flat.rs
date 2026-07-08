@@ -76,12 +76,28 @@ impl Layout for FlatLayout {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A flat 1-D masked view over `Vector<T, W>` lines (`W` = [`width`](Tile::width)): a row-major
-    /// scan over the tile's window, masking the overhang per its comptime `check` flag. The
-    /// elementwise twin of [`matrix`](Tile::matrix).
-    pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+    /// A flat 1-D quantization-transparent view over `Vector<T, W>` lines (`W` =
+    /// [`vector_size`](Tile::vector_size)): a row-major scan over the tile's window, masking the
+    /// overhang per its comptime `check` flag. A plain tile serves the `Direct` arm; a quantized
+    /// store re-types its buffer to the storage element `I` and dequantizes each read into `T`.
+    /// `I` is threaded by the calling kernel (bound via `#[define]` at launch); it is unused on
+    /// the plain path.
+    pub fn flat<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
         match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat::<W>(),
+            // `#[comptime]`: the store's quant-ness is a trace-time fact, so the plain path
+            // compiles to the bare `Direct` read.
+            TileKind::Gmem(g) | TileKind::Smem(g) =>
+            {
+                #[comptime]
+                match &g.quant {
+                    ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
+                        g.flat_storage::<I, W>(),
+                        T::cast_from(info.scale),
+                        comptime!(info.scheme),
+                    )),
+                    ComptimeOption::None => TileView::new_Direct(g.flat::<W>()),
+                }
+            }
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
                 panic!("Tile::flat: a cmma fragment has no memory view")
             }

@@ -6,7 +6,9 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use crate::{Axis, ConcreteLayout, PhysicalAxis, Space, Storage, TileArgLaunch};
+use cubecl::quant::scheme::QuantScheme;
+
+use crate::{Axis, ConcreteLayout, PhysicalAxis, QuantArgLaunch, Space, Storage, TileArgLaunch};
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
 /// is `start_axis`, its storage-tiling depth is `levels`.
@@ -74,7 +76,21 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         space: Space,
         storage: Storage,
     ) -> Self {
-        Self::new(tensor, vector_size, space, storage)
+        Self::new(
+            tensor,
+            vector_size,
+            space,
+            storage,
+            ComptimeOptionArgs::None,
+        )
+    }
+
+    /// Mark the operand as quantized: its tensor holds the storage element, and `scales` +
+    /// `scheme` let reads dequantize into the kernel's served type
+    /// ([`tile_dequant`](crate::TileArg::tile_dequant)).
+    pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
+        self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
+        self
     }
 }
 

@@ -2,7 +2,7 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArg, TileArgLaunch};
 
@@ -29,22 +29,23 @@ pub fn launch_ref<R: Runtime>(
         scheme.level == QuantLevel::Tensor,
         "only per tensor quantization is supported for now."
     );
+    assert!(
+        scheme.param == QuantParam::F32,
+        "only f32 scales are supported for now."
+    );
     check_i8_supported(client, scheme);
 
     let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
+    // The quantized operand: the storage-typed tensor plus its scale + scheme, attached at the
+    // payload so the kernel's reads dequantize transparently.
     let input_tilearg = TileArgLaunch::strided(
         input.into_tensor_arg(),
         1,
         input_space.clone(),
         input_storage,
-    );
-
-    // per-tensor scale: rank-1 [1] tensor, no reshape needed
-    let scale_space = sequential_space(&[(M, 1usize)]);
-    let scale_storage = Storage::of(scales.shape.len(), scale_space.rank());
-    let scale_tilearg =
-        TileArgLaunch::strided(scales.into_tensor_arg(), 1, scale_space, scale_storage);
+    )
+    .quantized(scales.into_tensor_arg(), *scheme);
 
     let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
     let output_storage = Storage::of(output.shape.len(), output_space.rank());
@@ -55,17 +56,14 @@ pub fn launch_ref<R: Runtime>(
     let cube_dim = input_space.cube_dim(client);
 
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
-    let scale_dtype = ElemType::from_quant_param(scheme.param).into();
 
     dequantize::launch(
         client,
         cube_count,
         cube_dim,
         input_tilearg,
-        scale_tilearg,
         output_tilearg,
         input_dtype,
-        scale_dtype,
         output_dtype,
     );
 
@@ -105,19 +103,18 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 }
 
 #[cube(launch)]
-/// input: the quantized input tensor
-/// scales: the scale grid
+/// input: the quantized input tensor (scale + scheme riding on its payload)
 /// output: the dequantized output tensor
-pub fn dequantize<I: Numeric, S: Numeric, O: Numeric>(
+///
+/// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
+/// storage element) is only threaded so the read leaf can downcast the buffer.
+pub fn dequantize<I: Numeric, O: Numeric>(
     input: &TileArg<'_, I>,
-    scales: &TileArg<'_, S>,
     output: &TileArg<'_, O>,
     #[define(I)] _input_dtype: StorageType,
-    #[define(S)] _scale_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = input.tile();
-    let scales = scales.tile();
+    let input = input.tile_dequant::<O>();
     let mut output = output.tile();
-    output.dequantize(&input, &scales);
+    output.dequantize::<I>(&input);
 }

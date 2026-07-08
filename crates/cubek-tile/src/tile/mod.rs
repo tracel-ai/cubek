@@ -11,7 +11,7 @@ pub use cmma::*;
 pub use mem::*;
 pub use tma::*;
 
-use cubecl::{prelude::barrier::Barrier, prelude::*};
+use cubecl::{prelude::barrier::Barrier, prelude::*, quant::scheme::QuantScheme};
 
 use crate::*;
 
@@ -90,6 +90,10 @@ impl Storage {
 /// with [`tile`](TileArg::tile). The physical vectorization is a plain comptime value (the
 /// `vector_size` field), not a type parameter — the buffer is served scalar and re-grouped into
 /// `Vector<E, vector_size>` lines in-kernel.
+///
+/// `E` is the element physically in the tensor. For a quantized operand
+/// ([`quantized`](TileArgLaunch::quantized) attaches the scales), `E` is the storage element and
+/// [`tile_dequant`](TileArg::tile_dequant) picks the served type.
 #[derive(CubeType, CubeLaunch)]
 pub struct TileArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<E>,
@@ -101,11 +105,19 @@ pub struct TileArg<'a, E: Numeric> {
     pub space: Space,
     #[cube(comptime)]
     pub storage: Storage,
+    /// Quantization side-channel, `None` for a plain operand (every constructor's default;
+    /// [`quantized`](TileArgLaunch::quantized) opts in).
+    pub quant: ComptimeOption<QuantArg>,
 }
 
 #[cube]
 impl<'a, E: Numeric> TileArg<'a, E> {
+    /// Serve the tensor's own element type. The plain path — a quantized operand must go through
+    /// [`tile_dequant`](Self::tile_dequant) to name its served type.
     pub fn tile(&self) -> Tile<E> {
+        if comptime!(self.quant.is_some()) {
+            panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
+        }
         Tile::from_tensor(
             self.tensor,
             comptime!(self.vector_size),
@@ -113,6 +125,53 @@ impl<'a, E: Numeric> TileArg<'a, E> {
             comptime!(self.storage),
         )
     }
+
+    /// Serve `O` from a storage-typed operand: `quant = Some` attaches the scale + scheme so reads
+    /// dequantize `E → O` transparently; `quant = None` is the plain path (the launch binds
+    /// `E == O`). For kernels that thread both types via `#[define]` and run quantized or not.
+    pub fn tile_dequant<O: Numeric>(&self) -> Tile<O> {
+        // `#[comptime]`: whether the operand is quantized is a trace-time fact, so the match
+        // resolves at expand and the plain path pays nothing.
+        let quant = #[comptime]
+        match &self.quant {
+            // Per-tensor native: a single scale at flat index 0.
+            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
+                scale: q.scales[0],
+                scheme: comptime!(q.scheme),
+            }),
+            ComptimeOption::None => ComptimeOption::new_None(),
+        };
+        Tile::<O>::from_tensor_quant::<E>(
+            self.tensor,
+            comptime!(self.vector_size),
+            comptime!(self.space.clone()),
+            comptime!(self.storage),
+            quant,
+        )
+    }
+}
+
+/// The quantization a tile's backing store carries so reads dequantize transparently: a runtime
+/// `scale` (per-tensor for now) plus the comptime [`QuantScheme`]. Lives on [`MemData`], not the
+/// [`Tile`] — the tile serves `T`; that the buffer secretly holds quantized data is a storage
+/// detail its consumers need not know.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct QuantInfo {
+    pub scale: f32,
+    #[cube(comptime)]
+    pub scheme: QuantScheme,
+}
+
+/// The quantization side-channel of a [`TileArg`]: the scale grid plus the comptime
+/// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
+/// quantized or not (the tile dequantizes on read).
+#[derive(CubeType, CubeLaunch)]
+pub struct QuantArg {
+    /// Per-tensor scales (currently a single value at flat index 0).
+    pub scales: OwnedTensor<f32>,
+    #[cube(comptime)]
+    pub scheme: QuantScheme,
 }
 
 /// One operand's data: the runtime [`TileKind`] and the comptime [`Space`] it projects. The
