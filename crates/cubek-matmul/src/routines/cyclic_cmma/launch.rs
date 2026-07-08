@@ -2,18 +2,15 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, TileArgLaunch, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
 
 use crate::{
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
     routines::{
-        BlueprintStrategy, DeviceSettings,
-        cyclic_cmma::{
-            base::{CyclicCmmaRoutine, K, M, N, batch_axis},
-            kernel::cyclic_cmma_kernel,
-        },
+        BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
+        cyclic_cmma::{base::CyclicCmmaRoutine, kernel::cyclic_cmma_kernel},
     },
 };
 
@@ -95,16 +92,7 @@ pub fn launch_ref<R: Runtime>(
     let blueprint = CyclicCmmaRoutine::blueprint(strategy, &problem, &device_settings)?;
     let (i, c) = (blueprint.instruction, blueprint.partition);
     let (stage_m, stage_n) = blueprint.stage();
-    // Stage depth: the deepest `d·i.k` dividing `k` (d ≤ 8) whose two double-buffered
-    // slots still fit shared memory — fewer, fatter K stages amortize the fill
-    // rendezvous; within a stage each plane walks `d` leaf sub-tiles per fragment.
-    let smem_budget = 32 * 1024;
-    let row_bytes = stage_m * dtypes.lhs_global.size() + stage_n * dtypes.rhs_global.size();
-    let stage_k = (1..=8usize)
-        .rev()
-        .map(|d| d * i.k)
-        .find(|&sk| k.is_multiple_of(sk) && 2 * sk * row_bytes <= smem_budget)
-        .unwrap_or(i.k);
+    let stage_k = blueprint.stage_k;
 
     // Output batch dims that survive (extent > 1) ride one-per-cube on Z.
     let batch: Vec<usize> = (0..out_batches.len())
@@ -142,53 +130,45 @@ pub fn launch_ref<R: Runtime>(
         .build()
         .with_leaf(Leaf::Cmma);
 
-    let cube_count = space.cube_count();
-    let cube_dim = space.cube_dim(client);
+    // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
+    // shape family), overhang checks derived per operand — all inside the launcher. The
+    // blueprint validated exact divisibility, so nothing overhangs and nothing is checked.
+    let launch = space.launcher(client);
 
-    // The kernel keys on a fully-dynamic space so distinct shapes reuse one compiled
-    // kernel; the blueprint validated divisibility, so nothing is bounds-checked.
-    let global_space = space.all_dynamic();
+    // Line each operand's contiguous innermost axis (`K` on lhs, `N` on rhs/out) at the widest
+    // width the launcher's gate allows: the shape is exactly divisible, so whole lines move and
+    // the cmma transport addresses the scalar buffer underneath. Each operand keeps its own
+    // dtype, so the widths are picked independently.
+    let lhs = lhs.into_data();
+    let rhs = rhs.into_data();
+    let v_lhs = launch.vector_size(K, &[(&lhs, &[M, K])], dtypes.lhs_global.size());
+    let v_rhs = launch.vector_size(N, &[(&rhs, &[K, N])], dtypes.rhs_global.size());
+    let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
 
-    // Line each operand's contiguous innermost axis (`K` on lhs, `N` on rhs/out) at the
-    // widest width dividing every tile edge on it — the shape is exactly divisible, so the
-    // fill moves whole lines; the cmma transport addresses the scalar buffer underneath.
-    let line = |elem: usize, inner_edge: usize| {
-        client
-            .io_optimized_vector_sizes(elem)
-            .filter(|&v| inner_edge.is_multiple_of(v))
-            .max()
-            .unwrap_or(1)
-    };
-    let v_lhs = line(dtypes.lhs_global.size(), i.k);
-    let v_rhs = line(dtypes.rhs_global.size(), i.n);
-    let v_out = line(dtypes.acc_global.size(), i.n);
-
-    let rank = out_batches.len();
-    let out_batch_axes: Vec<Axis> = (0..rank).map(batch_axis).collect();
+    // Every operand gets the full output batch-axis list; the builder right-aligns it to each
+    // operand's leading dims (numpy broadcast, size-1 dims drop out).
+    let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     cyclic_cmma_kernel::launch::<R>(
         client,
-        cube_count,
-        cube_dim,
-        TileArgLaunch::source(lhs.into_data())
-            .space(&global_space)
+        launch.cube_count(),
+        launch.cube_dim(),
+        launch
+            .arg(lhs)
             .subspace(&[M, K])
-            .batches(&out_batch_axes[rank - lhs_batches.len()..])
+            .batches(&out_batch_axes)
             .vectorize(v_lhs)
-            .checked(false)
             .build(),
-        TileArgLaunch::source(rhs.into_data())
-            .space(&global_space)
+        launch
+            .arg(rhs)
             .subspace(&[K, N])
-            .batches(&out_batch_axes[rank - rhs_batches.len()..])
+            .batches(&out_batch_axes)
             .vectorize(v_rhs)
-            .checked(false)
             .build(),
-        TileArgLaunch::source(out)
-            .space(&global_space)
+        launch
+            .arg(out)
             .subspace(&[M, N])
             .batches(&out_batch_axes)
             .vectorize(v_out)
-            .checked(false)
             .build(),
         dtypes.lhs_global,
         dtypes.rhs_global,

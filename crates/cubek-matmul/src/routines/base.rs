@@ -14,7 +14,19 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
 use cubek_std::InputBinding;
 use cubek_std::cube_count::CubeCountPlan;
+use cubek_tile::Axis;
 use std::fmt::{Debug, Display};
+
+// The matmul tile axes, shared by every routine that lays out its space over `(m, n, k)` plus
+// batches. `M`/`N`/`K` are the two matrix dims and the contraction; batch axes follow.
+pub(crate) const M: Axis = Axis(0);
+pub(crate) const N: Axis = Axis(1);
+pub(crate) const K: Axis = Axis(2);
+
+/// The axis for output batch dimension `i` (outermost is `0`).
+pub(crate) fn batch_axis(i: usize) -> Axis {
+    Axis(3 + i as u8)
+}
 
 /// A stride-0 (broadcast) matrix dim, or any layout that isn't row/col-major,
 /// classifies as [`MatrixBatchLayout::HighlyPermuted`] and can't be consumed

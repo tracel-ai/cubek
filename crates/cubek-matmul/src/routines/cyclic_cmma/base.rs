@@ -18,7 +18,6 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, features::MmaConfig};
-use cubek_tile::Axis;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -27,15 +26,6 @@ use crate::{
         cpu_gemm::{Instruction, PlaneGrid},
     },
 };
-
-// Matmul axes
-pub(crate) const M: Axis = Axis(0);
-pub(crate) const N: Axis = Axis(1);
-pub(crate) const K: Axis = Axis(2);
-/// The axis for output batch dimension `i` (outermost is `0`).
-pub(crate) fn batch_axis(i: usize) -> Axis {
-    Axis(3 + i as u8)
-}
 
 /// Upper bound on planes along one stage axis; 2×4 or 4×2 tends to saturate without
 /// blowing the cube dim.
@@ -51,12 +41,16 @@ pub struct Partition {
 }
 
 /// A fully-resolved plan: the tensor-core [`Instruction`], each plane's fragment
-/// [`Partition`], and how many planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]).
+/// [`Partition`], how many planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]), and how
+/// deep each double-buffered smem stage runs along `K` (`stage_k`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CyclicCmmaBlueprint {
     pub instruction: Instruction,
     pub partition: Partition,
     pub planes: PlaneGrid,
+    /// K-stage depth in elements: a multiple of `instruction.k`, chosen by [`select`] against
+    /// the shared-memory budget (fewer, fatter stages amortize the fill rendezvous).
+    pub stage_k: usize,
 }
 
 impl CyclicCmmaBlueprint {
@@ -73,22 +67,31 @@ impl CyclicCmmaBlueprint {
     #[allow(clippy::result_large_err)]
     pub fn validate(&self, problem: &MatmulProblem) -> Result<(), MatmulSetupError> {
         let (i, c, p) = (self.instruction, self.partition, self.planes);
-        if i.m == 0 || i.n == 0 || i.k == 0 || c.m == 0 || c.n == 0 || p.m == 0 || p.n == 0 {
+        if i.m == 0
+            || i.n == 0
+            || i.k == 0
+            || c.m == 0
+            || c.n == 0
+            || p.m == 0
+            || p.n == 0
+            || self.stage_k == 0
+        {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "CyclicCmma blueprint must be non-zero, got instruction {}x{}x{} \
-                 partition {}x{} planes {}x{}",
-                i.m, i.n, i.k, c.m, c.n, p.m, p.n
+                 partition {}x{} planes {}x{} stage_k {}",
+                i.m, i.n, i.k, c.m, c.n, p.m, p.n, self.stage_k
             ))));
         }
         let (stage_m, stage_n) = self.stage();
         if !problem.m.is_multiple_of(stage_m)
             || !problem.n.is_multiple_of(stage_n)
-            || !problem.k.is_multiple_of(i.k)
+            || !problem.k.is_multiple_of(self.stage_k)
+            || !self.stage_k.is_multiple_of(i.k)
         {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "CyclicCmma requires a shape divisible by the stage: \
-                 {}x{}x{} vs stage {stage_m}x{stage_n}x{}",
-                problem.m, problem.n, problem.k, i.k
+                 {}x{}x{} vs stage {stage_m}x{stage_n}x{} (stage_k {})",
+                problem.m, problem.n, problem.k, i.k, self.stage_k
             ))));
         }
         Ok(())
@@ -214,6 +217,18 @@ impl CyclicCmmaRoutine {
             (budget / planes_m).min(MAX_PLANES_PER_AXIS),
         );
 
+        // Stage depth: the deepest `d·ik` dividing `k` (d ≤ 8) whose two double-buffered slots
+        // still fit shared memory — fewer, fatter K stages amortize the fill rendezvous; within a
+        // stage each plane walks `d` leaf sub-tiles per fragment.
+        let (stage_m, stage_n) = (planes_m * part_m * im, planes_n * part_n * inn);
+        let smem_budget = 32 * 1024;
+        let row_bytes = stage_m * d.lhs.size() + stage_n * d.rhs.size();
+        let stage_k = (1..=8usize)
+            .rev()
+            .map(|d| d * ik)
+            .find(|&sk| problem.k.is_multiple_of(sk) && 2 * sk * row_bytes <= smem_budget)
+            .unwrap_or(ik);
+
         Ok(CyclicCmmaBlueprint {
             instruction: Instruction {
                 m: im,
@@ -228,6 +243,7 @@ impl CyclicCmmaRoutine {
                 m: planes_m,
                 n: planes_n,
             },
+            stage_k,
         })
     }
 }

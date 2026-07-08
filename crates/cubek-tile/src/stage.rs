@@ -170,7 +170,9 @@ impl<T: CubeType> Staging<T> {
     /// `Cube` slot relies on the *next* `fill`'s `sync_cube` to make a fill visible, so a
     /// fill consumed with no fill in between (the walk's final regions) needs this explicit
     /// rendezvous. A `Barrier` slot's consume already waits `full`; `Solo` has one unit.
-    pub fn publish(&self) {
+    /// Internal: reached only through [`consume_final`](Staging::consume_final), so the schedule
+    /// never emits a bare rendezvous.
+    fn publish(&self) {
         match &self.pipeline {
             Pipeline::Cube { collective } => {
                 if *collective {
@@ -215,6 +217,13 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
+
+    /// Consumer for a fill no later fill will publish (the walk's final regions): publish the slot
+    /// first, then consume. Keeps the trailing rendezvous inside `Staging` — the schedule reaches
+    /// for this instead of a bare `publish`. See [`StagingExpand::__expand_consume_final_method`].
+    pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+        unexpanded!()
+    }
 }
 
 impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
@@ -231,6 +240,16 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
     where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
+        self.__expand_acquire_read_method(scope);
+        compute(scope, &self.data.0, &self.data.1);
+        self.__expand_release_read_method(scope);
+    }
+
+    pub fn __expand_consume_final_method<F>(&mut self, scope: &Scope, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+    {
+        self.__expand_publish_method(scope);
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.0, &self.data.1);
         self.__expand_release_read_method(scope);

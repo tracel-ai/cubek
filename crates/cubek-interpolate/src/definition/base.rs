@@ -4,6 +4,7 @@ use crate::{
     routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
+use serde::{Deserialize, Serialize};
 
 // Base trait for interpolation algorithms.
 #[cube]
@@ -16,7 +17,7 @@ pub trait Interpolate {
 }
 
 /// Algorithm used for upsampling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType, Serialize, Deserialize)]
 pub enum InterpolateMode {
     /// Nearest-neighbor interpolation.
     /// <https://en.wikipedia.org/wiki/Nearest-neighbor_interpolation>
@@ -35,7 +36,7 @@ pub enum InterpolateMode {
     Lanczos3,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType, Serialize, Deserialize)]
 pub enum NearestMode {
     // Matches Scikit-Image and PIL nearest neighbours interpolation algorithms.
     Exact,

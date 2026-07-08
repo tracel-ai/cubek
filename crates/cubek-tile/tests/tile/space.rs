@@ -126,6 +126,66 @@ fn divide_chains_into_a_multi_level_scheme() {
     assert_eq!(level2.extent(N), 4);
 }
 
+// ---- Space::overhangs ------------------------------------------------------
+
+/// A cpu_gemm-shaped two-level scheme: a cube tile of `planes × leaf` leaves over `(m, n, k)`,
+/// K cut to its full extent at the cube level (sequential contraction) then to `leaf_k`.
+fn cpu_gemm_space(m: usize, n: usize, k: usize) -> Space {
+    let (leaf_m, leaf_n, leaf_k) = (8, 8, 4);
+    let (planes_m, planes_n) = (2, 4);
+    Space::new(&[(M, m), (N, n), (K, k)])
+        .with_partitioner(sequential(&[
+            (M, planes_m * leaf_m),
+            (N, planes_n * leaf_n),
+            (K, k),
+        ]))
+        .with_partitioner(sequential(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)]))
+}
+
+#[test]
+fn overhangs_matches_cpu_gemm_checks() {
+    // Every level divides: cube tiles 16×32, leaves 8×8×4.
+    let space = cpu_gemm_space(64, 64, 16);
+    assert!(!space.overhangs(M));
+    assert!(!space.overhangs(N));
+    assert!(!space.overhangs(K));
+
+    // m = 40 is not a multiple of the cube tile (16): M overhangs (cpu_gemm's check_m).
+    // Within a cube the plane split is exact, so the leaf level adds nothing.
+    assert!(cpu_gemm_space(40, 64, 16).overhangs(M));
+
+    // K's cube-level cut is its full extent (always divides); k = 18 fails only at the
+    // leaf (leaf_k = 4): the deeper level alone drives the overhang (cpu_gemm's check_k).
+    let space = cpu_gemm_space(64, 64, 18);
+    assert!(space.overhangs(K));
+    assert!(!space.overhangs(M));
+}
+
+#[test]
+fn overhangs_when_a_deeper_edge_misdivides_its_parent() {
+    // Top divides (32 % 16 == 0) but the second edge doesn't divide the first (16 % 3 != 0):
+    // the parent edge, not the top extent, is what each level must divide.
+    let space = Space::new(&[(M, 32)])
+        .with_partitioner(sequential(&[(M, 16)]))
+        .with_partitioner(sequential(&[(M, 3)]));
+    assert!(space.overhangs(M));
+}
+
+#[test]
+fn overhangs_final_space_never() {
+    // No partitioner level: nothing to misdivide.
+    assert!(!Space::new(&[(M, 7)]).overhangs(M));
+}
+
+#[test]
+#[should_panic(expected = "concrete space")]
+fn overhangs_dynamic_axis_panics() {
+    let space = Space::new(&[(M, 64)])
+        .with_partitioner(sequential(&[(M, 16)]))
+        .all_dynamic();
+    let _ = space.overhangs(M);
+}
+
 #[test]
 fn with_partitioner_stacks_levels_and_divide_descends() {
     // Stacking partitioners builds the whole multi-level scheme up front

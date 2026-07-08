@@ -259,7 +259,7 @@ impl<T: Numeric> Tile<T> {
     pub fn stage_from(&mut self, src: &Tile<T>, barrier: &Shared<Barrier>) {
         if src.is_tma() {
             if UNIT_POS == 0 {
-                barrier.expect_tx(self.buffer_bytes());
+                barrier.expect_tx(self.tma_transaction_bytes());
             }
             self.tma_stage(src, barrier);
         } else {

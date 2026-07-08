@@ -61,9 +61,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Bytes this shared-memory tile's buffer spans — the transaction count a TMA fill lands.
-    /// Runtime (the buffer length). Zero for the non-smem kinds, which are never TMA fill targets.
-    pub(crate) fn buffer_bytes(&self) -> u32 {
+    /// The transaction byte count a TMA fill into this shared-memory tile lands (its buffer
+    /// length, runtime). Zero for the non-smem kinds, which are never TMA fill targets.
+    pub(crate) fn tma_transaction_bytes(&self) -> u32 {
         match &self.tile_kind {
             TileKind::Smem(d) => d.buffer.len() as u32 * comptime!(T::type_size() as u32),
             TileKind::Gmem(_) => 0,
@@ -78,28 +78,18 @@ impl<T: Numeric> Tile<T> {
     /// so the copy overlaps compute. The core shared by [`stage_from`](Tile::stage_from) (barrier hoisted) and the
     /// blocking [`tma_load`](Tile::tma_load) (barrier owned locally).
     pub(crate) fn tma_stage(&mut self, src: &Tile<T>, barrier: &Shared<Barrier>) {
-        match &src.tile_kind {
-            TileKind::TmaGmem(s) => match &mut self.tile_kind {
-                TileKind::Smem(d) => {
-                    // The bulk copy is issued by one elected unit only; the transaction count
-                    // declared by the caller is that unit's alone, so more issuers would over-count
-                    // and corrupt the stage.
-                    if UNIT_POS == 0 {
-                        s.view
-                            .tensor_map_load(barrier, d.buffer.downcast_mut(), s.pos.clone());
-                    }
+        match (&src.tile_kind, &mut self.tile_kind) {
+            (TileKind::TmaGmem(s), TileKind::Smem(d)) => {
+                // The bulk copy is issued by one elected unit only; the transaction count
+                // declared by the caller is that unit's alone, so more issuers would over-count
+                // and corrupt the stage.
+                if UNIT_POS == 0 {
+                    s.view
+                        .tensor_map_load(barrier, d.buffer.downcast_mut(), s.pos.clone());
                 }
-                // TMA only ever targets shared memory; the other sinks are unreachable.
-                TileKind::Gmem(_) => (),
-                TileKind::Cmma(_) => (),
-                TileKind::CmmaPartition(_) => (),
-                TileKind::TmaGmem(_) => (),
-            },
-            // Unreachable: `stage`/`tma_load` route here only when `src` is a tma source.
-            TileKind::Gmem(_) => (),
-            TileKind::Smem(_) => (),
-            TileKind::Cmma(_) => (),
-            TileKind::CmmaPartition(_) => (),
+            }
+            // `stage_from`/`tma_load` route here only for a tma source targeting shared memory.
+            _ => panic!("Tile::stage_from: TMA source must target shared memory"),
         }
     }
 
@@ -111,7 +101,7 @@ impl<T: Numeric> Tile<T> {
         let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
         sync_async_proxy_shared();
         // One elected issuer only, matching the declared transaction count; more issuers over-count.
-        let expected = select(UNIT_POS == 0, self.buffer_bytes(), 0);
+        let expected = select(UNIT_POS == 0, self.tma_transaction_bytes(), 0);
         self.tma_stage(src, &barrier);
         let token = barrier.arrive_and_expect_tx(1, expected);
         barrier.wait(token);
