@@ -114,4 +114,3 @@ impl<T: Numeric> Tile<T> {
         }
     }
 }
-

@@ -155,14 +155,19 @@ impl CyclicCmmaRoutine {
 
         let d = &problem.global_dtypes;
         let supported = |m: usize, n: usize, k: usize| {
-            client.properties().features.matmul.cmma.contains(&MmaConfig {
-                a_type: d.lhs,
-                b_type: d.rhs,
-                cd_type: d.out,
-                m: m as u32,
-                n: n as u32,
-                k: k as u32,
-            })
+            client
+                .properties()
+                .features
+                .matmul
+                .cmma
+                .contains(&MmaConfig {
+                    a_type: d.lhs,
+                    b_type: d.rhs,
+                    cd_type: d.out,
+                    m: m as u32,
+                    n: n as u32,
+                    k: k as u32,
+                })
         };
 
         let (m, n) = (problem.m, problem.n);
@@ -203,10 +208,7 @@ impl CyclicCmmaRoutine {
         // at pipeline creation, which surfaces as a silently zeroed output.
         let max_units = (client.properties().hardware.max_units_per_cube as usize).min(256);
         let budget = (max_units / plane_dim).max(1);
-        let planes_m = divisor_at_most(
-            (grid_m / part_m).max(1),
-            budget.min(MAX_PLANES_PER_AXIS),
-        );
+        let planes_m = divisor_at_most((grid_m / part_m).max(1), budget.min(MAX_PLANES_PER_AXIS));
         let planes_n = divisor_at_most(
             (grid_n / part_n).max(1),
             (budget / planes_m).min(MAX_PLANES_PER_AXIS),

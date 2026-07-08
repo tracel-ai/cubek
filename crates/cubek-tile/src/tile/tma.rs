@@ -2,7 +2,11 @@
 //! only sink is a bulk copy into shared memory, blocking ([`Tile::tma_load`]) or pipelined
 //! under a caller-hoisted barrier ([`Tile::stage_from`]).
 
-use cubecl::{prelude::barrier::Barrier, prelude::*, std::tensor::{ViewMut, layout::CoordsDyn}};
+use cubecl::{
+    prelude::barrier::Barrier,
+    prelude::*,
+    std::tensor::{ViewMut, layout::CoordsDyn},
+};
 
 use crate::*;
 

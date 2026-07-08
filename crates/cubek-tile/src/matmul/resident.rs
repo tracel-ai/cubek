@@ -64,7 +64,8 @@ fn init<Acc: Numeric, Lhs: Numeric>(out: &mut Tile<Acc>, lhs: &Tile<Lhs>) -> Til
 #[cube]
 fn drain<Acc: Numeric>(out: &mut Tile<Acc>, acc: &Tile<Acc>) {
     match &acc.tile_kind {
-        TileKind::CmmaPartition(p) => {
+        TileKind::CmmaPartition(p) =>
+        {
             #[unroll]
             for mi in 0..comptime!(p.m_tiles) {
                 #[unroll]

@@ -5,7 +5,7 @@
 //! operands until a final tile; [`leaf`] is the one place that commits to numbers, dispatching by
 //! storage to the [`cmma`] (tensor-core) or [`register`] (software) backend.
 
-mod resident;
 mod instruction;
 mod lower;
+mod resident;
 mod schedule;

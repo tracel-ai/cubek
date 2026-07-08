@@ -54,8 +54,7 @@ impl<T: Numeric> CmmaData<T> {
         #[comptime] n: usize,
         #[comptime] k: usize,
     ) -> CmmaData<T> {
-        let matrix =
-            unsafe { Matrix::<T>::uninitialized(ident, m, n, k, MatrixLayout::RowMajor) };
+        let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, MatrixLayout::RowMajor) };
         CmmaData::<T> {
             matrix,
             ident,

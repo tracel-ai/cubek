@@ -22,10 +22,7 @@ impl<A: Numeric> CmmaData<A> {
             (TileKind::Cmma(a), TileKind::Cmma(b)) => {
                 cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
             }
-            (
-                TileKind::Gmem(a) | TileKind::Smem(a),
-                TileKind::Gmem(b) | TileKind::Smem(b),
-            ) => {
+            (TileKind::Gmem(a) | TileKind::Smem(a), TileKind::Gmem(b) | TileKind::Smem(b)) => {
                 // The tile is `m × k` on lhs and `k × n` on rhs (trailing two axes; any
                 // leading batch axes are extent-1 at a final tile).
                 let m = comptime!(lhs.space.extent_at(lhs.space.rank() - 2));

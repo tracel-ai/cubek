@@ -127,9 +127,8 @@ impl<T: Numeric> Tile<T> {
     /// gmem storage) so the cmma transaction reads it unstrided; anything else is plain
     /// row-major.
     pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
-        let levels = comptime!(
-            (!space.is_final() && space.partitioner().leaf() == Leaf::Cmma) as usize
-        );
+        let levels =
+            comptime!((!space.is_final() && space.partitioner().leaf() == Leaf::Cmma) as usize);
         let smem = Shared::<[T]>::new_slice(space.tile_size());
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
         let (physical_shape, physical_strides) =

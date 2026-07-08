@@ -1256,8 +1256,6 @@ fn cmma_matmul<E: Numeric>(
     c.copy_from(&c_smem_tile);
 }
 
-
-
 /// Vectorized operands (2-wide lines) through the Direct schedule: gmem-only line-unit
 /// addressing. Regression for the line-vs-scalar unit bug (worked on cubecl-cpu only).
 #[test]
