@@ -149,6 +149,20 @@ pub fn launch_ref<R: Runtime>(
     // kernel; the blueprint validated divisibility, so nothing is bounds-checked.
     let global_space = space.all_dynamic();
 
+    // Line each operand's contiguous innermost axis (`K` on lhs, `N` on rhs/out) at the
+    // widest width dividing every tile edge on it — the shape is exactly divisible, so the
+    // fill moves whole lines; the cmma transport addresses the scalar buffer underneath.
+    let line = |elem: usize, inner_edge: usize| {
+        client
+            .io_optimized_vector_sizes(elem)
+            .filter(|&v| inner_edge.is_multiple_of(v))
+            .max()
+            .unwrap_or(1)
+    };
+    let v_lhs = line(dtypes.lhs_global.size(), i.k);
+    let v_rhs = line(dtypes.rhs_global.size(), i.n);
+    let v_out = line(dtypes.acc_global.size(), i.n);
+
     let rank = out_batches.len();
     let out_batch_axes: Vec<Axis> = (0..rank).map(batch_axis).collect();
     cyclic_cmma_kernel::launch::<R>(
@@ -159,18 +173,21 @@ pub fn launch_ref<R: Runtime>(
             .space(&global_space)
             .subspace(&[M, K])
             .batches(&out_batch_axes[rank - lhs_batches.len()..])
+            .vectorize(v_lhs)
             .checked(false)
             .build(),
         TileArgLaunch::source(rhs.into_data())
             .space(&global_space)
             .subspace(&[K, N])
             .batches(&out_batch_axes[rank - rhs_batches.len()..])
+            .vectorize(v_rhs)
             .checked(false)
             .build(),
         TileArgLaunch::source(out)
             .space(&global_space)
             .subspace(&[M, N])
             .batches(&out_batch_axes)
+            .vectorize(v_out)
             .checked(false)
             .build(),
         dtypes.lhs_global,

@@ -234,11 +234,11 @@ pub struct TmaData<T: Numeric> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Wrap a launched scalar [`Tensor`] into a whole `Gmem` tile. The borrow is erased into a `Box`
-    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). Strides stay
-    /// scalar-unit (the leaf addresses the buffer with scalar offsets); only the contiguous innermost
-    /// axis re-expresses as `Vector<T, vector_size>` lines — its extent shrinks to a line count
-    /// (`extent / w`) and its step grows to `w` scalars (`stride * w`). All a no-op at
-    /// `vector_size == 1`.
+    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). Shape and
+    /// strides are *line-unit* (a `Vector<T, w>` slice indexes in lines — the cubecl contract, same
+    /// on every backend): the contiguous innermost axis counts lines (`extent / w`, stride
+    /// unchanged) and coarser strides divide by `w` — the launcher gates `w > 1` on divisibility.
+    /// All a no-op at `vector_size == 1`.
     pub fn from_tensor(
         tensor: &Tensor<T>,
         #[comptime] vector_size: usize,
@@ -258,14 +258,14 @@ impl<T: Numeric> Tile<T> {
             let extent = tensor.shape(i) as u32;
             let stride = tensor.stride(i) as u32;
             if comptime!(i == last) {
-                // Innermost (contiguous, stride 1): count lines (extent / w), each a `w`-scalar
-                // step (stride * w). The offset stays scalar-unit; the leaf loads a `w`-wide line.
+                // Innermost (contiguous, scalar stride 1): count lines; consecutive lines
+                // are one line apart.
                 physical_shape.push(extent / w);
-                physical_strides.push(stride * w);
-            } else {
-                // Coarser axes keep their scalar strides.
-                physical_shape.push(extent);
                 physical_strides.push(stride);
+            } else {
+                // Coarser axes re-express their scalar strides in lines.
+                physical_shape.push(extent);
+                physical_strides.push(stride / w);
             }
         }
         let buffer = unsafe { tensor.as_slice().as_boxed_unchecked() };
@@ -301,9 +301,9 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Allocate a shared-memory tile row-major over `space`, at physical `vector_size`. The scalar
-    /// slice (`space.tile_size() * vector_size` entries) is allocated here and erased into a `Box`.
+    /// slice (`space.tile_size()` entries) is allocated here and erased into a `Box`.
     pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
-        let smem = Shared::<[T]>::new_slice(space.tile_size() * vector_size);
+        let smem = Shared::<[T]>::new_slice(space.tile_size());
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
         let (physical_shape, physical_strides) = row_major(comptime!(space.clone()), vector_size);
         let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
@@ -716,10 +716,10 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The scalar buffer re-grouped into `Vector<T, W>` lines, so the base/window layouts address it.
-    /// `W` is the store's physical [`vector_size`](Tile::vector_size). The leaf dots the scalar-unit
-    /// strides for the offset and reads a `Vector<T, W>` at that scalar position; the re-grouped view
-    /// reports its length in *lines* (`scalars / W`), so an unchecked read is fine but a checked one
-    /// clips against the line count — hence vectorization is gated to the no-overhang path in launch.
+    /// `W` is the store's physical [`vector_size`](Tile::vector_size). A re-grouped slice indexes in
+    /// *line* units on every backend (the cubecl contract), which is why the physical shape,
+    /// strides, window and bound are all held line-unit; only the cmma transactions widen back to
+    /// scalars ([`window_offset`](MemData::window_offset)/[`row_stride`](MemData::row_stride)).
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.buffer.as_vectorized().with_vector_size::<W>()
     }
@@ -745,8 +745,8 @@ impl<T: Numeric> MemData<T> {
         self.buffer.slice_mut(offset, end)
     }
 
-    /// Scalar offset of the window origin: the origin dotted with the physical strides
-    /// (the innermost origin counts lines; its stride is already the per-line scalar step).
+    /// Scalar offset of the window origin: the origin dotted with the (line-unit) physical
+    /// strides, widened back to scalars — what a cmma transaction addresses.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             self.levels == 0,
@@ -761,14 +761,15 @@ impl<T: Numeric> MemData<T> {
         for i in 0..self.physical_strides.len() {
             offset += self.origin[i] * self.physical_strides[i];
         }
-        offset as usize
+        (offset as usize) * comptime!(self.vector_size)
     }
 
-    /// Scalar stride between matrix rows: the physical stride of the second-to-last axis.
-    /// Untiled stores only (`levels == 0`, so the physical rank is the space's).
+    /// Scalar stride between matrix rows: the (line-unit) physical stride of the
+    /// second-to-last axis, widened back to scalars. Untiled stores only (`levels == 0`,
+    /// so the physical rank is the space's).
     pub(crate) fn row_stride(&self) -> u32 {
         let rows = comptime!(self.start_axis + self.num_tiled - 2);
-        self.physical_strides[rows]
+        self.physical_strides[rows] * comptime!(self.vector_size as u32)
     }
 
     /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
@@ -975,9 +976,9 @@ fn top_window(
 }
 
 /// Row-major physical shape/strides over `space`'s per-axis extents, stored in the smem [`MemData`]
-/// so it survives `at`'s space division. The innermost (vectorized) axis's extent is a line count
-/// (`/ vector_size`) and strides stay scalar-unit (its line step is `vector_size` scalars); all a
-/// no-op at `vector_size == 1`.
+/// so it survives `at`'s space division. Line-unit like [`Tile::from_tensor`]: the innermost
+/// (vectorized) axis counts lines (`/ vector_size`) and every stride is a row-major weight over
+/// the *line* shape; all a no-op at `vector_size == 1`.
 #[cube]
 fn row_major(#[comptime] space: Space, #[comptime] vector_size: usize) -> (CoordsDyn, CoordsDyn) {
     let rank = space.rank();
@@ -994,20 +995,15 @@ fn row_major(#[comptime] space: Space, #[comptime] vector_size: usize) -> (Coord
 
     #[unroll]
     for p in 0..rank {
-        // Weight over the *scalar* extents so coarser strides stay scalar; the innermost line step
-        // widens to `vector_size`.
         let weight = comptime! {
             let mut acc = 1;
             for q in (p + 1)..rank {
-                acc *= space.extent(space.axis_at(q));
+                let e = space.extent(space.axis_at(q));
+                acc *= if q == last { e / vector_size } else { e };
             }
             acc
         };
-        strides.push(comptime!(if p == last {
-            weight * vector_size
-        } else {
-            weight
-        }) as u32);
+        strides.push(weight as u32);
     }
 
     (shape, strides)

@@ -1,3 +1,4 @@
+mod addressing;
 mod matmul;
 mod recursive;
 mod references;

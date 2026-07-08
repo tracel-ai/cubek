@@ -1257,3 +1257,79 @@ fn cmma_matmul<E: Numeric>(
 }
 
 
+
+/// Vectorized operands (2-wide lines) through the Direct schedule: gmem-only line-unit
+/// addressing. Regression for the line-vs-scalar unit bug (worked on cubecl-cpu only).
+#[test]
+fn matmul_direct_vectorized() {
+    check_matmul_vectorized(Schedule::Direct);
+}
+
+/// Vectorized operands through the staged schedule: the cooperative fill moves lines
+/// through smem. Regression for the line-vs-scalar unit bug.
+#[test]
+fn matmul_staged_vectorized() {
+    check_matmul_vectorized(Schedule::Staged);
+}
+
+fn check_matmul_vectorized(schedule: Schedule) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, edge, v) = (8usize, 8usize, 8usize, 4usize, 2usize);
+    let builder = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    );
+    let partitioner = match schedule {
+        Schedule::Direct => builder.direct(),
+        Schedule::Staged => builder.staged(),
+        Schedule::DoubleBuffered => builder.double_buffered(),
+    };
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        TileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The staged cmma K walk with operands served in 2-wide lines: the cooperative fill
+/// moves lines, the cmma transport addresses the scalar buffer underneath.
+#[test]
+fn cmma_matmul_staged_k_walk_vectorized() {
+    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 2);
+}
