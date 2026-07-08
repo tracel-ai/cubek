@@ -1,3 +1,4 @@
+use crate::matmul::launcher_strategy::run_with_strides;
 use crate::matmul::test_matmul_strategy;
 use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
 use cubek_matmul::{routines::BlueprintStrategy, strategy::Strategy};
@@ -8,15 +9,15 @@ use cubek_matmul::{
     routines::gemm::GemmStrategy,
 };
 use cubek_std::MatrixLayout;
+use cubek_test_utils::{TestOutcome, ValidationResult};
 
 type TestRuntime = cubecl::TestRuntime;
 
 /// Unified harness for the gemm family. Drives full GEMM (all 4 layout
-/// combinations), vec-mat (m = 1), and mat-vec (n = 1) through the same
-/// case struct and `Strategy::Gemm`. The `plane_parallel.rs` cases cover
-/// the Row-Col (Dot) variant — the same set runs on any backend; the
-/// `outer_product.rs` cases additionally cover Row-Row / Col-Row / Col-Col,
-/// which are CPU-only (the family enforces `plane_dim == 1` for those).
+/// combinations), vec-mat (m = 1), and mat-vec (n = 1) through the same case
+/// struct and `Strategy::Gemm`. `plane_parallel.rs` covers the Row-Col (Dot)
+/// variant. `outer_product.rs` covers Row-Row, Col-Row, and Col-Col, which run
+/// on CPU directly and on GPU after `launch_ref` normalizes them to Dot.
 struct GemmTestCase {
     pub m: usize,
     pub n: usize,
@@ -51,6 +52,20 @@ impl GemmTestCase {
         let client = TestRuntime::client(&Default::default());
         let problem = self.to_problem();
         test_matmul_strategy(client, problem, self.strategy);
+    }
+
+    /// Like [`test`], but asserts the matmul actually ran and validated rather
+    /// than letting the test policy accept a config rejection. Use for layouts
+    /// that must execute on GPU, where the default `correct` policy would
+    /// otherwise silently accept a `CompileError` and hide a regression.
+    pub(crate) fn test_executes(self) {
+        let client = TestRuntime::client(&Default::default());
+        let problem = self.to_problem();
+        let outcome = run_with_strides(client, problem, self.strategy);
+        assert!(
+            matches!(outcome, TestOutcome::Validated(ValidationResult::Pass)),
+            "expected the matmul to execute and validate, got {outcome:?}"
+        );
     }
 }
 

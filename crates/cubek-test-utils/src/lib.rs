@@ -2,6 +2,7 @@ mod config;
 mod correctness;
 mod progress;
 mod registry;
+mod stubs;
 mod test_mode;
 mod test_tensor;
 mod tile_input;

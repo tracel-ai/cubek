@@ -229,6 +229,16 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
             let batch_layout = BatchLayoutLaunch::from_handle(values, problem);
 
+            // The packing axis follows the scheme packed dim, not config.matrix_layout:
+            // GEMV reads the RHS ColMajor while the packed buffer stays RowMajor.
+            let values_config = GlobalLayoutConfig {
+                matrix_layout: match scheme.packing_dim() {
+                    Some(1) => MatrixLayout::ColMajor,
+                    _ => MatrixLayout::RowMajor,
+                },
+                ..config
+            };
+
             GlobalLayoutLaunch::new(
                 VirtualLayoutLaunch::new::<BatchLayout>(batch_layout),
                 rows as u32,
@@ -237,7 +247,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                 stride_col,
                 vector_size / scheme.num_quants(),
                 scheme.num_quants() as u32,
-                config,
+                values_config,
             )
         };
 

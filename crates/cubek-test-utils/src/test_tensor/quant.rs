@@ -2,18 +2,22 @@ use cubecl::{
     TestRuntime,
     client::ComputeClient,
     ir::{ElemType, StorageType},
+    quant::scheme::{QuantLevel, QuantStore},
+    std::tensor::TensorHandle,
     zspace::Shape,
 };
 use cubecl_common::quant::scheme::QuantScheme;
-use cubek_quant::scheme::{QuantLevel, QuantStore};
 
-use crate::{HostData, QuantizationInfo, TestInput, TestTensor};
+use crate::{
+    HostData, QuantizationInfo, TestTensor, stubs::quant::quantize,
+    test_tensor::custom::cast_f32_to_dtype,
+};
 
-/// Quantize an already-built [`TestTensor`] in place: launches the cubek-quant
-/// reference quantizer on `tensor.handle`, swaps the handle for the packed
-/// output, and stores the device-side scale + original shape on
-/// `tensor.quantization`. The host data on `tensor.host` is left as the
-/// original f32 reference so correctness checks can still compare against it.
+/// Quantize an already-built [`TestTensor`] in place: runs the host-side
+/// reference quantizer ([`crate::stubs::quant`]) over the tensor's host data,
+/// swaps the handle for the packed output, and stores the scale + original
+/// shape on `tensor.quantization`. The host data on `tensor.host` is left as
+/// the original f32 reference so correctness checks can still compare against it.
 pub(crate) fn apply_quantization(
     client: &ComputeClient<TestRuntime>,
     tensor: &mut TestTensor,
@@ -25,10 +29,7 @@ pub(crate) fn apply_quantization(
     // `QuantLevel::Tensor` a single scale is used; for `QuantLevel::Block` we
     // compute a per-block scale from the host data so each block fully uses
     // the quant range without clipping.
-    let (scales_shape, scales_data) = compute_input_scales(&tensor.host, &scheme);
-    let scale_handle = TestInput::builder(client.clone(), scales_shape.clone())
-        .custom(scales_data)
-        .generate_without_host_data();
+    let (scales_shape, scales_data, block_dims) = compute_input_scales(&tensor.host, &scheme);
 
     // Determine the correct storage type for the quantized output buffer.
     let output_storage_type = match &scheme.store {
@@ -51,30 +52,25 @@ pub(crate) fn apply_quantization(
         QuantStore::Native => {}
     }
 
-    let output_handle = TestInput::builder(client.clone(), quant_shape)
-        .dtype(output_storage_type)
-        .zeros()
-        .generate_without_host_data();
+    // Quantize on the host (see `crate::stubs::quant`). The kernel's `out_scale`
+    // is simply the input scales cast to the param precision, so we build it
+    // directly from `scales_data` instead of having the stub recompute it.
+    let shape: Vec<usize> = original_shape.iter().copied().collect();
+    let values = logical_values_f32(&tensor.host);
+    let output_bytes = quantize(&values, &shape, &scales_data, &block_dims, &scheme);
+    let output_handle = TensorHandle::new_contiguous(
+        quant_shape,
+        client.create_from_slice(&output_bytes),
+        output_storage_type,
+    );
 
-    let out_scale_handle = TestInput::builder(client.clone(), scales_shape)
-        .zeros()
-        .generate_without_host_data();
-
-    let input_elem = match tensor.handle.dtype {
-        StorageType::Scalar(elem) => elem,
-        _ => panic!("Unsupported storage type {:?}", tensor.handle.dtype),
-    };
-
-    cubek_quant::quantize::launch_ref(
-        client,
-        tensor.handle.clone().binding(),
-        output_handle.clone().binding(),
-        scale_handle.binding(),
-        out_scale_handle.clone().binding(),
-        &scheme,
-        input_elem,
-    )
-    .expect("Quantization failed");
+    let scale_dtype = StorageType::Scalar(ElemType::from_quant_param(scheme.param));
+    let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
+    let out_scale_handle = TensorHandle::new_contiguous(
+        scales_shape,
+        client.create_from_slice(&out_scale_bytes),
+        scale_dtype,
+    );
 
     // Keep the packed shape on the handle.
     tensor.handle = output_handle;
@@ -85,20 +81,43 @@ pub(crate) fn apply_quantization(
     });
 }
 
-/// Compute the scale tensor shape and values for a quantized input.
+/// Flatten the host data into a logical, row-major `Vec<f32>` for the
+/// host-side quantizer.
+fn logical_values_f32(host: &HostData) -> Vec<f32> {
+    let shape: Vec<usize> = host.shape.iter().copied().collect();
+    let rank = shape.len();
+    let num_elems: usize = shape.iter().product();
+
+    let mut values = Vec::with_capacity(num_elems);
+    let mut idx = vec![0usize; rank];
+    for linear in 0..num_elems {
+        let mut rem = linear;
+        for d in (0..rank).rev() {
+            idx[d] = rem % shape[d];
+            rem /= shape[d];
+        }
+        values.push(host.get_f32(&idx));
+    }
+    values
+}
+
+/// Compute the scale tensor shape, values, and per-dimension block extent for a
+/// quantized input.
 ///
 /// For `QuantLevel::Tensor` this returns a single-element scale based on the
-/// quant value's range (assumes input in [-1, 1]). For `QuantLevel::Block`
-/// each block gets its own scale derived from `max(|value|)` in that block,
-/// matching the reference pattern used by the cubek-quant symmetric tests.
-fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f32>) {
+/// quant value's range (assumes input in [-1, 1]) and the full shape as the
+/// block. For `QuantLevel::Block` each block gets its own scale derived from
+/// `max(|value|)` in that block, matching the reference pattern used by the
+/// cubek-quant symmetric tests.
+fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f32>, Vec<usize>) {
     let (q_min, q_max) = scheme.value.range();
     let max_abs_q = q_max.abs().max(q_min.abs());
 
     match &scheme.level {
         QuantLevel::Tensor => {
             let shape: Shape = core::iter::repeat_n(1, host.shape.len()).collect();
-            (shape, vec![1.0 / max_abs_q])
+            let block_dims: Vec<usize> = host.shape.iter().copied().collect();
+            (shape, vec![1.0 / max_abs_q], block_dims)
         }
         QuantLevel::Block(block_size) => {
             let rank = host.shape.len();
@@ -156,7 +175,7 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
                 scales.push(scale);
             }
 
-            (scales_shape, scales)
+            (scales_shape, scales, block_dims)
         }
     }
 }

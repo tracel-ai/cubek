@@ -1,13 +1,12 @@
 use cubecl::{
     TestRuntime,
-    client::ComputeClient,
-    ir::{ElemType, StorageType},
-    prelude::CubePrimitive,
+    ir::ElemType,
+    prelude::*,
+    quant::scheme::QuantStore,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
 use cubecl_common::quant::scheme::QuantScheme;
-use cubek_quant::scheme::QuantStore;
 
 use crate::test_tensor::{
     arange::build_arange,
@@ -171,17 +170,21 @@ impl TestInput {
     }
 
     pub fn generate_with_f32_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
-        self.generate_host_data(HostDataType::F32)
+        self.generate_with_host_data(HostDataType::F32)
+    }
+
+    pub fn generate_with_f64_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+        self.generate_with_host_data(HostDataType::F64)
     }
 
     pub fn generate_with_bool_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
-        self.generate_host_data(HostDataType::Bool)
+        self.generate_with_host_data(HostDataType::Bool)
     }
 
     pub fn generate_test_tensor(self) -> TestTensor {
         let input_dtype = self.input_dtype.clone();
         let client = self.base_spec.client.clone();
-        let (handle, host) = self.generate_with_f32_host_data();
+        let (handle, host) = self.generate_with_host_data(HostDataType::F32);
 
         let mut tensor = TestTensor {
             handle,
@@ -197,11 +200,11 @@ impl TestInput {
     }
 
     pub fn f32_host_data(self) -> HostData {
-        self.generate_host_data(HostDataType::F32).1
+        self.generate_with_host_data(HostDataType::F32).1
     }
 
     pub fn bool_host_data(self) -> HostData {
-        self.generate_host_data(HostDataType::Bool).1
+        self.generate_with_host_data(HostDataType::Bool).1
     }
 
     // Public API returning only TensorHandle
@@ -228,16 +231,14 @@ impl TestInput {
         handle
     }
 
-    fn generate_host_data(
+    pub fn generate_with_host_data(
         self,
         host_data_type: HostDataType,
     ) -> (TensorHandle<TestRuntime>, HostData) {
         let client = self.base_spec.client.clone();
-
         let tensor_handle = self.generate_without_host_data();
         let host_data =
             HostData::from_tensor_handle(&client, tensor_handle.clone(), host_data_type);
-
         (tensor_handle, host_data)
     }
 }

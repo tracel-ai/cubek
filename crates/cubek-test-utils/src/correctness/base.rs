@@ -132,7 +132,7 @@ fn assert_equals_approx_inner(
         lhs,
         rhs,
         shape,
-        epsilon,
+        epsilon as f64,
         &mut summary_visitor,
         &mut Vec::new(),
         filter.as_ref(),
@@ -149,9 +149,9 @@ fn assert_equals_approx_inner(
 pub(crate) enum ElemStatus {
     #[allow(dead_code)] // fields read via Debug in failure messages
     Correct {
-        got: f32,
-        delta: f32,
-        epsilon: f32,
+        got: f64,
+        delta: f64,
+        epsilon: f64,
     },
     Wrong(WrongStatus),
 }
@@ -159,16 +159,16 @@ pub(crate) enum ElemStatus {
 #[derive(Debug)]
 pub(crate) enum WrongStatus {
     GotWrongValue {
-        got: f32,
-        expected: f32,
-        delta: f32,
-        epsilon: f32,
+        got: f64,
+        expected: f64,
+        delta: f64,
+        epsilon: f64,
     },
     ExpectedNan {
-        got: f32,
+        got: f64,
     },
     GotNan {
-        expected: f32,
+        expected: f64,
     },
 }
 
@@ -184,7 +184,7 @@ pub(crate) struct SummaryCollector {
     pub mismatches: Vec<(Vec<usize>, WrongStatus)>,
     pub total: usize,
     pub mismatched: usize,
-    pub max_abs_delta: f32,
+    pub max_abs_delta: f64,
     pub sum_abs_delta: f64,
     pub worst_index: Option<Vec<usize>>,
 }
@@ -202,9 +202,9 @@ impl SummaryCollector {
         }
     }
 
-    fn record_delta(&mut self, index: &[usize], delta: f32) {
+    fn record_delta(&mut self, index: &[usize], delta: f64) {
         if delta.is_finite() {
-            self.sum_abs_delta += delta as f64;
+            self.sum_abs_delta += delta;
         }
         if delta > self.max_abs_delta || self.worst_index.is_none() {
             self.max_abs_delta = delta;
@@ -265,7 +265,7 @@ impl CompareVisitor for SummaryCollector {
             self.mismatched += 1;
             let delta = match &w {
                 WrongStatus::GotWrongValue { delta, .. } => *delta,
-                WrongStatus::ExpectedNan { .. } | WrongStatus::GotNan { .. } => f32::INFINITY,
+                WrongStatus::ExpectedNan { .. } | WrongStatus::GotNan { .. } => f64::INFINITY,
             };
             self.record_delta(index, delta);
             if self.mismatches.len() < self.max_reported {
@@ -289,7 +289,7 @@ fn format_wrong(w: &WrongStatus) -> String {
 }
 
 #[inline]
-fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
+fn compare_elem(got: f64, expected: f64, epsilon: f64) -> ElemStatus {
     let epsilon = (epsilon * expected).abs().max(epsilon);
 
     // NaN check: pass if both are NaN
@@ -322,7 +322,7 @@ fn compare_elem(got: f32, expected: f32, epsilon: f32) -> ElemStatus {
             return ElemStatus::Wrong(WrongStatus::GotWrongValue {
                 got,
                 expected,
-                delta: f32::INFINITY,
+                delta: f64::INFINITY,
                 epsilon,
             });
         }
@@ -350,7 +350,7 @@ fn compare_tensors(
     actual: &HostData,
     expected: &HostData,
     shape: &[usize],
-    epsilon: f32,
+    epsilon: f64,
     visitor: &mut dyn CompareVisitor,
     index: &mut Vec<usize>,
     filter: Option<&TensorFilter>,
@@ -368,8 +368,8 @@ fn compare_tensors(
             return false;
         }
 
-        let got = actual.get_f32(index);
-        let exp = expected.get_f32(index);
+        let got = actual.get_f64(index);
+        let exp = expected.get_f64(index);
         let status = compare_elem(got, exp, epsilon);
 
         if matches!(status, ElemStatus::Wrong(_)) {

@@ -2,9 +2,9 @@
 //!
 //! # Supported layouts
 //!
-//! Each operand carries its own [`InnerLayout`](crate::definition::InnerLayout), and the
-//! kernel reads it through a layout-agnostic view — so the three operands may differ. The
-//! supported set (per operand, independently):
+//! Each operand carries its own physical layout (row/col-major rides in its strides, storage-tiling
+//! depth in its `levels`), and the kernel reads it through a layout-agnostic view — so the three
+//! operands may differ. The supported set (per operand, independently):
 //!
 //! - **Row-major** (`cols` contiguous) — the only layout that takes the vectorized N path
 //!   (rhs *and* output must both be row-major to vectorize; otherwise scalar).
@@ -27,7 +27,7 @@
 use std::fmt::Display;
 
 use cubecl::Runtime;
-use cubek_tile::{Axis, AxisSet, Constraint, Facet, LayoutRequest};
+use cubek_tile::Axis;
 
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
@@ -47,8 +47,10 @@ pub(crate) fn batch_axis(i: usize) -> Axis {
 /// the runtime exposes per-core cache sizes.
 const L1_BYTES: usize = 32 * 1024;
 
-/// Accumulator lines the register microkernel fully unrolls
-const REGISTER_LINES: usize = 64;
+/// Byte budget for the leaf's `tile_m × tile_n` accumulator block, which must stay in vector
+/// registers across the `K` loop; overflowing spills every accumulator to the stack (~2×).
+/// ~24 of 32 NEON q-registers (~12 of 16 AVX2 ymm), leaving room for the A/B operands.
+const ACC_REG_BYTES: usize = 384;
 
 /// The largest divisor of `k` not exceeding `cap` (≥1).
 fn divisor_at_most(k: usize, cap: usize) -> usize {
@@ -142,31 +144,6 @@ impl Display for CpuGemmStrategy {
     }
 }
 
-/// The per-operand layout wishes a matmul strategy declares. Burn pairs a relayout with the
-/// strategy to satisfy these; the kernel still runs on whatever it is handed.
-#[allow(dead_code)]
-pub struct MatmulLayoutRequest {
-    pub lhs: LayoutRequest,
-    pub rhs: LayoutRequest,
-    pub out: LayoutRequest,
-}
-
-impl CpuGemmStrategy {
-    /// CpuGemm vectorizes over `N`, so it wants `N` innermost (contiguous) on `rhs` and the
-    /// output. `lhs` is broadcast scalar, so its layout is free. Preferred, not required: the
-    /// kernel falls back to scalar when a delivered operand puts another axis innermost.
-    #[allow(dead_code)]
-    pub fn layout_request() -> MatmulLayoutRequest {
-        let n_innermost =
-            || LayoutRequest::new().with(Constraint::preferred(Facet::Innermost(AxisSet::one(N))));
-        MatmulLayoutRequest {
-            lhs: LayoutRequest::new(),
-            rhs: n_innermost(),
-            out: n_innermost(),
-        }
-    }
-}
-
 /// Pairs the [`CpuGemmStrategy`] knob with the [`CpuGemmBlueprint`] plan.
 pub struct CpuGemmRoutine;
 
@@ -193,9 +170,8 @@ impl CpuGemmRoutine {
         Ok(blueprint)
     }
 
-    /// The tile-size heuristic. The leaf is the largest square block fitting the unroll
-    /// window ([`REGISTER_LINES`]) — bigger drops to a ~2× slower path, so L1-sized leaves
-    /// are a trap. `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`]
+    /// The tile-size heuristic. The leaf's accumulator block is sized to the register file
+    /// ([`ACC_REG_BYTES`]), not L1; `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`].
     fn select<R: Runtime>(
         strategy: &CpuGemmStrategy,
         problem: &MatmulProblem,
@@ -214,12 +190,15 @@ impl CpuGemmRoutine {
             .max(1);
         let alpha = strategy.alpha.clamp(0.0, 1.0);
 
-        // Leaf = largest square register block (in elements) that still unrolls: `nr`
-        // N-lines by `nr·vw` M-rows, so `nr·(nr·vw) = nr²·vw <= REGISTER_LINES`. A narrow
-        // `n < nr·vw` caps `tile_n` at `n` (scalar edge).
-        let nr = ((REGISTER_LINES as f64 / vw as f64).sqrt() as usize).max(1);
-        let tile_n = (nr * vw).min(n.max(1));
-        let tile_m = (nr * vw).min(m.max(1));
+        // Balance the register grid, not the element block: N is read in `vw`-wide lines, so
+        // an element-square tile would collapse to one N-line (nr=1) for wide `vw`, starving
+        // N-reuse. Aim `tile_n ≈ √(budget·vw)`, then fill the budget along M. Snap each tile to
+        // a divisor of its axis: a ragged tile masks every leaf and de-unrolls the kernel (~2×),
+        // so a smaller clean tile wins. A narrow axis collapses its tile to the whole axis.
+        let budget_elems = (ACC_REG_BYTES / elem).max(1);
+        let tn_target = ((budget_elems * vw) as f64).sqrt() as usize;
+        let tile_n = divisor_at_most(n, tn_target.max(1));
+        let tile_m = divisor_at_most(m, (budget_elems / tile_n).max(1));
 
         // K depth: `alpha` lerps from a shallow `vw` to the deepest panel that keeps A
         // (tile_m×tile_k) and B (tile_k×tile_n) in L1 with the C tile (tile_m×tile_n)
@@ -242,8 +221,7 @@ impl CpuGemmRoutine {
         let plane_m = nearest_divisor(grid_m, target_m);
         let plane_n = nearest_divisor(grid_n, (cores / plane_m).max(1));
 
-        // Edge tiles are masked, so the heuristic's ideal block stands — just clamp each
-        // edge to its axis (a tile no larger than the matrix) and keep it non-zero.
+        // Tiles already divide their axes; the clamp is a defensive [1, axis] floor.
         let instruction = Instruction {
             m: tile_m.clamp(1, m.max(1)),
             n: tile_n.clamp(1, n.max(1)),
@@ -259,42 +237,5 @@ impl CpuGemmRoutine {
             instruction,
             planes,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::definition::InnerLayout;
-
-    #[test]
-    fn cpu_gemm_prefers_n_innermost_on_rhs_and_out() {
-        let req = CpuGemmStrategy::layout_request();
-
-        // The preferred wish is met exactly when N is contiguous, mirroring the kernel's
-        // vectorize-vs-scalar condition on rhs and out.
-        assert_eq!(
-            req.rhs
-                .preference(&InnerLayout::RowMajor.to_concrete([K, N], 16, 16)),
-            1
-        );
-        assert_eq!(
-            req.rhs
-                .preference(&InnerLayout::ColMajor.to_concrete([K, N], 16, 16)),
-            0
-        );
-        assert_eq!(
-            req.out
-                .preference(&InnerLayout::RowMajor.to_concrete([M, N], 16, 16)),
-            1
-        );
-        assert_eq!(
-            req.out
-                .preference(&InnerLayout::ColMajor.to_concrete([M, N], 16, 16)),
-            0
-        );
-
-        // lhs is broadcast scalar: no layout wish.
-        assert!(req.lhs.constraints.is_empty());
     }
 }

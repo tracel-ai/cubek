@@ -3,15 +3,15 @@ use cubecl::prelude::*;
 use crate::*;
 
 #[cube]
-impl<O: CubePrimitive> Tile<O> {
-    pub fn add_scalar<I: CubePrimitive, S: Scalar>(&mut self, input: &Tile<I>, scalar: S)
-    where
-        O: AddScalar<I, S>,
-    {
+impl<O: Numeric> Tile<O> {
+    /// Elementwise `input + scalar` into `self`. Both tiles serve `O`; a quantized input
+    /// dequantizes on read ([`Tile::flat`]). `I` is the input's storage element, threaded from
+    /// the kernel (unused on a plain input).
+    pub fn add_scalar<I: Numeric, S: Scalar>(&mut self, input: &Tile<O>, scalar: S) {
         match comptime!(self.space.partitioner()) {
-            Partitioner::Final => AddScalar::add(input, scalar, self),
+            Partitioner::Final => add_leaf::<I, S, O>(input, scalar, self),
             Partitioner::Level(level) => match level.schedule() {
-                Schedule::Direct => add_direct(input, scalar, self),
+                Schedule::Direct => add_direct::<I, S, O>(input, scalar, self),
                 _ => {
                     unimplemented!(
                         "currently unsupported schedule: {:?}. only {:?} is supported",
@@ -23,44 +23,36 @@ impl<O: CubePrimitive> Tile<O> {
         }
     }
 
-    pub fn add_scalar_at<I: CubePrimitive, S: Scalar>(
+    pub fn add_scalar_at<I: Numeric, S: Scalar>(
         &mut self,
-        input: &Tile<I>,
+        input: &Tile<O>,
         scalar: S,
         region: &Region,
-    ) where
-        O: AddScalar<I, S>,
-    {
-        self.at(region).add_scalar(&input.at(region), scalar);
+    ) {
+        self.at(region).add_scalar::<I, S>(&input.at(region), scalar);
     }
 }
 
 #[cube]
-pub(crate) fn add_direct<I: CubePrimitive, S: Scalar, O: CubePrimitive + AddScalar<I, S>>(
-    input: &Tile<I>,
+pub(crate) fn add_direct<I: Numeric, S: Scalar, O: Numeric>(
+    input: &Tile<O>,
     scalar: S,
     output: &mut Tile<O>,
 ) {
     for region in Walk::over(output.runtime_space()) {
-        output.add_scalar_at(input, scalar, &region);
+        output.add_scalar_at::<I, S>(input, scalar, &region);
     }
 }
 
 #[cube]
-pub trait AddScalar<I: CubePrimitive, S: Scalar>: CubePrimitive {
-    fn add(input: &Tile<I>, scalar: S, output: &mut Tile<Self>);
-}
+fn add_leaf<I: Numeric, S: Scalar, O: Numeric>(input: &Tile<O>, scalar: S, output: &mut Tile<O>) {
+    let size!(W) = output.vector_size();
+    let scalar = Vector::<O, W>::cast_from(scalar);
 
-#[cube]
-impl<I: Numeric, S: Scalar, O: Numeric, N: Size> AddScalar<Vector<I, N>, S> for Vector<O, N> {
-    fn add(input: &Tile<Vector<I, N>>, scalar: S, output: &mut Tile<Vector<O, N>>) {
-        let scalar = Vector::cast_from(scalar);
+    let values = input.flat::<I, W>();
+    let mut out = output.flat_mut::<W>();
 
-        let values = input.flat::<O>();
-        let mut out = output.flat_mut::<O>();
-
-        for i in 0..out.shape() {
-            out.write(i, values.read(i) + scalar);
-        }
+    for i in 0..out.shape() {
+        out.write(i, values.read(i) + scalar);
     }
 }

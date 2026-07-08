@@ -425,3 +425,56 @@ pub fn matvec_large_col_major() {
     }
     .test();
 }
+
+// Assert these layouts actually execute on GPU instead of being silently rejected.
+
+#[test]
+pub fn matmat_row_row_executes() {
+    let (lhs_layout, rhs_layout) = matmat_row_row();
+    GemmTestCase {
+        m: 32,
+        n: 32,
+        k: 256,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        lhs_layout,
+        rhs_layout,
+        elems: elems(),
+        strategy: outer_product(),
+    }
+    .test_executes();
+}
+
+#[test]
+pub fn matmat_col_col_executes() {
+    let (lhs_layout, rhs_layout) = matmat_col_col();
+    GemmTestCase {
+        m: 32,
+        n: 32,
+        k: 256,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        lhs_layout,
+        rhs_layout,
+        elems: elems(),
+        strategy: outer_product(),
+    }
+    .test_executes();
+}
+
+#[test]
+pub fn matmat_col_row_executes() {
+    let (lhs_layout, rhs_layout) = matmat_col_row();
+    GemmTestCase {
+        m: 32,
+        n: 32,
+        k: 256,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        lhs_layout,
+        rhs_layout,
+        elems: elems(),
+        strategy: outer_product(),
+    }
+    .test_executes();
+}

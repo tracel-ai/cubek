@@ -10,18 +10,21 @@ pub use quant::*;
 
 use cubecl::{prelude::*, std::tensor::layout::Coordinates};
 
-// A quantization-transparent view over tile data.
+/// A quantization-transparent read view over a [`Tile`](crate::Tile) serving `O`: `Direct` reads
+/// the buffer as-is; `Quantized` reads the storage element `I` and dequantizes per the store's
+/// [`QuantInfo`](crate::QuantInfo). Which variant a tile yields is comptime, so the plain path
+/// compiles to a bare masked read.
 #[derive(CubeType)]
-pub enum TileView<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> {
-    Direct(MaskedView<'a, Vector<I, N>, C>),
-    Quantized(QuantizedView<'a, I, N, F, C>),
+pub enum TileView<'a, O: Numeric, I: Numeric, W: Size, C: Coordinates + 'a> {
+    Direct(MaskedView<'a, Vector<O, W>, C>),
+    Quantized(QuantizedView<'a, O, I, W, C>),
 }
 
 #[cube]
-impl<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> TileView<'a, I, N, C, F> {
-    pub fn read(&self, pos: C) -> Vector<F, N> {
+impl<'a, O: Numeric, I: Numeric, W: Size, C: Coordinates + 'a> TileView<'a, O, I, W, C> {
+    pub fn read(&self, pos: C) -> Vector<O, W> {
         match self {
-            TileView::Direct(direct) => Vector::cast_from(direct.read(pos)),
+            TileView::Direct(direct) => direct.read(pos),
             TileView::Quantized(quant) => quant.read(pos),
         }
     }
@@ -30,38 +33,6 @@ impl<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> TileView<'a, I, N
         match self {
             TileView::Direct(direct) => direct.shape(),
             TileView::Quantized(quant) => quant.shape(),
-        }
-    }
-}
-
-// used already for the `FlatViewMut` to explicitly tell a quantized `Tile` cannot be written to directly for now
-// as it requires more logic for packed values and require a requantization
-#[derive(CubeType)]
-pub enum TileViewMut<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> {
-    Direct(MaskedViewMut<'a, Vector<I, N>, C>),
-    Quantized(QuantizedView<'a, I, N, F, C>),
-}
-
-#[cube]
-impl<'a, I: Numeric, N: Size, C: Coordinates + 'a, F: Numeric> TileViewMut<'a, I, N, C, F> {
-    pub fn read(&self, pos: C) -> Vector<F, N> {
-        match self {
-            TileViewMut::Direct(direct) => Vector::cast_from(direct.read(pos)),
-            TileViewMut::Quantized(quant) => quant.read(pos),
-        }
-    }
-
-    pub fn shape(&self) -> C {
-        match self {
-            TileViewMut::Direct(direct) => direct.shape(),
-            TileViewMut::Quantized(quant) => quant.shape(),
-        }
-    }
-
-    pub fn write(&mut self, pos: C, value: Vector<I, N>) {
-        match self {
-            TileViewMut::Direct(direct) => direct.write(pos, value),
-            TileViewMut::Quantized(_) => panic!("writing to quantized view is not supported yet"),
         }
     }
 }

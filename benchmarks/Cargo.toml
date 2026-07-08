@@ -82,6 +82,10 @@ name = "gemm_cpu"
 
 [[bench]]
 harness = false
+name = "gemm_cpu_tiled"
+
+[[bench]]
+harness = false
 name = "gemv"
 
 [[bench]]

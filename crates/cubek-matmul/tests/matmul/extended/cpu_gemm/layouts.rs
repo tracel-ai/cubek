@@ -1,17 +1,18 @@
 #![allow(non_snake_case)]
 
+use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive,
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
-use cubek_matmul::definition::{InnerLayout, MatmulElems, MatmulProblem};
+use cubek_matmul::definition::{MatmulElems, MatmulProblem};
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::cpu_gemm::{
     CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::TestInput;
+use cubek_test_utils::{TestInput, skip_unless_cpu};
 use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
 
 use super::Dims;
@@ -29,14 +30,14 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E, Const<1>>,
-    dst: &TileArg<'_, E, Const<1>>,
+    src: &TileArg<'_, E>,
+    dst: &TileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let src = src.tile();
     let mut dst = dst.tile();
-    let r = src.view();
-    let mut w = dst.view_mut();
+    let r = src.view::<Const<1>>();
+    let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();
     for i in 0..shape[0] {
         for j in 0..shape[1] {
@@ -124,12 +125,9 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
 /// The operand's launchable `TileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric, V: Size>(
-    op: &Operand,
-    space: Space,
-) -> TileArgLaunch<'static, E, V, TestRuntime> {
+fn tile_arg<E: Numeric>(op: &Operand, space: Space) -> TileArgLaunch<'static, E, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    TileArgLaunch::new(tensor, space, storage)
+    TileArgLaunch::strided(tensor, 1, space, storage)
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.
@@ -161,6 +159,9 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     } = dims;
     let out_batch = lhs_batch.max(rhs_batch);
     let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
     let dtypes = MatmulElems::from_single_dtype(f32::as_type_native_unchecked());
 
     // Logical inputs (row-major) via cubek-test-utils, with host data for the
@@ -210,15 +211,15 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
         &client,
         WithLayout {
             binding: InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),
-            layout: lhs.layout.clone(),
+            levels: lhs.layout.levels(),
         },
         WithLayout {
             binding: InputBinding::Normal(physical_binding(&rhs), dtypes.rhs_global),
-            layout: rhs.layout.clone(),
+            levels: rhs.layout.levels(),
         },
         WithLayout {
             binding: physical_binding(&out),
-            layout: out.layout.clone(),
+            levels: out.layout.levels(),
         },
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: Instruction {

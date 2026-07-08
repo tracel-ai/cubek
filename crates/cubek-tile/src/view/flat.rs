@@ -75,41 +75,39 @@ impl Layout for FlatLayout {
 }
 
 #[cube]
-impl<I: Numeric, N: Size> Tile<Vector<I, N>> {
-    // the generic F type parameter is necessary for now as the `MemData` holds the same data type `T` as the `Tile` exposes
-    // so we need to cast the value explicitly here. this should be fixed in the future when `MemData` is refactored.
-    pub fn flat<F: Numeric>(&self) -> TileView<'_, I, N, Coords1d, F> {
-        match &self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => {
-                let values = g.flat();
-                let quant = self.quant;
-                if comptime!(quant.is_some()) {
-                    let info = quant.unwrap();
-                    TileView::new_Quantized(QuantizedView::new(
-                        values,
-                        F::cast_from(info.scale),
+impl<T: Numeric> Tile<T> {
+    /// A flat 1-D quantization-transparent view over `Vector<T, W>` lines (`W` =
+    /// [`vector_size`](Tile::vector_size)): a row-major scan over the tile's window, masking the
+    /// overhang per its comptime `check` flag. A plain tile serves the `Direct` arm; a quantized
+    /// store re-types its buffer to the storage element `I` and dequantizes each read into `T`.
+    /// `I` is threaded by the calling kernel (bound via `#[define]` at launch); it is unused on
+    /// the plain path.
+    pub fn flat<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
+        match &self.tile_kind {
+            // `#[comptime]`: the store's quant-ness is a trace-time fact, so the plain path
+            // compiles to the bare `Direct` read.
+            TileKind::Gmem(g) | TileKind::Smem(g) =>
+            {
+                #[comptime]
+                match &g.quant {
+                    ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
+                        g.flat_storage::<I, W>(),
+                        T::cast_from(info.scale),
                         comptime!(info.scheme),
-                    ))
-                } else {
-                    TileView::new_Direct(values)
+                    )),
+                    ComptimeOption::None => TileView::new_Direct(g.flat::<W>()),
                 }
             }
-            Payload::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
+            TileKind::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
+            TileKind::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
         }
     }
 
-    pub fn flat_mut<F: Numeric>(&mut self) -> TileViewMut<'_, I, N, Coords1d, F> {
-        match &mut self.payload {
-            Payload::Gmem(g) | Payload::Smem(g) => {
-                let values = g.flat_mut();
-                let quant = self.quant;
-                if comptime!(quant.is_some()) {
-                    panic!("writing to quantized view is not supported yet")
-                } else {
-                    TileViewMut::new_Direct(values)
-                }
-            }
-            Payload::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
+    pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
+            TileKind::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
+            TileKind::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
         }
     }
 }

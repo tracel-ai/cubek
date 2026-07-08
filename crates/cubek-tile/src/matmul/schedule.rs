@@ -5,17 +5,17 @@
 
 use cubecl::prelude::*;
 
-use crate::{matmul::instruction::Mma, *};
+use crate::*;
 
 /// `Direct`: no staging
 #[cube]
-pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
+pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
 ) where
-    Acc: CubePrimitive + Mma<Lhs, Rhs>,
+    Acc: Numeric,
 {
     for region in Walk::over(space) {
         out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
@@ -25,84 +25,75 @@ pub(crate) fn mma_direct<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
 /// `Staged`: stage each operand sub-tile into shared memory, then recurse. Each buffer keeps
 /// its own served type.
 #[cube]
-pub(crate) fn mma_staged<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
+pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
-) where
-    Acc: CubePrimitive + Mma<Lhs, Rhs>,
-{
-    // The buffer's space is this level's divide, so it mirrors what `at` produces and
-    // carries any remaining finer levels.
-    let a_sub = comptime!(lhs.space.divide());
-    let b_sub = comptime!(rhs.space.divide());
-    let a_smem = Shared::<[Lhs]>::new_slice(a_sub.tile_size());
-    let b_smem = Shared::<[Rhs]>::new_slice(b_sub.tile_size());
-    let mut a_tile = Tile::smem(&a_smem, a_sub);
-    let mut b_tile = Tile::smem(&b_smem, b_sub);
+) {
+    // Each smem buffer mirrors what `at` produces one level down (its `divide()`) and carries any
+    // remaining finer levels, at the source operand's physical width.
+    let mut a_tile = lhs.smem_like();
+    let mut b_tile = rhs.smem_like();
 
     for region in Walk::over(space) {
-        a_tile.stage(&lhs.at(&region));
-        b_tile.stage(&rhs.at(&region));
+        a_tile.copy_from(&lhs.at(&region));
+        b_tile.copy_from(&rhs.at(&region));
         out.at(&region).mma(&a_tile, &b_tile);
     }
 }
 
-/// `DoubleBuffered`: two staged buffers per operand, prefetching the next region into the idle
-/// slot while computing the current one.
+/// `DoubleBuffered`: two [`Staging`] slots, each a `(Tile<Lhs>, Tile<Rhs>)` payload, driven
+/// `fill`/`consume` on alternating slots so one slot's fill overlaps the other's compute. Each slot's
+/// synchronization is wrapped inside `fill`/`consume`, not here.
 #[cube]
-pub(crate) fn mma_double<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc>(
+pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
-) where
-    Acc: CubePrimitive + Mma<Lhs, Rhs>,
-{
-    // Allocated here in caller scope because a view-backed buffer must outlive the ring.
-    let a_sub = comptime!(lhs.space.divide());
-    let b_sub = comptime!(rhs.space.divide());
-    let a0 = Shared::<[Lhs]>::new_slice(a_sub.tile_size());
-    let a1 = Shared::<[Lhs]>::new_slice(a_sub.tile_size());
-    let b0 = Shared::<[Rhs]>::new_slice(b_sub.tile_size());
-    let b1 = Shared::<[Rhs]>::new_slice(b_sub.tile_size());
-    let mut a_buf = Sequence::new();
-    a_buf.push(Tile::smem(&a0, comptime!(a_sub.clone())));
-    a_buf.push(Tile::smem(&a1, comptime!(a_sub.clone())));
-    let mut b_buf = Sequence::new();
-    b_buf.push(Tile::smem(&b0, comptime!(b_sub.clone())));
-    b_buf.push(Tile::smem(&b1, comptime!(b_sub.clone())));
-    let mut a = Ring::new(a_buf);
-    let mut b = Ring::new(b_buf);
+) {
+    // Each slot stages `lhs`/`rhs` into its own smem; the sync strategy and the allocation both live
+    // in `Staging::new` (deduced from the operands' delivery), so the schedule stays out of it.
+    let mut s0 = Staging::new(lhs, rhs);
+    let mut s1 = Staging::new(lhs, rhs);
 
     // Double-buffering needs random access (prefetch the next region), so it indexes the `walk`
     // by hand rather than iterating.
     let walk = Walk::over(space);
+    let n = walk.total();
 
     // prologue: prime slot 0 with region 0.
-    let r0 = walk.region(0);
-    a.stage(0usize, &lhs.at(&r0));
-    b.stage(0usize, &rhs.at(&r0));
-    sync_cube();
+    let first = walk.region(0);
+    s0.fill(|s, pipe| {
+        pipe.fill(&mut s.0, &lhs.at(&first));
+        pipe.fill(&mut s.1, &rhs.at(&first));
+    });
 
-    let n = walk.total();
     for p in 0..n / 2 {
         let even = p * 2;
         let odd = even + 1;
 
-        // phase 0: prefetch the odd region into slot 1, compute the even region.
-        a.stage(1usize, &lhs.at(&walk.region(even + 1)));
-        b.stage(1usize, &rhs.at(&walk.region(even + 1)));
-        out.at(&walk.region(even)).mma(a.get(0usize), b.get(0usize));
-        sync_cube();
+        // prefetch the odd region into slot 1 (its fill overlaps the compute below), then compute
+        // the even region on slot 0.
+        let odd_region = walk.region(odd);
+        s1.fill(|s, pipe| {
+            pipe.fill(&mut s.0, &lhs.at(&odd_region));
+            pipe.fill(&mut s.1, &rhs.at(&odd_region));
+        });
+        let even_region = walk.region(even);
+        s0.consume(|a, b| out.at(&even_region).mma(a, b));
 
-        // phase 1: prefetch the next even region into slot 0, compute the odd region.
+        // prefetch the next even region back into slot 0 (if it exists), then compute the odd
+        // region on slot 1.
         if odd + 1 < n {
-            a.stage(0usize, &lhs.at(&walk.region(odd + 1)));
-            b.stage(0usize, &rhs.at(&walk.region(odd + 1)));
+            let next_even = walk.region(odd + 1);
+            s0.fill(|s, pipe| {
+                pipe.fill(&mut s.0, &lhs.at(&next_even));
+                pipe.fill(&mut s.1, &rhs.at(&next_even));
+            });
         }
-        out.at(&walk.region(odd)).mma(a.get(1usize), b.get(1usize));
-        sync_cube();
+        let odd_region = walk.region(odd);
+        s1.consume(|a, b| out.at(&odd_region).mma(a, b));
     }
 }

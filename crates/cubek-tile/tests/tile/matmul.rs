@@ -230,9 +230,19 @@ fn matmul_cpu_dynamic_k() {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.tensor_arg(1), a.space().with_dynamic(&[K]), a.storage()),
-        TileArgLaunch::new(b.tensor_arg(1), b.space().with_dynamic(&[K]), b.storage()),
-        TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
+        TileArgLaunch::strided(
+            a.tensor_arg(1),
+            1,
+            a.space().with_dynamic(&[K]),
+            a.storage(),
+        ),
+        TileArgLaunch::strided(
+            b.tensor_arg(1),
+            1,
+            b.space().with_dynamic(&[K]),
+            b.storage(),
+        ),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -465,9 +475,9 @@ fn check_matmul_batched(
         &client,
         cube_count,
         cube_dim,
-        TileArgLaunch::new(a.tensor_arg(vector_size), a.space(), a.storage()),
-        TileArgLaunch::new(rhs.tensor_arg(vector_size), rhs.space(), rhs.storage()),
-        TileArgLaunch::new(c.tensor_arg(vector_size), c.space(), c.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), vector_size, a.space(), a.storage()),
+        TileArgLaunch::strided(rhs.tensor_arg(1), vector_size, rhs.space(), rhs.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), vector_size, c.space(), c.storage()),
         dtype,
     );
 
@@ -533,9 +543,9 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
         &client,
         cube_count,
         cube_dim,
-        TileArgLaunch::new(lhs.tensor_arg(vector_size), lhs.space(), lhs.storage()),
-        TileArgLaunch::new(rhs.tensor_arg(vector_size), rhs.space(), rhs.storage()),
-        TileArgLaunch::new(acc.tensor_arg(vector_size), acc.space(), acc.storage()),
+        TileArgLaunch::strided(lhs.tensor_arg(1), vector_size, lhs.space(), lhs.storage()),
+        TileArgLaunch::strided(rhs.tensor_arg(1), vector_size, rhs.space(), rhs.storage()),
+        TileArgLaunch::strided(acc.tensor_arg(1), vector_size, acc.space(), acc.storage()),
         dtype,
     );
 
@@ -592,9 +602,9 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
-        TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),
-        TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -746,9 +756,9 @@ fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Pa
         &client,
         space.cube_count(),
         CubeDim::new_single(),
-        TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
-        TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),
-        TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -788,9 +798,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         &client,
         space.cube_count(),
         CubeDim::new_single(),
-        TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
-        TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),
-        TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -813,9 +823,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// from its partitioner's `Schedule` (here `.staged()` or `.double_buffered()`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -829,9 +839,9 @@ fn launch_staged_matmul<E: Numeric>(
 /// concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -844,7 +854,7 @@ fn launch_cpu_matmul<E: Numeric>(
 
 /// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no
 /// arithmetic: gmem → smem → cmma (load) → smem → gmem (store). Validates that the
-/// `Payload::Cmma` transit (`cmma::load_with_layout` / `cmma::store`) preserves data.
+/// `TileKind::Cmma` transit (`cmma::load_with_layout` / `cmma::store`) preserves data.
 /// Tensor-core only — skipped on backends without cmma (wgpu/cpu); run with
 /// `cargo test-metal`.
 #[test]
@@ -870,8 +880,8 @@ fn cmma_fragment_roundtrip() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::new(input.tensor_arg(1), input.space(), input.storage()),
-        TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
+        TileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
+        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         dtype,
     );
 
@@ -885,20 +895,18 @@ fn cmma_fragment_roundtrip() {
 /// gmem → smem → cmma accumulator → smem → gmem — pure transit, no arithmetic.
 #[cube(launch)]
 fn cmma_roundtrip<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
+    input: &TileArg<'_, E>,
+    output: &TileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = input.tile();
     let space = comptime!(a.space.clone());
-    let size = comptime!(space.tile_size());
 
-    let smem_in = Shared::<[Vector<E, Const<1>>]>::new_slice(size);
-    let mut a_smem = Tile::smem(&smem_in, comptime!(space.clone()));
-    a_smem.stage(&a);
+    let mut a_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    a_smem.copy_from(&a);
     sync_cube();
 
-    let mut frag = Tile::<Vector<E, Const<1>>>::cmma_fragment(
+    let mut frag = Tile::<E>::cmma_fragment(
         MatrixIdent::Accumulator,
         8usize,
         8usize,
@@ -906,15 +914,14 @@ fn cmma_roundtrip<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(space.clone()),
     );
-    frag.stage(&a_smem);
+    frag.copy_from(&a_smem);
 
-    let smem_out = Shared::<[Vector<E, Const<1>>]>::new_slice(size);
-    let mut c_smem = Tile::smem(&smem_out, comptime!(space.clone()));
-    c_smem.stage(&frag);
+    let mut c_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    c_smem.copy_from(&frag);
     sync_cube();
 
     let mut c = output.tile();
-    c.stage(&c_smem);
+    c.copy_from(&c_smem);
 }
 
 /// A real 8×8×8 matmul through tensor cores: `C = A · B`, contracted by `cmma::execute`
@@ -946,9 +953,9 @@ fn cmma_matmul_8x8x8() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::new(a.tensor_arg(1), a.space(), a.storage()),
-        TileArgLaunch::new(b.tensor_arg(1), b.space(), b.storage()),
-        TileArgLaunch::new(c.tensor_arg(1), c.space(), c.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -966,29 +973,26 @@ fn cmma_matmul_8x8x8() {
 /// `cmma::execute` (`acc = A·B`), stored back through smem to gmem.
 #[cube(launch)]
 fn cmma_matmul<E: Numeric>(
-    a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, E, Const<1>>,
-    c: &TileArg<'_, E, Const<1>>,
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
 
-    let a_smem = Shared::<[Vector<E, Const<1>>]>::new_slice(comptime!(a.space.tile_size()));
-    let mut a_smem_tile = Tile::smem(&a_smem, comptime!(a.space.clone()));
-    a_smem_tile.stage(&a);
+    let mut a_smem_tile = Tile::smem(comptime!(a.space.clone()), 1usize);
+    a_smem_tile.copy_from(&a);
 
-    let b_smem = Shared::<[Vector<E, Const<1>>]>::new_slice(comptime!(b.space.tile_size()));
-    let mut b_smem_tile = Tile::smem(&b_smem, comptime!(b.space.clone()));
-    b_smem_tile.stage(&b);
+    let mut b_smem_tile = Tile::smem(comptime!(b.space.clone()), 1usize);
+    b_smem_tile.copy_from(&b);
 
-    let c_smem = Shared::<[Vector<E, Const<1>>]>::new_slice(comptime!(c.space.tile_size()));
-    let mut c_smem_tile = Tile::smem(&c_smem, comptime!(c.space.clone()));
-    c_smem_tile.stage(&c);
+    let mut c_smem_tile = Tile::smem(comptime!(c.space.clone()), 1usize);
+    c_smem_tile.copy_from(&c);
     sync_cube();
 
-    let mut a_frag = Tile::<Vector<E, Const<1>>>::cmma_fragment(
+    let mut a_frag = Tile::<E>::cmma_fragment(
         MatrixIdent::A,
         8usize,
         8usize,
@@ -996,9 +1000,9 @@ fn cmma_matmul<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(a.space.clone()),
     );
-    a_frag.stage(&a_smem_tile);
+    a_frag.copy_from(&a_smem_tile);
 
-    let mut b_frag = Tile::<Vector<E, Const<1>>>::cmma_fragment(
+    let mut b_frag = Tile::<E>::cmma_fragment(
         MatrixIdent::B,
         8usize,
         8usize,
@@ -1006,9 +1010,9 @@ fn cmma_matmul<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(b.space.clone()),
     );
-    b_frag.stage(&b_smem_tile);
+    b_frag.copy_from(&b_smem_tile);
 
-    let mut acc = Tile::<Vector<E, Const<1>>>::cmma_fragment(
+    let mut acc = Tile::<E>::cmma_fragment(
         MatrixIdent::Accumulator,
         8usize,
         8usize,
@@ -1016,11 +1020,11 @@ fn cmma_matmul<E: Numeric>(
         MatrixLayout::RowMajor,
         comptime!(c.space.clone()),
     );
-    acc.stage(&c_smem_tile);
+    acc.copy_from(&c_smem_tile);
 
     acc.mma(&a_frag, &b_frag);
 
-    c_smem_tile.stage(&acc);
+    c_smem_tile.copy_from(&acc);
     sync_cube();
-    c.stage(&c_smem_tile);
+    c.copy_from(&c_smem_tile);
 }

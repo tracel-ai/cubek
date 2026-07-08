@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, ir::ElemType, prelude::*, zspace::Shape};
+use cubecl::{TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape};
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TileInput, assert_equals_approx,
@@ -28,20 +28,19 @@ fn scalar_add_quantized_matches_reference() {
 }
 
 #[cube(launch)]
-/// input: the input tensor
-/// scalar: the scalar to multiply with
+/// input: the input tensor, storage-typed (`I`); quantized when its payload carries scales
+/// scalar: the scalar to add
 /// output: the output tensor
-pub fn scalar_add<I: Numeric, O: Numeric, N: Size>(
-    input: &QuantTileArg<'_, I, N>,
+pub fn scalar_add<I: Numeric, O: Numeric>(
+    input: &QuantTileArg<'_, I>,
     scalar: f32,
-    output: &TileArg<'_, O, N>,
+    output: &TileArg<'_, O>,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
-    #[define(N)] _size: usize,
 ) {
-    let input = input.tile();
+    let input = input.tile::<O>();
     let mut output = output.tile();
-    output.add_scalar::<Vector<I, N>, f32>(&input, scalar);
+    output.add_scalar::<I, f32>(&input, scalar);
 }
 
 /// Launch `scalar_add` over a plain (non-quantized) f32 tensor and check `out == in + scalar`.
@@ -62,14 +61,14 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
         QuantTileArgLaunch::new(
             input.tensor_arg(1),
             ComptimeOptionArgs::None,
+            1,
             input.space(),
             input.storage(),
         ),
         scalar,
-        TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
+        TileArgLaunch::new(output.tensor_arg(1), 1, output.space(), output.storage()),
         dtype,
         dtype,
-        1usize,
     );
 
     let input_host = HostData::from_tensor_handle(&client, input.handle(), HostDataType::F32);
@@ -96,6 +95,9 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
 /// `out == q * scale + scalar`.
 fn run_quantized(m: usize, n: usize, scalar: f32) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        return; // backend has no native i8 (e.g. wgpu); native dequant can't run here
+    }
     let scale = 0.05f32;
 
     let scheme = QuantScheme::default()
@@ -132,14 +134,14 @@ fn run_quantized(m: usize, n: usize, scalar: f32) {
                 scales.binding().into_tensor_arg(),
                 scheme,
             )),
+            1,
             space,
             storage,
         ),
         scalar,
-        TileArgLaunch::new(output.tensor_arg(1), output.space(), output.storage()),
+        TileArgLaunch::new(output.tensor_arg(1), 1, output.space(), output.storage()),
         input_dtype,
         out_dtype,
-        1usize,
     );
 
     let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
