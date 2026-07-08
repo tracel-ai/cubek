@@ -330,6 +330,28 @@ impl Space {
         self.extent(axis).div_ceil(self.partitioner().edge(axis))
     }
 
+    /// Whether `axis` overhangs its tiling: some level's sub-tile edge fails to divide the
+    /// extent handed to it (the top extent at the first level, the parent edge below), leaving
+    /// a partial tile that needs masking. Host-side, on the concrete (real-extent) space —
+    /// a [`Dynamic`](Extent::Dynamic) axis panics.
+    pub fn overhangs(&self, axis: Axis) -> bool {
+        assert!(
+            !self.is_dynamic(axis),
+            "Space::overhangs: axis {axis:?} is Dynamic; call on the concrete space, not the kernel-form one"
+        );
+        let mut extent = self.extent(axis);
+        let mut partitioner = &self.partitioner;
+        while !partitioner.is_final() {
+            let edge = partitioner.edge(axis);
+            if !extent.is_multiple_of(edge) {
+                return true;
+            }
+            extent = edge;
+            partitioner = partitioner.next();
+        }
+        false
+    }
+
     /// The axes in this space but not in `output`, i.e. those contracted.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
