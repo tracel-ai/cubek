@@ -989,22 +989,14 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let builder = Partitioner::row_major(
-        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
-        ByAxis::new(&[
-            (M, Distribution::Sequential),
-            (N, Distribution::Sequential),
-            (K, Distribution::Sequential),
-        ]),
-    );
-    let partitioner = match schedule {
-        Schedule::Staged => builder.staged(),
-        Schedule::DoubleBuffered => builder.double_buffered(),
-        Schedule::Direct => builder.direct(),
-    };
-    let space = Space::new(&[(M, m), (N, n), (K, k)])
-        .with_partitioner(partitioner)
-        .with_leaf(Leaf::Cmma);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, schedule, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma);
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1059,31 +1051,21 @@ fn cmma_matmul_plane_partitioned_stage() {
     }
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
-    let plane = || Distribution::Spatial {
-        scope: ComputeScope::Plane,
-        spread: Spread::Contiguous,
-        coverage: Coverage::TilesEach(1),
-    };
-    // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
-    let l0 = Partitioner::row_major(
-        ByAxis::new(&[(M, m), (N, n), (K, edge)]),
-        ByAxis::new(&[
-            (M, Distribution::Sequential),
-            (N, Distribution::Sequential),
-            (K, Distribution::Sequential),
-        ]),
-    )
-    .double_buffered();
-    // L1: the stage split one `8×8` fragment per plane.
-    let l1 = Partitioner::row_major(
-        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
-        ByAxis::new(&[(M, plane()), (N, plane()), (K, Distribution::Sequential)]),
-    )
-    .direct();
-    let space = Space::new(&[(M, m), (N, n), (K, k)])
-        .with_partitioner(l0)
-        .with_partitioner(l1)
-        .with_leaf(Leaf::Cmma);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
+        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+            l.axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(edge))
+        })
+        // L1: the stage split one `8×8` fragment per plane.
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::plane(edge))
+                .axis(N, Cut::plane(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma);
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1156,8 +1138,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
-        .build()
-        .with_leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma);
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))

@@ -1,6 +1,6 @@
 //! The TMA backing store ([`TmaData`], a tensor-map source): not element-addressable, its
-//! only sink is a bulk copy into shared memory, blocking ([`Tile::tma_load`]) or pipelined
-//! under a caller-hoisted barrier ([`Tile::stage_from`]).
+//! only sink is a bulk copy into shared memory, blocking ([`TmaData::load_into`]) or pipelined
+//! under a caller-hoisted barrier ([`TmaData::stage_into`]).
 
 use cubecl::{
     prelude::barrier::Barrier,
@@ -12,8 +12,8 @@ use crate::*;
 
 /// A TMA tensor-map source: the launch-built `ViewMut` (backed by a `TensorMapTiled` `ViewArg`),
 /// the current global box origin `pos`, the logical `bound`, and the comptime box shape. Not
-/// element-addressable — its only sink is a [`stage_from`](Tile::stage_from) into shared memory, which
-/// lowers to a hardware bulk copy. `at` advances `pos`; the descriptor and bound ride along unchanged.
+/// element-addressable — its only sink is a bulk copy into shared memory. `at` advances `pos`;
+/// the descriptor and bound ride along unchanged.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct TmaData<T: Numeric> {
@@ -30,11 +30,9 @@ pub struct TmaData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side) as a `TmaGmem` tile. The global
-    /// `(batch, row, col)` bound is read off the view; `pos` starts at the origin and advances on
-    /// [`at`](Tile::at). Element addressing is unavailable — its only sink is a
-    /// [`stage_from`](Tile::stage_from) into shared memory. The store is scalar (`vector_size == 1`); the box
-    /// shape is carried comptime for the `tensor_map_load`. Dormant: no launch path builds this yet.
+    /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side) as a `TmaGmem` tile. `pos`
+    /// starts at the origin and advances on [`at`](Tile::at); the box shape is carried comptime
+    /// for the `tensor_map_load`. Dormant: no launch path builds this yet.
     pub fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
@@ -60,59 +58,33 @@ impl<T: Numeric> Tile<T> {
             space: comptime!(space),
         }
     }
-
-    /// The transaction byte count a TMA fill into this shared-memory tile lands (its buffer
-    /// length in native lines, runtime, widened to bytes). Zero for the non-smem kinds, which
-    /// are never TMA fill targets.
-    pub(crate) fn tma_transaction_bytes(&self) -> u32 {
-        match &self.tile_kind {
-            TileKind::Smem(d) => {
-                d.buffer.len() as u32 * comptime!(T::type_size() as u32 * d.vector_size as u32)
-            }
-            TileKind::Gmem(_) => 0,
-            TileKind::Cmma(_) => 0,
-            TileKind::CmmaPartition(_) => 0,
-            TileKind::TmaGmem(_) => 0,
-        }
-    }
-
-    /// TMA transport leaf, pipelined: issue the elected `tensor_map_load` of `src` (a tensor-map source)
-    /// into this shared-memory tile onto `barrier`, without arriving or waiting — the caller hoists those
-    /// so the copy overlaps compute. The core shared by [`stage_from`](Tile::stage_from) (barrier hoisted) and the
-    /// blocking [`tma_load`](Tile::tma_load) (barrier owned locally).
-    pub(crate) fn tma_stage(&mut self, src: &Tile<T>, barrier: &Shared<Barrier>) {
-        match (&src.tile_kind, &mut self.tile_kind) {
-            (TileKind::TmaGmem(s), TileKind::Smem(d)) => {
-                // The bulk copy is issued by one elected unit only; the transaction count
-                // declared by the caller is that unit's alone, so more issuers would over-count
-                // and corrupt the stage.
-                if UNIT_POS == 0 {
-                    s.view
-                        .tensor_map_load(barrier, d.buffer.downcast_mut(), s.pos.clone());
-                }
-            }
-            // `stage_from`/`tma_load` route here only for a tma source targeting shared memory.
-            _ => panic!("Tile::stage_from: TMA source must target shared memory"),
-        }
-    }
-
-    /// TMA transport leaf, blocking: hardware bulk-copy `src` (a tensor-map source) into this
-    /// shared-memory tile and wait for it. Owns its `mbarrier` locally — arms it, issues the copy via
-    /// [`tma_stage`](Tile::tma_stage), then `arrive_and_expect_tx` + `wait` before returning. The
-    /// double-buffered path hoists that barrier out with [`stage_from`](Tile::stage_from) instead.
-    pub(crate) fn tma_load(&mut self, src: &Tile<T>) {
-        let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
-        sync_async_proxy_shared();
-        // One elected issuer only, matching the declared transaction count; more issuers over-count.
-        let expected = select(UNIT_POS == 0, self.tma_transaction_bytes(), 0);
-        self.tma_stage(src, &barrier);
-        let token = barrier.arrive_and_expect_tx(1, expected);
-        barrier.wait(token);
-    }
 }
 
 #[cube]
 impl<T: Numeric> TmaData<T> {
+    /// TMA transport leaf, pipelined: issue the elected `tensor_map_load` into `dst` (shared
+    /// memory) onto `barrier`, without arriving or waiting — the caller hoists those so the
+    /// copy overlaps compute.
+    pub(crate) fn stage_into(&self, dst: &mut MemData<T>, barrier: &Shared<Barrier>) {
+        // One elected issuer only: the declared transaction count is that unit's alone, so
+        // more issuers would over-count and corrupt the stage.
+        if UNIT_POS == 0 {
+            self.view
+                .tensor_map_load(barrier, dst.buffer.downcast_mut(), self.pos.clone());
+        }
+    }
+
+    /// TMA transport leaf, blocking: bulk-copy into `dst` (shared memory) and wait. Owns its
+    /// mbarrier locally; the pipelined path hoists it out via [`stage_into`](TmaData::stage_into).
+    pub(crate) fn load_into(&self, dst: &mut MemData<T>) {
+        let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
+        sync_async_proxy_shared();
+        let expected = select(UNIT_POS == 0, dst.size_bytes(), 0);
+        self.stage_into(dst, &barrier);
+        let token = barrier.arrive_and_expect_tx(1, expected);
+        barrier.wait(token);
+    }
+
     /// Window down to `region`: advance the global origin by each axis's tile coordinate times its
     /// sub-tile edge. The descriptor and bound carry through unchanged — only `pos` moves — so the
     /// next `tensor_map_load` copies the windowed box.

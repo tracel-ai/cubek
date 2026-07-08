@@ -180,12 +180,10 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
     }
 }
 
-/// Classify the current level of an accumulator's space: `None` for an *instance* level
-/// (every axis hands this instance one tile — the walk visits a single region), or the
-/// trailing-two-axes tile counts for the *partition* level (comptime sequential tiles
-/// this instance owns wholesale). Anything else — a runtime count, a spatial axis mixed
-/// with a multi-tile one, a multi-tile leading axis — cannot back resident fragments and
-/// panics at comptime.
+/// Classify the current level of an accumulator's space: `None` for an *instance* level (one
+/// tile per axis), or the trailing-two-axes tile counts for the *partition* level (comptime
+/// sequential tiles this instance owns wholesale). Anything else cannot back resident
+/// fragments and panics at comptime.
 pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
     if space.is_final() {
         return None;

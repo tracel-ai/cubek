@@ -3,12 +3,10 @@ use cubecl::{
     std::tensor::{View, ViewMut, layout::Coordinates},
 };
 
-/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some
-/// [`Layout`](cubecl::std::tensor::layout::Layout) (a 2-D [`BatchMatrix`] or a 1-D [`FlatLayout`])
-/// plus its own comptime bounds-check flag, so the
-/// leaf reads it without being asked. `check` zeroes reads / skips writes past the operand's
-/// logical bound (the partial-tile overhang); `false` is the unchecked fast path. The coordinate
-/// type `C` is whatever the layout exposes — `Coords2d` for a matrix, `Coords1d` for a flat scan.
+/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some layout (a 2-D
+/// [`BatchMatrix`] or a 1-D [`FlatLayout`]) plus its own comptime `check` flag, so the leaf
+/// zeroes reads / skips writes past the partial-tile overhang without being asked; `false`
+/// is the unchecked fast path.
 #[derive(CubeType)]
 pub struct MaskedView<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: View<'a, T, C>,

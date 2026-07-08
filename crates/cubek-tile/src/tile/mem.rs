@@ -56,12 +56,10 @@ pub struct MemData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Wrap a launched [`VecTensor`] into a whole `Gmem` tile. The borrow is erased into a `Box`
-    /// and `vector_size` is recorded as the store's [`vector_size`](Tile::vector_size). Shape and
-    /// strides come in scalar-unit and convert here to *line-unit* (the buffer indexes in lines):
-    /// the contiguous innermost axis counts lines (`extent / w`, stride unchanged) and coarser
-    /// strides divide by `w` — the launcher gates `w > 1` on divisibility. All a no-op at
-    /// `vector_size == 1`.
+    /// Wrap a launched [`VecTensor`] into a whole `Gmem` tile. Shape and strides come in
+    /// scalar-unit and convert here to *line-unit* (the buffer indexes in lines): the contiguous
+    /// innermost axis counts lines, coarser strides divide by `w`; the launcher gates `w > 1`
+    /// on divisibility.
     pub fn from_tensor(
         tensor: &VecTensor<T>,
         #[comptime] vector_size: usize,
@@ -155,12 +153,10 @@ impl<T: Numeric> Tile<T> {
         Tile::smem(comptime!(self.space.divide()), self.vector_size())
     }
 
-    /// Allocate a shared-memory tile over `space`, at physical `vector_size`. The slice is
-    /// allocated natively wide (`tile_size / vector_size` lines) and type-erased into a scalar `Box`.
-    /// A stage bound for the cmma instruction is storage-tiled at the final tile
-    /// (`[grid…, tile…]`, one contiguous block per fragment — the same scheme as tiled
-    /// gmem storage) so the cmma transaction reads it unstrided; anything else is plain
-    /// row-major.
+    /// Allocate a shared-memory tile over `space`, at physical `vector_size` (the slice is
+    /// allocated natively wide, then scalar-erased). A stage bound for the cmma instruction is
+    /// storage-tiled at the final tile (one contiguous block per fragment) so the cmma
+    /// transaction reads it unstrided; anything else is plain row-major.
     pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
         let levels =
             comptime!((!space.is_final() && space.partitioner().leaf() == Leaf::Cmma) as usize);
@@ -238,16 +234,16 @@ impl<T: Numeric> Tile<T> {
             }
         }
     }
+}
 
-    /// Memory transport leaf: cooperative cyclic copy of `src` into `self`. The cube's units
-    /// split the flat line space with an interleaved stride — unit `u` moves lines `u`,
-    /// `u + CUBE_DIM`, … (`coord_of`'s `Interleaved` deal, at line granularity) — so one pass
-    /// of the whole cube fills the tile. Both tiles share `self`'s width (smem is staged at
-    /// the source operand's width), so the copy moves whole `Vector<T, W>` lines. The caller
-    /// owns the rendezvous: a `sync_cube` must separate this fill from its readers.
-    pub(crate) fn mem_copy(&mut self, src: &Tile<T>) {
-        let size!(W) = self.vector_size();
-        let s = src.flat::<T, W>();
+#[cube]
+impl<T: Numeric> MemData<T> {
+    /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole
+    /// `Vector<T, W>` lines at `self`'s width, unit `u` moving lines `u`, `u + CUBE_DIM`, ….
+    /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
+    pub(crate) fn fill_from(&mut self, src: &MemData<T>) {
+        let size!(W) = comptime!(self.vector_size);
+        let s = src.flat_transparent::<T, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
         let workers = CUBE_DIM as usize;
@@ -259,10 +255,13 @@ impl<T: Numeric> Tile<T> {
             i += workers;
         }
     }
-}
 
-#[cube]
-impl<T: Numeric> MemData<T> {
+    /// This buffer's byte length (its length is in native lines, so widened by the vector
+    /// size) — the transaction count a TMA fill into it lands.
+    pub(crate) fn size_bytes(&self) -> u32 {
+        self.buffer.len() as u32 * comptime!(T::type_size() as u32 * self.vector_size as u32)
+    }
+
     /// The base layout: the `[grid…, tile…]` split (gmem, `levels > 0`) or a plain
     /// strided dot (smem, `levels = 0`).
     fn base(&self) -> GmemLayout {
@@ -284,10 +283,9 @@ impl<T: Numeric> MemData<T> {
         self.extent.clone()
     }
 
-    /// The buffer re-grouped into `Vector<T, W>` lines, so the base/window layouts address it.
-    /// `W` is the store's physical [`vector_size`](Tile::vector_size) — the width the buffer
-    /// already has, so the regroup is a no-op. Shape, strides, window and bound are all line-unit;
-    /// only the cmma row stride widens back to scalars ([`row_stride`](MemData::row_stride)).
+    /// The buffer re-grouped into `Vector<T, W>` lines, so the base/window layouts (all
+    /// line-unit) address it. `W` is the width the buffer already has, so the regroup is a
+    /// no-op; only the cmma row stride widens back to scalars ([`row_stride`](MemData::row_stride)).
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.buffer.as_vectorized().with_vector_size::<W>()
     }
@@ -321,10 +319,9 @@ impl<T: Numeric> MemData<T> {
         self.buffer.slice_mut(offset, end)
     }
 
-    /// Line offset of the window origin: the origin through the base layout (the plain
-    /// line-unit dot at `levels == 0`, the tiled split above). On a tiled store the window
-    /// must lie within one storage tile (true by construction when the compute and storage
-    /// tiles agree).
+    /// Line offset of the window origin: the origin through the base layout. On a tiled store
+    /// the window must lie within one storage tile (true by construction when the compute and
+    /// storage tiles agree).
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             !self.check,
@@ -399,6 +396,22 @@ impl<T: Numeric> MemData<T> {
                 .view(FlatLayout::new(self.extent.clone())),
             comptime!(self.check),
         )
+    }
+
+    /// Quantization-transparent [`flat`](MemData::flat): a plain store serves the bare `Direct`
+    /// read, a quantized one re-types to the storage element `I` and dequantizes each read into
+    /// `T`. `#[comptime]`: the store's quant-ness is a trace-time fact, so the plain path pays
+    /// nothing.
+    pub(crate) fn flat_transparent<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
+        #[comptime]
+        match &self.quant {
+            ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
+                self.flat_storage::<I, W>(),
+                T::cast_from(info.scale),
+                comptime!(info.scheme),
+            )),
+            ComptimeOption::None => TileView::new_Direct(self.flat::<W>()),
+        }
     }
 
     /// The mutable twin of [`flat`](MemData::flat).
@@ -562,11 +575,9 @@ fn top_window(
     (origin, extent)
 }
 
-/// The smem physical shape/strides over `space`, stored in the [`MemData`] so they survive
-/// `at`'s space division. Line-unit like [`Tile::from_tensor`]: the innermost (vectorized)
-/// physical axis counts lines (`/ vector_size`) and every stride is a row-major weight over
-/// the *line* shape. `levels == 0` is a plain row-major buffer; `levels == 1` is the
-/// `[grid…, tile…]` storage tiling at the space's final tile, each tile a contiguous block.
+/// The smem physical shape/strides over `space`, line-unit like [`Tile::from_tensor`].
+/// `levels == 0` is a plain row-major buffer; `levels == 1` is the `[grid…, tile…]` storage
+/// tiling at the space's final tile, each tile a contiguous block.
 #[cube]
 fn storage_layout(
     #[comptime] space: Space,

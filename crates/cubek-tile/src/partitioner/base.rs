@@ -13,9 +13,9 @@ pub enum Schedule {
     DoubleBuffered,
 }
 
-/// The instruction that contracts a final tile: the software microkernel over the
-/// accumulator's memory, or the tensor-core path, which hoists the accumulator into a
-/// plane-resident fragment at the recursion boundary.
+/// The instruction that contracts a final tile. Declared in the plan rather than derived
+/// from the tiles because pre-leaf levels act on it: the residency hoist (lower.rs) and the
+/// cmma smem storage tiling ([`Tile::smem`](crate::Tile::smem)) read it before the leaf runs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Leaf {
     #[default]
@@ -23,9 +23,9 @@ pub enum Leaf {
     Cmma,
 }
 
-/// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
-/// hands [`next`](Partitioner::next) down. `Final` carries the [`Leaf`] instruction the
-/// innermost tile contracts with.
+/// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and hands
+/// [`next`](Partitioner::next) down. A `Level` carries how to walk its regions ([`Schedule`]);
+/// `Final` carries how to contract the terminal tile ([`Leaf`]) — same pattern, terminal case.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
     Final(Leaf),
@@ -62,7 +62,7 @@ impl Partitioner {
 
     /// Set the chain-end [`Leaf`], after all levels are stacked (appending a level
     /// resets it to the tail's).
-    pub fn with_leaf(self, leaf: Leaf) -> Partitioner {
+    pub(crate) fn with_leaf(self, leaf: Leaf) -> Partitioner {
         match self {
             Partitioner::Final(_) => Partitioner::Final(leaf),
             Partitioner::Level(mut level) => {

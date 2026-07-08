@@ -233,9 +233,10 @@ impl Space {
         self
     }
 
-    /// Set the [`Leaf`] instruction the innermost tile contracts with. Call after all
-    /// levels are stacked (appending a level resets the chain end).
-    pub fn with_leaf(mut self, leaf: Leaf) -> Self {
+    /// Set the [`Leaf`] instruction the innermost tile contracts with, after all levels are
+    /// stacked (appending a level resets the chain end) — which is why the public surface is
+    /// the order-safe [`Tiling::leaf`](crate::LeveledTiling::leaf) terminal instead.
+    pub(crate) fn with_leaf(mut self, leaf: Leaf) -> Self {
         self.partitioner = self.partitioner.with_leaf(leaf);
         self
     }
