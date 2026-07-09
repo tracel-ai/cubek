@@ -1,7 +1,5 @@
 //! The tensor-core backing stores: a single fragment ([`CmmaData`]) and a partition of
-//! them ([`CmmaPartition`]), plus the fragment↔memory transports. Everything that knows
-//! how a space maps to a fragment grid (its shape, its windows, its classification) lives
-//! here, on the kind — [`Tile`] stays structure.
+//! them ([`CmmaPartition`]), plus the fragment↔memory transports.
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -10,10 +8,8 @@ use cubecl::{
 
 use crate::*;
 
-/// A tensor-core fragment plus its comptime config. `cmma::load` picks
-/// load-vs-`load_with_layout` by `ident`, and `store`/`cast` need the layout. The
-/// fragment's `m`/`n`/`k` and the slice stride come from the tile's [`Space`].
-/// `Clone` duplicates the handle, not the fragment — a clone is the same matrix.
+/// A tensor-core fragment plus the comptime config its load/store paths dispatch on.
+/// `Clone` duplicates the handle, not the fragment: a clone is the same matrix.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct CmmaData<T: Numeric> {
@@ -39,16 +35,15 @@ pub struct CmmaPartition<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> CmmaPartition<T> {
-    /// The `(mi, ni)` fragment (a handle clone). Comptime indices only — fragments cannot
-    /// be selected at runtime, which is why the register tier walks statically.
+    /// The `(mi, ni)` fragment (a handle clone). Comptime indices only: fragments
+    /// cannot be selected at runtime.
     pub(crate) fn at(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> CmmaData<T> {
         self.frags.index(comptime!(mi * self.n_tiles + ni)).clone()
     }
 
-    /// The tile whose partition mirrors `space`'s fragment grid, accumulator fragments
-    /// uninitialized — the register form of an accumulator over `space`, `smem_like`'s
-    /// register sibling. `k` is the contraction depth of the instruction (the space's
-    /// own axes only give `m`/`n`).
+    /// The register form of an accumulator over `space`: a partition mirroring its
+    /// fragment grid, fragments uninitialized. `k` is the instruction's contraction
+    /// depth (the space's own axes only give `m`/`n`).
     pub(crate) fn mirror(#[comptime] space: Space, #[comptime] k: usize) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
@@ -74,11 +69,8 @@ impl<T: Numeric> CmmaPartition<T> {
     }
 
     /// The staging store for one region of an operand under `out`'s contraction: a
-    /// partition tile mirroring the region's fragment grid, fragments uninitialized —
-    /// `smem_like`'s register sibling for operands; [`copy_from`](Tile::copy_from) fills
-    /// it. Everything is derived from the spaces: the grid from the region's counts, the
-    /// fragment role from where the contracted axis sits, the MMA shape from the final
-    /// tiles.
+    /// partition mirroring the region's fragment grid, fragments uninitialized;
+    /// [`copy_from`](Tile::copy_from) fills it.
     pub(crate) fn store(#[comptime] window: Space, #[comptime] out: Space) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
         let a1 = comptime!(window.axis_at(window.rank() - 1));
@@ -119,9 +111,8 @@ impl<T: Numeric> CmmaPartition<T> {
         }
     }
 
-    /// Fill each fragment from its final window of `src` — the transport behind
-    /// [`copy_from`](Tile::copy_from)'s partition-destination pairing. Iterates the grid
-    /// in the partition's own row-major fragment order.
+    /// Fill each fragment from its final window of `src`, in the partition's row-major
+    /// fragment order.
     pub(crate) fn fill_from(&self, src: &Tile<T>) {
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
@@ -139,7 +130,7 @@ impl<T: Numeric> CmmaPartition<T> {
         }
     }
 
-    /// Drain each fragment into its final window of `dst` — [`fill_from`](Self::fill_from)'s
+    /// Drain each fragment into its final window of `dst`; [`fill_from`](Self::fill_from)'s
     /// inverse.
     pub(crate) fn drain_into(&self, dst: &mut Tile<T>) {
         #[unroll]
@@ -161,10 +152,9 @@ impl<T: Numeric> CmmaPartition<T> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Descend to the `(mi, ni)` fragment's final window — pure structure (regions and
-    /// levels), no kind knowledge: an instance level hands this instance a single region
-    /// (`region(0)`, hardware position folded in); the partition level takes the static
-    /// region at the partition coordinates.
+    /// Descend to the `(mi, ni)` fragment's final window: an instance level hands this
+    /// instance a single region; the partition level takes the static region at the
+    /// partition coordinates.
     fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
         let space = comptime!(self.space.clone());
         let sub = match comptime!(partition_level(&space)) {
@@ -204,8 +194,7 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
 
 /// Classify the current level of a space that backs fragments: `None` for an *instance*
 /// level (one tile per axis), or the trailing-two-axes tile counts for the *partition*
-/// level (comptime sequential tiles this instance owns wholesale). Anything else cannot
-/// back fragments and panics at comptime.
+/// level. Anything else cannot back fragments and panics at comptime.
 pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
     if space.is_final() {
         return None;
@@ -296,9 +285,8 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// Fill this fragment from `mem`'s *window*: `A`/`B` use `cmma::load`, an
-    /// `Accumulator` uses `load_with_layout`. The slice starts at the window's origin and
-    /// rows step by the store's physical row stride, so a window into a larger stage
-    /// loads as well as a whole buffer.
+    /// `Accumulator` uses `load_with_layout`. Rows step by the store's physical row
+    /// stride, so a window into a larger stage loads like a whole buffer.
     pub(crate) fn load_window(&mut self, mem: &MemData<T>) {
         let stride = mem.row_stride();
         match comptime!(self.ident) {

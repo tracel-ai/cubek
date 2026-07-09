@@ -1,9 +1,7 @@
-//! The leaf contraction `acc += lhs · rhs`, reached only at a *final* tile: the point where the
-//! type-agnostic [lowering](super::lower) stops recursing and the tile finally has to admit it
-//! holds numbers. Two peer leaves exist, picked by the accumulator's storage: a cmma fragment runs
-//! the hardware instruction ([`cmma`](super::cmma)); plain `Gmem`/`Smem` runs a software
-//! microkernel straight over the backing memory ([`register`](super::register)). Both are
-//! terminal; neither tiles further.
+//! The leaf contraction `acc += lhs · rhs`, reached only at a *final* tile. Two peer
+//! leaves, picked by the accumulator's storage: a cmma fragment runs the hardware
+//! instruction ([`cmma`](super::cmma)); plain `Gmem`/`Smem` runs a software microkernel
+//! ([`register`](super::register)).
 
 use cubecl::prelude::*;
 
@@ -21,8 +19,8 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
         TileKind::Cmma(d) => d.mma(lhs, rhs),
-        // A partition that reaches a final tile carries exactly one fragment (a wider one
-        // is consumed earlier, by the static walk at its partition level).
+        // A partition that reaches a final tile carries exactly one fragment; a wider
+        // one is consumed earlier, at its partition level.
         TileKind::CmmaPartition(p) => {
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,

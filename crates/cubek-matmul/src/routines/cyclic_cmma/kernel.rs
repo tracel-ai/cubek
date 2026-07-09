@@ -3,10 +3,8 @@
 use cubecl::prelude::*;
 use cubek_tile::TileArg;
 
-/// The classic global matmul, spelled in tiles: promote the accumulator to its register
-/// form (`init_accumulator`), run the whole contraction on it, copy it back (the
-/// epilogue). Each operand keeps its own element type, matching the hardware's
-/// `MmaConfig`.
+/// The classic global matmul, spelled in tiles. Each operand keeps its own element
+/// type, matching the hardware's `MmaConfig`.
 #[cube(launch)]
 pub fn cyclic_cmma_kernel<E: Numeric, EL: Numeric, ER: Numeric>(
     a: &TileArg<'_, EL>,

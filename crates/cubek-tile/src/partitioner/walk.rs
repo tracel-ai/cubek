@@ -142,9 +142,8 @@ impl Iterable for WalkExpand {
 }
 
 /// [`Walk`]'s static sibling, for the register tier: fragments are comptime-indexed, so
-/// this odometer is host data and its loop unrolls where the runtime walk's loops. `Static`
-/// axes only, no hardware folding — the level it walks is instance-owned wholesale (every
-/// axis sequential, which the partition-level classification asserts).
+/// this odometer is host data and its loop unrolls where the runtime walk loops.
+/// `Static` axes only, no hardware folding; the level it walks is instance-owned wholesale.
 pub struct StaticWalk {
     counts: Vec<usize>,
     space: Space,
@@ -159,9 +158,8 @@ impl StaticWalk {
         }
     }
 
-    /// The walk over `space` with `fastest` walked innermost — e.g. the output's row
-    /// axis, so each operand fragment feeds a consecutive burst of executes (the legacy
-    /// microkernel's emission order, worth ~1.3% on Metal).
+    /// The walk over `space` with `fastest` walked innermost, so each operand fragment
+    /// feeds a consecutive burst of executes (the legacy emission order, ~1.3% on Metal).
     pub fn over_fastest(space: &Space, fastest: Axis) -> StaticWalk {
         let mut axes: Vec<Axis> = space.axes().filter(|&a| a != fastest).collect();
         axes.push(fastest);
@@ -172,8 +170,8 @@ impl StaticWalk {
         self.counts.iter().product()
     }
 
-    /// The `i`th region, row-major (last axis fastest). Order-agnostic on purpose: the
-    /// register walk's steps are independent MMAs, so no [`WalkOrder`] plugs in.
+    /// The `i`th region, row-major (last axis fastest); the register walk's steps are
+    /// independent MMAs, so no [`WalkOrder`] plugs in.
     pub fn region(&self, i: usize) -> StaticRegion {
         let rank = self.space.rank();
         let mut coords = vec![0; rank];
@@ -236,8 +234,7 @@ fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
             cube_pos as usize
         }
         // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, the flat
-        // position is the unit index. Lanes of a plane agree on UNIT_POS_Y, so a
-        // plane-scoped axis makes them cooperate on the same regions.
+        // position the unit index. Lanes agree on UNIT_POS_Y, so they cooperate.
         ComputeScope::Plane => UNIT_POS_Y as usize,
         ComputeScope::Unit => UNIT_POS as usize,
     }

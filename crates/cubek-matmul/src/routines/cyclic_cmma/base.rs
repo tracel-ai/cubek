@@ -10,10 +10,8 @@
 //!
 //! - Backends without a matching cmma [`MmaConfig`] (and `plane_size 1`, i.e. CPU).
 //! - Quantized inputs.
-//! - Operands not row-major contiguous: the cmma transport addresses a window by row
-//!   stride, so col-major needs a fragment-layout path not yet wired.
-//! - Shapes not divisible by the instruction (`m % i.m`, `n % i.n`, `k % i.k`): the cmma
-//!   transport cannot mask an overhang.
+//! - Operands not row-major contiguous (col-major needs a fragment-layout path not yet wired).
+//! - Shapes not divisible by the instruction (the cmma transport cannot mask an overhang).
 
 use std::fmt::Display;
 
@@ -31,9 +29,8 @@ use crate::{
 /// blowing the cube dim.
 const MAX_PLANES_PER_AXIS: usize = 4;
 
-/// Tiles per plane along `m`/`n` — the plane's resident fragment partition. `A` fragments
-/// are reused across the `n` tiles and `B` across the `m` tiles, so fragment loads per
-/// execute fall as `(m + n) / (m·n)`.
+/// Tiles per plane along `m`/`n`: the plane's resident fragment partition,
+/// sized so `A`/`B` fragments are reused across executes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Partition {
     pub m: usize,
@@ -48,8 +45,8 @@ pub struct CyclicCmmaBlueprint {
     pub instruction: Instruction,
     pub partition: Partition,
     pub planes: PlaneGrid,
-    /// K-stage depth in elements: a multiple of `instruction.k`, chosen by [`select`] against
-    /// the shared-memory budget (fewer, fatter stages amortize the fill rendezvous).
+    /// K-stage depth in elements: a multiple of `instruction.k`, chosen by [`select`]
+    /// against the shared-memory budget.
     pub stage_k: usize,
 }
 
@@ -199,16 +196,14 @@ impl CyclicCmmaRoutine {
                 MatmulAvailabilityError::TileSizeNotFound,
             ))?;
 
-        // Each plane's partition: deep along n (A-fragment reuse), a couple of rows along
-        // m (B reuse), snapped to divisors of the tile grid so the stage never overhangs
-        // (cmma cannot mask). The legacy shape: partition_n ≈ 8, rows 2.
+        // Each plane's partition, snapped to divisors of the tile grid so the stage
+        // never overhangs. The legacy shape: partition_n ≈ 8, rows 2.
         let (grid_m, grid_n) = (problem.m / im.max(1), problem.n / inn.max(1));
         let part_n = divisor_at_most(grid_n.max(1), 8);
         let part_m = divisor_at_most(grid_m.max(1), 2);
 
-        // Plane grid over the remaining partition grid, filling the units-per-cube budget.
-        // Capped at 256 units like the legacy selector: past it Metal rejects the cube dim
-        // at pipeline creation, which surfaces as a silently zeroed output.
+        // Plane grid over the remaining partition grid, capped at 256 units like the
+        // legacy selector: past it Metal rejects the cube dim and silently zeroes output.
         let max_units = (client.properties().hardware.max_units_per_cube as usize).min(256);
         let budget = (max_units / plane_dim).max(1);
         let planes_m = divisor_at_most((grid_m / part_m).max(1), budget.min(MAX_PLANES_PER_AXIS));
@@ -217,9 +212,8 @@ impl CyclicCmmaRoutine {
             (budget / planes_m).min(MAX_PLANES_PER_AXIS),
         );
 
-        // Stage depth: the deepest `d·ik` dividing `k` (d ≤ 8) whose two double-buffered slots
-        // still fit shared memory — fewer, fatter K stages amortize the fill rendezvous; within a
-        // stage each plane walks `d` leaf sub-tiles per fragment.
+        // Stage depth: the deepest `d·ik` dividing `k` (d ≤ 8) whose two
+        // double-buffered slots still fit shared memory.
         let (stage_m, stage_n) = (planes_m * part_m * im, planes_n * part_n * inn);
         let smem_budget = 32 * 1024;
         let row_bytes = stage_m * d.lhs.size() + stage_n * d.rhs.size();

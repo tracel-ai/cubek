@@ -1,7 +1,6 @@
 //! Lowering `c.mma(a, b)`: at a final tile, the leaf instruction; while levels remain,
-//! walk this level under its [`Schedule`]. Nothing else — register residency is the
-//! kernel's explicit bracket ([`promote`](Tile) … [`copy_from`](Tile::copy_from)), not a
-//! lowering decision.
+//! walk this level under its [`Schedule`]. Register residency is the kernel's explicit
+//! bracket ([`promote`](Tile) … [`copy_from`](Tile::copy_from)), not a lowering decision.
 
 use cubecl::prelude::*;
 
@@ -17,8 +16,7 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final(_) => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 // The level's operation space is the merge of the operands' runtime
-                // spaces; the output contributes no axis beyond `lhs ∪ rhs`, so the
-                // two operands cover it.
+                // spaces; the output contributes no axis beyond `lhs ∪ rhs`.
                 let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
                 match comptime!(level.schedule()) {
                     Schedule::Direct => self.mma_direct(lhs, rhs, space),

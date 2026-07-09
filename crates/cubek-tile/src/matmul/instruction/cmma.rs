@@ -1,7 +1,6 @@
-//! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`. The accumulator is always a
-//! resident fragment; the operands arrive either as fragments (the register-tier walk's
-//! staged path) or as memory windows (the schedules' smem path), the latter loaded into
-//! transient `A`/`B` fragments here.
+//! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`. The accumulator is
+//! always a resident fragment; the operands arrive as fragments or as memory windows,
+//! the latter loaded into transient `A`/`B` fragments here.
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -13,8 +12,7 @@ use crate::*;
 #[cube]
 impl<A: Numeric> CmmaData<A> {
     /// Tensor-core contraction `self += lhs · rhs`. Fragment operands execute directly;
-    /// memory operands (what the lowering delivers: windows into a stage or gmem) are
-    /// loaded into transient `A`/`B` fragments each call — only the accumulator is resident.
+    /// memory operands are loaded into transient `A`/`B` fragments each call.
     pub(crate) fn mma<L: Numeric, R: Numeric>(&self, lhs: &Tile<L>, rhs: &Tile<R>) {
         match (&lhs.tile_kind, &rhs.tile_kind) {
             (TileKind::Cmma(a), TileKind::Cmma(b)) => {
@@ -27,8 +25,7 @@ impl<A: Numeric> CmmaData<A> {
                 let k = comptime!(lhs.space.extent_at(lhs.space.rank() - 1));
                 let n = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
 
-                // The rendezvous with the stage fill belongs to the schedule that filled it;
-                // here the operands are simply readable memory.
+                // The rendezvous with the stage fill belongs to the schedule that filled it.
                 let mut a_frag = unsafe {
                     Matrix::<L>::uninitialized(MatrixIdent::A, m, n, k, MatrixLayout::RowMajor)
                 };

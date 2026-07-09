@@ -17,8 +17,8 @@ impl Region {
         Region { coords, space }
     }
 
-    /// The coordinate along `axis`; `0` when the axis is absent (an omitted axis is
-    /// not walked — the tile spans all of it, mirroring broadcast by omission).
+    /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
+    /// the tile spans all of it).
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         if comptime!(self.space.contains(axis)) {
             self.coords[comptime!(self.space.position(axis))] as usize
@@ -62,8 +62,8 @@ impl StaticRegion {
         StaticRegion::new(coords, space.clone())
     }
 
-    /// The coordinate along `axis`; `0` when the axis is absent (an omitted axis is
-    /// not walked — the tile spans all of it, mirroring broadcast by omission).
+    /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
+    /// the tile spans all of it).
     pub fn coord(&self, axis: Axis) -> usize {
         if self.space.contains(axis) {
             self.coords[self.space.position(axis)]

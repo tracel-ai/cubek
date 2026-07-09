@@ -1122,8 +1122,8 @@ fn cmma_matmul_plane_partitioned_stage() {
 
 /// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³
 /// fragments, resident across a double-buffered K walk; the fragment level declares
-/// `Direct`, so the static walk reloads operand fragments per execute (no staging —
-/// the register tier's honest `Direct`). Tensor-core only — run with `cargo test-metal`.
+/// `Direct`, so the static walk reloads operand fragments per execute (no staging).
+/// Tensor-core only; run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
     let client = <TestRuntime as Runtime>::client(&Default::default());

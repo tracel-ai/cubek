@@ -1,7 +1,6 @@
 //! The [`Tile`]: one operand's data, a [`TileKind`] backing store plus the comptime
-//! [`Space`] it projects. This module holds the tile-level surface — the launch arg, the
-//! kind enum, and the operations that dispatch on the kind; each backing store's
-//! own data and leaves live in its file ([`mem`], [`cmma`], [`tma`]).
+//! [`Space`] it projects. This module holds the tile-level surface; each backing
+//! store's own data and leaves live in its file ([`mem`], [`cmma`], [`tma`]).
 
 mod cmma;
 mod mem;
@@ -24,14 +23,11 @@ pub enum TileKind<T: Numeric> {
     Smem(MemData<T>),
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
-    /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed. Backs the
-    /// resident accumulator ([`promote`](Tile)) and the register tier's
-    /// staged operands ([`CmmaPartition::store`]); walked statically
-    /// ([`at_static`](Tile::at_static)).
+    /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed; walked
+    /// statically ([`at_static`](Tile::at_static)).
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
-    /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
-    /// (see [`TmaData::from_tensor_map`]).
+    /// copy into shared memory. Dormant: no launch-side constructor wires it yet.
     TmaGmem(TmaData<T>),
 }
 
@@ -108,8 +104,8 @@ pub struct TileArg<'a, E: Numeric> {
 
 #[cube]
 impl<'a, E: Numeric> TileArg<'a, E> {
-    /// Serve the tensor's own element type. The plain path — a quantized operand must go through
-    /// [`tile_dequant`](Self::tile_dequant) to name its served type.
+    /// Serve the tensor's own element type. The plain path; a quantized operand goes
+    /// through [`tile_dequant`](Self::tile_dequant) to name its served type.
     pub fn tile(&self) -> Tile<E> {
         if comptime!(self.quant.is_some()) {
             panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
@@ -147,9 +143,8 @@ impl<'a, E: Numeric> TileArg<'a, E> {
     }
 }
 
-/// The quantization a tile's backing store carries so reads dequantize transparently: a runtime
-/// `scale` (per-tensor for now) plus the comptime [`QuantScheme`]. Lives on [`MemData`] — the
-/// tile serves `T`; the quantized buffer is a storage detail.
+/// The quantization a tile's backing store carries so reads dequantize transparently: a
+/// runtime `scale` (per-tensor for now) plus the comptime [`QuantScheme`].
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
@@ -191,9 +186,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Physical vectorization of the backing store — the `Vector<T, vector_size>` line width the leaf
-    /// reconstructs. A launched memory tile carries its operand's vector size; a cmma fragment and a
-    /// tma source are scalar (`1`). Comptime; a storage detail, not part of the logical `Space`.
+    /// Physical vectorization of the backing store: the `Vector<T, vector_size>` line
+    /// width the leaf reconstructs. A launched memory tile carries its operand's vector
+    /// size; a cmma fragment and a tma source are scalar (`1`).
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.vector_size,
@@ -212,10 +207,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
             }
-            // A resident fragment (or partition of them) passes through unchanged: a runtime
-            // region cannot select fragments, and above its partition level a partition is
-            // instance-owned wholesale — every region an instance visits means these same
-            // fragments. At the partition level [`at_static`](Tile::at_static) selects.
+            // A resident fragment (or partition) passes through unchanged: a runtime
+            // region cannot select fragments. At the partition level, `at_static` selects.
             TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
             TileKind::CmmaPartition(p) => TileKind::new_CmmaPartition(p.clone()),
         };
@@ -225,7 +218,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`at`](Tile::at) for a static region — the register tier's windowing. Memory
+    /// [`at`](Tile::at) for a static region: the register tier's windowing. Memory
     /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
     /// partition *selects* its `(mi, ni)` fragment, which only static coordinates can do.
     pub fn at_static(&self, #[comptime] region: &StaticRegion) -> Tile<T> {
@@ -245,9 +238,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData) folded
-    /// from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's tile count, so
-    /// one kernel serves any shape. A cmma fragment has no buffer extent.
+    /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData)
+    /// folded from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's
+    /// tile count. A cmma fragment has no buffer extent.
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let p = comptime!(self.space.position(axis));
         let raw = match &self.tile_kind {
@@ -257,9 +250,8 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::runtime_extent: a cmma fragment has no extent")
             }
         };
-        // `bound` is a line count on the vectorized innermost axis (folded from the lined physical
-        // shape); the walk divides by conceptual edges, so return line count × width. No-op off the
-        // innermost axis and at width 1.
+        // `bound` is a line count on the vectorized innermost axis; the walk divides by
+        // conceptual edges, so return line count × width.
         let last = comptime!(self.space.rank() - 1);
         let w = self.vector_size();
         comptime!(if p == last { w } else { 1usize }) * raw
@@ -279,12 +271,9 @@ impl<T: Numeric> Tile<T> {
         Space::with_sizes(space, sizes)
     }
 
-    /// Blocking copy of `src` into `self` across a level, each kind pairing dispatched to
-    /// its kind's transport leaf. Moves data (unlike [`at`](Tile::at)); returns once the
-    /// data has landed. The source side is matched first: a partition source drains per
-    /// fragment window ([`CmmaPartition::drain_into`]) and needs the whole destination
-    /// tile, which the pairing match below would keep borrowed. The pipelined counterpart
-    /// is [`Pipeline::fill`](crate::Pipeline::fill).
+    /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's
+    /// transport leaf. A partition source is matched first: it needs the whole
+    /// destination tile, which the pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
         match &src.tile_kind {
             TileKind::CmmaPartition(s) => s.drain_into(self),

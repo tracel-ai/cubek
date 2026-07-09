@@ -1,8 +1,6 @@
-//! The walks behind [`Tile::mma`](super::Tile), one per [`Schedule`]. A schedule's body is
-//! pure structure — walk this level's regions, stage into a slot, recurse — with every
-//! kind decision delegated: the slot's store and rendezvous are deduced by
-//! [`Staging::new`] from the spaces, the fills dispatch per kind pairing, and `Direct`
-//! walks statically when the accumulator's backing is comptime-indexed (fragments).
+//! The walks behind [`Tile::mma`](super::Tile), one per [`Schedule`]. A schedule's body
+//! is pure structure; kind decisions (slot store, rendezvous, fill dispatch) are
+//! delegated, chiefly to [`Staging::new`].
 
 use cubecl::prelude::*;
 
@@ -10,11 +8,9 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `Direct` on this accumulator: no staging — every read goes to where the operand
-    /// lives, through the walk the accumulator supports. The two loops are twins; the
-    /// static one is spelled with indexed `comptime!` steps because each unrolled copy
-    /// stamps different host data (a static region), which the runtime iterator sugar
-    /// cannot carry. It walks the output's row axis fastest ([`StaticWalk::over_fastest`]).
+    /// `Direct`: no staging, every read goes to where the operand lives. The static twin
+    /// steps with indexed `comptime!` because each unrolled copy stamps different host
+    /// data, which the runtime iterator sugar cannot carry.
     pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -39,10 +35,9 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `Staged` on this accumulator: per region, fill a [`Staging`] slot with the operands
-    /// and consume it into the recursion. One body for every tier — which store the slot
-    /// holds and whether the fill rendezvouses live in [`Staging::new`]; `consume_final`
-    /// every region, since no later fill publishes within an iteration.
+    /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it
+    /// into the recursion. `consume_final` every region, since no later fill publishes
+    /// within an iteration.
     pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -59,9 +54,8 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `DoubleBuffered` on this accumulator: two [`Staging`] slots driven `fill`/`consume`
-    /// on alternating regions so one slot's fill overlaps the other's compute. Each slot's
-    /// synchronization is wrapped inside `fill`/`consume`, not here.
+    /// `DoubleBuffered`: two [`Staging`] slots driven `fill`/`consume` on alternating
+    /// regions so one slot's fill overlaps the other's compute.
     pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -97,9 +91,9 @@ impl<Acc: Numeric> Tile<Acc> {
             let even_region = walk.region(even);
             s0.consume(|a, b| self.at(&even_region).mma(a, b));
 
-            // prefetch the next even region back into slot 0 (if it exists), then compute the
-            // odd region on slot 1. When a fill follows, its rendezvous publishes slot 1; when
-            // none does (the walk's final region), `consume_final` publishes it first.
+            // prefetch the next even region back into slot 0 (if it exists), then compute
+            // the odd region on slot 1; on the walk's final region no fill follows, so
+            // `consume_final` publishes slot 1 itself.
             let odd_region = walk.region(odd);
             if odd + 1 < n {
                 let next_even = walk.region(odd + 1);
@@ -113,9 +107,8 @@ impl<Acc: Numeric> Tile<Acc> {
             }
         }
 
-        // An odd total leaves the last region primed in slot 0 (by the final prefetch above,
-        // or the prologue when `n == 1`) with no consumer in the loop; no fill follows, so
-        // `consume_final` publishes it before draining.
+        // An odd total leaves the last region primed in slot 0 with no consumer in the
+        // loop; no fill follows, so `consume_final` publishes it.
         if n % 2 == 1 {
             let last = walk.region(n - 1);
             s0.consume_final(|a, b| self.at(&last).mma(a, b));

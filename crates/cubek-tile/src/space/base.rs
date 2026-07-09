@@ -233,9 +233,8 @@ impl Space {
         self
     }
 
-    /// Set the [`Leaf`] instruction the innermost tile contracts with, after all levels are
-    /// stacked (appending a level resets the chain end) — which is why the public surface is
-    /// the order-safe [`Tiling::leaf`](crate::LeveledTiling::leaf) terminal instead.
+    /// Set the chain-end [`Leaf`] after all levels are stacked (appending a level resets
+    /// it); the public surface is the order-safe [`Tiling::leaf`](crate::LeveledTiling::leaf).
     pub(crate) fn with_leaf(mut self, leaf: Leaf) -> Self {
         self.partitioner = self.partitioner.with_leaf(leaf);
         self
@@ -365,7 +364,7 @@ impl Space {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
-    /// The single axis this operand contracts against `output` —
+    /// The single axis this operand contracts against `output`:
     /// [`contracting`](Space::contracting) with the one-axis contract asserted.
     pub fn contraction(&self, output: &Space) -> Axis {
         let contracted = self.contracting(output);
