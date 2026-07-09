@@ -1,4 +1,5 @@
 pub mod basic;
+pub mod masking;
 #[cfg(feature = "benchmarks")]
 pub mod bench_catalog;
 #[cfg(feature = "extended")]
