@@ -1,11 +1,10 @@
 //! [`Resident`]: the accumulator's register-tier decorator, [`Staging`](crate::Staging)'s
-//! write-side dual. A memory accumulator bound for the [`Leaf::Cmma`] instruction runs its
-//! whole contraction register-resident: initialized from the accumulator once, accumulated
-//! across the whole walk, written back once (the classic global matmul's
-//! `init_accumulator` / epilogue). Where `Staging` refills per region, residency brackets
-//! the whole contraction — it is entered once at the outermost cmma boundary, not per
-//! schedule. What "register form" means (the fragment grid, its windows) is the backing
-//! store's business ([`fragments_like`](Tile), [`copy_from`](Tile::copy_from)), not ours.
+//! write-side dual. A memory accumulator whose operation runs register-resident is
+//! initialized from the accumulator once, accumulated across the whole walk, and written
+//! back once (the classic global matmul's `init_accumulator` / epilogue). Where `Staging`
+//! refills per region, residency brackets the whole operation. What "register form" means
+//! (the fragment grid, its windows) is the backing store's business
+//! ([`fragments_like`](Tile), [`copy_from`](Tile::copy_from)), not ours.
 //!
 //! `contract` is a hand-written expand method for the same reason as `Staging`'s
 //! `fill`/`consume`: the write-back must follow the caller-defined body, a `Drop` guard
@@ -13,7 +12,6 @@
 
 use cubecl::{prelude::*, unexpanded};
 
-use super::schedule::contracted_extent;
 use crate::*;
 
 /// The register-resident form of a memory accumulator: the register tile standing in
@@ -24,27 +22,12 @@ pub struct Resident<T: Numeric> {
     acc: Tile<T>,
 }
 
-/// Enter register residency for `out` and run its contraction there: the recursion
-/// continues on the register tile in place of the memory one (it carries the same space,
-/// so the schedules walk it exactly like the tile it replaces), and the write-back
-/// follows inside `contract`.
-#[cube]
-pub(crate) fn mma_resident<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
-    out: &mut Tile<Acc>,
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-) {
-    let mut acc = out.promote(lhs);
-    acc.contract(out, |frags| frags.mma(lhs, rhs));
-}
-
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// Promote this accumulator to its register form, initialized from the delivered
-    /// values so the contraction accumulates onto them. `lhs` only names the contraction
+    /// values so the operation accumulates onto them. `k` is the operation's contraction
     /// depth (this tile's own axes give `m`/`n` but not `k`).
-    fn promote<Lhs: Numeric>(&self, lhs: &Tile<Lhs>) -> Resident<Acc> {
-        let k = comptime!(contracted_extent(&lhs.space, &self.space));
+    pub fn promote(&self, #[comptime] k: usize) -> Resident<Acc> {
         let mut acc = self.fragments_like(k);
         acc.copy_from(self);
         Resident::<Acc> { acc }

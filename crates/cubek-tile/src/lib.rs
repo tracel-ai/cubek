@@ -6,6 +6,7 @@ mod load;
 mod matmul;
 mod partitioner;
 mod quantization;
+mod resident;
 mod scalar;
 mod space;
 mod stage;
@@ -16,9 +17,9 @@ mod view;
 // through `cubek_tile::{Axis, ...}`.
 pub use layout::*;
 pub use load::*;
-pub use matmul::*;
 pub use partitioner::*;
 pub use quantization::*;
+pub use resident::*;
 pub use scalar::*;
 pub use space::*;
 pub use stage::*;

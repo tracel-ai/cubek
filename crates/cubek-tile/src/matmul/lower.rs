@@ -6,9 +6,23 @@
 use cubecl::prelude::*;
 
 use super::instruction::mma_leaf;
-use super::resident::mma_resident;
-use super::schedule::{mma_direct, mma_double, mma_staged};
+use super::schedule::{contracted_extent, mma_direct, mma_double, mma_staged};
 use crate::*;
+
+/// Enter register residency for `out` and run its contraction there: the recursion
+/// continues on the register tile in place of the memory one (it carries the same space,
+/// so the schedules walk it exactly like the tile it replaces), and the write-back
+/// follows inside [`contract`](Resident::contract).
+#[cube]
+fn mma_resident<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
+    out: &mut Tile<Acc>,
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+) {
+    let k = comptime!(contracted_extent(&lhs.space, &out.space));
+    let mut acc = out.promote(k);
+    acc.contract(out, |frags| frags.mma(lhs, rhs));
+}
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
