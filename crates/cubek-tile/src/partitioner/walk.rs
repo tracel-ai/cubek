@@ -107,61 +107,66 @@ impl Walk {
         Region::new(self.resolve(idx), self.space.clone())
     }
 
-    /// Unravel a runtime step `idx` to its per-axis coordinates. The hardware part is
-    /// precomputed at construction; a digit's div/mod also drops when the axes after
-    /// (resp. before) it are all comptime single-tile, leaving a pure-`TilesEach(1)`
-    /// spatial grid with a lone sequential axis decode-free.
+    /// Unravel a runtime step `idx` to its per-axis coordinates: each axis's odometer
+    /// [`digit`](Walk::digit), [`fold`](Walk::fold)ed with its instance position.
     fn resolve(&self, idx: usize) -> CoordsDyn {
-        let rank = comptime!(self.space.rank());
         let mut coords = CoordsDyn::new();
 
         #[unroll]
-        for p in 0..rank {
-            let dist = comptime!(
-                self.space
-                    .partitioner()
-                    .distribution(self.space.axis_at(p))
-            );
-            let pos = *self.positions.index(p);
-
-            if comptime!(dist.single_tile()) {
-                // One tile per instance: the coordinate is the hardware position alone.
-                coords.push(pos as u32);
+        for p in 0..comptime!(self.space.rank()) {
+            // A `TilesEach(1)` axis has no digit (comptime count 1): position alone.
+            let coord = if comptime!(self.space.single_tile_at(p)) {
+                *self.positions.index(p)
             } else {
-                // weight = product of later axes' counts (last axis fastest); single-tile
-                // axes count comptime 1, so only the rest multiply — and when none remain
-                // the division vanishes. Likewise `% count` is a no-op when every earlier
-                // axis is single-tile (`idx` then has no more significant digit).
-                let quot = if comptime!(((p + 1)..rank).all(|e| self.space.single_tile_at(e))) {
-                    idx
-                } else {
-                    let mut weight = 1usize;
-                    #[unroll]
-                    for e in comptime!(p + 1)..rank {
-                        let other = comptime!(self.space.axis_at(e));
-                        let other_dist = comptime!(self.space.partitioner().distribution(other));
-                        if comptime!(!other_dist.single_tile()) {
-                            weight *= *self.counts.index(e);
-                        }
-                    }
-                    idx / weight
-                };
-                let local = if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
-                    quot
-                } else {
-                    quot % *self.counts.index(p)
-                };
-                let coord = if comptime!(matches!(dist, Distribution::Sequential)) {
-                    local
-                } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-                    local + pos * *self.scales.index(p)
-                } else {
-                    local * *self.scales.index(p) + pos
-                };
-                coords.push(coord as u32);
-            }
+                self.fold(self.digit(idx, p), p)
+            };
+            coords.push(coord as u32);
         }
         coords
+    }
+
+    /// The odometer digit of step `idx` along axis `p` (last axis fastest): divide off
+    /// the later axes' counts, keep the remainder of this one. Single-tile axes count
+    /// comptime 1, so only the rest weigh in — the division vanishes when none remain,
+    /// and the `%` drops when `idx` has no more significant digit (every earlier axis
+    /// single-tile).
+    fn digit(&self, idx: usize, #[comptime] p: usize) -> usize {
+        let rank = comptime!(self.space.rank());
+        let quot = if comptime!(((p + 1)..rank).all(|e| self.space.single_tile_at(e))) {
+            idx
+        } else {
+            let mut weight = 1usize;
+            #[unroll]
+            for e in comptime!(p + 1)..rank {
+                if comptime!(!self.space.single_tile_at(e)) {
+                    weight *= *self.counts.index(e);
+                }
+            }
+            idx / weight
+        };
+        if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
+            quot
+        } else {
+            quot % *self.counts.index(p)
+        }
+    }
+
+    /// Fold axis `p`'s instance position into its `digit` per the [`Spread`]: an
+    /// instance owns a contiguous run (`digit + pos·share`) or the instances take
+    /// turns (`digit·instances + pos`); a sequential digit passes through.
+    fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
+        let dist = comptime!(
+            self.space
+                .partitioner()
+                .distribution(self.space.axis_at(p))
+        );
+        if comptime!(matches!(dist, Distribution::Sequential)) {
+            digit
+        } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
+            digit + *self.positions.index(p) * *self.scales.index(p)
+        } else {
+            digit * *self.scales.index(p) + *self.positions.index(p)
+        }
     }
 }
 
