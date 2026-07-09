@@ -30,6 +30,10 @@ pub struct MemData<T: Numeric> {
     /// Accumulates across [`at`](Tile::at)s.
     origin: CoordsDyn,
     extent: CoordsDyn,
+    /// The window origin's line offset through the base layout, accumulated across
+    /// [`at`](Tile::at)s (each descent is tile-aligned, where the layout is linear), so
+    /// [`window_slice`](MemData::window_slice) never re-derives it from the origin.
+    window_start: u32,
     /// Comptime twin of `extent`, present below the dynamic top level (and at it when the
     /// space is fully `Static`): flat decodes divide by constants instead of runtime vars.
     #[cube(comptime)]
@@ -148,6 +152,7 @@ impl<T: Numeric> MemData<T> {
                 physical_strides,
                 origin,
                 extent,
+                window_start: 0u32,
                 static_extent,
                 static_physical: comptime!(None),
                 whole: comptime!(true),
@@ -195,6 +200,7 @@ impl<T: Numeric> MemData<T> {
                 physical_strides,
                 origin,
                 extent,
+                window_start: 0u32,
                 static_extent: comptime!(Some(line_extents(&space, vector_size))),
                 static_physical: comptime!(Some(storage_extents(&space, vector_size, levels))),
                 whole: comptime!(true),
@@ -364,21 +370,28 @@ impl<T: Numeric> MemData<T> {
         self.buffer.slice_mut(offset, end)
     }
 
-    /// Line offset of the window origin: the origin through the base layout. On a tiled
+    /// Line offset of the window origin: the accumulated `window_start`. On a tiled
     /// store the window must lie within one storage tile.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             !self.check,
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
-        self.base().to_source_pos(self.origin.clone())
+        self.window_start as usize
     }
 
     /// Scalar stride between matrix rows: the line-unit physical stride of the leaf
-    /// tile's row axis, widened back to scalars.
+    /// tile's row axis, widened back to scalars; a constant on a static store.
     pub(crate) fn row_stride(&self) -> u32 {
         let rows = comptime!(self.start_axis + (self.levels + 1) * self.num_tiled - 2);
-        self.physical_strides[rows] * comptime!(self.vector_size as u32)
+        if comptime!(self.static_physical.is_some()) {
+            let stride = comptime!(
+                self.static_physical.as_ref().unwrap().1[rows] * self.vector_size as u32
+            );
+            stride.runtime()
+        } else {
+            self.physical_strides[rows] * comptime!(self.vector_size as u32)
+        }
     }
 
     /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
@@ -508,6 +521,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> MemData<T> {
         let mut origin = CoordsDyn::new();
         let mut extent = CoordsDyn::new();
+        let mut start = self.window_start;
 
         let last = comptime!(space.rank() - 1);
         #[unroll]
@@ -523,6 +537,30 @@ impl<T: Numeric> MemData<T> {
 
             origin.push(self.origin[p] + (index * edge) as u32);
             extent.push(edge as u32);
+
+            // Advance the accumulated line offset by `index` edge-steps along this axis:
+            // a comptime stride on a static store, one runtime mult on a strided one.
+            if comptime!(self.static_physical.is_some()) {
+                let step = comptime!({
+                    let (shape, strides) = self.static_physical.as_ref().unwrap();
+                    static_step(
+                        shape,
+                        strides,
+                        self.start_axis,
+                        self.num_tiled,
+                        self.levels,
+                        p,
+                        edge as u32,
+                    )
+                });
+                start += (index * comptime!(step as usize)) as u32;
+            } else if comptime!(self.levels == 0) {
+                start += (index * edge) as u32 * self.physical_strides[p];
+            }
+        }
+        // A runtime tiled store (gmem, `levels > 0`) has no linear steps: re-derive.
+        if comptime!(self.static_physical.is_none() && self.levels > 0) {
+            start = self.base().to_source_pos(origin.clone()) as u32;
         }
 
         MemData::<T> {
@@ -532,6 +570,7 @@ impl<T: Numeric> MemData<T> {
             physical_strides: self.physical_strides.clone(),
             origin,
             extent,
+            window_start: start,
             // The pushed edges are all comptime, so the window is static at any depth.
             static_extent: comptime!(Some(line_edges(&space, self.vector_size))),
             static_physical: comptime!(self.static_physical.clone()),
@@ -725,6 +764,34 @@ fn physical_coord(
         out.push(l);
     }
     out
+}
+
+/// The line offset one `edge` step along logical axis `p` moves in a static store: the
+/// edge decomposed in the axis's level radix, dotted with the level strides. Exact for
+/// the tile-aligned windows [`window_slice`](MemData::window_slice) admits.
+fn static_step(
+    shape: &[u32],
+    strides: &[u32],
+    start_axis: usize,
+    num_tiled: usize,
+    levels: usize,
+    p: usize,
+    edge: u32,
+) -> u32 {
+    if p < start_axis {
+        return edge * strides[p];
+    }
+    let mut rem = edge;
+    let mut step = 0;
+    for k in 0..=levels {
+        let j = start_axis + k * num_tiled + (p - start_axis);
+        let finer: u32 = ((k + 1)..=levels)
+            .map(|f| shape[start_axis + f * num_tiled + (p - start_axis)])
+            .product();
+        step += (rem / finer) * strides[j];
+        rem %= finer;
+    }
+    step
 }
 
 /// The comptime per-axis line extents of a fully-`Static` `space` (innermost
