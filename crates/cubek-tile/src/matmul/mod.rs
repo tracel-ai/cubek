@@ -5,7 +5,7 @@
 //! operands until a final tile; [`instruction`] is the one place that commits to numbers,
 //! dispatching by storage to the tensor-core or software-register backend. The register tier
 //! rides the same shapes one tier down: [`resident`] is the accumulator's staging decorator,
-//! and the fragment walk in [`schedule`] is `Staged` with a comptime walk.
+//! and each schedule walks the register tier statically when its accumulator lives there.
 
 mod instruction;
 mod lower;

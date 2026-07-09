@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{CRegion, Region, RegionExpand, Space, instance_count, tiles_per_instance};
+use crate::{Region, RegionExpand, Space, StaticRegion, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -141,19 +141,19 @@ impl Iterable for WalkExpand {
     }
 }
 
-/// [`Walk`]'s comptime sibling, for the register tier: fragments are comptime-indexed, so
+/// [`Walk`]'s static sibling, for the register tier: fragments are comptime-indexed, so
 /// this odometer is host data and its loop unrolls where the runtime walk's loops. `Static`
 /// axes only, no hardware folding — the level it walks is instance-owned wholesale (every
-/// axis sequential, which [`partition_level`](crate::matmul) asserts).
-pub struct ComptimeWalk {
+/// axis sequential, which the partition-level classification asserts).
+pub struct StaticWalk {
     counts: Vec<usize>,
     space: Space,
 }
 
-impl ComptimeWalk {
-    pub fn over(space: &Space) -> ComptimeWalk {
+impl StaticWalk {
+    pub fn over(space: &Space) -> StaticWalk {
         let counts = space.axes().map(|axis| space.count(axis)).collect();
-        ComptimeWalk {
+        StaticWalk {
             counts,
             space: space.clone(),
         }
@@ -165,7 +165,7 @@ impl ComptimeWalk {
 
     /// The `i`th region, row-major (last axis fastest). Order-agnostic on purpose: the
     /// register walk's steps are independent MMAs, so no [`WalkOrder`] plugs in.
-    pub fn region(&self, i: usize) -> CRegion {
+    pub fn region(&self, i: usize) -> StaticRegion {
         let rank = self.space.rank();
         let mut coords = vec![0; rank];
         let mut rem = i;
@@ -173,7 +173,7 @@ impl ComptimeWalk {
             coords[p] = rem % self.counts[p];
             rem /= self.counts[p];
         }
-        CRegion::new(coords, self.space.clone())
+        StaticRegion::new(coords, self.space.clone())
     }
 }
 

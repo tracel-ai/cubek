@@ -1,38 +1,107 @@
-//! The walks behind [`Tile::mma`](super::Tile). Three runtime schedules —
-//! [`Direct`](Schedule::Direct) (no staging), [`Staged`](Schedule::Staged), and
-//! [`DoubleBuffered`](Schedule::DoubleBuffered) — each receiving the level's [`Walk`] from
-//! `Tile::mma`, so the schedules themselves carry no extent or merge logic. The fourth,
-//! [`mma_fragment_walk`], is `Staged` at the register tier: same shape (stage operands into
-//! the faster tier, walk, contract), but the staged tier is fragments, so the walk is
-//! comptime ([`ComptimeWalk`]) and needs no rendezvous (registers are private).
+//! The walks behind [`Tile::mma`](super::Tile), one per [`Schedule`]. Each schedule walks
+//! at the tier its accumulator lives in: memory accumulators walk regions at runtime and
+//! stage into shared memory; a fragment-partition accumulator at its partition level walks
+//! the register tier — same schedule, but fragments are comptime-indexed, so the walk is
+//! static ([`StaticWalk`]) and needs no rendezvous (registers are private).
 
 use cubecl::{cmma::MatrixIdent, prelude::*};
 
-use super::resident::contracted_axis;
 use crate::*;
 
-/// `Direct`: no staging
 #[cube]
-pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc>(
+impl<T: Numeric> Tile<T> {
+    /// Whether this level walks the register tier: a fragment partition at its partition
+    /// level. Comptime; each schedule picks its tier by it.
+    fn register_level(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::CmmaPartition(_) => comptime!(partition_level(&self.space).is_some()),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                comptime!(false)
+            }
+        }
+    }
+}
+
+/// `Direct`: no staging — every read goes to where the operand lives.
+#[cube]
+pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
-) where
-    Acc: Numeric,
-{
-    for region in Walk::over(space) {
-        out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+) {
+    let register = out.register_level();
+    if register {
+        direct_register(lhs, rhs, out);
+    } else {
+        for region in Walk::over(space) {
+            out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+        }
     }
 }
 
-/// The register tier's staged walk, for a fragment-partition accumulator at its partition
-/// level: per contraction step, stage each operand's fragments ([`stage_frags`](Tile) — the
-/// smem fill's register analog, and where the legacy `A`-across-`n` / `B`-across-`m` reuse
-/// lives), then walk the fragment grid contracting fragment triples through the ordinary
-/// recursion.
+/// `Direct` at the register tier: the static walk over the whole level, every operand
+/// window read at its use (the leaf loads transient fragments per contraction). No reuse —
+/// that is `Staged`'s job — so a partition level wanting the staged register microkernel
+/// declares [`Schedule::Staged`].
 #[cube]
-pub(crate) fn mma_fragment_walk<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
+fn direct_register<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    out: &mut Tile<Acc>,
+) {
+    let walk = comptime!(StaticWalk::over(&Space::merge(&[&lhs.space, &rhs.space])));
+    #[unroll]
+    for i in 0..comptime!(walk.total()) {
+        let region = comptime!(walk.region(i));
+        out.at_static(comptime!(region.clone())).mma(
+            &lhs.at_static(comptime!(region.clone())),
+            &rhs.at_static(region),
+        );
+    }
+}
+
+/// `Staged`: per region, stage each operand into the faster tier, then recurse.
+#[cube]
+pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    out: &mut Tile<Acc>,
+    space: Space,
+) {
+    let register = out.register_level();
+    if register {
+        staged_register(lhs, rhs, out);
+    } else {
+        staged_smem(lhs, rhs, out, space);
+    }
+}
+
+/// `Staged` at the memory tier: one [`Staging`] slot filled and consumed per region. The
+/// slot owns the rendezvous (fill visible before any read, reads done before the refill);
+/// `consume_final` every region, since no later fill publishes within an iteration.
+#[cube]
+fn staged_smem<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    out: &mut Tile<Acc>,
+    space: Space,
+) {
+    let mut slot = Staging::new(lhs, rhs);
+    for region in Walk::over(space) {
+        slot.fill(|s, pipe| {
+            pipe.fill(&mut s.0, &lhs.at(&region));
+            pipe.fill(&mut s.1, &rhs.at(&region));
+        });
+        slot.consume_final(|a, b| out.at(&region).mma(a, b));
+    }
+}
+
+/// `Staged` at the register tier: per contraction step, stage each operand's fragments
+/// ([`Tile::stage`] — where the legacy `A`-across-`n` / `B`-across-`m` reuse lives), then
+/// walk the fragment grid contracting fragment triples through the ordinary recursion.
+#[cube]
+fn staged_register<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
@@ -45,54 +114,28 @@ pub(crate) fn mma_fragment_walk<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     let k = comptime!(lhs.space.final_space().extent(contracted));
     let k_tiles = comptime!(lhs.space.count(contracted));
 
-    // The fragment grid: the output's axes at this level, walked comptime (fragments are
-    // comptime-indexed, so this walk unrolls where the runtime walks loop). Trailing axes
-    // swapped so rows run fastest — each staged `B` fragment feeds a consecutive burst of
-    // executes, the legacy microkernel's emission order.
+    // The fragment grid: the output's axes at this level. Trailing axes swapped so rows
+    // run fastest — each staged `B` fragment feeds a consecutive burst of executes, the
+    // legacy microkernel's emission order (worth ~1.3% on Metal).
     let grid = comptime!({
         let mut axes: Vec<Axis> = out.space.axes().collect();
         axes.swap(out.space.rank() - 2, out.space.rank() - 1);
-        ComptimeWalk::over(&out.space.project(&axes))
+        StaticWalk::over(&out.space.project(&axes))
     });
 
     // The contraction steps stay a *runtime* loop: `ki` only positions memory windows, and
     // unrolling it would keep every step's staged fragments live at once.
     for ki in 0..k_tiles {
-        let a = lhs.stage_frags(MatrixIdent::A, m, n, k, contracted, ki);
-        let b = rhs.stage_frags(MatrixIdent::B, m, n, k, contracted, ki);
+        let a = lhs.stage(MatrixIdent::A, m, n, k, contracted, ki);
+        let b = rhs.stage(MatrixIdent::B, m, n, k, contracted, ki);
         #[unroll]
         for i in 0..comptime!(grid.total()) {
             let region = comptime!(grid.region(i));
-            out.at_comptime(comptime!(region.clone())).mma(
-                &a.at_comptime(comptime!(region.clone())),
-                &b.at_comptime(region),
+            out.at_static(comptime!(region.clone())).mma(
+                &a.at_static(comptime!(region.clone())),
+                &b.at_static(region),
             );
         }
-    }
-}
-
-/// `Staged`: stage each operand sub-tile into shared memory, then recurse. Each buffer keeps
-/// its own served type.
-#[cube]
-pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-    space: Space,
-) {
-    // Each smem buffer mirrors what `at` produces one level down (its `divide()`) and carries any
-    // remaining finer levels, at the source operand's physical width.
-    let mut a_tile = lhs.smem_like();
-    let mut b_tile = rhs.smem_like();
-
-    for region in Walk::over(space) {
-        a_tile.copy_from(&lhs.at(&region));
-        b_tile.copy_from(&rhs.at(&region));
-        // The fill is cooperative (each unit moves an interleaved share), so a rendezvous
-        // brackets the compute: fills visible before any read, reads done before the refill.
-        sync_cube();
-        out.at(&region).mma(&a_tile, &b_tile);
-        sync_cube();
     }
 }
 
@@ -106,6 +149,12 @@ pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     out: &mut Tile<Acc>,
     space: Space,
 ) {
+    let register = out.register_level();
+    if register {
+        // Register double buffering is software pipelining; the Metal compiler already
+        // overlaps fragment loads with executes, so it is not wired.
+        panic!("mma: a partition level walks Direct or Staged")
+    }
     // Each slot stages `lhs`/`rhs` into its own smem; the sync strategy and the allocation both live
     // in `Staging::new` (deduced from the operands' delivery), so the schedule stays out of it.
     let mut s0 = Staging::new(lhs, rhs);
@@ -160,4 +209,19 @@ pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
         let last = walk.region(n - 1);
         s0.consume_final(|a, b| out.at(&last).mma(a, b));
     }
+}
+
+/// The axis of `operand` the output drops — the contraction axis.
+pub(crate) fn contracted_axis(operand: &Space, out: &Space) -> Axis {
+    let contracted = operand.contracting(out);
+    assert!(
+        contracted.len() == 1,
+        "cmma accumulator: the leaf contracts exactly one axis"
+    );
+    contracted[0]
+}
+
+/// The contraction depth `k`: the final-space extent of the contracted axis.
+pub(crate) fn contracted_extent(operand: &Space, out: &Space) -> usize {
+    operand.final_space().extent(contracted_axis(operand, out))
 }

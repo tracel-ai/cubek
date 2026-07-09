@@ -1,5 +1,6 @@
-//! [`Staging`]: a matmul-agnostic double-buffer slot — a payload `T` plus a [`Pipeline`]
-//! sequencing its fill against its read. `fill`/`consume` acquire, run a closure, release; no
+//! [`Staging`]: a matmul-agnostic staging slot — a payload `T` plus a [`Pipeline`]
+//! sequencing its fill against its read (one slot behind `Staged`, an alternating pair
+//! behind `DoubleBuffered`). `fill`/`consume` acquire, run a closure, release; no
 //! raw barrier escapes. The [`Barrier`](Sync::Barrier) strategy (a `full`/`empty` mbarrier pair
 //! with a `phase` parity, mirroring cubek-matmul's `specialized/matmul.rs`) is the reference
 //! design; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are degenerate cases.

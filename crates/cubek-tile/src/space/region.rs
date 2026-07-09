@@ -21,9 +21,9 @@ impl Region {
         self.coords[comptime!(self.space.position(axis))] as usize
     }
 
-    /// The runtime form of a comptime region. Memory windowing is coordinate-kind-agnostic,
+    /// The runtime form of a static region. Memory windowing is coordinate-kind-agnostic,
     /// so the register-tier walk reuses [`Tile::at`](crate::Tile::at) through this.
-    pub(crate) fn from_comptime(#[comptime] region: CRegion) -> Region {
+    pub(crate) fn from_static(#[comptime] region: StaticRegion) -> Region {
         let mut coords = CoordsDyn::new();
         #[unroll]
         for p in 0..comptime!(region.space().rank()) {
@@ -33,27 +33,27 @@ impl Region {
     }
 }
 
-/// [`Region`]'s comptime sibling, for the register tier: fragments are comptime-indexed,
+/// [`Region`]'s static sibling, for the register tier: fragments are comptime-indexed,
 /// so a walk over them carries its coordinates as host data.
 #[derive(Clone, Debug)]
-pub struct CRegion {
+pub struct StaticRegion {
     coords: Vec<usize>,
     space: Space,
 }
 
-impl CRegion {
-    pub fn new(coords: Vec<usize>, space: Space) -> CRegion {
-        assert!(coords.len() == space.rank(), "CRegion: rank mismatch");
-        CRegion { coords, space }
+impl StaticRegion {
+    pub fn new(coords: Vec<usize>, space: Space) -> StaticRegion {
+        assert!(coords.len() == space.rank(), "StaticRegion: rank mismatch");
+        StaticRegion { coords, space }
     }
 
     /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere.
-    pub fn trailing(space: &Space, c0: usize, c1: usize) -> CRegion {
+    pub fn trailing(space: &Space, c0: usize, c1: usize) -> StaticRegion {
         let rank = space.rank();
         let mut coords = vec![0; rank];
         coords[rank - 2] = c0;
         coords[rank - 1] = c1;
-        CRegion::new(coords, space.clone())
+        StaticRegion::new(coords, space.clone())
     }
 
     /// The coordinate along `axis`; `0` when the axis is absent (an omitted axis is

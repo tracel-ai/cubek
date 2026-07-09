@@ -25,8 +25,8 @@ pub enum TileKind<T: Numeric> {
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
     /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed. Backs the
-    /// resident accumulator ([`Resident`](crate::Resident)) and the register-tier walk's
-    /// staged operands ([`stage_frags`](Tile)); contraction is the comptime fragment walk.
+    /// resident accumulator ([`Resident`](crate::Resident)) and the register tier's
+    /// staged operands ([`stage`](Tile::stage)); walked statically ([`at_static`](Tile::at_static)).
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
@@ -200,7 +200,7 @@ impl<T: Numeric> Tile<T> {
             // A resident fragment (or partition of them) passes through unchanged: a runtime
             // region cannot select fragments, and above its partition level a partition is
             // instance-owned wholesale — every region an instance visits means these same
-            // fragments. At the partition level [`at_comptime`](Tile::at_comptime) selects.
+            // fragments. At the partition level [`at_static`](Tile::at_static) selects.
             TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
             TileKind::CmmaPartition(p) => TileKind::new_CmmaPartition(p.clone()),
         };
@@ -210,13 +210,13 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// [`at`](Tile::at) for a comptime region — the register tier's windowing. Memory
+    /// [`at`](Tile::at) for a static region — the register tier's windowing. Memory
     /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
-    /// partition *selects* its `(mi, ni)` fragment, which only comptime coordinates can do.
-    pub fn at_comptime(&self, #[comptime] region: CRegion) -> Tile<T> {
+    /// partition *selects* its `(mi, ni)` fragment, which only static coordinates can do.
+    pub fn at_static(&self, #[comptime] region: StaticRegion) -> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
-                self.at(&Region::from_comptime(region))
+                self.at(&Region::from_static(region))
             }
             TileKind::CmmaPartition(p) => {
                 let mi = comptime!(region.coord(self.space.axis_at(self.space.rank() - 2)));
@@ -226,7 +226,7 @@ impl<T: Numeric> Tile<T> {
                     space: comptime!(self.space.divide()),
                 }
             }
-            TileKind::Cmma(_) => panic!("Tile::at_comptime: a single fragment has no regions"),
+            TileKind::Cmma(_) => panic!("Tile::at_static: a single fragment has no regions"),
         }
     }
 
@@ -264,21 +264,42 @@ impl<T: Numeric> Tile<T> {
         Space::with_sizes(space, sizes)
     }
 
+    /// Whether this tile is backed by a fragment partition. Comptime; peels the
+    /// whole-tile partition transports off [`copy_from`](Tile::copy_from).
+    #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
+    fn is_partition(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::CmmaPartition(_) => true,
+            _ => false,
+        }
+    }
+
     /// Blocking copy of `src` into `self` across a level, each kind pairing dispatched to its
     /// transport leaf. Moves data (unlike [`at`](Tile::at)); returns once the data has landed.
-    /// The pipelined counterpart is [`Pipeline::fill`](crate::Pipeline::fill).
+    /// A fragment partition on either side transports per fragment window
+    /// ([`fill_partition`](Tile::fill_partition)/[`drain_partition`](Tile::drain_partition)
+    /// descend the memory side's levels). The pipelined counterpart is
+    /// [`Pipeline::fill`](crate::Pipeline::fill).
     pub fn copy_from(&mut self, src: &Tile<T>) {
-        match (&mut self.tile_kind, &src.tile_kind) {
-            (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
-            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
-            (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
-            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
-                d.fill_from(s)
+        let src_partition = src.is_partition();
+        let dst_partition = self.is_partition();
+        if src_partition {
+            self.drain_partition(src);
+        } else if dst_partition {
+            self.fill_partition(src);
+        } else {
+            match (&mut self.tile_kind, &src.tile_kind) {
+                (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
+                (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
+                    d.fill_from(s)
+                }
+                (TileKind::Cmma(_), TileKind::Cmma(_)) => {
+                    panic!("Tile::copy_from: cmma→cmma cast not wired")
+                }
+                _ => panic!("Tile::copy_from: unsupported kind pairing"),
             }
-            (TileKind::Cmma(_), TileKind::Cmma(_) | TileKind::CmmaPartition(_)) => {
-                panic!("Tile::copy_from: cmma→cmma cast not wired")
-            }
-            _ => panic!("Tile::copy_from: unsupported kind pairing"),
         }
     }
 }
