@@ -6,7 +6,7 @@
 use cubecl::prelude::*;
 
 use super::instruction::mma_leaf;
-use super::schedule::{contracted_extent, mma_direct, mma_double, mma_staged};
+use super::schedule::contracted_extent;
 use crate::*;
 
 /// Enter register residency for `out` and run its contraction there: the recursion
@@ -53,9 +53,9 @@ impl<Acc: Numeric> Tile<Acc> {
                     // two operands cover it.
                     let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
                     match comptime!(level.schedule()) {
-                        Schedule::Direct => mma_direct(lhs, rhs, self, space),
-                        Schedule::Staged => mma_staged(lhs, rhs, self, space),
-                        Schedule::DoubleBuffered => mma_double(lhs, rhs, self, space),
+                        Schedule::Direct => self.mma_direct(lhs, rhs, space),
+                        Schedule::Staged => self.mma_staged(lhs, rhs, space),
+                        Schedule::DoubleBuffered => self.mma_double(lhs, rhs, space),
                     }
                 }
             }

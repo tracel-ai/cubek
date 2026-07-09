@@ -8,34 +8,79 @@ use cubecl::{cmma::MatrixIdent, prelude::*};
 
 use crate::*;
 
+/// The tier a level's walk runs at. An accumulator knows its own: `Register` when it is
+/// a fragment partition at its partition level (fragments are comptime-indexed, so that
+/// walk is static), `Memory` otherwise.
+enum Tier {
+    Memory,
+    Register,
+}
+
 #[cube]
-impl<T: Numeric> Tile<T> {
-    /// Whether this level walks the register tier: a fragment partition at its partition
-    /// level. Comptime; each schedule picks its tier by it.
-    fn register_level(&self) -> comptime_type!(bool) {
+impl<Acc: Numeric> Tile<Acc> {
+    /// The [`Tier`] this accumulator's level walks. Comptime self-knowledge — callers
+    /// tell the accumulator to walk; they never pick a tier for it.
+    fn tier(&self) -> comptime_type!(Tier) {
         match &self.tile_kind {
-            TileKind::CmmaPartition(_) => comptime!(partition_level(&self.space).is_some()),
+            TileKind::CmmaPartition(_) => {
+                comptime!(if partition_level(&self.space).is_some() {
+                    Tier::Register
+                } else {
+                    Tier::Memory
+                })
+            }
             TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                comptime!(false)
+                comptime!(Tier::Memory)
             }
         }
     }
-}
 
-/// `Direct`: no staging — every read goes to where the operand lives.
-#[cube]
-pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-    space: Space,
-) {
-    let register = out.register_level();
-    if register {
-        direct_register(lhs, rhs, out);
-    } else {
-        for region in Walk::over(space) {
-            out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+    /// `Direct` on this accumulator: no staging — every read goes to where the operand lives.
+    pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        space: Space,
+    ) {
+        let tier = self.tier();
+        match comptime!(tier) {
+            Tier::Register => direct_register(lhs, rhs, self),
+            Tier::Memory => {
+                for region in Walk::over(space) {
+                    self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+                }
+            }
+        }
+    }
+
+    /// `Staged` on this accumulator: per region, stage each operand into the faster tier,
+    /// then recurse.
+    pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        space: Space,
+    ) {
+        let tier = self.tier();
+        match comptime!(tier) {
+            Tier::Register => staged_register(lhs, rhs, self),
+            Tier::Memory => staged_smem(lhs, rhs, self, space),
+        }
+    }
+
+    /// `DoubleBuffered` on this accumulator. Register double buffering is software
+    /// pipelining, which the Metal compiler already does across fragment loads and
+    /// executes, so it is not wired.
+    pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        space: Space,
+    ) {
+        let tier = self.tier();
+        match comptime!(tier) {
+            Tier::Register => panic!("mma: a partition level walks Direct or Staged"),
+            Tier::Memory => double_smem(lhs, rhs, self, space),
         }
     }
 }
@@ -58,22 +103,6 @@ fn direct_register<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
             &lhs.at_static(comptime!(region.clone())),
             &rhs.at_static(region),
         );
-    }
-}
-
-/// `Staged`: per region, stage each operand into the faster tier, then recurse.
-#[cube]
-pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-    space: Space,
-) {
-    let register = out.register_level();
-    if register {
-        staged_register(lhs, rhs, out);
-    } else {
-        staged_smem(lhs, rhs, out, space);
     }
 }
 
@@ -139,22 +168,16 @@ fn staged_register<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     }
 }
 
-/// `DoubleBuffered`: two [`Staging`] slots, each a `(Tile<Lhs>, Tile<Rhs>)` payload, driven
-/// `fill`/`consume` on alternating slots so one slot's fill overlaps the other's compute. Each slot's
-/// synchronization is wrapped inside `fill`/`consume`, not here.
+/// `DoubleBuffered` at the memory tier: two [`Staging`] slots, each a `(Tile<Lhs>, Tile<Rhs>)`
+/// payload, driven `fill`/`consume` on alternating slots so one slot's fill overlaps the
+/// other's compute. Each slot's synchronization is wrapped inside `fill`/`consume`, not here.
 #[cube]
-pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
+fn double_smem<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
     space: Space,
 ) {
-    let register = out.register_level();
-    if register {
-        // Register double buffering is software pipelining; the Metal compiler already
-        // overlaps fragment loads with executes, so it is not wired.
-        panic!("mma: a partition level walks Direct or Staged")
-    }
     // Each slot stages `lhs`/`rhs` into its own smem; the sync strategy and the allocation both live
     // in `Staging::new` (deduced from the operands' delivery), so the schedule stays out of it.
     let mut s0 = Staging::new(lhs, rhs);
