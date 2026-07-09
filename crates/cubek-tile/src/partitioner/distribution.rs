@@ -110,6 +110,18 @@ pub(crate) fn instance_count(grid: usize, #[comptime] cov: Coverage) -> usize {
 }
 
 impl Distribution {
+    /// `Spatial` with `TilesEach(1)`: the instance owns exactly one tile, so its walk
+    /// count is comptime `1` and its coordinate is the hardware position alone.
+    pub(crate) fn single_tile(self) -> bool {
+        matches!(
+            self,
+            Distribution::Spatial {
+                coverage: Coverage::TilesEach(1),
+                ..
+            }
+        )
+    }
+
     pub(crate) fn coverage(self) -> Coverage {
         match self {
             Distribution::Spatial { coverage, .. } => coverage,

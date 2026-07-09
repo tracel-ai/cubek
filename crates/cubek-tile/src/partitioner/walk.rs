@@ -13,7 +13,16 @@ use super::{ComputeScope, CubeAxis, Distribution, Spread};
 /// The runtime odometer over a [`Space`]'s tiles.
 #[derive(CubeType)]
 pub struct Walk {
+    /// Per-axis walk counts: this instance's share on `Spatial` axes, the whole grid on
+    /// `Sequential` ones.
     counts: Sequence<usize>,
+    /// Per-axis hardware-instance coordinate, folded through any shared hardware dim;
+    /// `0` for `Sequential`. Loop-invariant, so decoded once at construction rather
+    /// than per region.
+    positions: Sequence<usize>,
+    /// Per-axis spread factor combining a step with its position: the instance's tile
+    /// share (`Contiguous`) or the instance count (`Interleaved`); `1` for `Sequential`.
+    scales: Sequence<usize>,
     steps: usize,
     #[cube(comptime)]
     space: Space,
@@ -33,18 +42,55 @@ impl Walk {
         Walk::from_counts(comptime!(space.clone()), counts)
     }
 
-    /// Total step count from the per-axis grid `counts`, shared by both constructors.
-    fn from_counts(#[comptime] space: Space, counts: Sequence<usize>) -> Walk {
+    /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
+    /// `Spatial` axis's hardware decode (invariant across the walk, so paid once here).
+    fn from_counts(#[comptime] space: Space, grid: Sequence<usize>) -> Walk {
+        let rank = comptime!(space.rank());
         let mut steps = 1usize;
+        let mut counts = Sequence::<usize>::new();
+        let mut positions = Sequence::<usize>::new();
+        let mut scales = Sequence::<usize>::new();
+
         #[unroll]
-        for p in 0..comptime!(space.rank()) {
-            let axis = space.axis_at(p);
-            let dist = space.partitioner().distribution(axis);
-            steps *= axis_count(*counts.index(p), dist);
+        for p in 0..rank {
+            let axis = comptime!(space.axis_at(p));
+            let dist = comptime!(space.partitioner().distribution(axis));
+            let count = axis_count(*grid.index(p), dist);
+            steps *= count;
+            counts.push(count);
+
+            if comptime!(matches!(dist, Distribution::Spatial { .. })) {
+                // Mixed-radix stride for axes sharing one hardware dim: the product of the
+                // later same-scope axes' instance counts (the earlier axis is the more
+                // significant digit). Computed from the runtime grid counts, so dynamic
+                // extents work; `1` when this axis owns its scope.
+                let mut inner_weight = 1usize;
+                #[unroll]
+                for q in comptime!(p + 1)..rank {
+                    let other = comptime!(space.axis_at(q));
+                    let other_dist = comptime!(space.partitioner().distribution(other));
+                    if comptime!(other_dist.scope() == dist.scope()) {
+                        inner_weight *=
+                            instance_count(*grid.index(q), comptime!(other_dist.coverage()));
+                    }
+                }
+                let instances = instance_count(*grid.index(p), comptime!(dist.coverage()));
+                positions.push((hardware_pos(comptime!(dist.unit())) / inner_weight) % instances);
+                if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
+                    scales.push(tiles_per_instance(*grid.index(p), comptime!(dist.coverage())));
+                } else {
+                    scales.push(instances);
+                }
+            } else {
+                positions.push(0usize);
+                scales.push(1usize);
+            }
         }
 
         Walk {
             counts,
+            positions,
+            scales,
             steps,
             space,
         }
@@ -61,45 +107,59 @@ impl Walk {
         Region::new(self.resolve(idx), self.space.clone())
     }
 
-    /// Unravel a runtime step `idx` to its per-axis coordinates
+    /// Unravel a runtime step `idx` to its per-axis coordinates. The hardware part is
+    /// precomputed at construction; a digit's div/mod also drops when the axes after
+    /// (resp. before) it are all comptime single-tile, leaving a pure-`TilesEach(1)`
+    /// spatial grid with a lone sequential axis decode-free.
     fn resolve(&self, idx: usize) -> CoordsDyn {
         let rank = comptime!(self.space.rank());
-        let mut counts = Sequence::<usize>::new();
-
-        #[unroll]
-        for p in 0..rank {
-            let axis = comptime!(self.space.axis_at(p));
-            let dist = comptime!(self.space.partitioner().distribution(axis));
-            counts.push(axis_count(*self.counts.index(p), dist));
-        }
-
         let mut coords = CoordsDyn::new();
+
         #[unroll]
         for p in 0..rank {
-            // weight = product of later axes' counts (last axis fastest).
-            let mut weight = 1usize;
-            #[unroll]
-            for e in comptime!(p + 1)..comptime!(self.space.rank()) {
-                weight *= *counts.index(e);
+            let dist = comptime!(
+                self.space
+                    .partitioner()
+                    .distribution(self.space.axis_at(p))
+            );
+            let pos = *self.positions.index(p);
+
+            if comptime!(dist.single_tile()) {
+                // One tile per instance: the coordinate is the hardware position alone.
+                coords.push(pos as u32);
+            } else {
+                // weight = product of later axes' counts (last axis fastest); single-tile
+                // axes count comptime 1, so only the rest multiply — and when none remain
+                // the division vanishes. Likewise `% count` is a no-op when every earlier
+                // axis is single-tile (`idx` then has no more significant digit).
+                let quot = if comptime!(((p + 1)..rank).all(|e| self.space.single_tile_at(e))) {
+                    idx
+                } else {
+                    let mut weight = 1usize;
+                    #[unroll]
+                    for e in comptime!(p + 1)..rank {
+                        let other = comptime!(self.space.axis_at(e));
+                        let other_dist = comptime!(self.space.partitioner().distribution(other));
+                        if comptime!(!other_dist.single_tile()) {
+                            weight *= *self.counts.index(e);
+                        }
+                    }
+                    idx / weight
+                };
+                let local = if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
+                    quot
+                } else {
+                    quot % *self.counts.index(p)
+                };
+                let coord = if comptime!(matches!(dist, Distribution::Sequential)) {
+                    local
+                } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
+                    local + pos * *self.scales.index(p)
+                } else {
+                    local * *self.scales.index(p) + pos
+                };
+                coords.push(coord as u32);
             }
-            let local = (idx / weight) % *counts.index(p);
-            let axis = comptime!(self.space.axis_at(p));
-            let dist = comptime!(self.space.partitioner().distribution(axis));
-            // Mixed-radix stride for axes sharing one hardware dim: the product of the later
-            // same-scope axes' instance counts (the earlier axis is the more significant
-            // digit). Computed from the runtime grid counts, so dynamic extents work; `1` when
-            // this axis owns its scope or is sequential.
-            let mut inner_weight = 1usize;
-            #[unroll]
-            for q in comptime!(p + 1)..rank {
-                let other = comptime!(self.space.axis_at(q));
-                let other_dist = comptime!(self.space.partitioner().distribution(other));
-                if comptime!(dist.scope().is_some() && other_dist.scope() == dist.scope()) {
-                    inner_weight *=
-                        instance_count(*self.counts.index(q), comptime!(other_dist.coverage()));
-                }
-            }
-            coords.push(coord_of(local, *self.counts.index(p), inner_weight, dist) as u32);
         }
         coords
     }
@@ -194,34 +254,8 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
     }
 }
 
-/// Grid coordinate for a runtime local `step`: `step` for `Sequential`, else the
-/// `Spatial` axis folds its hardware instance in (`Contiguous`: instance owns a run;
-/// `Interleaved`: instances take turns). `inner_weight` is this axis's stride in a
-/// hardware dim it may share with others: the raw hardware position is decoded to this
-/// axis's own instance via `(pos / inner_weight) % instances`. With one axis on the dim
-/// `inner_weight = 1` and the position is in range, so the decode is a no-op.
-#[cube]
-fn coord_of(
-    step: usize,
-    grid: usize,
-    inner_weight: usize,
-    #[comptime] dist: Distribution,
-) -> usize {
-    let mut coord = step;
-    if comptime!(matches!(dist, Distribution::Spatial { .. })) {
-        let cov = comptime!(dist.coverage());
-        let unit = comptime!(dist.unit());
-        let instances = instance_count(grid, cov);
-        let pos = (hardware_pos(unit) / inner_weight) % instances;
-        if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-            coord = step + pos * tiles_per_instance(grid, cov);
-        } else {
-            coord = step * instances + pos;
-        }
-    }
-    coord
-}
-
+/// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
+/// it through the axis's shared-dim stride to the per-axis instance coordinate.
 #[cube]
 fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
     match comptime!(unit) {

@@ -277,6 +277,14 @@ impl Space {
         self.extents.axis_at(i)
     }
 
+    /// Whether axis position `p` is `Spatial` `TilesEach(1)`: its walk count is
+    /// comptime `1`, so a step decode can skip it.
+    pub(crate) fn single_tile_at(&self, p: usize) -> bool {
+        self.partitioner()
+            .distribution(self.axis_at(p))
+            .single_tile()
+    }
+
     pub fn position(&self, axis: Axis) -> usize {
         self.extents.position(axis)
     }
