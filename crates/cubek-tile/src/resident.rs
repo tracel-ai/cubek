@@ -2,9 +2,11 @@
 //! write-side dual. A memory accumulator whose operation runs register-resident is
 //! initialized from the accumulator once, accumulated across the whole walk, and written
 //! back once (the classic global matmul's `init_accumulator` / epilogue). Where `Staging`
-//! refills per region, residency brackets the whole operation. What "register form" means
-//! (the fragment grid, its windows) is the backing store's business
-//! ([`CmmaPartition::mirror`], [`copy_from`](Tile::copy_from)), not ours.
+//! refills per region, residency brackets the whole operation — the *kernel* enters it,
+//! at the outermost scope, independent of what runs inside the bracket; the lowering
+//! never decides it. What "register form" means (the fragment grid, its windows) is the
+//! backing store's business ([`CmmaPartition::mirror`], [`copy_from`](Tile::copy_from)),
+//! not ours.
 //!
 //! `contract` is a hand-written expand method for the same reason as `Staging`'s
 //! `fill`/`consume`: the write-back must follow the caller-defined body, a `Drop` guard
@@ -25,9 +27,15 @@ pub struct Resident<T: Numeric> {
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// Promote this accumulator to its register form, initialized from the delivered
-    /// values so the operation accumulates onto them. `k` is the operation's contraction
-    /// depth (this tile's own axes give `m`/`n` but not `k`).
-    pub fn promote(&self, #[comptime] k: usize) -> Resident<Acc> {
+    /// values so the operation accumulates onto them. `operand` only names the operation's
+    /// contraction depth (this tile's own axes give `m`/`n` but not `k`).
+    pub fn promote<Operand: Numeric>(&self, operand: &Tile<Operand>) -> Resident<Acc> {
+        let k = comptime!(
+            operand
+                .space
+                .final_space()
+                .extent(operand.space.contraction(&self.space))
+        );
         let mut acc = CmmaPartition::mirror(comptime!(self.space.clone()), k);
         acc.copy_from(self);
         Resident::<Acc> { acc }

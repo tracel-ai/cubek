@@ -31,6 +31,11 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             p.at(0usize, 0usize).mma(lhs, rhs)
         }
         TileKind::Gmem(g) | TileKind::Smem(g) => {
+            comptime!(assert!(
+                space.partitioner().leaf() == Leaf::Register,
+                "mma: a cmma-leaf accumulator runs register-resident — \
+                 promote it first (Tile::promote / Resident::contract)"
+            ));
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
