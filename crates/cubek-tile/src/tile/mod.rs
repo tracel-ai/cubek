@@ -31,7 +31,7 @@ pub enum TileKind<T: Numeric> {
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
-    /// (see [`Tile::from_tensor_map`]).
+    /// (see [`TmaData::from_tensor_map`]).
     TmaGmem(TmaData<T>),
 }
 
@@ -114,7 +114,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
         if comptime!(self.quant.is_some()) {
             panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
         }
-        Tile::from_tensor(
+        MemData::from_tensor(
             self.tensor,
             comptime!(self.vector_size),
             comptime!(self.space.clone()),
@@ -137,7 +137,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
             }),
             ComptimeOption::None => ComptimeOption::new_None(),
         };
-        Tile::<O>::from_tensor_quant::<E>(
+        MemData::<O>::from_tensor_quant::<E>(
             self.tensor,
             comptime!(self.vector_size),
             comptime!(self.space.clone()),

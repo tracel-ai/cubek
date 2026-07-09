@@ -901,7 +901,7 @@ fn cmma_roundtrip<E: Numeric>(
     let a = input.tile();
     let space = comptime!(a.space.clone());
 
-    let mut a_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    let mut a_smem = MemData::smem(comptime!(space.clone()), 1usize);
     a_smem.copy_from(&a);
     sync_cube();
 
@@ -915,7 +915,7 @@ fn cmma_roundtrip<E: Numeric>(
     );
     frag.copy_from(&a_smem);
 
-    let mut c_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    let mut c_smem = MemData::smem(comptime!(space.clone()), 1usize);
     c_smem.copy_from(&frag);
     sync_cube();
 
@@ -1206,13 +1206,13 @@ fn cmma_matmul<E: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
 
-    let mut a_smem_tile = Tile::smem(comptime!(a.space.clone()), 1usize);
+    let mut a_smem_tile = MemData::smem(comptime!(a.space.clone()), 1usize);
     a_smem_tile.copy_from(&a);
 
-    let mut b_smem_tile = Tile::smem(comptime!(b.space.clone()), 1usize);
+    let mut b_smem_tile = MemData::smem(comptime!(b.space.clone()), 1usize);
     b_smem_tile.copy_from(&b);
 
-    let mut c_smem_tile = Tile::smem(comptime!(c.space.clone()), 1usize);
+    let mut c_smem_tile = MemData::smem(comptime!(c.space.clone()), 1usize);
     c_smem_tile.copy_from(&c);
     sync_cube();
 

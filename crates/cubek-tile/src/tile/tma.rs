@@ -29,7 +29,7 @@ pub struct TmaData<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl<T: Numeric> TmaData<T> {
     /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side) as a `TmaGmem` tile. `pos`
     /// starts at the origin and advances on [`at`](Tile::at); the box shape is carried comptime
     /// for the `tensor_map_load`. Dormant: no launch path builds this yet.

@@ -12,7 +12,9 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{CmmaPartition, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level};
+use crate::{
+    CmmaPartition, MemData, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
+};
 
 /// How a slot rendezvouses its fill against its read. Comptime — fixed at construction from the
 /// operands' delivery, never inferred at the call site.
@@ -209,7 +211,10 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             Staging::wrap((a, b), Pipeline::new(Sync::Solo))
         } else {
             let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
-            Staging::wrap((lhs.smem_like(), rhs.smem_like()), Pipeline::new(sync))
+            Staging::wrap(
+                (MemData::smem_like(lhs), MemData::smem_like(rhs)),
+                Pipeline::new(sync),
+            )
         }
     }
 }

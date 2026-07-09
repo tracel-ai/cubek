@@ -55,7 +55,7 @@ pub struct MemData<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl<T: Numeric> MemData<T> {
     /// Wrap a launched scalar [`Tensor`] into a whole `Gmem` tile. Shape and strides are held
     /// *line-unit* (the cubecl contract for `Vector<T, w>` slices): the contiguous innermost axis
     /// counts lines, coarser strides divide by `w`; the launcher gates `w > 1` on divisibility.
@@ -65,7 +65,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] storage: Storage,
     ) -> Tile<T> {
-        Tile::<T>::from_tensor_quant::<T>(
+        MemData::<T>::from_tensor_quant::<T>(
             tensor,
             vector_size,
             space,
@@ -74,9 +74,9 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`from_tensor`](Tile::from_tensor) from a storage-typed tensor: the buffer physically holds
-    /// `I` while the tile serves `T`, dequantizing on read per `quant`. The plain path is `I == T`
-    /// with `quant == None`; [`TileArg::tile_dequant`] is the kernel-side constructor.
+    /// [`from_tensor`](MemData::from_tensor) from a storage-typed tensor: the buffer physically
+    /// holds `I` while the tile serves `T`, dequantizing on read per `quant`. The plain path is
+    /// `I == T` with `quant == None`; [`TileArg::tile_dequant`] is the kernel-side constructor.
     pub fn from_tensor_quant<I: Numeric>(
         tensor: &Tensor<I>,
         #[comptime] vector_size: usize,
@@ -140,11 +140,12 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `self`, at the
-    /// same physical width. The one-liner staging schedules reach for — `lhs.smem_like()` instead of
-    /// hand-rolling a `Shared` slice, its size, and a `Tile::smem`.
-    pub fn smem_like(&self) -> Tile<T> {
-        Tile::smem(comptime!(self.space.divide()), self.vector_size())
+    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
+    /// `operand`, at the same physical width. The one-liner staging reaches for —
+    /// `MemData::smem_like(lhs)` instead of hand-rolling a `Shared` slice, its size, and a
+    /// [`smem`](MemData::smem).
+    pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
+        MemData::smem(comptime!(operand.space.divide()), operand.vector_size())
     }
 
     /// Allocate a shared-memory tile over `space`, at physical `vector_size`. A stage bound for
@@ -179,7 +180,10 @@ impl<T: Numeric> Tile<T> {
             space: comptime!(space),
         }
     }
+}
 
+#[cube]
+impl<T: Numeric> Tile<T> {
     /// A read [`View`] over `Vector<T, W>` lines: the scalar buffer re-grouped into its physical
     /// width, then re-viewed through the base layout and [`Window`]. `W` is the line width
     /// (`self.vector_size`); pass `Const<1>` when only the (width-invariant) leading shape is needed.
@@ -586,7 +590,7 @@ fn storage_layout(
                     let (e, t) = (space.extent_at(p), fin.extent_at(p));
                     assert!(
                         e.is_multiple_of(t),
-                        "Tile::smem: the final tile must divide the staged space"
+                        "MemData::smem: the final tile must divide the staged space"
                     );
                     extents.push(e / t);
                 }
@@ -594,7 +598,7 @@ fn storage_layout(
                     extents.push(fin.extent_at(p));
                 }
             }
-            _ => panic!("Tile::smem: one storage-tiling level at most"),
+            _ => panic!("MemData::smem: one storage-tiling level at most"),
         }
         let last = extents.len() - 1;
         extents[last] /= vector_size;
