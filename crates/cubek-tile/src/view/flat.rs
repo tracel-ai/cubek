@@ -19,23 +19,16 @@ pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 /// Maps a flat row-major index to an N-D coordinate over `shape`: the inverse of a
 /// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it
 /// linearly (`shape()` is the element count) without re-deriving strides in the kernel.
+/// A static window's extents are constant handles, so the decode divides by constants.
 #[derive(CubeType, Clone)]
 pub struct FlatLayout {
     shape: CoordsDyn,
-    /// Comptime twin of `shape`, present for any window below the dynamic top level:
-    /// the decode divisors become constants the compiler strength-reduces (Apple GPUs
-    /// emulate runtime integer division).
-    #[cube(comptime)]
-    static_shape: Option<Vec<u32>>,
 }
 
 #[cube]
 impl FlatLayout {
-    pub fn new(shape: CoordsDyn, #[comptime] static_shape: Option<Vec<u32>>) -> Self {
-        FlatLayout {
-            shape,
-            static_shape,
-        }
+    pub fn new(shape: CoordsDyn) -> Self {
+        FlatLayout { shape }
     }
 }
 
@@ -53,15 +46,9 @@ impl Layout for FlatLayout {
         #[unroll]
         for i in 0..rank {
             let dim = rank - i - 1;
-            if comptime!(self.static_shape.is_some()) {
-                let extent = comptime!(self.static_shape.as_ref().unwrap()[dim]);
-                out.push(offs % extent);
-                offs /= extent;
-            } else {
-                let extent = self.shape[dim];
-                out.push(offs % extent);
-                offs /= extent;
-            }
+            let extent = self.shape[dim];
+            out.push(offs % extent);
+            offs /= extent;
         }
 
         out.reverse(); // pushed last→first; restore ascending dim order
@@ -73,25 +60,10 @@ impl Layout for FlatLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        if comptime!(self.static_shape.is_some()) {
-            let total = comptime!(
-                self.static_shape
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .product::<u32>() as usize
-            );
-            total.runtime()
-        } else {
-            let mut total = 1u32;
-
-            #[unroll]
-            for p in 0..self.shape.len() {
-                total *= self.shape[p];
-            }
-
-            total as usize
-        }
+        let rank = self.shape.len().comptime();
+        self.shape
+            .fproduct(comptime!((0..rank).collect::<Vec<_>>()))
+            .fcast::<usize>()
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {

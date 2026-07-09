@@ -34,7 +34,8 @@ impl<Acc: Numeric> Tile<Acc> {
 
     /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it
     /// into the recursion. `consume_final` every region, since no later fill publishes
-    /// within an iteration.
+    /// within an iteration. A static walk unrolls, so every window offset folds to an
+    /// immediate (Metal does not unroll cubecl's runtime loops).
     pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -42,12 +43,25 @@ impl<Acc: Numeric> Tile<Acc> {
         space: Space,
     ) {
         let mut slot = Staging::new(lhs, rhs, comptime!(self.space.clone()));
-        for region in Walk::over(space) {
-            slot.fill(|s, pipe| {
-                pipe.fill(&mut s.0, &lhs.at(&region));
-                pipe.fill(&mut s.1, &rhs.at(&region));
-            });
-            slot.consume_final(|a, b| self.at(&region).mma(a, b));
+        if comptime!(
+            Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
+                && !self.space.stages_below()
+        ) {
+            for region in Walk::over(space).unrolled() {
+                slot.fill(|s, pipe| {
+                    pipe.fill(&mut s.0, &lhs.at(&region));
+                    pipe.fill(&mut s.1, &rhs.at(&region));
+                });
+                slot.consume_final(|a, b| self.at(&region).mma(a, b));
+            }
+        } else {
+            for region in Walk::over(space) {
+                slot.fill(|s, pipe| {
+                    pipe.fill(&mut s.0, &lhs.at(&region));
+                    pipe.fill(&mut s.1, &rhs.at(&region));
+                });
+                slot.consume_final(|a, b| self.at(&region).mma(a, b));
+            }
         }
     }
 
