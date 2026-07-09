@@ -45,9 +45,12 @@ impl Sync {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum Pipeline {
-    /// Synchronous element copy. `collective` → rendezvous on one `sync_cube` per phase; otherwise a
-    /// single unit fills its own slot with no collective at all.
-    Cube { collective: bool },
+    /// Synchronous cooperative element copy, rendezvoused on one `sync_cube` per phase.
+    /// The variant (not a flag) carries the choice, so the dispatch is comptime and the
+    /// rendezvous emits a bare barrier, never a branch-wrapped one.
+    Cube,
+    /// A single unit fills and reads its own slot: no collective at all.
+    Solo,
     /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase`
     /// parity, so the fill overlaps compute. TMA motivates it, but the barrier itself is
     /// delivery-agnostic; see [`Pipeline::fill`].
@@ -67,8 +70,8 @@ impl Pipeline {
     /// before any bulk copy, for [`Barrier`](Sync::Barrier); nothing to allocate otherwise.
     fn new(#[comptime] sync: Sync) -> Pipeline {
         match sync {
-            Sync::Solo => Pipeline::new_Cube(false),
-            Sync::Cube => Pipeline::new_Cube(true),
+            Sync::Solo => Pipeline::new_Solo(),
+            Sync::Cube => Pipeline::new_Cube(),
             Sync::Barrier => {
                 // full: one producer arrival; empty: one arrival per unit.
                 let full = Barrier::shared(1, UNIT_POS == 0);
@@ -96,7 +99,7 @@ impl Pipeline {
                 (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s),
                 _ => panic!("Pipeline::fill: unsupported kind pairing"),
             },
-            Pipeline::Cube { .. } => dst.copy_from(src),
+            Pipeline::Cube | Pipeline::Solo => dst.copy_from(src),
         }
     }
 }
@@ -124,11 +127,8 @@ impl<T: CubeType> Staging<T> {
     fn acquire_write(&self) {
         match &self.pipeline {
             Pipeline::Barrier { empty, phase, .. } => empty.wait_parity(*phase ^ 1),
-            Pipeline::Cube { collective } => {
-                if *collective {
-                    sync_cube();
-                }
-            }
+            Pipeline::Cube => sync_cube(),
+            Pipeline::Solo => {}
         }
     }
 
@@ -141,7 +141,7 @@ impl<T: CubeType> Staging<T> {
                     full.arrive();
                 }
             }
-            Pipeline::Cube { .. } => {}
+            Pipeline::Cube | Pipeline::Solo => {}
         }
     }
 
@@ -150,7 +150,7 @@ impl<T: CubeType> Staging<T> {
     fn acquire_read(&self) {
         match &self.pipeline {
             Pipeline::Barrier { full, phase, .. } => full.wait_parity(*phase),
-            Pipeline::Cube { .. } => {}
+            Pipeline::Cube | Pipeline::Solo => {}
         }
     }
 
@@ -162,7 +162,7 @@ impl<T: CubeType> Staging<T> {
                 empty.arrive();
                 *phase ^= 1;
             }
-            Pipeline::Cube { .. } => {}
+            Pipeline::Cube | Pipeline::Solo => {}
         }
     }
 
@@ -171,12 +171,8 @@ impl<T: CubeType> Staging<T> {
     /// [`consume_final`](Staging::consume_final).
     fn publish(&self) {
         match &self.pipeline {
-            Pipeline::Cube { collective } => {
-                if *collective {
-                    sync_cube();
-                }
-            }
-            Pipeline::Barrier { .. } => {}
+            Pipeline::Cube => sync_cube(),
+            Pipeline::Solo | Pipeline::Barrier { .. } => {}
         }
     }
 }
