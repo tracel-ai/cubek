@@ -5,7 +5,10 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Axis, Region, RegionExpand, Space, StaticRegion, instance_count, tiles_per_instance};
+use crate::{
+    Axis, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Region, RegionExpand, Space, instance_count,
+    tiles_per_instance,
+};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -26,6 +29,10 @@ pub struct Walk {
     steps: usize,
     #[cube(comptime)]
     space: Space,
+    /// Whether iterating this walk unrolls (the one codegen choice folding cannot
+    /// make): fragment outputs demand it, memory outputs prefer the compact loop.
+    #[cube(comptime)]
+    unroll: bool,
 }
 
 #[cube]
@@ -42,11 +49,23 @@ impl Walk {
         Walk::from_counts(comptime!(space.clone()), counts)
     }
 
+    /// [`over`](Walk::over) with `fastest` walked innermost, so each operand fragment
+    /// feeds a consecutive burst of executes (the legacy emission order, ~1.3% on
+    /// Metal). Static spaces only: there are no runtime sizes to permute.
+    pub fn over_fastest(#[comptime] space: Space, #[comptime] fastest: Axis) -> Walk {
+        let reordered = comptime!({
+            assert!(space.is_static(), "Walk::over_fastest: static spaces only");
+            let mut axes: Vec<Axis> = space.axes().filter(|&a| a != fastest).collect();
+            axes.push(fastest);
+            space.project(&axes)
+        });
+        Walk::over(Space::with_sizes(reordered, Sequence::new()))
+    }
+
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
     /// `Spatial` axis's hardware decode (invariant across the walk, so paid once here).
     fn from_counts(#[comptime] space: Space, grid: Sequence<usize>) -> Walk {
         let rank = comptime!(space.rank());
-        let mut steps = 1usize;
         let mut counts = Sequence::<usize>::new();
         let mut positions = Sequence::<usize>::new();
         let mut scales = Sequence::<usize>::new();
@@ -56,7 +75,6 @@ impl Walk {
             let axis = comptime!(space.axis_at(p));
             let dist = comptime!(space.partitioner().distribution(axis));
             let count = axis_count(*grid.index(p), dist);
-            steps *= count;
             counts.push(count);
 
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
@@ -87,12 +105,30 @@ impl Walk {
             }
         }
 
+        // Folded, not accumulated: a static walk's total stays a constant, so
+        // `#[unroll] for region in walk` can unroll it.
+        let steps = counts.fproduct(comptime!((0..rank).collect::<Vec<_>>()));
+
         Walk {
             counts,
             positions,
             scales,
             steps,
             space,
+            unroll: comptime!(false),
+        }
+    }
+
+    /// This walk, unrolled when iterated: each region's coordinates fold to comptime
+    /// constants (static spaces only; the trip count must be constant).
+    pub fn unrolled(self) -> Walk {
+        Walk {
+            counts: self.counts,
+            positions: self.positions,
+            scales: self.scales,
+            steps: self.steps,
+            space: comptime!(self.space.clone()),
+            unroll: comptime!(true),
         }
     }
 
@@ -108,46 +144,30 @@ impl Walk {
     }
 
     /// Unravel a runtime step `idx` to its per-axis coordinates: each axis's odometer
-    /// [`digit`](Walk::digit), [`fold`](Walk::fold)ed with its instance position.
+    /// [`digit`](Walk::digit), [`fold`](Walk::fold)ed with its instance position. A
+    /// constant `idx` (an unrolled walk's) folds through, so a static walk's regions
+    /// carry comptime coordinates and can select fragments.
     fn resolve(&self, idx: usize) -> CoordsDyn {
         let mut coords = CoordsDyn::new();
 
         #[unroll]
         for p in 0..comptime!(self.space.rank()) {
-            // A `TilesEach(1)` axis has no digit (comptime count 1): position alone.
-            let coord = if comptime!(self.space.single_tile_at(p)) {
-                *self.positions.index(p)
-            } else {
-                self.fold(self.digit(idx, p), p)
-            };
-            coords.push(coord as u32);
+            coords.push(self.fold(self.digit(idx, p), p).fcast::<u32>());
         }
         coords
     }
 
     /// The odometer digit of step `idx` along axis `p` (last axis fastest): divide off
-    /// the later axes' counts, keep the remainder of this one. Single-tile axes count
-    /// comptime 1, so only the rest weigh in — the division vanishes when none remain,
-    /// and the `%` drops when `idx` has no more significant digit (every earlier axis
-    /// single-tile).
+    /// the later axes' counts, keep the remainder of this one. Constant counts fold.
     fn digit(&self, idx: usize, #[comptime] p: usize) -> usize {
         let rank = comptime!(self.space.rank());
-        let quot = if comptime!(((p + 1)..rank).all(|e| self.space.single_tile_at(e))) {
-            idx
-        } else {
-            let mut weight = 1usize;
-            #[unroll]
-            for e in comptime!(p + 1)..rank {
-                if comptime!(!self.space.single_tile_at(e)) {
-                    weight *= *self.counts.index(e);
-                }
-            }
-            idx / weight
-        };
+        let quot = idx.fdiv(self.counts.fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())));
+        // `% count` is a no-op when `idx` has no more significant digit: a range fact,
+        // which folding (which only sees values) cannot know.
         if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
             quot
         } else {
-            quot % *self.counts.index(p)
+            quot.frem(*self.counts.index(p))
         }
     }
 
@@ -163,9 +183,9 @@ impl Walk {
         if comptime!(matches!(dist, Distribution::Sequential)) {
             digit
         } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-            digit + *self.positions.index(p) * *self.scales.index(p)
+            digit.fadd((*self.positions.index(p)).fmul(*self.scales.index(p)))
         } else {
-            digit * *self.scales.index(p) + *self.positions.index(p)
+            digit.fmul(*self.scales.index(p)).fadd(*self.positions.index(p))
         }
     }
 }
@@ -192,9 +212,16 @@ impl Iterable for WalkExpand {
     fn expand(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
         let start = 0usize.into_expand(scope);
         let total = self.__expand_total_method(scope);
-        RangeExpand::new(start, total).expand(scope, |scope, i| {
-            body(scope, self.__expand_region_method(scope, i));
-        });
+        let range = RangeExpand::new(start, total);
+        if self.unroll {
+            range.expand_unroll(scope, |scope, i| {
+                body(scope, self.__expand_region_method(scope, i));
+            });
+        } else {
+            range.expand(scope, |scope, i| {
+                body(scope, self.__expand_region_method(scope, i));
+            });
+        }
     }
 
     fn expand_unroll(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
@@ -203,49 +230,6 @@ impl Iterable for WalkExpand {
         RangeExpand::new(start, total).expand_unroll(scope, |scope, i| {
             body(scope, self.__expand_region_method(scope, i));
         });
-    }
-}
-
-/// [`Walk`]'s static sibling, for the register tier: fragments are comptime-indexed, so
-/// this odometer is host data and its loop unrolls where the runtime walk loops.
-/// `Static` axes only, no hardware folding; the level it walks is instance-owned wholesale.
-pub struct StaticWalk {
-    counts: Vec<usize>,
-    space: Space,
-}
-
-impl StaticWalk {
-    pub fn over(space: &Space) -> StaticWalk {
-        let counts = space.axes().map(|axis| space.count(axis)).collect();
-        StaticWalk {
-            counts,
-            space: space.clone(),
-        }
-    }
-
-    /// The walk over `space` with `fastest` walked innermost, so each operand fragment
-    /// feeds a consecutive burst of executes (the legacy emission order, ~1.3% on Metal).
-    pub fn over_fastest(space: &Space, fastest: Axis) -> StaticWalk {
-        let mut axes: Vec<Axis> = space.axes().filter(|&a| a != fastest).collect();
-        axes.push(fastest);
-        StaticWalk::over(&space.project(&axes))
-    }
-
-    pub fn total(&self) -> usize {
-        self.counts.iter().product()
-    }
-
-    /// The `i`th region, row-major (last axis fastest); the register walk's steps are
-    /// independent MMAs, so no [`WalkOrder`] plugs in.
-    pub fn region(&self, i: usize) -> StaticRegion {
-        let rank = self.space.rank();
-        let mut coords = vec![0; rank];
-        let mut rem = i;
-        for p in (0..rank).rev() {
-            coords[p] = rem % self.counts[p];
-            rem /= self.counts[p];
-        }
-        StaticRegion::new(coords, self.space.clone())
     }
 }
 

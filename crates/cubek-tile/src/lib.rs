@@ -1,6 +1,7 @@
 //! The axis-agnostic tile DSL engine
 #![allow(dead_code)]
 
+mod fold;
 mod layout;
 mod load;
 mod matmul;
@@ -16,6 +17,7 @@ mod view;
 
 // `Axis`/`MAX_AXES` and `ConcreteLayout` are the storage-layout vocabulary; clients reach them
 // through `cubek_tile::{Axis, ...}`.
+pub use fold::*;
 pub use layout::*;
 pub use load::*;
 pub use partitioner::*;

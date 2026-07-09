@@ -8,9 +8,9 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `Direct`: no staging, every read goes to where the operand lives. The static twin
-    /// steps with indexed `comptime!` because each unrolled copy stamps different host
-    /// data, which the runtime iterator sugar cannot carry.
+    /// `Direct`: no staging, every read goes to where the operand lives. A fragment
+    /// output demands the unrolled walk (its coordinates fold to constants, which
+    /// select fragments); a memory output keeps the compact runtime loop.
     pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -18,15 +18,12 @@ impl<Acc: Numeric> Tile<Acc> {
         space: Space,
     ) {
         if self.tile_kind.static_level(comptime!(self.space.clone())) {
-            let walk = comptime!(StaticWalk::over_fastest(
-                &Space::merge(&[&lhs.space, &rhs.space]),
-                self.space.axis_at(self.space.rank() - 2),
-            ));
-            #[unroll]
-            for i in 0..comptime!(walk.total()) {
-                let region = comptime!(walk.region(i));
-                self.at_static(&region)
-                    .mma(&lhs.at_static(&region), &rhs.at_static(&region));
+            let walk = Walk::over_fastest(
+                comptime!(Space::merge(&[&lhs.space, &rhs.space])),
+                comptime!(self.space.axis_at(self.space.rank() - 2)),
+            );
+            for region in walk.unrolled() {
+                self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
         } else {
             for region in Walk::over(space) {

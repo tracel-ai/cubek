@@ -23,8 +23,8 @@ pub enum TileKind<T: Numeric> {
     Smem(MemData<T>),
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
-    /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed; walked
-    /// statically ([`at_static`](Tile::at_static)).
+    /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed; only a
+    /// static walk's regions (constant coordinates) can select through it.
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Dormant: no launch-side constructor wires it yet.
@@ -208,34 +208,32 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
             }
-            // A resident fragment (or partition) passes through unchanged: a runtime
-            // region cannot select fragments. At the partition level, `at_static` selects.
+            // A resident fragment passes through unchanged (nothing to window).
             TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
-            TileKind::CmmaPartition(p) => TileKind::new_CmmaPartition(p.clone()),
+            // A partition *selects* its `(mi, ni)` fragment at its partition level —
+            // which needs comptime coordinates, so the walk over it must be static
+            // (a static walk's coordinates fold to constants) — and passes through
+            // whole anywhere above it.
+            TileKind::CmmaPartition(p) => match comptime!(partition_level(&self.space)) {
+                None => TileKind::new_CmmaPartition(p.clone()),
+                Some(_) => {
+                    let rank = comptime!(self.space.rank());
+                    let mi = region.coord(comptime!(self.space.axis_at(rank - 2))).constant();
+                    let ni = region.coord(comptime!(self.space.axis_at(rank - 1))).constant();
+                    let sel = comptime!(mi.zip(ni));
+                    comptime!(assert!(
+                        sel.is_some(),
+                        "Tile::at: fragments cannot be runtime-indexed — the walk over a \
+                         partition level must be static"
+                    ));
+                    let (mi, ni) = comptime!(sel.unwrap());
+                    TileKind::new_Cmma(p.at(comptime!(mi as usize), comptime!(ni as usize)))
+                }
+            },
         };
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
-        }
-    }
-
-    /// [`at`](Tile::at) for a static region: the register tier's windowing. Memory
-    /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
-    /// partition *selects* its `(mi, ni)` fragment, which only static coordinates can do.
-    pub fn at_static(&self, #[comptime] region: &StaticRegion) -> Tile<T> {
-        match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
-                self.at(&Region::from_static(region))
-            }
-            TileKind::CmmaPartition(p) => {
-                let mi = comptime!(region.coord(self.space.axis_at(self.space.rank() - 2)));
-                let ni = comptime!(region.coord(self.space.axis_at(self.space.rank() - 1)));
-                Tile::<T> {
-                    tile_kind: TileKind::new_Cmma(p.at(mi, ni)),
-                    space: comptime!(self.space.divide()),
-                }
-            }
-            TileKind::Cmma(_) => panic!("Tile::at_static: a single fragment has no regions"),
         }
     }
 

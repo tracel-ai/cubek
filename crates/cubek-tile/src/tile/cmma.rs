@@ -153,8 +153,8 @@ impl<T: Numeric> CmmaPartition<T> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Descend to the `(mi, ni)` fragment's final window: an instance level hands this
-    /// instance a single region; the partition level takes the static region at the
-    /// partition coordinates.
+    /// instance a single region; the partition level takes the region at the
+    /// partition coordinates (comptime, so it selects).
     fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
         let space = comptime!(self.space.clone());
         let sub = match comptime!(partition_level(&space)) {
@@ -162,10 +162,7 @@ impl<T: Numeric> Tile<T> {
                 let walk = Walk::over(self.runtime_space());
                 self.at(&walk.region(0))
             }
-            Some(_) => {
-                let region = comptime!(StaticRegion::trailing(&space, mi, ni));
-                self.at_static(&region)
-            }
+            Some(_) => self.at(&Region::trailing(space, mi, ni)),
         };
         match comptime!(sub.space.partitioner()) {
             Partitioner::Final(_) => sub,
