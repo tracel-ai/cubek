@@ -220,9 +220,11 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
         // Explicit override wins; a Launcher-minted source derives the check from overhang, and
         // the free-standing path stays conservatively checked.
         let check = check.unwrap_or_else(|| match concrete {
-            Some(concrete) => {
-                (subspace.iter().chain(batch_axes)).any(|&axis| concrete.overhangs(axis))
-            }
+            Some(concrete) => (subspace.iter().chain(batch_axes))
+                // A batch axis absent from the space is a broadcast omission (its size-1
+                // dim drops out below): nothing to overhang.
+                .filter(|&&axis| concrete.contains(axis))
+                .any(|&axis| concrete.overhangs(axis)),
             None => true,
         });
         // A masked access counts its length in lines and would clip valid rows, so a
