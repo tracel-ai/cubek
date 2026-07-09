@@ -191,8 +191,8 @@ fn rfft_kernel<F: Float>(
         let j = bit_reverse(i, log2_n);
         let active = i < signal_len as usize;
         let src = select(active, i, 0);
-        shared_re[j] = select(active, signal_view.read_checked(src), F::new(0.0));
-        shared_im[j] = F::new(0.0);
+        shared_re[j] = select(active, signal_view.read_checked(src), F::new(0.0_f32));
+        shared_im[j] = F::new(0.0_f32);
         i += threads_per_cube;
     }
     sync_cube();

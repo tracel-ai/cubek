@@ -12,6 +12,10 @@ impl Interpolate for Bilinear {
 
     fn compute_weight<EA: Float>(x: EA) -> EA {
         let abs_x = x.abs();
-        select(abs_x < EA::new(1.0), EA::new(1.0) - abs_x, EA::new(0.0))
+        select(
+            abs_x < EA::new(1.0_f32),
+            EA::new(1.0_f32) - abs_x,
+            EA::new(0.0_f32),
+        )
     }
 }
