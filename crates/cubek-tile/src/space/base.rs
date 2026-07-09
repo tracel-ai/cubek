@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, MAX_AXES, Partitioner};
+use crate::{Axis, Leaf, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -196,7 +196,7 @@ impl Space {
     pub fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
-            partitioner: Partitioner::Final,
+            partitioner: Partitioner::Final(Leaf::Register),
         }
     }
 
@@ -230,6 +230,13 @@ impl Space {
     /// the chain (see [`Partitioner::append`]).
     pub fn with_partitioner(mut self, partitioner: Partitioner) -> Self {
         self.partitioner = self.partitioner.append(partitioner);
+        self
+    }
+
+    /// Set the chain-end [`Leaf`] after all levels are stacked (appending a level resets
+    /// it); the public surface is the order-safe [`Tiling::leaf`](crate::LeveledTiling::leaf).
+    pub(crate) fn with_leaf(mut self, leaf: Leaf) -> Self {
+        self.partitioner = self.partitioner.with_leaf(leaf);
         self
     }
 
@@ -305,7 +312,7 @@ impl Space {
             .map(|p| &p.partitioner)
             .find(|p| !p.is_final())
             .cloned()
-            .unwrap_or(Partitioner::Final);
+            .unwrap_or(Partitioner::Final(Leaf::Register));
 
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
@@ -355,6 +362,17 @@ impl Space {
     /// The axes in this space but not in `output`, i.e. those contracted.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
+    }
+
+    /// The single axis this operand contracts against `output`:
+    /// [`contracting`](Space::contracting) with the one-axis contract asserted.
+    pub fn contraction(&self, output: &Space) -> Axis {
+        let contracted = self.contracting(output);
+        assert!(
+            contracted.len() == 1,
+            "Space::contraction: exactly one contracted axis expected"
+        );
+        contracted[0]
     }
 
     pub fn axes(&self) -> Axes<'_> {

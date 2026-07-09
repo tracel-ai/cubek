@@ -27,21 +27,11 @@
 use std::fmt::Display;
 
 use cubecl::Runtime;
-use cubek_tile::Axis;
 
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
     routines::{BlueprintStrategy, DeviceSettings, Routine},
 };
-
-// Matmul axes
-pub(crate) const M: Axis = Axis(0);
-pub(crate) const N: Axis = Axis(1);
-pub(crate) const K: Axis = Axis(2);
-/// The axis for output batch dimension `i` (outermost is `0`).
-pub(crate) fn batch_axis(i: usize) -> Axis {
-    Axis(3 + i as u8)
-}
 
 /// L1 data-cache budget the blocking targets, in bytes. Conservative constant until
 /// the runtime exposes per-core cache sizes.

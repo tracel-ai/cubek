@@ -2,18 +2,15 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
 
 use crate::{
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
     routines::{
-        BlueprintStrategy, DeviceSettings,
-        cpu_gemm::{
-            base::{CpuGemmRoutine, K, M, N, batch_axis},
-            kernel::cpu_gemm_kernel,
-        },
+        BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
+        cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
     },
 };
 
@@ -175,7 +172,7 @@ pub fn launch_ref<R: Runtime>(
                 .axis(N, Cut::plane(leaf.n))
                 .axis(K, Cut::sequential(leaf.k))
         })
-        .build();
+        .leaf(Leaf::Register);
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
     // shape family), overhang checks derived per operand — all inside the launcher.

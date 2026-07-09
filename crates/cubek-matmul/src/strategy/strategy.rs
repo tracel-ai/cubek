@@ -34,6 +34,7 @@ use crate::{
             specialized::{SpecializedAlgorithm, SpecializedStrategy},
         },
         cpu_gemm::{self, CpuGemmRoutine, WithLayout},
+        cyclic_cmma::{self, CyclicCmmaRoutine},
         gemm::{GemmRoutine, launch as launch_gemm},
         gemv_unit_perpendicular::{
             GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
@@ -189,6 +190,8 @@ pub enum Strategy {
     GemvUnitPerpendicular(BlueprintStrategy<(), GemvUnitPerpendicularRoutine>),
     Gemm(BlueprintStrategy<(), GemmRoutine>),
     CpuGemm(BlueprintStrategy<(), CpuGemmRoutine>),
+    /// The simple cyclic cmma matmul on the tile DSL (vs the legacy `SimpleCyclicCmma`).
+    CyclicCmma(BlueprintStrategy<(), CyclicCmmaRoutine>),
     Naive,
     #[default]
     Auto,
@@ -246,6 +249,7 @@ impl Display for Strategy {
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
             Strategy::Gemm(s) => write!(f, "gemm{}", s),
             Strategy::CpuGemm(s) => write!(f, "cpu_gemm{}", s),
+            Strategy::CyclicCmma(s) => write!(f, "cyclic_cmma{}", s),
         }
     }
 }
@@ -550,6 +554,14 @@ impl Strategy {
                 WithLayout::strided_input(into_contiguous_if_highly_permuted(client, lhs)?)?,
                 WithLayout::strided_input(into_contiguous_if_highly_permuted(client, rhs)?)?,
                 WithLayout::strided_output(out)?,
+                strategy,
+                dtypes,
+            ),
+            Strategy::CyclicCmma(strategy) => cyclic_cmma::launch_ref(
+                client,
+                into_contiguous_if_highly_permuted(client, lhs)?,
+                into_contiguous_if_highly_permuted(client, rhs)?,
+                out,
                 strategy,
                 dtypes,
             ),

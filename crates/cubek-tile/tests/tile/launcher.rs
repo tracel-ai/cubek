@@ -1,7 +1,7 @@
 //! Unit tests for [`Launcher`]: geometry read off the concrete space, kernel space dynamic.
 
 use cubecl::{TestRuntime, prelude::*};
-use cubek_tile::{Axis, CubeAxis, Cut, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -79,7 +79,7 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
                 .axis(N, Cut::plane(8))
                 .axis(K, Cut::sequential(4))
         })
-        .build()
+        .leaf(Leaf::Register)
 }
 
 #[test]

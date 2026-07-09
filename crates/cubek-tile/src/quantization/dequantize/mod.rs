@@ -11,7 +11,7 @@ impl<O: Numeric> Tile<O> {
     /// threaded from the kernel (unused on a plain input). Per-tensor native only.
     pub fn dequantize<I: Numeric>(&mut self, input: &Tile<O>) {
         match comptime!(self.space.partitioner()) {
-            Partitioner::Final => dequantize_leaf::<I, O>(input, self),
+            Partitioner::Final(_) => dequantize_leaf::<I, O>(input, self),
             Partitioner::Level(level) => match level.schedule() {
                 Schedule::Direct => dequantize_direct::<I, O>(input, self),
                 _ => {

@@ -1,11 +1,13 @@
 //! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
 //! then one [`level`](LeveledTiling::level) per decomposition: its walk order, schedule,
 //! and the per-axis [`Cut`]. Each [`level`](LeveledTiling::level) maps 1:1 to the
-//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes — no transpose.
+//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes — no transpose. The
+//! [`leaf`](LeveledTiling::leaf) is the terminal level: it names the contraction
+//! instruction and builds, so nothing stacks after it.
 
 use crate::{Axis, ByAxis, Space};
 
-use super::{CubeAxis, Distribution, Partitioner, Schedule, WalkOrder};
+use super::{CubeAxis, Distribution, Leaf, Partitioner, Schedule, WalkOrder};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
 /// tiles out. Constructors name the common distributions; [`Cut::new`] takes any.
@@ -69,7 +71,7 @@ impl Default for Tiling {
 
 /// Builds a [`Space`] one level at a time. Add levels with [`level`](LeveledTiling::level),
 /// each configured by a closure that hangs the per-axis [`Cut`]s off a [`LevelBuilder`],
-/// then [`build`](LeveledTiling::build).
+/// then end the chain with [`leaf`](LeveledTiling::leaf).
 pub struct LeveledTiling {
     extents: Vec<(Axis, usize)>,
     levels: Vec<LevelSpec>,
@@ -112,7 +114,9 @@ impl LeveledTiling {
         });
     }
 
-    pub fn build(self) -> Space {
+    /// The terminal level: the [`Leaf`] instruction the innermost tile contracts with.
+    /// Builds the [`Space`], so no level can stack after the leaf.
+    pub fn leaf(self, leaf: Leaf) -> Space {
         let mut space = Space::new(&self.extents);
         for level in &self.levels {
             let cut = |axis| {
@@ -149,7 +153,7 @@ impl LeveledTiling {
             };
             space = space.with_partitioner(partitioner);
         }
-        space
+        space.with_leaf(leaf)
     }
 }
 

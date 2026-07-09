@@ -1,3 +1,4 @@
+mod addressing;
 mod launcher;
 mod matmul;
 mod recursive;

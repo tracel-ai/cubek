@@ -9,7 +9,7 @@ impl<O: Numeric> Tile<O> {
     /// the kernel (unused on a plain input).
     pub fn add_scalar<I: Numeric, S: Scalar>(&mut self, input: &Tile<O>, scalar: S) {
         match comptime!(self.space.partitioner()) {
-            Partitioner::Final => add_leaf::<I, S, O>(input, scalar, self),
+            Partitioner::Final(_) => add_leaf::<I, S, O>(input, scalar, self),
             Partitioner::Level(level) => match level.schedule() {
                 Schedule::Direct => add_direct::<I, S, O>(input, scalar, self),
                 _ => {

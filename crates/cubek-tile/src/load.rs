@@ -19,15 +19,13 @@ impl From<&ConcreteLayout> for Storage {
 }
 
 impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
-    /// Start describing a strided tile kernel argument sourced from `binding` — a [`TileSource`]
-    /// builder. Set the two required parts — the [`space`](TileSource::space) it projects from and the
-    /// [`subspace`](TileSource::subspace) block it iterates (`build` won't compile until both are set) —
-    /// then optionally outer [`batches`](TileSource::batches), storage-tiling
-    /// [`levels`](TileSource::levels), a [`vectorize`](TileSource::vectorize) line size, or an explicit
-    /// bounds-check ([`checked`](TileSource::checked)). Optional defaults are the safe ones — scalar,
-    /// batchless, plain-strided, checked (derived from the concrete space when minted by a
-    /// [`Launcher`](crate::Launcher)) — so a forgotten *optional* setter degrades performance,
-    /// never correctness.
+    /// Start describing a strided tile kernel argument sourced from `binding`: a
+    /// [`TileSource`] builder. Set the required [`space`](TileSource::space) and
+    /// [`subspace`](TileSource::subspace) (`build` won't compile until both are set), then
+    /// optionally [`batches`](TileSource::batches), [`levels`](TileSource::levels),
+    /// [`vectorize`](TileSource::vectorize), or [`checked`](TileSource::checked).
+    /// Optional defaults are the safe ones, so a forgotten optional setter degrades
+    /// performance, never correctness.
     pub fn source<'a>(binding: TensorBinding<R>) -> TileSource<'a, Unset, Unset, E, R> {
         TileSource {
             data: TileSourceData {
@@ -45,12 +43,10 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         }
     }
 
-    /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned axes
-    /// ([`distinct_axes`](ConcreteLayout::distinct_axes)) and the tiling [`Storage`] from the layout,
-    /// and project `space` onto those axes. The innermost (`cols`) axis is served as `Vector<E, v>`
-    /// lines — the re-lining happens in-kernel from the comptime `vector_size`, so the scalar
-    /// buffer's shape/strides pass through untouched. The matmul-agnostic loader — the `layout`'s axes are in
-    /// the binding's dim order — so a client just builds the operand's layout and hands it here.
+    /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned
+    /// axes and the tiling [`Storage`] from the layout, and project `space` onto those
+    /// axes. The innermost axis is served as `Vector<E, v>` lines, re-lined in-kernel so
+    /// the scalar buffer's shape/strides pass through untouched.
     pub fn from_concrete(
         binding: TensorBinding<R>,
         layout: &ConcreteLayout,
@@ -114,14 +110,9 @@ struct TileSourceData<'a, E, R: Runtime> {
     _ty: PhantomData<E>,
 }
 
-/// Typestate builder for a strided tile kernel argument, started with [`TileArgLaunch::source`]. The
-/// argument occupies a subspace of the global space, named by two complementary axis groups: the
-/// inner [`subspace`](Self::subspace) block (the tile it iterates — its trailing buffer dims,
-/// storage-tiled so labels repeat level-major: dim `i` is `subspace[i % subspace.len()]`) and the
-/// outer [`batches`](Self::batches) (the output's batch axes, right-aligned to its leading dims,
-/// size-1 dims dropped — numpy broadcast). The binding is set at construction; the `Sp`/`Sub` markers track the two
-/// remaining required setters, so [`build`](Self::build) exists only once both [`space`](Self::space)
-/// and [`subspace`](Self::subspace) are [`Set`]. Borrows the axis slices + `space` for the chain.
+/// Typestate builder for a strided tile kernel argument, started with
+/// [`TileArgLaunch::source`]. The `Sp`/`Sub` markers make [`build`](Self::build) exist
+/// only once both required setters are [`Set`].
 pub struct TileSource<'a, Sp, Sub, E, R: Runtime> {
     data: TileSourceData<'a, E, R>,
     _state: PhantomData<(Sp, Sub)>,
@@ -223,9 +214,11 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
         // Explicit override wins; a Launcher-minted source derives the check from overhang, and
         // the free-standing path stays conservatively checked.
         let check = check.unwrap_or_else(|| match concrete {
-            Some(concrete) => {
-                (subspace.iter().chain(batch_axes)).any(|&axis| concrete.overhangs(axis))
-            }
+            Some(concrete) => (subspace.iter().chain(batch_axes))
+                // A batch axis absent from the space is a broadcast omission (its size-1
+                // dim drops out below): nothing to overhang.
+                .filter(|&&axis| concrete.contains(axis))
+                .any(|&axis| concrete.overhangs(axis)),
             None => true,
         });
         // A masked access counts its length in lines and would clip valid rows, so a

@@ -1,28 +1,21 @@
-//! [`Staging`]: a matmul-agnostic double-buffer slot. It owns a payload `T` (for matmul, a
-//! `(Tile<Lhs>, Tile<Rhs>)` tuple) and a [`Pipeline`] sequencing the payload's fill against its read.
-//! `fill`/`consume` each acquire the slot, run a closure over the payload, then release: the caller
-//! never makes the rendezvous call, and no raw barrier escapes.
+//! [`Staging`]: a matmul-agnostic staging slot, a payload `T` plus a [`Pipeline`]
+//! sequencing its fill against its read. The [`Barrier`](Sync::Barrier) strategy mirrors
+//! cubek-matmul's `specialized/matmul.rs`; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo)
+//! are degenerate cases.
 //!
-//! The [`Barrier`](Sync::Barrier) strategy is the reference design (mirrors cubek-matmul's
-//! `specialized/matmul.rs`): a `full`/`empty` mbarrier pair with a `phase` parity, producer and
-//! consumer decoupled so a hardware bulk copy overlaps compute. `write` waits `empty` (WAR), the
-//! fill pushes an async copy onto `full`, `write` arrives `full`; `read` waits `full` (RAW), the
-//! body reads, `read` arrives `empty` and flips the phase. [`Cube`](Sync::Cube) (strided, one
-//! `sync_cube`) and [`Solo`](Sync::Solo) (single unit, no collective) are degenerate cases.
-//!
-//! A `Guard` with `Drop` would be the natural spelling, but a `Drop` can't emit a barrier op in
-//! cubecl (it never receives a `Scope`), so the release is emitted by the wrapper right after the
-//! closure body. And because `#[cube]` rejects `impl Trait` kernel args, `fill`/`consume` are
-//! hand-written expand methods (mirroring `ComptimeOption::map`) delegating to the [`Pipeline`].
+//! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
+//! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Tile, TileExpand};
+use crate::{
+    CmmaPartition, MemData, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
+};
 
-/// How a slot rendezvouses its fill against its read. Comptime — fixed at construction from the
-/// operands' delivery, never inferred at the call site.
+/// How a slot rendezvouses its fill against its read; fixed comptime at construction
+/// from the operands' delivery.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sync {
     /// One unit fills and reads its own slot: no collective (single-plane / CPU).
@@ -47,20 +40,17 @@ impl Sync {
     }
 }
 
-/// The rendezvous for one slot, and every barrier it owns. Only [`Barrier`](Pipeline::Barrier) carries
-/// an mbarrier or a phase — [`Cube`](Pipeline::Cube) carries just the comptime flag distinguishing a
-/// `sync_cube` fill from a lone-unit one. The acquire/release operations live on [`Staging`] (matched
-/// off `&self.pipeline`, the way `Tile` operations match off its `tile_kind`); [`fill`](Pipeline::fill)
-/// is the one op a `write` body reaches for directly.
+/// The rendezvous for one slot, and every barrier it owns. The acquire/release operations live
+/// on [`Staging`]; [`fill`](Pipeline::fill) is the one op a `write` body reaches for directly.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum Pipeline {
     /// Synchronous element copy. `collective` → rendezvous on one `sync_cube` per phase; otherwise a
     /// single unit fills its own slot with no collective at all.
     Cube { collective: bool },
-    /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase` parity, so
-    /// the fill overlaps compute. TMA is the fill that motivates it (the bulk copy lands the `full`
-    /// transaction), but the barrier itself is delivery-agnostic — see [`Tile::stage_from`].
+    /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase`
+    /// parity, so the fill overlaps compute. TMA motivates it, but the barrier itself is
+    /// delivery-agnostic; see [`Pipeline::fill`].
     Barrier {
         /// Producer→consumer (one producer arrival): flips once the fill's transaction bytes land.
         full: Shared<Barrier>,
@@ -90,12 +80,22 @@ impl Pipeline {
         }
     }
 
-    /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot stages
-    /// under its `full` mbarrier ([`stage_from`](Tile::stage_from), which itself picks TMA vs a plain
-    /// copy off the source); a `Cube` slot is a plain element [`copy_from`](Tile::copy_from).
+    /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
+    /// stages under its `full` mbarrier; a `Cube` slot is a plain blocking
+    /// [`copy_from`](Tile::copy_from).
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         match self {
-            Pipeline::Barrier { full, .. } => dst.stage_from(src, full),
+            Pipeline::Barrier { full, .. } => match (&mut dst.tile_kind, &src.tile_kind) {
+                (TileKind::Smem(d), TileKind::TmaGmem(s)) => {
+                    if UNIT_POS == 0 {
+                        full.expect_tx(d.size_bytes());
+                    }
+                    s.stage_into(d, full);
+                }
+                // A strided source under a barrier is a plain synchronous copy.
+                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s),
+                _ => panic!("Pipeline::fill: unsupported kind pairing"),
+            },
             Pipeline::Cube { .. } => dst.copy_from(src),
         }
     }
@@ -165,21 +165,53 @@ impl<T: CubeType> Staging<T> {
             Pipeline::Cube { .. } => {}
         }
     }
+
+    /// Publish this slot's last fill when no successor fill's rendezvous will (the walk's final
+    /// regions). Only a collective `Cube` slot needs it; reached only through
+    /// [`consume_final`](Staging::consume_final).
+    fn publish(&self) {
+        match &self.pipeline {
+            Pipeline::Cube { collective } => {
+                if *collective {
+                    sync_cube();
+                }
+            }
+            Pipeline::Barrier { .. } => {}
+        }
+    }
 }
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build a double-buffer slot staging the gmem operands `lhs`/`rhs` into fresh shared memory.
-    /// The [`Sync`] strategy is deduced from the operands' delivery — both TMA sources → async
-    /// `Barrier`, otherwise strided `Cube`; mixed delivery is rejected at comptime. Each smem buffer
-    /// is sized from its operand (row-major over the level's divide, at the operand's physical width,
-    /// so the scalar slice holds `tile_size * width`).
-    pub fn new(lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Build a slot staging one region of the operands `lhs`/`rhs`. When the level below
+    /// `out` is the fragment grid (cmma leaf), the operands stage into plane-private
+    /// register partitions ([`Solo`](Sync::Solo)); otherwise fresh shared memory, with
+    /// [`Sync`] deduced from the operands' delivery.
+    pub fn new(
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] out: Space,
+    ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_tma = lhs.is_tma();
         let rhs_tma = rhs.is_tma();
-        let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
-
-        Staging::wrap((lhs.smem_like(), rhs.smem_like()), Pipeline::new(sync))
+        let register = comptime!(
+            out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
+        );
+        if register {
+            comptime!(assert!(
+                !lhs_tma && !rhs_tma,
+                "Staging: a TMA source cannot stage into registers"
+            ));
+            let a = CmmaPartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
+            let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
+            Staging::wrap((a, b), Pipeline::new(Sync::Solo))
+        } else {
+            let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
+            Staging::wrap(
+                (MemData::smem_like(lhs), MemData::smem_like(rhs)),
+                Pipeline::new(sync),
+            )
+        }
     }
 }
 
@@ -188,9 +220,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
 // inference can't resolve the projection `&mut T::ExpandType` through a generic `T`, but resolves the
 // spelled-out tiles fine.
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Producer: wait the slot is free, run `fill` over its two staged buffers, then publish. `fill`
-    /// gets the buffers and the slot's [`Pipeline`]; call [`Pipeline::fill`] per operand and one body
-    /// serves every [`Sync`]. See [`StagingExpand::__expand_fill_method`].
+    /// Producer: wait the slot is free, run `fill` over the staged buffers and the slot's
+    /// [`Pipeline`], then publish. See [`StagingExpand::__expand_fill_method`].
     pub fn fill(&mut self, _fill: impl FnOnce(&mut (Tile<Lhs>, Tile<Rhs>), &Pipeline)) {
         unexpanded!()
     }
@@ -198,6 +229,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
     /// See [`StagingExpand::__expand_consume_method`].
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+        unexpanded!()
+    }
+
+    /// Consumer for a fill no later fill will publish (the walk's final regions): publish
+    /// the slot first, then consume. See [`StagingExpand::__expand_consume_final_method`].
+    pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
 }
@@ -219,5 +256,13 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.0, &self.data.1);
         self.__expand_release_read_method(scope);
+    }
+
+    pub fn __expand_consume_final_method<F>(&mut self, scope: &Scope, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+    {
+        self.__expand_publish_method(scope);
+        self.__expand_consume_method(scope, compute);
     }
 }

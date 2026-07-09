@@ -4,12 +4,10 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-/// Fully unroll the `mr × nr` register block only up to this many cells. Past it the
-/// load/store loops run at runtime: a larger block (the heuristic sizes tiles for L1, not
-/// registers) would inline hundreds of cells into one straight chain, overflowing the
-/// optimizer's recursive block pass. An *edge-masked* block never fully unrolls regardless
-/// of size — each guarded load/store is its own CFG branch, so `mr × nr` of them in a chain
-/// blow the recursive passes even well under this cap (see [`mma_register`]).
+/// Fully unroll the `mr × nr` register block only up to this many cells; past it the
+/// load/store loops run at runtime, since hundreds of inlined cells overflow the
+/// optimizer's recursive block pass. An *edge-masked* block never fully unrolls
+/// regardless of size: each guarded access is its own CFG branch (see [`mma_register`]).
 const UNROLL_BLOCK: usize = 64;
 
 /// Run the register microkernel over each batch matrix. `mr × nr` are the accumulator's

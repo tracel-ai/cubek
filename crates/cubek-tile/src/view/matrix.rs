@@ -65,20 +65,6 @@ impl Layout for BatchMatrix {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The product of the leading (batch) extents. Width-invariant, so it reads the shape at a
-    /// `Const<1>` regroup.
-    pub fn matrix_count(&self) -> usize {
-        let shape = self.view::<Const<1>>().shape();
-        let mut count = 1;
-
-        #[unroll]
-        for p in 0..comptime!(self.space.rank() - 2) {
-            count *= shape[p];
-        }
-
-        count as usize
-    }
-
     /// The leading axes are pinned to `i` unraveled over their extents. Only the (width-invariant)
     /// leading shape is read, so a `Const<1>` regroup suffices.
     fn batch_matrix(&self, i: usize) -> BatchMatrix {
@@ -110,7 +96,9 @@ impl<T: Numeric> Tile<T> {
         let layout = self.batch_matrix(i);
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.masked::<W>(layout),
-            TileKind::Cmma(_) => panic!("Tile::matrix: a cmma fragment has no memory view"),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("Tile::matrix: a cmma fragment has no memory view")
+            }
             TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
         }
     }
@@ -119,20 +107,10 @@ impl<T: Numeric> Tile<T> {
         let layout = self.batch_matrix(i);
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.masked_mut::<W>(layout),
-            TileKind::Cmma(_) => panic!("Tile::matrix_mut: a cmma fragment has no memory view"),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("Tile::matrix_mut: a cmma fragment has no memory view")
+            }
             TileKind::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
-        }
-    }
-}
-
-#[cube]
-pub fn copy_2d<T: CubePrimitive>(dst: &mut MatrixViewMut<'_, T>, src: &MatrixView<'_, T>) {
-    let (h, w) = src.shape();
-    for i in 0..h {
-        for j in 0..w {
-            // `src` zeroes reads past its logical bound (the partial-tile overhang); the
-            // staged buffer is unchecked, so the full padded cell is still written.
-            dst.write((i, j), src.read((i, j)));
         }
     }
 }

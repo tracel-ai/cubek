@@ -3,12 +3,9 @@ use cubecl::{
     std::tensor::{View, ViewMut, layout::Coordinates},
 };
 
-/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some
-/// [`Layout`](cubecl::std::tensor::layout::Layout) (a 2-D [`BatchMatrix`] or a 1-D [`FlatLayout`])
-/// plus its own comptime bounds-check flag, so the
-/// leaf reads it without being asked. `check` zeroes reads / skips writes past the operand's
-/// logical bound (the partial-tile overhang); `false` is the unchecked fast path. The coordinate
-/// type `C` is whatever the layout exposes — `Coords2d` for a matrix, `Coords1d` for a flat scan.
+/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some layout plus
+/// its own comptime `check` flag, so the leaf zeroes reads / skips writes past the
+/// partial-tile overhang; `false` is the unchecked fast path.
 #[derive(CubeType)]
 pub struct MaskedView<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: View<'a, T, C>,
@@ -26,10 +23,8 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
         if comptime!(self.check) {
             self.view.read_checked(pos)
         } else {
-            // `check == false` means the launch proved this access in-bounds, so the inner
-            // view's memory-safety index clamp (`index.min(len)`) is redundant. Dropping it
-            // via `read_unchecked` removes a per-read clamp from the hot leaf loop and lets the
-            // address strength-reduce.
+            // `check == false` means the launch proved this access in-bounds; dropping
+            // the inner view's redundant index clamp speeds up the hot leaf loop.
             self.view.read_unchecked(pos)
         }
     }
