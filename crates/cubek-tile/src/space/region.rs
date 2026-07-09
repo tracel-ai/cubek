@@ -17,8 +17,14 @@ impl Region {
         Region { coords, space }
     }
 
+    /// The coordinate along `axis`; `0` when the axis is absent (an omitted axis is
+    /// not walked — the tile spans all of it, mirroring broadcast by omission).
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
-        self.coords[comptime!(self.space.position(axis))] as usize
+        if comptime!(self.space.contains(axis)) {
+            self.coords[comptime!(self.space.position(axis))] as usize
+        } else {
+            0usize.runtime()
+        }
     }
 
     /// The runtime form of a static region. Memory windowing is coordinate-kind-agnostic,

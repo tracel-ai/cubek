@@ -6,7 +6,6 @@
 use cubecl::prelude::*;
 
 use super::instruction::mma_leaf;
-use super::schedule::contracted_extent;
 use crate::*;
 
 /// Enter register residency for `out` and run its contraction there: the recursion
@@ -19,7 +18,11 @@ fn mma_resident<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
 ) {
-    let k = comptime!(contracted_extent(&lhs.space, &out.space));
+    let k = comptime!(
+        lhs.space
+            .final_space()
+            .extent(lhs.space.contraction(&out.space))
+    );
     let mut acc = out.promote(k);
     acc.contract(out, |frags| frags.mma(lhs, rhs));
 }

@@ -104,10 +104,11 @@ pub fn launch_ref<R: Runtime>(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // Three levels: the cube grid whose double-buffered walk rotates `stage_k`-deep smem
+    // Four levels: the cube grid whose double-buffered walk rotates `stage_k`-deep smem
     // stages along `K` (filled cooperatively); the stage split one partition per plane;
-    // the partition level, Staged at the register tier (operand fragments staged per
-    // contraction step, resident accumulator).
+    // the contraction-step walk that stages each step's operand fragments (`Staged`, the
+    // register tier — resident accumulator passes through); the fragment grid the step
+    // contracts (`Direct`, walked statically).
     let space = Tiling::new()
         .extents(&extents)
         .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
@@ -123,6 +124,12 @@ pub fn launch_ref<R: Runtime>(
                 .axis(K, Cut::sequential(stage_k))
         })
         .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axes(&batch_axes, Cut::sequential(1))
+                .axis(M, Cut::sequential(c.m * i.m))
+                .axis(N, Cut::sequential(c.n * i.n))
+                .axis(K, Cut::sequential(i.k))
+        })
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(i.m))
                 .axis(N, Cut::sequential(i.n))

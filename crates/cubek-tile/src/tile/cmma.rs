@@ -6,7 +6,6 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
-    std::tensor::layout::CoordsDyn,
 };
 
 use crate::*;
@@ -74,40 +73,36 @@ impl<T: Numeric> CmmaPartition<T> {
         }
     }
 
-    /// One contraction step of the memory `operand` staged into a partition tile — the
-    /// register tier's stage fill. One fragment per grid tile of the operand's trailing
-    /// two axes; the `contracted` axis stages a single step, positioned at `ki`.
-    /// `m`/`n`/`k` are the whole MMA instruction shape (the alloc needs the full triple
-    /// whatever the operand's role).
-    pub(crate) fn stage(
-        operand: &Tile<T>,
-        #[comptime] ident: MatrixIdent,
-        #[comptime] m: usize,
-        #[comptime] n: usize,
-        #[comptime] k: usize,
-        #[comptime] contracted: Axis,
-        ki: usize,
-    ) -> Tile<T> {
-        let space = comptime!(operand.space.clone());
-        let a0 = comptime!(space.axis_at(space.rank() - 2));
-        let a1 = comptime!(space.axis_at(space.rank() - 1));
-        let t0 = comptime!(if a0 == contracted { 1 } else { space.count(a0) });
-        let t1 = comptime!(if a1 == contracted { 1 } else { space.count(a1) });
+    /// The staging store for one region of an operand under `out`'s contraction: a
+    /// partition tile mirroring the region's fragment grid, fragments uninitialized —
+    /// `smem_like`'s register sibling for operands; [`copy_from`](Tile::copy_from) fills
+    /// it. Everything is derived from the spaces: the grid from the region's counts, the
+    /// fragment role from where the contracted axis sits, the MMA shape from the final
+    /// tiles.
+    pub(crate) fn store(#[comptime] window: Space, #[comptime] out: Space) -> Tile<T> {
+        let a0 = comptime!(window.axis_at(window.rank() - 2));
+        let a1 = comptime!(window.axis_at(window.rank() - 1));
+        let t0 = comptime!(window.count(a0));
+        let t1 = comptime!(window.count(a1));
+
+        // `A` is `m×k`, `B` is `k×n`: the operand's role is where its contracted axis sits.
+        let contracted = comptime!(window.contraction(&out));
+        let ident = comptime!(if contracted == a1 {
+            MatrixIdent::A
+        } else {
+            MatrixIdent::B
+        });
+        let out_fin = comptime!(out.final_space());
+        let m = comptime!(out_fin.extent_at(out_fin.rank() - 2));
+        let n = comptime!(out_fin.extent_at(out_fin.rank() - 1));
+        let k = comptime!(window.final_space().extent(contracted));
 
         let mut frags = Sequence::<CmmaData<T>>::new();
         #[unroll]
-        for i in 0..t0 {
+        for _i in 0..t0 {
             #[unroll]
-            for j in 0..t1 {
-                let mut frag = CmmaData::<T>::alloc(ident, m, n, k);
-                let w = operand.at(&step_region(comptime!(space.clone()), contracted, ki, i, j));
-                match &w.tile_kind {
-                    TileKind::Gmem(s) | TileKind::Smem(s) => frag.load_window(s),
-                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                        panic!("CmmaPartition::stage: the source must be a memory window")
-                    }
-                }
-                frags.push(frag);
+            for _j in 0..t1 {
+                frags.push(CmmaData::<T>::alloc(ident, m, n, k));
             }
         }
         Tile::<T> {
@@ -116,7 +111,7 @@ impl<T: Numeric> CmmaPartition<T> {
                 m_tiles: t0,
                 n_tiles: t1,
             }),
-            space: comptime!(space),
+            space: comptime!(window),
         }
     }
 
@@ -180,34 +175,6 @@ impl<T: Numeric> Tile<T> {
             Partitioner::Level(_) => sub.fragment_window(mi, ni),
         }
     }
-}
-
-/// The [`Region`] one staging step windows: the runtime contraction step `ki` on the
-/// `contracted` axis, comptime fragment coordinates `(c0, c1)` on the trailing two axes
-/// (`contracted` wins where they coincide), `0` elsewhere.
-#[cube]
-fn step_region(
-    #[comptime] space: Space,
-    #[comptime] contracted: Axis,
-    ki: usize,
-    #[comptime] c0: usize,
-    #[comptime] c1: usize,
-) -> Region {
-    let mut coords = CoordsDyn::new();
-    #[unroll]
-    for p in 0..comptime!(space.rank()) {
-        let axis = comptime!(space.axis_at(p));
-        if comptime!(axis == contracted) {
-            coords.push(ki as u32);
-        } else if comptime!(p == space.rank() - 2) {
-            coords.push(c0 as u32);
-        } else if comptime!(p == space.rank() - 1) {
-            coords.push(c1 as u32);
-        } else {
-            coords.push(0u32);
-        }
-    }
-    Region::new(coords, space)
 }
 
 /// The per-instance tile count of `axis` at this level, `None` when it is runtime.

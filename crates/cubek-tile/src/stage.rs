@@ -12,7 +12,9 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Tile, TileExpand, TileKind, TileKindExpand};
+use crate::{
+    CmmaPartition, Leaf, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
+};
 
 /// How a slot rendezvouses its fill against its read. Comptime — fixed at construction from the
 /// operands' delivery, never inferred at the call site.
@@ -183,15 +185,36 @@ impl<T: CubeType> Staging<T> {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build a double-buffer slot staging the gmem operands `lhs`/`rhs` into fresh shared
-    /// memory, each smem buffer sized from its operand. The [`Sync`] strategy is deduced from
-    /// the operands' delivery — both TMA sources → async `Barrier`, otherwise strided `Cube`.
-    pub fn new(lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-        let lhs_tma = lhs.is_tma();
-        let rhs_tma = rhs.is_tma();
-        let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
-
-        Staging::wrap((lhs.smem_like(), rhs.smem_like()), Pipeline::new(sync))
+    /// Build a slot staging one region of the operands `lhs`/`rhs`, each buffer sized from
+    /// its operand. The store follows the consumer below `out`: when the level underneath
+    /// is the fragment grid (cmma leaf), the operands stage into register partitions and
+    /// need no rendezvous ([`Solo`](Sync::Solo) — fragments are plane-private); otherwise
+    /// fresh shared memory, [`Sync`] deduced from the operands' delivery — both TMA
+    /// sources → async `Barrier`, otherwise strided `Cube`.
+    pub fn new(
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] out: Space,
+    ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
+        let register = comptime!(
+            out.partitioner().leaf() == Leaf::Cmma && partition_level(&out.divide()).is_some()
+        );
+        if register {
+            let lhs_tma = lhs.is_tma();
+            let rhs_tma = rhs.is_tma();
+            comptime!(assert!(
+                !lhs_tma && !rhs_tma,
+                "Staging: a TMA source cannot stage into registers"
+            ));
+            let a = CmmaPartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
+            let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
+            Staging::wrap((a, b), Pipeline::new(Sync::Solo))
+        } else {
+            let lhs_tma = lhs.is_tma();
+            let rhs_tma = rhs.is_tma();
+            let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
+            Staging::wrap((lhs.smem_like(), rhs.smem_like()), Pipeline::new(sync))
+        }
     }
 }
 

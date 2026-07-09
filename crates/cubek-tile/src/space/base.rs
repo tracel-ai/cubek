@@ -365,6 +365,17 @@ impl Space {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
+    /// The single axis this operand contracts against `output` —
+    /// [`contracting`](Space::contracting) with the one-axis contract asserted.
+    pub fn contraction(&self, output: &Space) -> Axis {
+        let contracted = self.contracting(output);
+        assert!(
+            contracted.len() == 1,
+            "Space::contraction: exactly one contracted axis expected"
+        );
+        contracted[0]
+    }
+
     pub fn axes(&self) -> Axes<'_> {
         Axes { space: self, i: 0 }
     }
