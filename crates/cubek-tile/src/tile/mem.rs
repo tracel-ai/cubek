@@ -30,6 +30,14 @@ pub struct MemData<T: Numeric> {
     /// Accumulates across [`at`](Tile::at)s.
     origin: CoordsDyn,
     extent: CoordsDyn,
+    /// Comptime twin of `extent`, present below the dynamic top level (and at it when the
+    /// space is fully `Static`): flat decodes divide by constants instead of runtime vars.
+    #[cube(comptime)]
+    static_extent: Option<Vec<u32>>,
+    /// Comptime twin of `physical_shape`/`physical_strides`, smem only (a tensor's are
+    /// runtime): the tiled-split divisors and the stride dot fold to constants.
+    #[cube(comptime)]
+    static_physical: Option<(Vec<u32>, Vec<u32>)>,
     /// Absolute logical extent per axis (the valid region); `origin + pos` beyond it is
     /// the partial-tile overhang. Preserved across [`at`](Tile::at), unlike `extent`.
     pub(crate) bound: CoordsDyn,
@@ -123,6 +131,11 @@ impl<T: Numeric> MemData<T> {
         // The whole-tile window. A `Dynamic` axis takes its runtime size from `bound`, so the
         // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
         let (origin, extent) = top_window(comptime!(space.clone()), &bound, vector_size);
+        let static_extent = comptime!(
+            space
+                .is_static()
+                .then(|| line_extents(&space, vector_size))
+        );
         Tile::<T> {
             tile_kind: TileKind::new_Gmem(MemData::<T> {
                 buffer,
@@ -131,6 +144,8 @@ impl<T: Numeric> MemData<T> {
                 physical_strides,
                 origin,
                 extent,
+                static_extent,
+                static_physical: comptime!(None),
                 bound,
                 start_axis,
                 num_tiled,
@@ -175,6 +190,8 @@ impl<T: Numeric> MemData<T> {
                 physical_strides,
                 origin,
                 extent,
+                static_extent: comptime!(Some(line_extents(&space, vector_size))),
+                static_physical: comptime!(Some(storage_extents(&space, vector_size, levels))),
                 bound,
                 start_axis: comptime!(0usize),
                 num_tiled: comptime!(space.rank()),
@@ -259,12 +276,13 @@ impl<T: Numeric> MemData<T> {
         self.buffer.len() as u32 * comptime!(T::type_size() as u32 * self.vector_size as u32)
     }
 
-    /// The base layout: the `[grid…, tile…]` split (gmem, `levels > 0`) or a plain
-    /// strided dot (smem, `levels = 0`).
+    /// The base layout: the `[grid…, tile…]` split (`levels > 0`) or a plain
+    /// strided dot (`levels = 0`).
     fn base(&self) -> GmemLayout {
         GmemLayout {
             physical_shape: self.physical_shape.clone(),
             physical_strides: self.physical_strides.clone(),
+            static_physical: comptime!(self.static_physical.clone()),
             start_axis: self.start_axis,
             num_tiled: self.num_tiled,
             levels: self.levels,
@@ -371,10 +389,9 @@ impl<T: Numeric> MemData<T> {
     /// carrying the `check` flag so a flat scan masks the overhang without being asked.
     pub(crate) fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         FlatView::new(
-            self.lines::<W>()
-                .view(self.base())
-                .view(self.window())
-                .view(FlatLayout::new(self.extent.clone())),
+            self.lines::<W>().view(self.base()).view(self.window()).view(
+                FlatLayout::new(self.extent.clone(), comptime!(self.static_extent.clone())),
+            ),
             comptime!(self.check),
         )
     }
@@ -386,7 +403,10 @@ impl<T: Numeric> MemData<T> {
             self.lines_storage::<I, W>()
                 .view(self.base())
                 .view(self.window())
-                .view(FlatLayout::new(self.extent.clone())),
+                .view(FlatLayout::new(
+                    self.extent.clone(),
+                    comptime!(self.static_extent.clone()),
+                )),
             comptime!(self.check),
         )
     }
@@ -414,12 +434,13 @@ impl<T: Numeric> MemData<T> {
         let base = self.base();
         let window = self.window();
         let extent = self.extent.clone();
+        let static_extent = comptime!(self.static_extent.clone());
         let check = comptime!(self.check);
         FlatViewMut::new(
             self.lines_mut::<W>()
                 .view_mut(base)
                 .view_mut(window)
-                .view_mut(FlatLayout::new(extent)),
+                .view_mut(FlatLayout::new(extent, static_extent)),
             check,
         )
     }
@@ -480,6 +501,9 @@ impl<T: Numeric> MemData<T> {
             physical_strides: self.physical_strides.clone(),
             origin,
             extent,
+            // The pushed edges are all comptime, so the window is static at any depth.
+            static_extent: comptime!(Some(line_edges(&space, self.vector_size))),
+            static_physical: comptime!(self.static_physical.clone()),
             bound: self.bound.clone(),
             start_axis: comptime!(self.start_axis),
             num_tiled: comptime!(self.num_tiled),
@@ -575,56 +599,91 @@ fn storage_layout(
     #[comptime] vector_size: usize,
     #[comptime] levels: usize,
 ) -> (CoordsDyn, CoordsDyn) {
-    // The physical line extents, comptime: `[extents…]` flat, or `[grid…, tile…]`.
-    let extents = comptime! {
-        let rank = space.rank();
-        let mut extents = Vec::new();
-        match levels {
-            0 => {
-                for p in 0..rank {
-                    extents.push(space.extent_at(p));
-                }
-            }
-            1 => {
-                let fin = space.final_space();
-                for p in 0..rank {
-                    let (e, t) = (space.extent_at(p), fin.extent_at(p));
-                    assert!(
-                        e.is_multiple_of(t),
-                        "MemData::smem: the final tile must divide the staged space"
-                    );
-                    extents.push(e / t);
-                }
-                for p in 0..rank {
-                    extents.push(fin.extent_at(p));
-                }
-            }
-            _ => panic!("MemData::smem: one storage-tiling level at most"),
-        }
-        let last = extents.len() - 1;
-        extents[last] /= vector_size;
-        extents
-    };
+    let (shape_c, strides_c) = comptime!(storage_extents(&space, vector_size, levels));
 
     let mut shape = CoordsDyn::new();
     let mut strides = CoordsDyn::new();
     #[unroll]
-    for p in 0..comptime!(extents.len()) {
-        shape.push(comptime!(extents[p]) as u32);
-        let weight = comptime!(extents[p + 1..].iter().product::<usize>());
-        strides.push(weight as u32);
+    for p in 0..comptime!(shape_c.len()) {
+        shape.push(comptime!(shape_c[p]));
+        strides.push(comptime!(strides_c[p]));
     }
 
     (shape, strides)
 }
 
+/// [`storage_layout`]'s host data: the physical line extents (`[extents…]` flat, or
+/// `[grid…, tile…]`) and their row-major suffix-product strides.
+fn storage_extents(space: &Space, vector_size: usize, levels: usize) -> (Vec<u32>, Vec<u32>) {
+    let rank = space.rank();
+    let mut extents = Vec::new();
+    match levels {
+        0 => {
+            for p in 0..rank {
+                extents.push(space.extent_at(p));
+            }
+        }
+        1 => {
+            let fin = space.final_space();
+            for p in 0..rank {
+                let (e, t) = (space.extent_at(p), fin.extent_at(p));
+                assert!(
+                    e.is_multiple_of(t),
+                    "MemData::smem: the final tile must divide the staged space"
+                );
+                extents.push(e / t);
+            }
+            for p in 0..rank {
+                extents.push(fin.extent_at(p));
+            }
+        }
+        _ => panic!("MemData::smem: one storage-tiling level at most"),
+    }
+    let last = extents.len() - 1;
+    extents[last] /= vector_size;
+
+    let shape = extents.iter().map(|&e| e as u32).collect();
+    let strides = (0..extents.len())
+        .map(|p| extents[p + 1..].iter().product::<usize>() as u32)
+        .collect();
+    (shape, strides)
+}
+
+/// The comptime per-axis line extents of a fully-`Static` `space` (innermost
+/// `/ vector_size`): the host twin of [`full_window`]/[`top_window`]'s static arm.
+fn line_extents(space: &Space, vector_size: usize) -> Vec<u32> {
+    let last = space.rank() - 1;
+    (0..space.rank())
+        .map(|p| {
+            let e = space.extent_at(p);
+            (if p == last { e / vector_size } else { e }) as u32
+        })
+        .collect()
+}
+
+/// The comptime per-axis line edges of `space`'s partitioner (innermost
+/// `/ vector_size`): the host twin of the window [`Tile::at`] pushes.
+fn line_edges(space: &Space, vector_size: usize) -> Vec<u32> {
+    let last = space.rank() - 1;
+    (0..space.rank())
+        .map(|p| {
+            let edge = space.partitioner().edge(space.axis_at(p));
+            (if p == last { edge / vector_size } else { edge }) as u32
+        })
+        .collect()
+}
+
 /// In-kernel twin of cubecl's `TiledViewLayout`, which has no in-kernel
 /// constructor. Splits each logical axis into its `[grid…, tile…]` parts
-/// ([`TiledLayout`]) then dots the physical strides.
+/// ([`TiledLayout`]) then dots the physical strides. When the physical layout is
+/// comptime (`static_physical`, smem) the split divisors and stride dot fold to
+/// constants; an untiled layout (`levels == 0`) skips the split entirely.
 #[derive(CubeType, Clone)]
 pub struct GmemLayout {
     physical_shape: CoordsDyn,
     physical_strides: CoordsDyn,
+    #[cube(comptime)]
+    static_physical: Option<(Vec<u32>, Vec<u32>)>,
     #[cube(comptime)]
     start_axis: usize,
     #[cube(comptime)]
@@ -639,23 +698,61 @@ impl Layout for GmemLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let split = TiledLayout::new(
-            self.physical_shape.clone(),
-            self.start_axis,
-            self.num_tiled,
-            self.levels,
-        );
+        if comptime!(self.static_physical.is_some()) {
+            // Comptime split + dot, mirroring `TiledLayout` digit for digit.
+            let mut offset = 0u32;
+            #[unroll]
+            for i in 0..comptime!(self.start_axis) {
+                offset += pos[i] * comptime!(self.static_physical.as_ref().unwrap().1[i]);
+            }
+            #[unroll]
+            for k in 0..comptime!(self.levels + 1) {
+                #[unroll]
+                for i in 0..comptime!(self.num_tiled) {
+                    // Strip the finer blocks, then take this block's digit. The grid
+                    // (k == 0) keeps the full quotient — it has no enclosing tile.
+                    let j = comptime!(self.start_axis + k * self.num_tiled + i);
+                    let divisor = comptime!({
+                        let (shape, _) = self.static_physical.as_ref().unwrap();
+                        ((k + 1)..=self.levels)
+                            .map(|f| shape[self.start_axis + f * self.num_tiled + i])
+                            .product::<u32>()
+                    });
+                    let mut digit = pos[comptime!(self.start_axis + i)] / divisor;
+                    if comptime!(k > 0) {
+                        digit %= comptime!(self.static_physical.as_ref().unwrap().0[j]);
+                    }
+                    offset += digit * comptime!(self.static_physical.as_ref().unwrap().1[j]);
+                }
+            }
+            offset as usize
+        } else if comptime!(self.levels == 0) {
+            // Untiled: the physical coordinate is the logical one, a plain strided dot.
+            let mut offset = 0u32;
+            #[unroll]
+            for i in 0..self.physical_strides.len() {
+                offset += pos[i] * self.physical_strides[i];
+            }
+            offset as usize
+        } else {
+            let split = TiledLayout::new(
+                self.physical_shape.clone(),
+                self.start_axis,
+                self.num_tiled,
+                self.levels,
+            );
 
-        let physical = split.to_source_pos(pos);
+            let physical = split.to_source_pos(pos);
 
-        let mut offset = 0;
+            let mut offset = 0;
 
-        #[unroll]
-        for i in 0..self.physical_strides.len() {
-            offset += physical[i] * self.physical_strides[i];
+            #[unroll]
+            for i in 0..self.physical_strides.len() {
+                offset += physical[i] * self.physical_strides[i];
+            }
+
+            offset as usize
         }
-
-        offset as usize
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -664,14 +761,36 @@ impl Layout for GmemLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        let split = TiledLayout::new(
-            self.physical_shape.clone(),
-            self.start_axis,
-            self.num_tiled,
-            self.levels,
-        );
+        if comptime!(self.static_physical.is_some()) {
+            // Each tiled axis collapses its `levels + 1` factors back to their product.
+            let mut semantic = CoordsDyn::new();
+            #[unroll]
+            for i in 0..comptime!(self.start_axis) {
+                semantic.push(comptime!(self.static_physical.as_ref().unwrap().0[i]));
+            }
+            #[unroll]
+            for i in 0..comptime!(self.num_tiled) {
+                let extent = comptime!({
+                    let (shape, _) = self.static_physical.as_ref().unwrap();
+                    (0..=self.levels)
+                        .map(|k| shape[self.start_axis + k * self.num_tiled + i])
+                        .product::<u32>()
+                });
+                semantic.push(extent);
+            }
+            semantic
+        } else if comptime!(self.levels == 0) {
+            self.physical_shape.clone()
+        } else {
+            let split = TiledLayout::new(
+                self.physical_shape.clone(),
+                self.start_axis,
+                self.num_tiled,
+                self.levels,
+            );
 
-        split.shape()
+            split.shape()
+        }
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {

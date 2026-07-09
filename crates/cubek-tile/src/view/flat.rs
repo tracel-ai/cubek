@@ -22,12 +22,20 @@ pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 #[derive(CubeType, Clone)]
 pub struct FlatLayout {
     shape: CoordsDyn,
+    /// Comptime twin of `shape`, present for any window below the dynamic top level:
+    /// the decode divisors become constants the compiler strength-reduces (Apple GPUs
+    /// emulate runtime integer division).
+    #[cube(comptime)]
+    static_shape: Option<Vec<u32>>,
 }
 
 #[cube]
 impl FlatLayout {
-    pub fn new(shape: CoordsDyn) -> Self {
-        FlatLayout { shape }
+    pub fn new(shape: CoordsDyn, #[comptime] static_shape: Option<Vec<u32>>) -> Self {
+        FlatLayout {
+            shape,
+            static_shape,
+        }
     }
 }
 
@@ -45,9 +53,15 @@ impl Layout for FlatLayout {
         #[unroll]
         for i in 0..rank {
             let dim = rank - i - 1;
-            let extent = self.shape[dim];
-            out.push(offs % extent);
-            offs /= extent;
+            if comptime!(self.static_shape.is_some()) {
+                let extent = comptime!(self.static_shape.as_ref().unwrap()[dim]);
+                out.push(offs % extent);
+                offs /= extent;
+            } else {
+                let extent = self.shape[dim];
+                out.push(offs % extent);
+                offs /= extent;
+            }
         }
 
         out.reverse(); // pushed last→first; restore ascending dim order
@@ -59,14 +73,25 @@ impl Layout for FlatLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        let mut total = 1u32;
+        if comptime!(self.static_shape.is_some()) {
+            let total = comptime!(
+                self.static_shape
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .product::<u32>() as usize
+            );
+            total.runtime()
+        } else {
+            let mut total = 1u32;
 
-        #[unroll]
-        for p in 0..self.shape.len() {
-            total *= self.shape[p];
+            #[unroll]
+            for p in 0..self.shape.len() {
+                total *= self.shape[p];
+            }
+
+            total as usize
         }
-
-        total as usize
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
