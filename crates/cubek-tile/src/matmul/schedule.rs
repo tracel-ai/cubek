@@ -94,7 +94,6 @@ impl<Acc: Numeric> Tile<Acc> {
             // prefetch the next even region back into slot 0 (if it exists), then compute
             // the odd region on slot 1; on the walk's final region no fill follows, so
             // `consume_final` publishes slot 1 itself.
-            let odd_region = walk.region(odd);
             if odd + 1 < n {
                 let next_even = walk.region(odd + 1);
                 s0.fill(|s, pipe| {
