@@ -888,7 +888,7 @@ fn cmma_roundtrip<E: Numeric>(
     a_smem.copy_from(&a);
     sync_cube();
 
-    let mut frag = Tile::<E>::cmma_fragment(
+    let mut frag = CmmaData::<E>::fragment(
         MatrixIdent::Accumulator,
         8usize,
         8usize,
@@ -1200,7 +1200,7 @@ fn cmma_matmul<E: Numeric>(
     c_smem_tile.copy_from(&c);
     sync_cube();
 
-    let mut a_frag = Tile::<E>::cmma_fragment(
+    let mut a_frag = CmmaData::<E>::fragment(
         MatrixIdent::A,
         8usize,
         8usize,
@@ -1210,7 +1210,7 @@ fn cmma_matmul<E: Numeric>(
     );
     a_frag.copy_from(&a_smem_tile);
 
-    let mut b_frag = Tile::<E>::cmma_fragment(
+    let mut b_frag = CmmaData::<E>::fragment(
         MatrixIdent::B,
         8usize,
         8usize,
@@ -1220,7 +1220,7 @@ fn cmma_matmul<E: Numeric>(
     );
     b_frag.copy_from(&b_smem_tile);
 
-    let mut acc = Tile::<E>::cmma_fragment(
+    let mut acc = CmmaData::<E>::fragment(
         MatrixIdent::Accumulator,
         8usize,
         8usize,

@@ -1,7 +1,7 @@
 //! The tensor-core backing stores: a single fragment ([`CmmaData`]) and a partition of
-//! them ([`CmmaPartition`]), plus the fragment↔memory transports. The partition mirrors
-//! its tile's [`Space`] — everything that knows how a space maps to a fragment grid
-//! (its shape, its windows, its classification) lives here.
+//! them ([`CmmaPartition`]), plus the fragment↔memory transports. Everything that knows
+//! how a space maps to a fragment grid (its shape, its windows, its classification) lives
+//! here, on the kind — [`Tile`] stays structure.
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -45,15 +45,12 @@ impl<T: Numeric> CmmaPartition<T> {
     pub(crate) fn at(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> CmmaData<T> {
         self.frags.index(comptime!(mi * self.n_tiles + ni)).clone()
     }
-}
 
-#[cube]
-impl<T: Numeric> Tile<T> {
-    /// Allocate the register form of this accumulator: a fragment partition mirroring the
-    /// space's fragment grid, `smem_like`'s register sibling. `k` is the contraction depth
-    /// of the instruction (this tile's own axes only give `m`/`n`).
-    pub(crate) fn fragments_like(&self, #[comptime] k: usize) -> Tile<T> {
-        let space = comptime!(self.space.clone());
+    /// The tile whose partition mirrors `space`'s fragment grid, accumulator fragments
+    /// uninitialized — the register form of an accumulator over `space`, `smem_like`'s
+    /// register sibling. `k` is the contraction depth of the instruction (the space's
+    /// own axes only give `m`/`n`).
+    pub(crate) fn mirror(#[comptime] space: Space, #[comptime] k: usize) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
         let m = comptime!(fin.extent_at(fin.rank() - 2));
@@ -77,13 +74,13 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Stage one contraction step of this memory operand into a register partition — the
+    /// One contraction step of the memory `operand` staged into a partition tile — the
     /// register tier's stage fill. One fragment per grid tile of the operand's trailing
     /// two axes; the `contracted` axis stages a single step, positioned at `ki`.
     /// `m`/`n`/`k` are the whole MMA instruction shape (the alloc needs the full triple
-    /// whatever this operand's role).
+    /// whatever the operand's role).
     pub(crate) fn stage(
-        &self,
+        operand: &Tile<T>,
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -91,7 +88,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] contracted: Axis,
         ki: usize,
     ) -> Tile<T> {
-        let space = comptime!(self.space.clone());
+        let space = comptime!(operand.space.clone());
         let a0 = comptime!(space.axis_at(space.rank() - 2));
         let a1 = comptime!(space.axis_at(space.rank() - 1));
         let t0 = comptime!(if a0 == contracted { 1 } else { space.count(a0) });
@@ -103,11 +100,11 @@ impl<T: Numeric> Tile<T> {
             #[unroll]
             for j in 0..t1 {
                 let mut frag = CmmaData::<T>::alloc(ident, m, n, k);
-                let w = self.at(&step_region(comptime!(space.clone()), contracted, ki, i, j));
+                let w = operand.at(&step_region(comptime!(space.clone()), contracted, ki, i, j));
                 match &w.tile_kind {
                     TileKind::Gmem(s) | TileKind::Smem(s) => frag.load_window(s),
                     TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                        panic!("Tile::stage: the source must be a memory window")
+                        panic!("CmmaPartition::stage: the source must be a memory window")
                     }
                 }
                 frags.push(frag);
@@ -123,92 +120,52 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Allocate an uninitialized tensor-core fragment as a `Cmma` tile. `m`/`n`/`k`
-    /// are the whole MMA tile, passed in full whatever the role.
-    pub fn cmma_fragment(
-        #[comptime] ident: MatrixIdent,
-        #[comptime] m: usize,
-        #[comptime] n: usize,
-        #[comptime] k: usize,
-        #[comptime] layout: MatrixLayout,
-        #[comptime] space: Space,
-    ) -> Tile<T> {
-        let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, layout) };
-        Tile::<T> {
-            tile_kind: TileKind::new_Cmma(CmmaData::<T> {
-                matrix,
-                ident,
-                layout,
-            }),
-            space: comptime!(space),
+    /// Fill each fragment from its final window of `src` — the transport behind
+    /// [`copy_from`](Tile::copy_from)'s partition-destination pairing. Iterates the grid
+    /// in the partition's own row-major fragment order.
+    pub(crate) fn fill_from(&self, src: &Tile<T>) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut frag = self.at(mi, ni);
+                let window = src.fragment_window(mi, ni);
+                match &window.tile_kind {
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
+                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                        panic!("CmmaPartition::fill_from: the source must be memory")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drain each fragment into its final window of `dst` — [`fill_from`](Self::fill_from)'s
+    /// inverse.
+    pub(crate) fn drain_into(&self, dst: &mut Tile<T>) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let frag = self.at(mi, ni);
+                let mut window = dst.fragment_window(mi, ni);
+                match &mut window.tile_kind {
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
+                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                        panic!("CmmaPartition::drain_into: the sink must be memory")
+                    }
+                }
+            }
         }
     }
 }
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Fill this partition-backed tile's fragments, each from its final window of `src` —
-    /// [`copy_from`](Tile::copy_from)'s partition-destination transport. Iterates the grid
-    /// in the partition's own row-major fragment order.
-    pub(crate) fn fill_partition(&mut self, src: &Tile<T>) {
-        match &self.tile_kind {
-            TileKind::CmmaPartition(p) =>
-            {
-                #[unroll]
-                for mi in 0..comptime!(p.m_tiles) {
-                    #[unroll]
-                    for ni in 0..comptime!(p.n_tiles) {
-                        let mut frag = p.at(mi, ni);
-                        let window = src.fragment_window(mi, ni);
-                        match &window.tile_kind {
-                            TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
-                            TileKind::Cmma(_)
-                            | TileKind::CmmaPartition(_)
-                            | TileKind::TmaGmem(_) => {
-                                panic!("fill_partition: the source must be memory")
-                            }
-                        }
-                    }
-                }
-            }
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                panic!("fill_partition: the destination must be a fragment partition")
-            }
-        }
-    }
-
-    /// Drain `src`'s fragments, each into its final window of this memory tile —
-    /// [`fill_partition`](Tile::fill_partition)'s inverse.
-    pub(crate) fn drain_partition(&mut self, src: &Tile<T>) {
-        match &src.tile_kind {
-            TileKind::CmmaPartition(p) =>
-            {
-                #[unroll]
-                for mi in 0..comptime!(p.m_tiles) {
-                    #[unroll]
-                    for ni in 0..comptime!(p.n_tiles) {
-                        let frag = p.at(mi, ni);
-                        let mut window = self.fragment_window(mi, ni);
-                        match &mut window.tile_kind {
-                            TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
-                            TileKind::Cmma(_)
-                            | TileKind::CmmaPartition(_)
-                            | TileKind::TmaGmem(_) => {
-                                panic!("drain_partition: the sink must be memory")
-                            }
-                        }
-                    }
-                }
-            }
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                panic!("drain_partition: the source must be a fragment partition")
-            }
-        }
-    }
-
-    /// Descend to the `(mi, ni)` fragment's final window: an instance level hands this
-    /// instance a single region (`region(0)`, hardware position folded in); the partition
-    /// level takes the static region at the partition coordinates.
+    /// Descend to the `(mi, ni)` fragment's final window — pure structure (regions and
+    /// levels), no kind knowledge: an instance level hands this instance a single region
+    /// (`region(0)`, hardware position folded in); the partition level takes the static
+    /// region at the partition coordinates.
     fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
         let space = comptime!(self.space.clone());
         let sub = match comptime!(partition_level(&space)) {
@@ -340,6 +297,27 @@ impl<T: Numeric> CmmaData<T> {
             matrix,
             ident,
             layout: MatrixLayout::RowMajor,
+        }
+    }
+
+    /// An uninitialized fragment presented as a `Cmma` tile. `m`/`n`/`k` are the whole
+    /// MMA tile, passed in full whatever the role.
+    pub fn fragment(
+        #[comptime] ident: MatrixIdent,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] k: usize,
+        #[comptime] layout: MatrixLayout,
+        #[comptime] space: Space,
+    ) -> Tile<T> {
+        let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, layout) };
+        Tile::<T> {
+            tile_kind: TileKind::new_Cmma(CmmaData::<T> {
+                matrix,
+                ident,
+                layout,
+            }),
+            space: comptime!(space),
         }
     }
 

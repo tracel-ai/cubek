@@ -155,8 +155,8 @@ fn staged_register<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     // The contraction steps stay a *runtime* loop: `ki` only positions memory windows, and
     // unrolling it would keep every step's staged fragments live at once.
     for ki in 0..k_tiles {
-        let a = lhs.stage(MatrixIdent::A, m, n, k, contracted, ki);
-        let b = rhs.stage(MatrixIdent::B, m, n, k, contracted, ki);
+        let a = CmmaPartition::stage(lhs, MatrixIdent::A, m, n, k, contracted, ki);
+        let b = CmmaPartition::stage(rhs, MatrixIdent::B, m, n, k, contracted, ki);
         #[unroll]
         for i in 0..comptime!(grid.total()) {
             let region = comptime!(grid.region(i));

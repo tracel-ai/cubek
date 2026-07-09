@@ -4,7 +4,7 @@
 //! back once (the classic global matmul's `init_accumulator` / epilogue). Where `Staging`
 //! refills per region, residency brackets the whole operation. What "register form" means
 //! (the fragment grid, its windows) is the backing store's business
-//! ([`fragments_like`](Tile), [`copy_from`](Tile::copy_from)), not ours.
+//! ([`CmmaPartition::mirror`], [`copy_from`](Tile::copy_from)), not ours.
 //!
 //! `contract` is a hand-written expand method for the same reason as `Staging`'s
 //! `fill`/`consume`: the write-back must follow the caller-defined body, a `Drop` guard
@@ -28,7 +28,7 @@ impl<Acc: Numeric> Tile<Acc> {
     /// values so the operation accumulates onto them. `k` is the operation's contraction
     /// depth (this tile's own axes give `m`/`n` but not `k`).
     pub fn promote(&self, #[comptime] k: usize) -> Resident<Acc> {
-        let mut acc = self.fragments_like(k);
+        let mut acc = CmmaPartition::mirror(comptime!(self.space.clone()), k);
         acc.copy_from(self);
         Resident::<Acc> { acc }
     }

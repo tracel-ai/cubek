@@ -26,7 +26,8 @@ pub enum TileKind<T: Numeric> {
     Cmma(CmmaData<T>),
     /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed. Backs the
     /// resident accumulator ([`Resident`](crate::Resident)) and the register tier's
-    /// staged operands ([`stage`](Tile::stage)); walked statically ([`at_static`](Tile::at_static)).
+    /// staged operands ([`CmmaPartition::stage`]); walked statically
+    /// ([`at_static`](Tile::at_static)).
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
@@ -264,41 +265,32 @@ impl<T: Numeric> Tile<T> {
         Space::with_sizes(space, sizes)
     }
 
-    /// Whether this tile is backed by a fragment partition. Comptime; peels the
-    /// whole-tile partition transports off [`copy_from`](Tile::copy_from).
-    #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
-    fn is_partition(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::CmmaPartition(_) => true,
-            _ => false,
-        }
-    }
-
-    /// Blocking copy of `src` into `self` across a level, each kind pairing dispatched to its
-    /// transport leaf. Moves data (unlike [`at`](Tile::at)); returns once the data has landed.
-    /// A fragment partition on either side transports per fragment window
-    /// ([`fill_partition`](Tile::fill_partition)/[`drain_partition`](Tile::drain_partition)
-    /// descend the memory side's levels). The pipelined counterpart is
-    /// [`Pipeline::fill`](crate::Pipeline::fill).
+    /// Blocking copy of `src` into `self` across a level, each kind pairing dispatched to
+    /// its kind's transport leaf. Moves data (unlike [`at`](Tile::at)); returns once the
+    /// data has landed. The source side is matched first: a partition source drains per
+    /// fragment window ([`CmmaPartition::drain_into`]) and needs the whole destination
+    /// tile, which the pairing match below would keep borrowed. The pipelined counterpart
+    /// is [`Pipeline::fill`](crate::Pipeline::fill).
     pub fn copy_from(&mut self, src: &Tile<T>) {
-        let src_partition = src.is_partition();
-        let dst_partition = self.is_partition();
-        if src_partition {
-            self.drain_partition(src);
-        } else if dst_partition {
-            self.fill_partition(src);
-        } else {
-            match (&mut self.tile_kind, &src.tile_kind) {
-                (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
-                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
-                (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
-                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
-                    d.fill_from(s)
+        match &src.tile_kind {
+            TileKind::CmmaPartition(s) => s.drain_into(self),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                match (&mut self.tile_kind, &src.tile_kind) {
+                    (TileKind::CmmaPartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
+                        d.fill_from(src)
+                    }
+                    (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                    (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
+                    (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
+                    (
+                        TileKind::Gmem(d) | TileKind::Smem(d),
+                        TileKind::Gmem(s) | TileKind::Smem(s),
+                    ) => d.fill_from(s),
+                    (TileKind::Cmma(_), TileKind::Cmma(_)) => {
+                        panic!("Tile::copy_from: cmma→cmma cast not wired")
+                    }
+                    _ => panic!("Tile::copy_from: unsupported kind pairing"),
                 }
-                (TileKind::Cmma(_), TileKind::Cmma(_)) => {
-                    panic!("Tile::copy_from: cmma→cmma cast not wired")
-                }
-                _ => panic!("Tile::copy_from: unsupported kind pairing"),
             }
         }
     }
