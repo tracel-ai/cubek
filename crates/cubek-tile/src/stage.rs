@@ -1,8 +1,7 @@
-//! [`Staging`]: a matmul-agnostic double-buffer slot — a payload `T` plus a [`Pipeline`]
-//! sequencing its fill against its read. `fill`/`consume` acquire, run a closure, release; no
-//! raw barrier escapes. The [`Barrier`](Sync::Barrier) strategy (a `full`/`empty` mbarrier pair
-//! with a `phase` parity, mirroring cubek-matmul's `specialized/matmul.rs`) is the reference
-//! design; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are degenerate cases.
+//! [`Staging`]: a matmul-agnostic staging slot, a payload `T` plus a [`Pipeline`]
+//! sequencing its fill against its read. The [`Barrier`](Sync::Barrier) strategy mirrors
+//! cubek-matmul's `specialized/matmul.rs`; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo)
+//! are degenerate cases.
 //!
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
@@ -11,10 +10,12 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Tile, TileExpand, TileKind, TileKindExpand};
+use crate::{
+    CmmaPartition, MemData, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
+};
 
-/// How a slot rendezvouses its fill against its read. Comptime — fixed at construction from the
-/// operands' delivery, never inferred at the call site.
+/// How a slot rendezvouses its fill against its read; fixed comptime at construction
+/// from the operands' delivery.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sync {
     /// One unit fills and reads its own slot: no collective (single-plane / CPU).
@@ -47,9 +48,9 @@ pub enum Pipeline {
     /// Synchronous element copy. `collective` → rendezvous on one `sync_cube` per phase; otherwise a
     /// single unit fills its own slot with no collective at all.
     Cube { collective: bool },
-    /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase` parity, so
-    /// the fill overlaps compute. TMA is the fill that motivates it (the bulk copy lands the `full`
-    /// transaction), but the barrier itself is delivery-agnostic — see [`Pipeline::fill`].
+    /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair with a `phase`
+    /// parity, so the fill overlaps compute. TMA motivates it, but the barrier itself is
+    /// delivery-agnostic; see [`Pipeline::fill`].
     Barrier {
         /// Producer→consumer (one producer arrival): flips once the fill's transaction bytes land.
         full: Shared<Barrier>,
@@ -182,15 +183,35 @@ impl<T: CubeType> Staging<T> {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build a double-buffer slot staging the gmem operands `lhs`/`rhs` into fresh shared
-    /// memory, each smem buffer sized from its operand. The [`Sync`] strategy is deduced from
-    /// the operands' delivery — both TMA sources → async `Barrier`, otherwise strided `Cube`.
-    pub fn new(lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Build a slot staging one region of the operands `lhs`/`rhs`. When the level below
+    /// `out` is the fragment grid (cmma leaf), the operands stage into plane-private
+    /// register partitions ([`Solo`](Sync::Solo)); otherwise fresh shared memory, with
+    /// [`Sync`] deduced from the operands' delivery.
+    pub fn new(
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] out: Space,
+    ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_tma = lhs.is_tma();
         let rhs_tma = rhs.is_tma();
-        let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
-
-        Staging::wrap((lhs.smem_like(), rhs.smem_like()), Pipeline::new(sync))
+        let register = comptime!(
+            out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
+        );
+        if register {
+            comptime!(assert!(
+                !lhs_tma && !rhs_tma,
+                "Staging: a TMA source cannot stage into registers"
+            ));
+            let a = CmmaPartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
+            let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
+            Staging::wrap((a, b), Pipeline::new(Sync::Solo))
+        } else {
+            let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
+            Staging::wrap(
+                (MemData::smem_like(lhs), MemData::smem_like(rhs)),
+                Pipeline::new(sync),
+            )
+        }
     }
 }
 
@@ -199,9 +220,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
 // inference can't resolve the projection `&mut T::ExpandType` through a generic `T`, but resolves the
 // spelled-out tiles fine.
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Producer: wait the slot is free, run `fill` over its two staged buffers, then publish. `fill`
-    /// gets the buffers and the slot's [`Pipeline`]; call [`Pipeline::fill`] per operand and one body
-    /// serves every [`Sync`]. See [`StagingExpand::__expand_fill_method`].
+    /// Producer: wait the slot is free, run `fill` over the staged buffers and the slot's
+    /// [`Pipeline`], then publish. See [`StagingExpand::__expand_fill_method`].
     pub fn fill(&mut self, _fill: impl FnOnce(&mut (Tile<Lhs>, Tile<Rhs>), &Pipeline)) {
         unexpanded!()
     }
@@ -212,9 +232,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         unexpanded!()
     }
 
-    /// Consumer for a fill no later fill will publish (the walk's final regions): publish the slot
-    /// first, then consume. Keeps the trailing rendezvous inside `Staging` — the schedule reaches
-    /// for this instead of a bare `publish`. See [`StagingExpand::__expand_consume_final_method`].
+    /// Consumer for a fill no later fill will publish (the walk's final regions): publish
+    /// the slot first, then consume. See [`StagingExpand::__expand_consume_final_method`].
     pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }

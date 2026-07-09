@@ -14,8 +14,8 @@ use crate::{
     },
 };
 
-/// A cmma operand must be row-major contiguous: the transport addresses each window by a
-/// row stride off a scalar offset, which a col-major or permuted buffer doesn't afford.
+/// A cmma operand must be row-major contiguous: the transport addresses each window
+/// by a row stride off a scalar offset.
 #[allow(clippy::result_large_err)]
 fn validate_row_major(strides: &[usize]) -> Result<(), MatmulSetupError> {
     if strides.last() == Some(&1) {
@@ -104,9 +104,9 @@ pub fn launch_ref<R: Runtime>(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // Three levels: the cube grid whose double-buffered walk rotates `stage_k`-deep smem
-    // stages along `K` (filled cooperatively); the stage split one partition per plane;
-    // the partition level the microkernel contracts with resident fragments.
+    // Four levels: the cube grid (double-buffered smem stages along `K`); one partition
+    // per plane; the contraction-step walk staging each step's operand fragments
+    // (`Staged`); the fragment grid the step contracts (`Direct`, walked statically).
     let space = Tiling::new()
         .extents(&extents)
         .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
@@ -121,23 +121,24 @@ pub fn launch_ref<R: Runtime>(
                 .axis(N, Cut::plane(c.n * i.n))
                 .axis(K, Cut::sequential(stage_k))
         })
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axes(&batch_axes, Cut::sequential(1))
+                .axis(M, Cut::sequential(c.m * i.m))
+                .axis(N, Cut::sequential(c.n * i.n))
+                .axis(K, Cut::sequential(i.k))
+        })
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(i.m))
                 .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: i.k });
 
-    // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
-    // shape family), overhang checks derived per operand — all inside the launcher. The
-    // blueprint validated exact divisibility, so nothing overhangs and nothing is checked.
     let launch = space.launcher(client);
 
-    // Line each operand's contiguous innermost axis (`K` on lhs, `N` on rhs/out) at the widest
-    // width the launcher's gate allows: the shape is exactly divisible, so whole lines move and
-    // the cmma transport addresses the scalar buffer underneath. Each operand keeps its own
-    // dtype, so the widths are picked independently.
+    // Line each operand's contiguous innermost axis (`K` on lhs, `N` on rhs/out) at the
+    // widest width the launcher's gate allows, per-operand since dtypes differ.
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
     let v_lhs = launch.vector_size(K, &[(&lhs, &[M, K])], dtypes.lhs_global.size());

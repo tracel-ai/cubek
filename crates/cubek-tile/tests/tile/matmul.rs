@@ -816,6 +816,23 @@ fn launch_staged_matmul<E: Numeric>(
     c.mma(&a, &b);
 }
 
+/// The tensor-core kernel: promote the accumulator to its register form (the classic
+/// `init_accumulator`), run the whole contraction on it, copy it back (the epilogue).
+#[cube(launch)]
+fn launch_resident_matmul<E: Numeric>(
+    a: &TileArg<'_, E>,
+    b: &TileArg<'_, E>,
+    c: &TileArg<'_, E>,
+    #[define(E)] _dtype: StorageType,
+) {
+    let a = a.tile();
+    let b = b.tile();
+    let mut c = c.tile();
+    let mut acc = c.promote();
+    acc.mma(&a, &b);
+    c.copy_from(&acc);
+}
+
 /// The CPU kernel: the same `c.mma(a, b)`; the partitioner's `Direct` schedule
 /// selects the no-staging move. Operands are size-free — vectorization is a launch
 /// concern, not threaded through the DSL.
@@ -884,11 +901,11 @@ fn cmma_roundtrip<E: Numeric>(
     let a = input.tile();
     let space = comptime!(a.space.clone());
 
-    let mut a_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    let mut a_smem = MemData::smem(comptime!(space.clone()), 1usize);
     a_smem.copy_from(&a);
     sync_cube();
 
-    let mut frag = Tile::<E>::cmma_fragment(
+    let mut frag = CmmaData::<E>::fragment(
         MatrixIdent::Accumulator,
         8usize,
         8usize,
@@ -898,7 +915,7 @@ fn cmma_roundtrip<E: Numeric>(
     );
     frag.copy_from(&a_smem);
 
-    let mut c_smem = Tile::smem(comptime!(space.clone()), 1usize);
+    let mut c_smem = MemData::smem(comptime!(space.clone()), 1usize);
     c_smem.copy_from(&frag);
     sync_cube();
 
@@ -951,10 +968,9 @@ fn cmma_matmul_8x8x8() {
         .enforce()
 }
 
-/// A matmul through tensor cores with a K walk: `Leaf::Cmma` makes the lowering hoist the
-/// accumulator into a resident fragment at the boundary, walk the staged K regions
-/// accumulating into it, and drain it back to gmem after. Tensor-core only — run with
-/// `cargo test-metal`.
+/// A matmul through tensor cores with a K walk: the kernel promotes the accumulator to
+/// its register-resident form, the staged K regions accumulate into it, and the copy
+/// back to gmem is the epilogue. Tensor-core only — run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
     check_cmma_matmul_k_walk(16, Schedule::Staged);
@@ -996,7 +1012,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: edge });
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1009,7 +1025,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1065,7 +1081,7 @@ fn cmma_matmul_plane_partitioned_stage() {
                 .axis(N, Cut::plane(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: edge });
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1078,7 +1094,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1105,9 +1121,9 @@ fn cmma_matmul_plane_partitioned_stage() {
 }
 
 /// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³
-/// fragments, resident across a double-buffered K walk; the partition microkernel
-/// contracts it with A fragments reused across the n loop and B across the m loop.
-/// Tensor-core only — run with `cargo test-metal`.
+/// fragments, resident across a double-buffered K walk; the fragment level declares
+/// `Direct`, so the static walk reloads operand fragments per execute (no staging).
+/// Tensor-core only; run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1138,7 +1154,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: i });
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1151,7 +1167,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1190,17 +1206,17 @@ fn cmma_matmul<E: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
 
-    let mut a_smem_tile = Tile::smem(comptime!(a.space.clone()), 1usize);
+    let mut a_smem_tile = MemData::smem(comptime!(a.space.clone()), 1usize);
     a_smem_tile.copy_from(&a);
 
-    let mut b_smem_tile = Tile::smem(comptime!(b.space.clone()), 1usize);
+    let mut b_smem_tile = MemData::smem(comptime!(b.space.clone()), 1usize);
     b_smem_tile.copy_from(&b);
 
-    let mut c_smem_tile = Tile::smem(comptime!(c.space.clone()), 1usize);
+    let mut c_smem_tile = MemData::smem(comptime!(c.space.clone()), 1usize);
     c_smem_tile.copy_from(&c);
     sync_cube();
 
-    let mut a_frag = Tile::<E>::cmma_fragment(
+    let mut a_frag = CmmaData::<E>::fragment(
         MatrixIdent::A,
         8usize,
         8usize,
@@ -1210,7 +1226,7 @@ fn cmma_matmul<E: Numeric>(
     );
     a_frag.copy_from(&a_smem_tile);
 
-    let mut b_frag = Tile::<E>::cmma_fragment(
+    let mut b_frag = CmmaData::<E>::fragment(
         MatrixIdent::B,
         8usize,
         8usize,
@@ -1220,7 +1236,7 @@ fn cmma_matmul<E: Numeric>(
     );
     b_frag.copy_from(&b_smem_tile);
 
-    let mut acc = Tile::<E>::cmma_fragment(
+    let mut acc = CmmaData::<E>::fragment(
         MatrixIdent::Accumulator,
         8usize,
         8usize,

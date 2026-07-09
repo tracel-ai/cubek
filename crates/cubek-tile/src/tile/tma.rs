@@ -10,10 +10,9 @@ use cubecl::{
 
 use crate::*;
 
-/// A TMA tensor-map source: the launch-built `ViewMut` (backed by a `TensorMapTiled` `ViewArg`),
-/// the current global box origin `pos`, the logical `bound`, and the comptime box shape. Not
-/// element-addressable — its only sink is a bulk copy into shared memory. `at` advances `pos`;
-/// the descriptor and bound ride along unchanged.
+/// A TMA tensor-map source: the launch-built `ViewMut`, the current global box origin
+/// `pos`, the logical `bound`, and the comptime box shape. `at` advances `pos`; the
+/// descriptor and bound ride along unchanged.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct TmaData<T: Numeric> {
@@ -29,7 +28,7 @@ pub struct TmaData<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
+impl<T: Numeric> TmaData<T> {
     /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side) as a `TmaGmem` tile. `pos`
     /// starts at the origin and advances on [`at`](Tile::at); the box shape is carried comptime
     /// for the `tensor_map_load`. Dormant: no launch path builds this yet.
@@ -62,9 +61,9 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> TmaData<T> {
-    /// TMA transport leaf, pipelined: issue the elected `tensor_map_load` into `dst` (shared
-    /// memory) onto `barrier`, without arriving or waiting — the caller hoists those so the
-    /// copy overlaps compute.
+    /// TMA transport leaf, pipelined: issue the elected `tensor_map_load` into `dst`
+    /// onto `barrier`, without arriving or waiting; the caller hoists those so the copy
+    /// overlaps compute.
     pub(crate) fn stage_into(&self, dst: &mut MemData<T>, barrier: &Shared<Barrier>) {
         // One elected issuer only: the declared transaction count is that unit's alone, so
         // more issuers would over-count and corrupt the stage.
@@ -85,9 +84,8 @@ impl<T: Numeric> TmaData<T> {
         barrier.wait(token);
     }
 
-    /// Window down to `region`: advance the global origin by each axis's tile coordinate times its
-    /// sub-tile edge. The descriptor and bound carry through unchanged — only `pos` moves — so the
-    /// next `tensor_map_load` copies the windowed box.
+    /// Window down to `region`: advance the global origin by each axis's tile coordinate
+    /// times its sub-tile edge, so the next `tensor_map_load` copies the windowed box.
     pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> TmaData<T> {
         let mut pos = CoordsDyn::new();
 

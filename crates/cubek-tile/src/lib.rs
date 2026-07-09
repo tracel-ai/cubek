@@ -6,6 +6,7 @@ mod load;
 mod matmul;
 mod partitioner;
 mod quantization;
+mod resident;
 mod scalar;
 mod space;
 mod stage;

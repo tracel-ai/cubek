@@ -13,19 +13,27 @@ pub enum Schedule {
     DoubleBuffered,
 }
 
-/// The instruction that contracts a final tile. Declared in the plan rather than derived
-/// from the tiles because pre-leaf levels act on it: the residency hoist (lower.rs) and the
-/// cmma smem storage tiling ([`Tile::smem`](crate::Tile::smem)) read it before the leaf runs.
+/// The instruction that contracts a final tile. Declared in the plan because pre-leaf
+/// code (residency, staging-store deduction, cmma smem tiling) reads it before the leaf
+/// runs. `Cmma` carries the contraction depth `k`, which an accumulator's axes never give.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Leaf {
     #[default]
     Register,
-    Cmma,
+    Cmma {
+        k: usize,
+    },
 }
 
-/// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and hands
-/// [`next`](Partitioner::next) down. A `Level` carries how to walk its regions ([`Schedule`]);
-/// `Final` carries how to contract the terminal tile ([`Leaf`]) — same pattern, terminal case.
+impl Leaf {
+    pub fn is_cmma(&self) -> bool {
+        matches!(self, Leaf::Cmma { .. })
+    }
+}
+
+/// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
+/// hands [`next`](Partitioner::next) down. A `Level` carries how to walk its regions
+/// ([`Schedule`]); `Final` carries how to contract the terminal tile ([`Leaf`]).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
     Final(Leaf),
