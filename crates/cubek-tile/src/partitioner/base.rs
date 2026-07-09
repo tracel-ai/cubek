@@ -32,15 +32,6 @@ impl Leaf {
     pub fn is_cmma(&self) -> bool {
         matches!(self, Leaf::Cmma { .. })
     }
-
-    /// The cmma instruction's contraction depth; panics on [`Register`](Leaf::Register)
-    /// (a software leaf reads its depth off the operand at the leaf).
-    pub fn k(&self) -> usize {
-        match self {
-            Leaf::Cmma { k } => *k,
-            Leaf::Register => panic!("Leaf::k: the register leaf declares no depth"),
-        }
-    }
 }
 
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and hands
