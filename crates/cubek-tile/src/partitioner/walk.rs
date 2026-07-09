@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Region, RegionExpand, Space, StaticRegion, instance_count, tiles_per_instance};
+use crate::{Axis, Region, RegionExpand, Space, StaticRegion, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -157,6 +157,15 @@ impl StaticWalk {
             counts,
             space: space.clone(),
         }
+    }
+
+    /// The walk over `space` with `fastest` walked innermost — e.g. the output's row
+    /// axis, so each operand fragment feeds a consecutive burst of executes (the legacy
+    /// microkernel's emission order, worth ~1.3% on Metal).
+    pub fn over_fastest(space: &Space, fastest: Axis) -> StaticWalk {
+        let mut axes: Vec<Axis> = space.axes().filter(|&a| a != fastest).collect();
+        axes.push(fastest);
+        StaticWalk::over(&space.project(&axes))
     }
 
     pub fn total(&self) -> usize {

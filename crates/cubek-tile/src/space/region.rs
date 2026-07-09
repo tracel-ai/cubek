@@ -29,7 +29,7 @@ impl Region {
 
     /// The runtime form of a static region. Memory windowing is coordinate-kind-agnostic,
     /// so the register-tier walk reuses [`Tile::at`](crate::Tile::at) through this.
-    pub(crate) fn from_static(#[comptime] region: StaticRegion) -> Region {
+    pub(crate) fn from_static(#[comptime] region: &StaticRegion) -> Region {
         let mut coords = CoordsDyn::new();
         #[unroll]
         for p in 0..comptime!(region.space().rank()) {

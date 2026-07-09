@@ -26,13 +26,27 @@ pub enum TileKind<T: Numeric> {
     Cmma(CmmaData<T>),
     /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed. Backs the
     /// resident accumulator ([`Resident`](crate::Resident)) and the register tier's
-    /// staged operands ([`CmmaPartition::stage`]); walked statically
+    /// staged operands ([`CmmaPartition::store`]); walked statically
     /// ([`at_static`](Tile::at_static)).
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
     /// (see [`Tile::from_tensor_map`]).
     TmaGmem(TmaData<T>),
+}
+
+#[cube]
+impl<T: Numeric> TileKind<T> {
+    /// Whether a level over `space` must be walked statically: fragments cannot be
+    /// indexed by a runtime region (a partition at its partition level). Comptime.
+    pub(crate) fn static_level(&self, #[comptime] space: Space) -> comptime_type!(bool) {
+        match self {
+            TileKind::CmmaPartition(_) => comptime!(partition_level(&space).is_some()),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                comptime!(false)
+            }
+        }
+    }
 }
 
 /// How a launched tensor's `[pre…, grid…, tile…]` buffer maps to the logical
@@ -214,7 +228,7 @@ impl<T: Numeric> Tile<T> {
     /// [`at`](Tile::at) for a static region — the register tier's windowing. Memory
     /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
     /// partition *selects* its `(mi, ni)` fragment, which only static coordinates can do.
-    pub fn at_static(&self, #[comptime] region: StaticRegion) -> Tile<T> {
+    pub fn at_static(&self, #[comptime] region: &StaticRegion) -> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
                 self.at(&Region::from_static(region))

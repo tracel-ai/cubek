@@ -168,7 +168,10 @@ impl<T: Numeric> Tile<T> {
                 let walk = Walk::over(self.runtime_space());
                 self.at(&walk.region(0))
             }
-            Some(_) => self.at_static(comptime!(StaticRegion::trailing(&space, mi, ni))),
+            Some(_) => {
+                let region = comptime!(StaticRegion::trailing(&space, mi, ni));
+                self.at_static(&region)
+            }
         };
         match comptime!(sub.space.partitioner()) {
             Partitioner::Final(_) => sub,

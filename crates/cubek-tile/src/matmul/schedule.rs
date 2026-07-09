@@ -10,18 +10,6 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// Whether this level's walk must be static: the accumulator's backing cannot be
-    /// indexed by a runtime region (a fragment partition at its partition level). Comptime
-    /// self-knowledge.
-    fn static_level(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::CmmaPartition(_) => comptime!(partition_level(&self.space).is_some()),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                comptime!(false)
-            }
-        }
-    }
-
     /// `Direct` on this accumulator: no staging — every read goes to where the operand
     /// lives, through the walk the accumulator supports.
     pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
@@ -30,7 +18,7 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         space: Space,
     ) {
-        let static_walk = self.static_level();
+        let static_walk = self.tile_kind.static_level(comptime!(self.space.clone()));
         if static_walk {
             direct_static(lhs, rhs, self);
         } else {
@@ -126,28 +114,21 @@ impl<Acc: Numeric> Tile<Acc> {
 
 /// `Direct`'s static walk, the runtime loop's comptime twin: every step windows the
 /// operands and recurses, unrolled because the accumulator's fragments are
-/// comptime-indexed. The output's row axis walks fastest — each operand fragment feeds a
-/// consecutive burst of executes, the legacy microkernel's emission order (worth ~1.3% on
-/// Metal).
+/// comptime-indexed. The output's row axis walks fastest ([`StaticWalk::over_fastest`]).
 #[cube]
 fn direct_static<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
     out: &mut Tile<Acc>,
 ) {
-    let walk = comptime!({
-        let merged = Space::merge(&[&lhs.space, &rhs.space]);
-        let rows = out.space.axis_at(out.space.rank() - 2);
-        let mut axes: Vec<Axis> = merged.axes().filter(|a| *a != rows).collect();
-        axes.push(rows);
-        StaticWalk::over(&merged.project(&axes))
-    });
+    let walk = comptime!(StaticWalk::over_fastest(
+        &Space::merge(&[&lhs.space, &rhs.space]),
+        out.space.axis_at(out.space.rank() - 2),
+    ));
     #[unroll]
     for i in 0..comptime!(walk.total()) {
         let region = comptime!(walk.region(i));
-        out.at_static(comptime!(region.clone())).mma(
-            &lhs.at_static(comptime!(region.clone())),
-            &rhs.at_static(region),
-        );
+        out.at_static(&region)
+            .mma(&lhs.at_static(&region), &rhs.at_static(&region));
     }
 }
