@@ -1,10 +1,14 @@
-//! The three lowering schedules behind [`Tile::mma`](super::Tile): [`Direct`](Schedule::Direct)
-//! (no staging), [`Staged`](Schedule::Staged), and [`DoubleBuffered`](Schedule::DoubleBuffered).
-//! Each receives the level's [`Walk`] from `Tile::mma`, so the schedules themselves carry no
-//! extent or merge logic.
+//! The walks behind [`Tile::mma`](super::Tile). Three runtime schedules —
+//! [`Direct`](Schedule::Direct) (no staging), [`Staged`](Schedule::Staged), and
+//! [`DoubleBuffered`](Schedule::DoubleBuffered) — each receiving the level's [`Walk`] from
+//! `Tile::mma`, so the schedules themselves carry no extent or merge logic. The fourth,
+//! [`mma_fragment_walk`], is `Staged` at the register tier: same shape (stage operands into
+//! the faster tier, walk, contract), but the staged tier is fragments, so the walk is
+//! comptime ([`ComptimeWalk`]) and needs no rendezvous (registers are private).
 
-use cubecl::prelude::*;
+use cubecl::{cmma::MatrixIdent, prelude::*};
 
+use super::resident::contracted_axis;
 use crate::*;
 
 /// `Direct`: no staging
@@ -19,6 +23,51 @@ pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc>(
 {
     for region in Walk::over(space) {
         out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+    }
+}
+
+/// The register tier's staged walk, for a fragment-partition accumulator at its partition
+/// level: per contraction step, stage each operand's fragments ([`stage_frags`](Tile) — the
+/// smem fill's register analog, and where the legacy `A`-across-`n` / `B`-across-`m` reuse
+/// lives), then walk the fragment grid contracting fragment triples through the ordinary
+/// recursion.
+#[cube]
+pub(crate) fn mma_fragment_walk<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
+    lhs: &Tile<Lhs>,
+    rhs: &Tile<Rhs>,
+    out: &mut Tile<Acc>,
+) {
+    // The MMA instruction shape, read off the final tiles.
+    let fin = comptime!(out.space.final_space());
+    let m = comptime!(fin.extent_at(fin.rank() - 2));
+    let n = comptime!(fin.extent_at(fin.rank() - 1));
+    let contracted = comptime!(contracted_axis(&lhs.space, &out.space));
+    let k = comptime!(lhs.space.final_space().extent(contracted));
+    let k_tiles = comptime!(lhs.space.count(contracted));
+
+    // The fragment grid: the output's axes at this level, walked comptime (fragments are
+    // comptime-indexed, so this walk unrolls where the runtime walks loop). Trailing axes
+    // swapped so rows run fastest — each staged `B` fragment feeds a consecutive burst of
+    // executes, the legacy microkernel's emission order.
+    let grid = comptime!({
+        let mut axes: Vec<Axis> = out.space.axes().collect();
+        axes.swap(out.space.rank() - 2, out.space.rank() - 1);
+        ComptimeWalk::over(&out.space.project(&axes))
+    });
+
+    // The contraction steps stay a *runtime* loop: `ki` only positions memory windows, and
+    // unrolling it would keep every step's staged fragments live at once.
+    for ki in 0..k_tiles {
+        let a = lhs.stage_frags(MatrixIdent::A, m, n, k, contracted, ki);
+        let b = rhs.stage_frags(MatrixIdent::B, m, n, k, contracted, ki);
+        #[unroll]
+        for i in 0..comptime!(grid.total()) {
+            let region = comptime!(grid.region(i));
+            out.at_comptime(comptime!(region.clone())).mma(
+                &a.at_comptime(comptime!(region.clone())),
+                &b.at_comptime(region),
+            );
+        }
     }
 }
 

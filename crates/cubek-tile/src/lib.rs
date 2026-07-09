@@ -16,6 +16,7 @@ mod view;
 // through `cubek_tile::{Axis, ...}`.
 pub use layout::*;
 pub use load::*;
+pub use matmul::*;
 pub use partitioner::*;
 pub use quantization::*;
 pub use scalar::*;

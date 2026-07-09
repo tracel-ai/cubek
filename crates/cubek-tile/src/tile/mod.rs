@@ -24,9 +24,9 @@ pub enum TileKind<T: Numeric> {
     Smem(MemData<T>),
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
-    /// An instance's resident accumulator partition: `m_tiles × n_tiles` cmma fragments,
-    /// comptime-indexed. Built only by [`mma_resident`](crate::matmul); contraction is the
-    /// partition microkernel.
+    /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed. Backs the
+    /// resident accumulator ([`Resident`](crate::Resident)) and the register-tier walk's
+    /// staged operands ([`stage_frags`](Tile)); contraction is the comptime fragment walk.
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Built but dormant — no launch-side constructor wires it yet
@@ -197,15 +197,36 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
             }
-            // A resident fragment (or partition of them) passes through unchanged:
-            // [`mma_resident`](crate::matmul) guarantees one partition per instance, so
-            // every region an instance visits selects these same fragments.
+            // A resident fragment (or partition of them) passes through unchanged: a runtime
+            // region cannot select fragments, and above its partition level a partition is
+            // instance-owned wholesale — every region an instance visits means these same
+            // fragments. At the partition level [`at_comptime`](Tile::at_comptime) selects.
             TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
             TileKind::CmmaPartition(p) => TileKind::new_CmmaPartition(p.clone()),
         };
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
+        }
+    }
+
+    /// [`at`](Tile::at) for a comptime region — the register tier's windowing. Memory
+    /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
+    /// partition *selects* its `(mi, ni)` fragment, which only comptime coordinates can do.
+    pub fn at_comptime(&self, #[comptime] region: CRegion) -> Tile<T> {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
+                self.at(&Region::from_comptime(region))
+            }
+            TileKind::CmmaPartition(p) => {
+                let mi = comptime!(region.coord(self.space.axis_at(self.space.rank() - 2)));
+                let ni = comptime!(region.coord(self.space.axis_at(self.space.rank() - 1)));
+                Tile::<T> {
+                    tile_kind: TileKind::new_Cmma(p.at(mi, ni)),
+                    space: comptime!(self.space.divide()),
+                }
+            }
+            TileKind::Cmma(_) => panic!("Tile::at_comptime: a single fragment has no regions"),
         }
     }
 

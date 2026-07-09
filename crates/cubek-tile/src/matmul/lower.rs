@@ -1,95 +1,73 @@
-//! Lowering `c.mma(a, b)`: each call classifies itself comptime ([`Tile::lowering`]) from the
-//! accumulator's kind and its space, then takes exactly one step — the leaf instruction, the
-//! resident-accumulator lifecycle, the partition microkernel, or a level walk under this
+//! Lowering `c.mma(a, b)`: at a final tile, the leaf instruction; while levels remain, the
+//! accumulator's backing store picks the level's step ([`LevelStep`]) — enter register
+//! residency, the register-tier fragment walk, or an ordinary region walk under the
 //! level's [`Schedule`].
 
 use cubecl::prelude::*;
 
-use super::instruction::{mma_leaf, mma_partition};
+use super::instruction::mma_leaf;
 use super::resident::{mma_resident, partition_level};
-use super::schedule::{mma_direct, mma_double, mma_staged};
+use super::schedule::{mma_direct, mma_double, mma_fragment_walk, mma_staged};
 use crate::*;
 
-/// The lowering step one `mma` call takes, decided comptime.
-enum Lowering {
-    /// A final tile: the instruction ([`mma_leaf`]).
-    Leaf,
-    /// A memory accumulator bound for [`Leaf::Cmma`]: run the whole contraction on a
-    /// resident fragment partition ([`mma_resident`]).
+/// How one level is taken, decided comptime by the accumulator's backing store. The
+/// space alone can't tell: two of the steps exist only because fragments do (a memory
+/// accumulator must move into them; once in them, only a comptime walk can index them).
+enum LevelStep {
+    /// A memory accumulator bound for [`Leaf::Cmma`]: promote it to a resident fragment
+    /// partition for the whole contraction ([`mma_resident`]), then recurse.
     Resident,
-    /// A fragment partition at its partition level: the comptime microkernel
-    /// ([`mma_partition`] — fragments cannot be indexed by a runtime walk).
-    Partition,
-    /// Walk this level's regions under its [`Schedule`].
-    Walk(Schedule),
-}
-
-impl Lowering {
-    /// A memory accumulator: hoist to a resident partition when the leaf is cmma.
-    fn mem(space: &Space) -> Lowering {
-        match space.partitioner() {
-            Partitioner::Final(_) => Lowering::Leaf,
-            Partitioner::Level(level) => {
-                if space.partitioner().leaf() == Leaf::Cmma {
-                    Lowering::Resident
-                } else {
-                    Lowering::Walk(level.schedule())
-                }
-            }
-        }
-    }
-
-    /// A fragment partition: the comptime microkernel at its partition level.
-    fn partition(space: &Space) -> Lowering {
-        match space.partitioner() {
-            Partitioner::Final(_) => Lowering::Leaf,
-            Partitioner::Level(level) => {
-                if partition_level(space).is_some() {
-                    Lowering::Partition
-                } else {
-                    Lowering::Walk(level.schedule())
-                }
-            }
-        }
-    }
-
-    /// A plain fragment: leaf or walk.
-    fn plain(space: &Space) -> Lowering {
-        match space.partitioner() {
-            Partitioner::Final(_) => Lowering::Leaf,
-            Partitioner::Level(level) => Lowering::Walk(level.schedule()),
-        }
-    }
+    /// A fragment partition at its partition level: the comptime register-tier walk
+    /// ([`mma_fragment_walk`] — fragments cannot be indexed by a runtime walk).
+    FragmentWalk,
+    /// Anything else: walk this level's regions under its [`Schedule`].
+    Walk,
 }
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// The [`Lowering`] step this accumulator takes: each kind tells its own.
-    fn lowering(&self) -> comptime_type!(Lowering) {
+    /// The [`LevelStep`] this accumulator takes: each kind tells its own.
+    fn level_step(&self) -> comptime_type!(LevelStep) {
         match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Lowering::mem(&self.space)),
-            TileKind::CmmaPartition(_) => comptime!(Lowering::partition(&self.space)),
-            TileKind::Cmma(_) => comptime!(Lowering::plain(&self.space)),
+            TileKind::Gmem(_) | TileKind::Smem(_) => {
+                comptime!(if self.space.partitioner().leaf() == Leaf::Cmma {
+                    LevelStep::Resident
+                } else {
+                    LevelStep::Walk
+                })
+            }
+            TileKind::CmmaPartition(_) => {
+                comptime!(if partition_level(&self.space).is_some() {
+                    LevelStep::FragmentWalk
+                } else {
+                    LevelStep::Walk
+                })
+            }
+            TileKind::Cmma(_) => comptime!(LevelStep::Walk),
             TileKind::TmaGmem(_) => comptime!(panic!("mma: a tma source is not an accumulator")),
         }
     }
 
-    /// `c.mma(a, b)`: take this call's [`Lowering`] step.
+    /// `c.mma(a, b)`: contract at a final tile, else take this level's [`LevelStep`].
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let lowering = self.lowering();
-        match comptime!(lowering) {
-            Lowering::Leaf => mma_leaf(self, lhs, rhs),
-            Lowering::Resident => mma_resident(self, lhs, rhs),
-            Lowering::Partition => mma_partition(self, lhs, rhs),
-            Lowering::Walk(schedule) => {
-                // The level's operation space is the merge of the operands' runtime spaces;
-                // the output contributes no axis beyond `lhs ∪ rhs`, so the two operands
-                // cover it.
-                let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
-                match schedule {
-                    Schedule::Direct => mma_direct(lhs, rhs, self, space),
-                    Schedule::Staged => mma_staged(lhs, rhs, self, space),
-                    Schedule::DoubleBuffered => mma_double(lhs, rhs, self, space),
+        match comptime!(self.space.partitioner()) {
+            Partitioner::Final(_) => mma_leaf(self, lhs, rhs),
+            Partitioner::Level(level) => {
+                let step = self.level_step();
+                match comptime!(step) {
+                    LevelStep::Resident => mma_resident(self, lhs, rhs),
+                    LevelStep::FragmentWalk => mma_fragment_walk(lhs, rhs, self),
+                    LevelStep::Walk => {
+                        // The level's operation space is the merge of the operands' runtime
+                        // spaces; the output contributes no axis beyond `lhs ∪ rhs`, so the
+                        // two operands cover it.
+                        let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
+                        match comptime!(level.schedule()) {
+                            Schedule::Direct => mma_direct(lhs, rhs, self, space),
+                            Schedule::Staged => mma_staged(lhs, rhs, self, space),
+                            Schedule::DoubleBuffered => mma_double(lhs, rhs, self, space),
+                        }
+                    }
                 }
             }
         }

@@ -2,10 +2,14 @@
 //! axes as the `row × col` matrix, leading axes as a batch, and contracts `K`.
 //!
 //! Two layers: [`lower`] + [`schedule`] recurse over tiles as opaque [`CubePrimitive`], shuffling
-//! operands until a final tile; [`leaf`] is the one place that commits to numbers, dispatching by
-//! storage to the [`cmma`] (tensor-core) or [`register`] (software) backend.
+//! operands until a final tile; [`instruction`] is the one place that commits to numbers,
+//! dispatching by storage to the tensor-core or software-register backend. The register tier
+//! rides the same shapes one tier down: [`resident`] is the accumulator's staging decorator,
+//! and the fragment walk in [`schedule`] is `Staged` with a comptime walk.
 
 mod instruction;
 mod lower;
 mod resident;
 mod schedule;
+
+pub use resident::Resident;

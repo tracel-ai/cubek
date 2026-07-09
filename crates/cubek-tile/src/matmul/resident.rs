@@ -1,95 +1,136 @@
-//! The resident accumulator: a memory accumulator bound for the [`Leaf::Cmma`]
-//! instruction runs the contraction in fragments — initialized from this instance's
-//! windows once, accumulated across the whole walk, drained back once (the classic
-//! global matmul's `init_accumulator` / epilogue). Fragments cannot be indexed at
-//! runtime, so residency is handled once here at the outermost level, not per schedule.
+//! [`Resident`]: the accumulator's register-tier decorator, [`Staging`](crate::Staging)'s
+//! write-side dual. A memory accumulator bound for the [`Leaf::Cmma`] instruction runs its
+//! whole contraction on a register-resident fragment partition: initialized from the
+//! accumulator's windows once, accumulated across the whole walk, written back once (the
+//! classic global matmul's `init_accumulator` / epilogue). Where `Staging` refills per
+//! region, residency brackets the whole contraction — fragments cannot be indexed at
+//! runtime, so it is entered once at the outermost cmma boundary, not per schedule.
+//!
+//! `contract` is a hand-written expand method for the same reason as `Staging`'s
+//! `fill`/`consume`: the write-back must follow the caller-defined body, a `Drop` guard
+//! can't emit ops in cubecl, and `#[cube]` rejects `impl Trait` args.
 
-use cubecl::{cmma::MatrixIdent, prelude::*, std::tensor::layout::CoordsDyn};
+use cubecl::{cmma::MatrixIdent, prelude::*, unexpanded};
 
 use crate::*;
 
-/// Run `out`'s contraction on a resident accumulator: [`init`] the fragment partition
-/// from its windows, recurse `mma` on it (the partition carries `out`'s space, so the
-/// schedules walk it exactly like the tile it replaces and [`Tile::at`] passes it
-/// through unchanged), then [`drain`] it back.
+/// The register-resident form of a memory accumulator: the fragment partition standing in
+/// for the tile it decorates. Built by [`new`](Resident::new), consumed by
+/// [`contract`](Resident::contract).
+#[derive(CubeType)]
+pub struct Resident<T: Numeric> {
+    acc: Tile<T>,
+}
+
+/// Enter register residency for `out` and run its contraction there: the recursion
+/// continues on the fragment partition in place of the memory tile (it carries the same
+/// space, so the schedules walk it exactly like the tile it replaces), and the write-back
+/// follows inside `contract`.
 #[cube]
 pub(crate) fn mma_resident<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
     out: &mut Tile<Acc>,
     lhs: &Tile<Lhs>,
     rhs: &Tile<Rhs>,
 ) {
-    let mut acc = init(out, lhs);
-    acc.mma(lhs, rhs);
-    drain(out, &acc);
+    let mut acc = Resident::new(out, lhs);
+    acc.contract(out, |frags| frags.mma(lhs, rhs));
 }
 
-/// The resident [`CmmaPartition`] for `out`, each fragment initialized from its final
-/// window so the contraction accumulates onto the delivered values.
 #[cube]
-fn init<Acc: Numeric, Lhs: Numeric>(out: &mut Tile<Acc>, lhs: &Tile<Lhs>) -> Tile<Acc> {
-    let space = comptime!(out.space.clone());
-    let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
-    let fin = comptime!(space.final_space());
-    let m = comptime!(fin.extent_at(fin.rank() - 2));
-    let n = comptime!(fin.extent_at(fin.rank() - 1));
-    let k = comptime!(contracted_extent(&lhs.space, &space));
+impl<Acc: Numeric> Resident<Acc> {
+    /// Promote `out` to a resident fragment partition, each fragment initialized from its
+    /// final window so the contraction accumulates onto the delivered values.
+    pub fn new<Lhs: Numeric>(out: &mut Tile<Acc>, lhs: &Tile<Lhs>) -> Resident<Acc> {
+        let space = comptime!(out.space.clone());
+        let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
+        let fin = comptime!(space.final_space());
+        let m = comptime!(fin.extent_at(fin.rank() - 2));
+        let n = comptime!(fin.extent_at(fin.rank() - 1));
+        let k = comptime!(contracted_extent(&lhs.space, &space));
 
-    let mut frags = Sequence::<CmmaData<Acc>>::new();
-    #[unroll]
-    for mi in 0..m_tiles {
+        let mut frags = Sequence::<CmmaData<Acc>>::new();
         #[unroll]
-        for ni in 0..n_tiles {
-            let mut frag = CmmaData::<Acc>::alloc(MatrixIdent::Accumulator, m, n, k);
-            let window = fragment_window(out, mi, ni);
-            match &window.tile_kind {
-                TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
-                TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                    panic!("resident accumulator: the source must be memory")
+        for mi in 0..m_tiles {
+            #[unroll]
+            for ni in 0..n_tiles {
+                let mut frag = CmmaData::<Acc>::alloc(MatrixIdent::Accumulator, m, n, k);
+                let window = fragment_window(out, mi, ni);
+                match &window.tile_kind {
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
+                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                        panic!("Resident: the source must be memory")
+                    }
                 }
+                frags.push(frag);
             }
-            frags.push(frag);
+        }
+        Resident::<Acc> {
+            acc: Tile::<Acc> {
+                tile_kind: TileKind::new_CmmaPartition(CmmaPartition::<Acc> {
+                    frags,
+                    m_tiles,
+                    n_tiles,
+                }),
+                space: comptime!(space),
+            },
         }
     }
-    Tile::<Acc> {
-        tile_kind: TileKind::new_CmmaPartition(CmmaPartition::<Acc> {
-            frags,
-            m_tiles,
-            n_tiles,
-        }),
-        space: comptime!(space),
-    }
-}
 
-/// Drain the resident partition back into this instance's final windows of `out`.
-#[cube]
-fn drain<Acc: Numeric>(out: &mut Tile<Acc>, acc: &Tile<Acc>) {
-    match &acc.tile_kind {
-        TileKind::CmmaPartition(p) =>
-        {
-            #[unroll]
-            for mi in 0..comptime!(p.m_tiles) {
+    /// Drain the resident partition back into the final windows of the tile it decorates.
+    fn writeback(&self, out: &mut Tile<Acc>) {
+        match &self.acc.tile_kind {
+            TileKind::CmmaPartition(p) =>
+            {
                 #[unroll]
-                for ni in 0..comptime!(p.n_tiles) {
-                    let mut window = fragment_window(out, mi, ni);
-                    let frag = p.at(mi, ni);
-                    match &mut window.tile_kind {
-                        TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
-                        TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                            panic!("resident accumulator: the sink must be memory")
+                for mi in 0..comptime!(p.m_tiles) {
+                    #[unroll]
+                    for ni in 0..comptime!(p.n_tiles) {
+                        let mut window = fragment_window(out, mi, ni);
+                        let frag = p.at(mi, ni);
+                        match &mut window.tile_kind {
+                            TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
+                            TileKind::Cmma(_)
+                            | TileKind::CmmaPartition(_)
+                            | TileKind::TmaGmem(_) => {
+                                panic!("Resident: the sink must be memory")
+                            }
                         }
                     }
                 }
             }
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                panic!("Resident: write-back expects the fragment partition")
+            }
         }
-        TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-            panic!("resident accumulator: drain expects the fragment partition")
-        }
+    }
+}
+
+impl<Acc: Numeric> Resident<Acc> {
+    /// Run `compute` on the resident accumulator, then write it back to `out` — the
+    /// closure-scoped lifecycle, mirroring [`Staging`](crate::Staging)'s `fill`/`consume`.
+    /// See [`ResidentExpand::__expand_contract_method`].
+    pub fn contract(&mut self, _out: &mut Tile<Acc>, _compute: impl FnOnce(&mut Tile<Acc>)) {
+        unexpanded!()
+    }
+}
+
+impl<Acc: Numeric> ResidentExpand<Acc> {
+    pub fn __expand_contract_method<F>(
+        &mut self,
+        scope: &Scope,
+        out: &mut TileExpand<Acc>,
+        compute: F,
+    ) where
+        F: FnOnce(&Scope, &mut TileExpand<Acc>),
+    {
+        compute(scope, &mut self.acc);
+        self.__expand_writeback_method(scope, out);
     }
 }
 
 /// Descend to the `(mi, ni)` fragment's final window: an instance level hands this
 /// instance a single region (`region(0)`, hardware position folded in); the partition
-/// level takes the region at the comptime partition coordinates.
+/// level takes the comptime region at the partition coordinates.
 #[cube]
 fn fragment_window<T: Numeric>(
     tile: &mut Tile<T>,
@@ -102,49 +143,12 @@ fn fragment_window<T: Numeric>(
             let walk = Walk::over(tile.runtime_space());
             tile.at(&walk.region(0))
         }
-        Some(_) => {
-            let rows = comptime!(space.axis_at(space.rank() - 2));
-            let cols = comptime!(space.axis_at(space.rank() - 1));
-            tile.at(&region_at(
-                comptime!(space.clone()),
-                rows,
-                mi,
-                cols,
-                ni.runtime(),
-            ))
-        }
+        Some(_) => tile.at_comptime(comptime!(CRegion::trailing(&space, mi, ni))),
     };
     match comptime!(sub.space.partitioner()) {
         Partitioner::Final(_) => sub,
         Partitioner::Level(_) => fragment_window(&mut sub, mi, ni),
     }
-}
-
-/// A [`Region`] of `space` at explicit coordinates: the comptime `frag` axis (a fragment
-/// index must be comptime), the runtime `walk` axis (a contraction step may be a plain
-/// loop variable), every other axis `0`. How the comptime microkernel reuses the runtime
-/// windowing ([`Tile::at`]) without a runtime walk.
-#[cube]
-pub(crate) fn region_at(
-    #[comptime] space: Space,
-    #[comptime] frag_axis: Axis,
-    #[comptime] frag_idx: usize,
-    #[comptime] walk_axis: Axis,
-    walk_idx: usize,
-) -> Region {
-    let mut coords = CoordsDyn::new();
-    #[unroll]
-    for p in 0..comptime!(space.rank()) {
-        let axis = comptime!(space.axis_at(p));
-        if comptime!(axis == frag_axis) {
-            coords.push(frag_idx as u32);
-        } else if comptime!(axis == walk_axis) {
-            coords.push(walk_idx as u32);
-        } else {
-            coords.push(0u32);
-        }
-    }
-    Region::new(coords, space)
 }
 
 /// The axis of `operand` the output drops — the contraction axis.

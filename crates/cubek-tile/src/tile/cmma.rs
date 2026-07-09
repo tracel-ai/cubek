@@ -4,6 +4,7 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
+    std::tensor::layout::CoordsDyn,
 };
 
 use crate::*;
@@ -42,6 +43,34 @@ impl<T: Numeric> CmmaPartition<T> {
     pub(crate) fn at(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> CmmaData<T> {
         self.frags.index(comptime!(mi * self.n_tiles + ni)).clone()
     }
+}
+
+/// The [`Region`] one staging step windows: the runtime contraction step `ki` on the
+/// `contracted` axis, comptime fragment coordinates `(c0, c1)` on the trailing two axes
+/// (`contracted` wins where they coincide), `0` elsewhere.
+#[cube]
+fn step_region(
+    #[comptime] space: Space,
+    #[comptime] contracted: Axis,
+    ki: usize,
+    #[comptime] c0: usize,
+    #[comptime] c1: usize,
+) -> Region {
+    let mut coords = CoordsDyn::new();
+    #[unroll]
+    for p in 0..comptime!(space.rank()) {
+        let axis = comptime!(space.axis_at(p));
+        if comptime!(axis == contracted) {
+            coords.push(ki as u32);
+        } else if comptime!(p == space.rank() - 2) {
+            coords.push(c0 as u32);
+        } else if comptime!(p == space.rank() - 1) {
+            coords.push(c1 as u32);
+        } else {
+            coords.push(0u32);
+        }
+    }
+    Region::new(coords, space)
 }
 
 #[cube]
@@ -93,6 +122,52 @@ impl<T: Numeric> CmmaData<T> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
+    /// Stage one contraction step of this memory operand into a register partition — the
+    /// register tier's `smem_like` + `copy_from`. One fragment per grid tile of the operand's
+    /// trailing two axes; the `contracted` axis stages a single step, positioned at `ki`.
+    /// `m`/`n`/`k` are the whole MMA instruction shape (the alloc needs the full triple
+    /// whatever this operand's role).
+    pub(crate) fn stage_frags(
+        &self,
+        #[comptime] ident: MatrixIdent,
+        #[comptime] m: usize,
+        #[comptime] n: usize,
+        #[comptime] k: usize,
+        #[comptime] contracted: Axis,
+        ki: usize,
+    ) -> Tile<T> {
+        let space = comptime!(self.space.clone());
+        let a0 = comptime!(space.axis_at(space.rank() - 2));
+        let a1 = comptime!(space.axis_at(space.rank() - 1));
+        let t0 = comptime!(if a0 == contracted { 1 } else { space.count(a0) });
+        let t1 = comptime!(if a1 == contracted { 1 } else { space.count(a1) });
+
+        let mut frags = Sequence::<CmmaData<T>>::new();
+        #[unroll]
+        for i in 0..t0 {
+            #[unroll]
+            for j in 0..t1 {
+                let mut frag = CmmaData::<T>::alloc(ident, m, n, k);
+                let w = self.at(&step_region(comptime!(space.clone()), contracted, ki, i, j));
+                match &w.tile_kind {
+                    TileKind::Gmem(s) | TileKind::Smem(s) => frag.load_window(s),
+                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                        panic!("Tile::stage_frags: the source must be a memory window")
+                    }
+                }
+                frags.push(frag);
+            }
+        }
+        Tile::<T> {
+            tile_kind: TileKind::new_CmmaPartition(CmmaPartition::<T> {
+                frags,
+                m_tiles: t0,
+                n_tiles: t1,
+            }),
+            space: comptime!(space),
+        }
+    }
+
     /// Allocate an uninitialized tensor-core fragment as a `Cmma` tile. `m`/`n`/`k`
     /// are the whole MMA tile, passed in full whatever the role.
     pub fn cmma_fragment(
