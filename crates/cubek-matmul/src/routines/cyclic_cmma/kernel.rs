@@ -19,6 +19,6 @@ pub fn cyclic_cmma_kernel<E: Numeric, EL: Numeric, ER: Numeric>(
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
-    let mut acc = c.promote(&a);
+    let mut acc = c.promote();
     acc.contract(&mut c, |r| r.mma(&a, &b));
 }

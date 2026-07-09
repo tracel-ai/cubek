@@ -14,13 +14,33 @@ pub enum Schedule {
 }
 
 /// The instruction that contracts a final tile. Declared in the plan rather than derived
-/// from the tiles because pre-leaf levels act on it: the residency hoist (lower.rs) and the
-/// cmma smem storage tiling ([`Tile::smem`](crate::Tile::smem)) read it before the leaf runs.
+/// from the tiles because pre-leaf code acts on it: residency ([`promote`](crate::Tile)),
+/// staging-store deduction ([`Staging::new`](crate::Staging)), and the cmma smem storage
+/// tiling ([`Tile::smem`](crate::Tile::smem)) all read it before the leaf runs. `Cmma`
+/// carries the instruction's contraction depth `k` — the final space gives `m`/`n`, but
+/// an accumulator's own axes never include `k`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Leaf {
     #[default]
     Register,
-    Cmma,
+    Cmma {
+        k: usize,
+    },
+}
+
+impl Leaf {
+    pub fn is_cmma(&self) -> bool {
+        matches!(self, Leaf::Cmma { .. })
+    }
+
+    /// The cmma instruction's contraction depth; panics on [`Register`](Leaf::Register)
+    /// (a software leaf reads its depth off the operand at the leaf).
+    pub fn k(&self) -> usize {
+        match self {
+            Leaf::Cmma { k } => *k,
+            Leaf::Register => panic!("Leaf::k: the register leaf declares no depth"),
+        }
+    }
 }
 
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and hands

@@ -135,7 +135,7 @@ pub fn launch_ref<R: Runtime>(
                 .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: i.k });
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
     // shape family), overhang checks derived per operand — all inside the launcher. The

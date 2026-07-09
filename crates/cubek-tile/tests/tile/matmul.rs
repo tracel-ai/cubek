@@ -829,7 +829,7 @@ fn launch_resident_matmul<E: Numeric>(
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
-    let mut acc = c.promote(&a);
+    let mut acc = c.promote();
     acc.contract(&mut c, |r| r.mma(&a, &b));
 }
 
@@ -1012,7 +1012,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: edge });
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1081,7 +1081,7 @@ fn cmma_matmul_plane_partitioned_stage() {
                 .axis(N, Cut::plane(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: edge });
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1121,9 +1121,9 @@ fn cmma_matmul_plane_partitioned_stage() {
 }
 
 /// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³
-/// fragments, resident across a double-buffered K walk; the partition microkernel
-/// contracts it with A fragments reused across the n loop and B across the m loop.
-/// Tensor-core only — run with `cargo test-metal`.
+/// fragments, resident across a double-buffered K walk; the fragment level declares
+/// `Direct`, so the static walk reloads operand fragments per execute (no staging —
+/// the register tier's honest `Direct`). Tensor-core only — run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1154,7 +1154,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
-        .leaf(Leaf::Cmma);
+        .leaf(Leaf::Cmma { k: i });
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))

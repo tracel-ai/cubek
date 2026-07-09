@@ -12,9 +12,7 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{
-    CmmaPartition, Leaf, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
-};
+use crate::{CmmaPartition, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level};
 
 /// How a slot rendezvouses its fill against its read. Comptime — fixed at construction from the
 /// operands' delivery, never inferred at the call site.
@@ -197,7 +195,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let register = comptime!(
-            out.partitioner().leaf() == Leaf::Cmma && partition_level(&out.divide()).is_some()
+            out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
         );
         if register {
             let lhs_tma = lhs.is_tma();

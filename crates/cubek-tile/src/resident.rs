@@ -27,15 +27,11 @@ pub struct Resident<T: Numeric> {
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// Promote this accumulator to its register form, initialized from the delivered
-    /// values so the operation accumulates onto them. `operand` only names the operation's
-    /// contraction depth (this tile's own axes give `m`/`n` but not `k`).
-    pub fn promote<Operand: Numeric>(&self, operand: &Tile<Operand>) -> Resident<Acc> {
-        let k = comptime!(
-            operand
-                .space
-                .final_space()
-                .extent(operand.space.contraction(&self.space))
-        );
+    /// values so the operation accumulates onto them. The instruction shape comes from
+    /// this tile's own space: `m`/`n` from the final tile, `k` from the declared
+    /// [`Leaf`](crate::Leaf).
+    pub fn promote(&self) -> Resident<Acc> {
+        let k = comptime!(self.space.partitioner().leaf().k());
         let mut acc = CmmaPartition::mirror(comptime!(self.space.clone()), k);
         acc.copy_from(self);
         Resident::<Acc> { acc }

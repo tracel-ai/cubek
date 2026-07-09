@@ -11,16 +11,27 @@ use crate::*;
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// `Direct` on this accumulator: no staging — every read goes to where the operand
-    /// lives, through the walk the accumulator supports.
+    /// lives, through the walk the accumulator supports. The two loops are twins; the
+    /// static one is spelled with indexed `comptime!` steps because each unrolled copy
+    /// stamps different host data (a static region), which the runtime iterator sugar
+    /// cannot carry. It walks the output's row axis fastest ([`StaticWalk::over_fastest`]).
     pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         space: Space,
     ) {
-        let static_walk = self.tile_kind.static_level(comptime!(self.space.clone()));
-        if static_walk {
-            direct_static(lhs, rhs, self);
+        if self.tile_kind.static_level(comptime!(self.space.clone())) {
+            let walk = comptime!(StaticWalk::over_fastest(
+                &Space::merge(&[&lhs.space, &rhs.space]),
+                self.space.axis_at(self.space.rank() - 2),
+            ));
+            #[unroll]
+            for i in 0..comptime!(walk.total()) {
+                let region = comptime!(walk.region(i));
+                self.at_static(&region)
+                    .mma(&lhs.at_static(&region), &rhs.at_static(&region));
+            }
         } else {
             for region in Walk::over(space) {
                 self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
@@ -109,26 +120,5 @@ impl<Acc: Numeric> Tile<Acc> {
             let last = walk.region(n - 1);
             s0.consume_final(|a, b| self.at(&last).mma(a, b));
         }
-    }
-}
-
-/// `Direct`'s static walk, the runtime loop's comptime twin: every step windows the
-/// operands and recurses, unrolled because the accumulator's fragments are
-/// comptime-indexed. The output's row axis walks fastest ([`StaticWalk::over_fastest`]).
-#[cube]
-fn direct_static<Lhs: Numeric, Rhs: Numeric, Acc: Numeric>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-) {
-    let walk = comptime!(StaticWalk::over_fastest(
-        &Space::merge(&[&lhs.space, &rhs.space]),
-        out.space.axis_at(out.space.rank() - 2),
-    ));
-    #[unroll]
-    for i in 0..comptime!(walk.total()) {
-        let region = comptime!(walk.region(i));
-        out.at_static(&region)
-            .mma(&lhs.at_static(&region), &rhs.at_static(&region));
     }
 }
