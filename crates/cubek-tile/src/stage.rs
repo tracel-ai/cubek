@@ -194,12 +194,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         rhs: &Tile<Rhs>,
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
+        let lhs_tma = lhs.is_tma();
+        let rhs_tma = rhs.is_tma();
         let register = comptime!(
             out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
         );
         if register {
-            let lhs_tma = lhs.is_tma();
-            let rhs_tma = rhs.is_tma();
             comptime!(assert!(
                 !lhs_tma && !rhs_tma,
                 "Staging: a TMA source cannot stage into registers"
@@ -208,8 +208,6 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
             Staging::wrap((a, b), Pipeline::new(Sync::Solo))
         } else {
-            let lhs_tma = lhs.is_tma();
-            let rhs_tma = rhs.is_tma();
             let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
             Staging::wrap((lhs.smem_like(), rhs.smem_like()), Pipeline::new(sync))
         }
