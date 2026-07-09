@@ -38,6 +38,10 @@ pub struct MemData<T: Numeric> {
     /// runtime): the tiled-split divisors and the stride dot fold to constants.
     #[cube(comptime)]
     static_physical: Option<(Vec<u32>, Vec<u32>)>,
+    /// Whether the window still covers the whole buffer (constructors yes,
+    /// [`at`](Tile::at) no): such a tile can be written in physical order.
+    #[cube(comptime)]
+    whole: bool,
     /// Absolute logical extent per axis (the valid region); `origin + pos` beyond it is
     /// the partial-tile overhang. Preserved across [`at`](Tile::at), unlike `extent`.
     pub(crate) bound: CoordsDyn,
@@ -146,6 +150,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 static_extent,
                 static_physical: comptime!(None),
+                whole: comptime!(true),
                 bound,
                 start_axis,
                 num_tiled,
@@ -192,6 +197,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 static_extent: comptime!(Some(line_extents(&space, vector_size))),
                 static_physical: comptime!(Some(storage_extents(&space, vector_size, levels))),
+                whole: comptime!(true),
                 bound,
                 start_axis: comptime!(0usize),
                 num_tiled: comptime!(space.rank()),
@@ -257,16 +263,41 @@ impl<T: Numeric> MemData<T> {
     /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
     pub(crate) fn fill_from(&mut self, src: &MemData<T>) {
         let size!(W) = comptime!(self.vector_size);
-        let s = src.flat_transparent::<T, W>();
-        let mut d = self.flat_mut::<W>();
-        let total = d.shape();
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
-        while i < total {
-            // `src` zeroes reads past its logical bound (the partial-tile overhang); the
-            // staged buffer is unchecked, so the full padded cell is still written.
-            d.write(i, s.read(i));
-            i += workers;
+        // A whole-buffer static destination (any staged smem) fills in destination-physical
+        // order: the write is linear and only the source decodes, once per line by comptime
+        // divisors — half the address math of scanning both sides in logical order.
+        if comptime!(self.whole && self.static_physical.is_some() && !self.check && src.quant.is_none())
+        {
+            let s = MaskedView::new(
+                src.lines::<W>().view(src.base()).view(src.window()),
+                comptime!(src.check),
+            );
+            let shape = comptime!(self.static_physical.as_ref().unwrap().0.clone());
+            let total = comptime!(shape.iter().product::<u32>() as usize);
+            let start_axis = comptime!(self.start_axis);
+            let num_tiled = comptime!(self.num_tiled);
+            let levels = comptime!(self.levels);
+            let d = self.lines_mut::<W>();
+            let workers = CUBE_DIM as usize;
+            let mut i = UNIT_POS as usize;
+            while i < total {
+                // `src` zeroes reads past its logical bound (the partial-tile overhang);
+                // the staged buffer is unchecked, so the full padded cell is still written.
+                d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                i += workers;
+            }
+        } else {
+            let s = src.flat_transparent::<T, W>();
+            let mut d = self.flat_mut::<W>();
+            let total = d.shape();
+            let workers = CUBE_DIM as usize;
+            let mut i = UNIT_POS as usize;
+            while i < total {
+                // `src` zeroes reads past its logical bound (the partial-tile overhang); the
+                // staged buffer is unchecked, so the full padded cell is still written.
+                d.write(i, s.read(i));
+                i += workers;
+            }
         }
     }
 
@@ -504,6 +535,7 @@ impl<T: Numeric> MemData<T> {
             // The pushed edges are all comptime, so the window is static at any depth.
             static_extent: comptime!(Some(line_edges(&space, self.vector_size))),
             static_physical: comptime!(self.static_physical.clone()),
+            whole: comptime!(false),
             bound: self.bound.clone(),
             start_axis: comptime!(self.start_axis),
             num_tiled: comptime!(self.num_tiled),
@@ -647,6 +679,52 @@ fn storage_extents(space: &Space, vector_size: usize, levels: usize) -> (Vec<u32
         .map(|p| extents[p + 1..].iter().product::<usize>() as u32)
         .collect();
     (shape, strides)
+}
+
+/// The logical coordinate of physical line `i` in a static `[grid…, tile…]` store:
+/// comptime suffix-stride digit decode, each logical axis folding its level digits
+/// back. Size-1 dims and the most significant digit's redundant `%` drop comptime.
+#[cube]
+fn physical_coord(
+    i: usize,
+    #[comptime] shape: Vec<u32>,
+    #[comptime] start_axis: usize,
+    #[comptime] num_tiled: usize,
+    #[comptime] levels: usize,
+) -> CoordsDyn {
+    let x = i as u32;
+    let mut out = CoordsDyn::new();
+    #[unroll]
+    for a in 0..comptime!(start_axis + num_tiled) {
+        let mut l = 0u32;
+        #[unroll]
+        for k in 0..comptime!(if a < start_axis { 1usize } else { levels + 1 }) {
+            let j = comptime!(if a < start_axis {
+                a
+            } else {
+                start_axis + k * num_tiled + (a - start_axis)
+            });
+            if comptime!(shape[j] != 1) {
+                let stride = comptime!(shape[j + 1..].iter().product::<u32>());
+                let digit = if comptime!(shape[..j].iter().all(|&e| e == 1)) {
+                    x / stride
+                } else {
+                    (x / stride) % comptime!(shape[j])
+                };
+                // Finer levels of this axis nest below: scale their extents in.
+                let finer = comptime!(if a < start_axis {
+                    1
+                } else {
+                    ((k + 1)..=levels)
+                        .map(|f| shape[start_axis + f * num_tiled + (a - start_axis)])
+                        .product::<u32>()
+                });
+                l += digit * finer;
+            }
+        }
+        out.push(l);
+    }
+    out
 }
 
 /// The comptime per-axis line extents of a fully-`Static` `space` (innermost
