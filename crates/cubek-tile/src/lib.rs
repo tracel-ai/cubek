@@ -19,7 +19,6 @@ pub use layout::*;
 pub use load::*;
 pub use partitioner::*;
 pub use quantization::*;
-pub use resident::*;
 pub use scalar::*;
 pub use space::*;
 pub use stage::*;

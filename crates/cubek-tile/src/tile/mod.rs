@@ -25,7 +25,7 @@ pub enum TileKind<T: Numeric> {
     /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
     Cmma(CmmaData<T>),
     /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed. Backs the
-    /// resident accumulator ([`Resident`](crate::Resident)) and the register tier's
+    /// resident accumulator ([`promote`](Tile)) and the register tier's
     /// staged operands ([`CmmaPartition::store`]); walked statically
     /// ([`at_static`](Tile::at_static)).
     CmmaPartition(CmmaPartition<T>),

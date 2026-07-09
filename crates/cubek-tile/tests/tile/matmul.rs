@@ -816,9 +816,8 @@ fn launch_staged_matmul<E: Numeric>(
     c.mma(&a, &b);
 }
 
-/// The tensor-core kernel: the accumulator runs the whole contraction register-resident —
-/// promote it (the classic `init_accumulator`), contract inside the bracket, write-back
-/// in `contract` (the epilogue).
+/// The tensor-core kernel: promote the accumulator to its register form (the classic
+/// `init_accumulator`), run the whole contraction on it, copy it back (the epilogue).
 #[cube(launch)]
 fn launch_resident_matmul<E: Numeric>(
     a: &TileArg<'_, E>,
@@ -830,7 +829,8 @@ fn launch_resident_matmul<E: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
     let mut acc = c.promote();
-    acc.contract(&mut c, |r| r.mma(&a, &b));
+    acc.mma(&a, &b);
+    c.copy_from(&acc);
 }
 
 /// The CPU kernel: the same `c.mma(a, b)`; the partitioner's `Direct` schedule
@@ -969,8 +969,8 @@ fn cmma_matmul_8x8x8() {
 }
 
 /// A matmul through tensor cores with a K walk: the kernel promotes the accumulator to
-/// its register-resident form, the staged K regions accumulate into it, and `contract`
-/// writes it back to gmem after. Tensor-core only — run with `cargo test-metal`.
+/// its register-resident form, the staged K regions accumulate into it, and the copy
+/// back to gmem is the epilogue. Tensor-core only — run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
     check_cmma_matmul_k_walk(16, Schedule::Staged);

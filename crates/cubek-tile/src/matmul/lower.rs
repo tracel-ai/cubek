@@ -1,6 +1,7 @@
 //! Lowering `c.mma(a, b)`: at a final tile, the leaf instruction; while levels remain,
 //! walk this level under its [`Schedule`]. Nothing else — register residency is the
-//! kernel's explicit bracket ([`Resident`](crate::Resident)), not a lowering decision.
+//! kernel's explicit bracket ([`promote`](Tile) … [`copy_from`](Tile::copy_from)), not a
+//! lowering decision.
 
 use cubecl::prelude::*;
 

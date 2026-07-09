@@ -1,12 +1,12 @@
-//! The CyclicCmma kernel: promote the accumulator, contract.
+//! The CyclicCmma kernel: promote the accumulator, contract, copy back.
 
 use cubecl::prelude::*;
 use cubek_tile::TileArg;
 
-/// The classic global matmul, spelled in tiles: the accumulator runs the whole
-/// contraction register-resident — promote it (`init_accumulator`), `c.mma(a, b)` inside
-/// the bracket, and the write-back follows in `contract` (the epilogue). Each operand
-/// keeps its own element type, matching the hardware's `MmaConfig`.
+/// The classic global matmul, spelled in tiles: promote the accumulator to its register
+/// form (`init_accumulator`), run the whole contraction on it, copy it back (the
+/// epilogue). Each operand keeps its own element type, matching the hardware's
+/// `MmaConfig`.
 #[cube(launch)]
 pub fn cyclic_cmma_kernel<E: Numeric, EL: Numeric, ER: Numeric>(
     a: &TileArg<'_, EL>,
@@ -20,5 +20,6 @@ pub fn cyclic_cmma_kernel<E: Numeric, EL: Numeric, ER: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
     let mut acc = c.promote();
-    acc.contract(&mut c, |r| r.mma(&a, &b));
+    acc.mma(&a, &b);
+    c.copy_from(&acc);
 }

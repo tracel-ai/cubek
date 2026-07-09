@@ -34,7 +34,7 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             comptime!(assert!(
                 space.partitioner().leaf() == Leaf::Register,
                 "mma: a cmma-leaf accumulator runs register-resident — \
-                 promote it first (Tile::promote / Resident::contract)"
+                 promote it first (Tile::promote), copy it back after"
             ));
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }

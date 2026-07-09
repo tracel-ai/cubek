@@ -4,8 +4,8 @@
 //! Two layers: [`lower`] + [`schedule`] recurse over tiles as opaque [`CubePrimitive`], shuffling
 //! operands until a final tile; [`instruction`] is the one place that commits to numbers,
 //! dispatching by storage to the tensor-core or software-register backend. The register tier
-//! rides the same shapes one tier down: [`Resident`](crate::Resident) is the accumulator's
-//! staging decorator, and each schedule walks the register tier statically when its
+//! rides the same shapes one tier down: [`promote`](crate::Tile) is the accumulator's
+//! staging bracket, and each schedule walks the register tier statically when its
 //! accumulator lives there.
 
 mod instruction;
