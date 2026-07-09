@@ -90,6 +90,10 @@ impl<T: Numeric> CmmaPartition<T> {
         let ident = comptime!(if contracted == a1 {
             MatrixIdent::A
         } else {
+            assert!(
+                contracted == a0,
+                "CmmaPartition::store: the contracted axis must be one of the trailing two"
+            );
             MatrixIdent::B
         });
         let out_fin = comptime!(out.final_space());
