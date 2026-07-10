@@ -1,10 +1,10 @@
 //! The CyclicCmma routine: the classic simple matmul (plane-partitioned stage, cooperative
 //! cyclic loading, tensor-core leaf) ported onto the tile DSL.
 //!
-//! Each cube owns a `planes·partition·instruction`-sized stage along `m`/`n`; a
-//! double-buffered walk rotates smem slots along `K` (depth smem-budgeted), filled
-//! cooperatively (cyclic across the cube's units). Within the stage each plane owns a
-//! [`Partition`] of instruction-sized cmma fragments, resident across the whole `K` walk.
+//! Each cube owns a `planes·partition·instruction`-sized stage along `m`/`n`; the walk
+//! refills one smem stage per `K` step (depth smem-budgeted), filled cooperatively
+//! (cyclic across the cube's units). Within the stage each plane owns a [`Partition`] of
+//! instruction-sized cmma fragments, resident across the whole `K` walk.
 //!
 //! # Rejected (returns [`MatmulSetupError`])
 //!
@@ -196,31 +196,26 @@ impl CyclicCmmaRoutine {
                 MatmulAvailabilityError::TileSizeNotFound,
             ))?;
 
-        // Each plane's partition, snapped to divisors of the tile grid so the stage
-        // never overhangs. The legacy shape: partition_n ≈ 8, rows 2.
+        // The thin shape (single-row partitions, planes along `m`, small stages): high
+        // threadgroup residency beats per-plane reuse on Metal. Cross-point measured
+        // 5.2 vs 3.6 TFLOPS against the old fat 2x8 selection on square_4096 f16.
         let (grid_m, grid_n) = (problem.m / im.max(1), problem.n / inn.max(1));
-        let part_n = divisor_at_most(grid_n.max(1), 8);
-        let part_m = divisor_at_most(grid_m.max(1), 2);
-
-        // Plane grid over the remaining partition grid, capped at 256 units like the
-        // legacy selector: past it Metal rejects the cube dim and silently zeroes output.
         let max_units = (client.properties().hardware.max_units_per_cube as usize).min(256);
         let budget = (max_units / plane_dim).max(1);
-        let planes_m = divisor_at_most((grid_m / part_m).max(1), budget.min(MAX_PLANES_PER_AXIS));
-        let planes_n = divisor_at_most(
-            (grid_n / part_n).max(1),
-            (budget / planes_m).min(MAX_PLANES_PER_AXIS),
-        );
+        let rows = (budget / inn.div_ceil(4).max(1)).max(1);
 
-        // Stage depth: the deepest `d·ik` dividing `k` (d ≤ 8) whose two
-        // double-buffered slots still fit shared memory.
-        let (stage_m, stage_n) = (planes_m * part_m * im, planes_n * part_n * inn);
-        let smem_budget = 32 * 1024;
-        let row_bytes = stage_m * d.lhs.size() + stage_n * d.rhs.size();
-        let stage_k = (1..=8usize)
+        let part_m = 1;
+        let part_n = divisor_at_most(grid_n.max(1), rows.min(MAX_PLANES_PER_AXIS));
+        let planes_m = divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS));
+        let planes_n = 1;
+
+        // Stage depth: one instruction column per plane lane (the legacy partition_k),
+        // snapped down to the deepest `d·ik` dividing `k`. Deeper stages lose residency
+        // (measured 5.21 at 32 vs 4.68 at 128 on square_4096 f16).
+        let stage_k = (1..=(plane_dim / ik).max(1))
             .rev()
             .map(|d| d * ik)
-            .find(|&sk| problem.k.is_multiple_of(sk) && 2 * sk * row_bytes <= smem_budget)
+            .find(|&sk| problem.k.is_multiple_of(sk))
             .unwrap_or(ik);
 
         Ok(CyclicCmmaBlueprint {

@@ -37,7 +37,9 @@ impl<Acc: Numeric> Tile<Acc> {
 
     /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it
     /// into the recursion. `consume_final` every region, since no later fill publishes
-    /// within an iteration.
+    /// within an iteration. A static register-staged level unrolls with comptime regions
+    /// so window offsets land as immediates; an smem-staged level keeps the runtime loop
+    /// (unrolling would restage the recursion's shared memory per copy).
     pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -45,12 +47,29 @@ impl<Acc: Numeric> Tile<Acc> {
         space: Space,
     ) {
         let mut slot = Staging::new(lhs, rhs, comptime!(self.space.clone()));
-        for region in Walk::over(space) {
-            slot.fill(|s, pipe| {
-                pipe.fill(&mut s.0, &lhs.at(&region));
-                pipe.fill(&mut s.1, &rhs.at(&region));
-            });
-            slot.consume_final(|a, b| self.at(&region).mma(a, b));
+        let register = comptime!(
+            self.space.partitioner().leaf().is_cmma()
+                && partition_level(&self.space.divide()).is_some()
+        );
+        if comptime!(register && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()) {
+            let walk = comptime!(StaticWalk::over(&Space::merge(&[&lhs.space, &rhs.space])));
+            #[unroll]
+            for i in 0..comptime!(walk.total()) {
+                let region = comptime!(walk.region(i));
+                slot.fill(|s, pipe| {
+                    pipe.fill(&mut s.0, &lhs.at_static(&region));
+                    pipe.fill(&mut s.1, &rhs.at_static(&region));
+                });
+                slot.consume_final(|a, b| self.at_static(&region).mma(a, b));
+            }
+        } else {
+            for region in Walk::over(space) {
+                slot.fill(|s, pipe| {
+                    pipe.fill(&mut s.0, &lhs.at(&region));
+                    pipe.fill(&mut s.1, &rhs.at(&region));
+                });
+                slot.consume_final(|a, b| self.at(&region).mma(a, b));
+            }
         }
     }
 

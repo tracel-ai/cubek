@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Leaf, MAX_AXES, Partitioner};
+use crate::{Axis, Distribution, Leaf, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -267,6 +267,19 @@ impl Space {
     /// merge can be dynamic.
     pub fn is_static(&self) -> bool {
         self.axes().all(|axis| !self.is_dynamic(axis))
+    }
+
+    /// Whether this level's walk is host data: every extent `Static` and every axis
+    /// `Sequential` (no hardware digit to decode), so a [`StaticWalk`](crate::StaticWalk)
+    /// can unroll it with comptime regions.
+    pub(crate) fn static_walkable(&self) -> bool {
+        self.is_static()
+            && self.axes().all(|axis| {
+                matches!(
+                    self.partitioner().distribution(axis),
+                    Distribution::Sequential
+                )
+            })
     }
 
     pub fn extent_at(&self, i: usize) -> usize {

@@ -55,6 +55,10 @@ pub struct Storage {
     /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
     /// keeps the unchecked (divisible) fast path.
     pub check_bounds: bool,
+    /// The launch's cube size (units per cube), `0` when unknown. Comptime knowledge of
+    /// the cooperative worker count lets a fill emit straight-line tasks instead of a
+    /// rolled loop whose runtime `CUBE_DIM` stride blocks unrolling.
+    pub units: usize,
 }
 
 impl Storage {
@@ -64,6 +68,7 @@ impl Storage {
             start_axis: 0,
             levels: physical_rank / logical_rank - 1,
             check_bounds: false,
+            units: 0,
         }
     }
 
@@ -72,12 +77,19 @@ impl Storage {
             start_axis,
             levels,
             check_bounds: false,
+            units: 0,
         }
     }
 
     /// Set whether edge reads/writes must be bounds-checked.
     pub fn checked(mut self, check_bounds: bool) -> Self {
         self.check_bounds = check_bounds;
+        self
+    }
+
+    /// Set the launch's cube size (units per cube).
+    pub fn units(mut self, units: usize) -> Self {
+        self.units = units;
         self
     }
 }
@@ -198,6 +210,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The launch's cube size carried by a memory tile's [`Storage`], `0` when unknown
+    /// (or for a non-memory tile).
+    pub fn units(&self) -> comptime_type!(usize) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.units(),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(0usize)
+            }
+        }
+    }
+
     /// Window this tile down to `region` (no copy). The tile projects `region` onto
     /// its own axes, so `lhs ∈ {M,K}` and `out ∈ {M,N}` agree without the caller
     /// matching them.
@@ -221,18 +244,26 @@ impl<T: Numeric> Tile<T> {
 
     /// [`at`](Tile::at) for a static region: the register tier's windowing. Memory
     /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
-    /// partition *selects* its `(mi, ni)` fragment, which only static coordinates can do.
+    /// partition whose child is the final tile *selects* its `(mi, ni)` fragment, and
+    /// above that (a contraction-step level) passes through whole, like [`at`](Tile::at).
     pub fn at_static(&self, #[comptime] region: &StaticRegion) -> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
                 self.at(&Region::from_static(region))
             }
             TileKind::CmmaPartition(p) => {
-                let mi = comptime!(region.coord(self.space.axis_at(self.space.rank() - 2)));
-                let ni = comptime!(region.coord(self.space.axis_at(self.space.rank() - 1)));
-                Tile::<T> {
-                    tile_kind: TileKind::new_Cmma(p.at(mi, ni)),
-                    space: comptime!(self.space.divide()),
+                if comptime!(self.space.divide().is_final()) {
+                    let mi = comptime!(region.coord(self.space.axis_at(self.space.rank() - 2)));
+                    let ni = comptime!(region.coord(self.space.axis_at(self.space.rank() - 1)));
+                    Tile::<T> {
+                        tile_kind: TileKind::new_Cmma(p.at(mi, ni)),
+                        space: comptime!(self.space.divide()),
+                    }
+                } else {
+                    Tile::<T> {
+                        tile_kind: TileKind::new_CmmaPartition(p.clone()),
+                        space: comptime!(self.space.divide()),
+                    }
                 }
             }
             TileKind::Cmma(_) => panic!("Tile::at_static: a single fragment has no regions"),

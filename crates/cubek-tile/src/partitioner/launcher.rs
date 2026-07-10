@@ -55,6 +55,7 @@ impl<'c, R: Runtime> Launcher<'c, R> {
         TileArgLaunch::source(binding)
             .space(&self.kernel)
             .concrete(&self.concrete)
+            .cube_units(self.cube_dim().num_elems() as usize)
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis` — one width
