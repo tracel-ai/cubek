@@ -25,11 +25,11 @@ pub struct MemData<T: Numeric> {
     /// unvectorized; held comptime so `size!` can read it.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    physical_shape: CoordsDyn,
-    physical_strides: CoordsDyn,
+    physical_shape: Coords<u32>,
+    physical_strides: Coords<u32>,
     /// Accumulates across [`at`](Tile::at)s.
-    origin: CoordsDyn,
-    extent: CoordsDyn,
+    origin: Coords<u32>,
+    extent: Coords<u32>,
     /// The window origin's line offset through the base layout, accumulated across
     /// [`at`](Tile::at)s (each descent is tile-aligned, where the layout is linear), so
     /// [`window_slice`](MemData::window_slice) never re-derives it from the origin.
@@ -40,7 +40,7 @@ pub struct MemData<T: Numeric> {
     whole: bool,
     /// Absolute logical extent per axis (the valid region); `origin + pos` beyond it is
     /// the partial-tile overhang. Preserved across [`at`](Tile::at), unlike `extent`.
-    pub(crate) bound: CoordsDyn,
+    pub(crate) bound: Coords<u32>,
     #[cube(comptime)]
     start_axis: usize,
     /// Tiled axes, each split into `levels + 1` `[grid…, tile…]` parts.
@@ -100,8 +100,8 @@ impl<T: Numeric> MemData<T> {
         let rank = comptime!(start_axis + (levels + 1) * num_tiled);
         let last = comptime!(rank - 1);
         let w = comptime!(vector_size as u32);
-        let mut physical_shape = CoordsDyn::new();
-        let mut physical_strides = CoordsDyn::new();
+        let mut physical_shape = Coords::<u32>::new();
+        let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
             let extent = tensor.shape(i) as u32;
@@ -315,7 +315,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The window extent, for shape-only readers that must not regroup the buffer.
-    pub(crate) fn extent(&self) -> CoordsDyn {
+    pub(crate) fn extent(&self) -> Coords<u32> {
         self.extent.clone()
     }
 
@@ -368,7 +368,7 @@ impl<T: Numeric> MemData<T> {
     /// tile's row axis, widened back to scalars; a constant on a static store.
     pub(crate) fn row_stride(&self) -> u32 {
         let rows = comptime!(self.start_axis + (self.levels + 1) * self.num_tiled - 2);
-        self.physical_strides[rows].fmul(comptime!(self.vector_size as u32).runtime())
+        self.physical_strides.at(rows).fmul(comptime!(self.vector_size as u32).runtime())
     }
 
     /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
@@ -480,7 +480,7 @@ impl<T: Numeric> MemData<T> {
         #[unroll]
         for p in 0..rank - 2 {
             let weight = shape.fproduct(comptime!(((p + 1)..(rank - 2)).collect::<Vec<_>>()));
-            batches.push(i.fcast::<u32>().fdiv(weight).frem(shape[p]));
+            batches.push(i.fcast::<u32>().fdiv(weight).frem(shape.at(p)));
         }
         self.masked_mut::<W>(BatchMatrix::new(batches, rows, cols))
     }
@@ -489,10 +489,10 @@ impl<T: Numeric> MemData<T> {
     /// the sub-tile edge, crop each axis to that edge, re-box the same buffer. `bound`
     /// is carried through unchanged, so the leaf masks correctly at any nesting depth.
     pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> MemData<T> {
-        let mut origin = CoordsDyn::new();
-        let mut extent = CoordsDyn::new();
+        let mut origin = Coords::<u32>::new();
+        let mut extent = Coords::<u32>::new();
         // Per-axis window_start advances, summed below (chained, so constants fold).
-        let mut advances = Sequence::<u32>::new();
+        let mut advances = Coords::<u32>::new();
 
         let last = comptime!(space.rank() - 1);
         #[unroll]
@@ -506,7 +506,7 @@ impl<T: Numeric> MemData<T> {
             });
             let index = region.coord(axis);
 
-            origin.push(self.origin[p].fadd(index.fmul(edge).fcast::<u32>()));
+            origin.push(self.origin.at(p).fadd(index.fmul(edge).fcast::<u32>()));
             extent.push(comptime!(edge as u32).runtime());
             advances.push(
                 index
@@ -544,13 +544,13 @@ impl<T: Numeric> MemData<T> {
     fn step(&self, #[comptime] p: usize, #[comptime] edge: u32) -> u32 {
         let e = comptime!(edge).runtime();
         if comptime!(p < self.start_axis || self.levels == 0) {
-            e.fmul(self.physical_strides[p])
+            e.fmul(self.physical_strides.at(p))
         } else {
             // One tiling level (`storage_layout` asserts): a grid and a tile digit.
             let jt = comptime!(self.num_tiled + p);
-            let finer = self.physical_shape[jt];
-            let grid = e.fdiv(finer).fmul(self.physical_strides[p]);
-            let tile = e.frem(finer).fmul(self.physical_strides[jt]);
+            let finer = self.physical_shape.at(jt);
+            let grid = e.fdiv(finer).fmul(self.physical_strides.at(p));
+            let tile = e.frem(finer).fmul(self.physical_strides.at(jt));
             grid.fadd(tile)
         }
     }
@@ -561,15 +561,15 @@ impl<T: Numeric> MemData<T> {
 /// Reduces to `physical_shape` for an untiled (strided) operand.
 #[cube]
 fn logical_bound(
-    physical_shape: &CoordsDyn,
+    physical_shape: &Coords<u32>,
     #[comptime] start_axis: usize,
     #[comptime] num_tiled: usize,
     #[comptime] levels: usize,
-) -> CoordsDyn {
-    let mut bound = CoordsDyn::new();
+) -> Coords<u32> {
+    let mut bound = Coords::<u32>::new();
     #[unroll]
     for i in 0..start_axis {
-        bound.push(physical_shape[i]);
+        bound.push(physical_shape.at(i));
     }
     #[unroll]
     for a in 0..num_tiled {
@@ -585,9 +585,12 @@ fn logical_bound(
 /// The whole-tile window: `origin = 0`, `extent =` the space's per-axis extents. `Space` is
 /// conceptual; the innermost (vectorized) axis's extent is a line count, `/ vector_size`.
 #[cube]
-fn full_window(#[comptime] space: Space, #[comptime] vector_size: usize) -> (CoordsDyn, CoordsDyn) {
-    let mut origin = CoordsDyn::new();
-    let mut extent = CoordsDyn::new();
+fn full_window(
+    #[comptime] space: Space,
+    #[comptime] vector_size: usize,
+) -> (Coords<u32>, Coords<u32>) {
+    let mut origin = Coords::<u32>::new();
+    let mut extent = Coords::<u32>::new();
     let last = comptime!(space.rank() - 1);
 
     #[unroll]
@@ -606,11 +609,11 @@ fn full_window(#[comptime] space: Space, #[comptime] vector_size: usize) -> (Coo
 #[cube]
 fn top_window(
     #[comptime] space: Space,
-    bound: &CoordsDyn,
+    bound: &Coords<u32>,
     #[comptime] vector_size: usize,
-) -> (CoordsDyn, CoordsDyn) {
-    let mut origin = CoordsDyn::new();
-    let mut extent = CoordsDyn::new();
+) -> (Coords<u32>, Coords<u32>) {
+    let mut origin = Coords::<u32>::new();
+    let mut extent = Coords::<u32>::new();
     let last = comptime!(space.rank() - 1);
 
     #[unroll]
@@ -623,7 +626,7 @@ fn top_window(
             Extent::Static(e) => {
                 (comptime!(if p == last { e / vector_size } else { e }) as u32).runtime()
             }
-            Extent::Dynamic => bound[p],
+            Extent::Dynamic => bound.at(p),
         };
         extent.push(size);
     }
@@ -639,11 +642,11 @@ fn storage_layout(
     #[comptime] space: Space,
     #[comptime] vector_size: usize,
     #[comptime] levels: usize,
-) -> (CoordsDyn, CoordsDyn) {
+) -> (Coords<u32>, Coords<u32>) {
     let (shape_c, strides_c) = comptime!(storage_extents(&space, vector_size, levels));
 
-    let mut shape = CoordsDyn::new();
-    let mut strides = CoordsDyn::new();
+    let mut shape = Coords::<u32>::new();
+    let mut strides = Coords::<u32>::new();
     #[unroll]
     for p in 0..comptime!(shape_c.len()) {
         shape.push(comptime!(shape_c[p]));
@@ -696,7 +699,7 @@ fn storage_extents(space: &Space, vector_size: usize, levels: usize) -> (Vec<u32
 #[cube]
 fn physical_coord(
     i: usize,
-    shape: CoordsDyn,
+    shape: Coords<u32>,
     #[comptime] start_axis: usize,
     #[comptime] num_tiled: usize,
     #[comptime] levels: usize,
@@ -712,7 +715,7 @@ fn physical_coord(
             // tile extent, the tile digit rides along.
             let jt = comptime!(num_tiled + a);
             let l = line_digit(x, &shape, a)
-                .fmul(shape[jt])
+                .fmul(shape.at(jt))
                 .fadd(line_digit(x, &shape, jt));
             out.push(l);
         }
@@ -722,10 +725,10 @@ fn physical_coord(
 
 /// Digit `j` of flat line `x` under `shape`'s row-major suffix strides.
 #[cube]
-fn line_digit(x: u32, shape: &CoordsDyn, #[comptime] j: usize) -> u32 {
-    let plen = shape.len().comptime();
+fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
+    let plen = shape.len();
     x.fdiv(shape.fproduct(comptime!(((j + 1)..plen).collect::<Vec<_>>())))
-        .frem(shape[j])
+        .frem(shape.at(j))
 }
 
 /// In-kernel twin of cubecl's `TiledViewLayout`, which has no in-kernel
@@ -734,8 +737,8 @@ fn line_digit(x: u32, shape: &CoordsDyn, #[comptime] j: usize) -> u32 {
 /// by constants, and an untiled one (`levels == 0`) reduces to the plain strided dot.
 #[derive(CubeType, Clone)]
 pub struct GmemLayout {
-    physical_shape: CoordsDyn,
-    physical_strides: CoordsDyn,
+    physical_shape: Coords<u32>,
+    physical_strides: Coords<u32>,
     #[cube(comptime)]
     start_axis: usize,
     #[cube(comptime)]
@@ -754,7 +757,7 @@ impl Layout for GmemLayout {
         let mut terms = Sequence::<u32>::new();
         #[unroll]
         for i in 0..comptime!(self.start_axis) {
-            terms.push(pos[i].fmul(self.physical_strides[i]));
+            terms.push(pos[i].fmul(self.physical_strides.at(i)));
         }
         #[unroll]
         for k in 0..comptime!(self.levels + 1) {
@@ -770,11 +773,11 @@ impl Layout for GmemLayout {
                 ));
                 let quot = pos[comptime!(self.start_axis + i)].fdiv(divisor);
                 let digit = if comptime!(k > 0) {
-                    quot.frem(self.physical_shape[j])
+                    quot.frem(self.physical_shape.at(j))
                 } else {
                     quot
                 };
-                terms.push(digit.fmul(self.physical_strides[j]));
+                terms.push(digit.fmul(self.physical_strides.at(j)));
             }
         }
         let n = comptime!(self.start_axis + (self.levels + 1) * self.num_tiled);
@@ -793,7 +796,7 @@ impl Layout for GmemLayout {
         let mut semantic = CoordsDyn::new();
         #[unroll]
         for i in 0..comptime!(self.start_axis) {
-            semantic.push(self.physical_shape[i]);
+            semantic.push(self.physical_shape.at(i));
         }
         #[unroll]
         for i in 0..comptime!(self.num_tiled) {
@@ -824,17 +827,17 @@ impl Layout for GmemLayout {
 /// [`BatchMatrix`](super::BatchMatrix).
 #[derive(CubeType, Clone)]
 pub struct Window {
-    origin: CoordsDyn,
-    extent: CoordsDyn,
+    origin: Coords<u32>,
+    extent: Coords<u32>,
     /// Absolute logical extent (the valid region). `shape()` stays `extent` (the tile
     /// cell, so loops cover the whole padded tile), but `is_in_bounds` clips against
     /// `bound` so a checked read/write zeroes / skips the overhang.
-    bound: CoordsDyn,
+    bound: Coords<u32>,
 }
 
 #[cube]
 impl Window {
-    pub fn new(origin: CoordsDyn, extent: CoordsDyn, bound: CoordsDyn) -> Self {
+    pub fn new(origin: Coords<u32>, extent: Coords<u32>, bound: Coords<u32>) -> Self {
         Window {
             origin,
             extent,
@@ -853,7 +856,7 @@ impl Layout for Window {
 
         #[unroll]
         for i in 0..self.origin.len() {
-            out.push(self.origin[i].fadd(pos[i]));
+            out.push(self.origin.at(i).fadd(pos[i]));
         }
 
         out
@@ -865,7 +868,7 @@ impl Layout for Window {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        self.extent.clone()
+        self.extent.to_dyn()
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
@@ -875,7 +878,7 @@ impl Layout for Window {
         // coordinate (`origin + pos`) is within the logical `bound`.
         #[unroll]
         for i in 0..self.bound.len() {
-            valid = valid && self.origin[i] + pos[i] < self.bound[i];
+            valid = valid && self.origin.at(i).fadd(pos[i]) < self.bound.at(i);
         }
 
         valid

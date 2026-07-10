@@ -3,10 +3,9 @@
 //! an origin); a [`Tile`] locates itself at it.
 
 use cubecl::prelude::*;
-use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::{
-    Axis, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Region, RegionExpand, Space, instance_count,
+    Axis, Coords, Fold, FoldExpand, Region, RegionExpand, Space, instance_count,
     tiles_per_instance,
 };
 
@@ -18,14 +17,14 @@ use super::{ComputeScope, CubeAxis, Distribution, Spread};
 pub struct Walk {
     /// Per-axis walk counts: this instance's share on `Spatial` axes, the whole grid on
     /// `Sequential` ones.
-    counts: Sequence<usize>,
+    counts: Coords<usize>,
     /// Per-axis hardware-instance coordinate, folded through any shared hardware dim;
     /// `0` for `Sequential`. Loop-invariant, so decoded once at construction rather
     /// than per region.
-    positions: Sequence<usize>,
+    positions: Coords<usize>,
     /// Per-axis spread factor combining a step with its position: the instance's tile
     /// share (`Contiguous`) or the instance count (`Interleaved`); `1` for `Sequential`.
-    scales: Sequence<usize>,
+    scales: Coords<usize>,
     steps: usize,
     #[cube(comptime)]
     space: Space,
@@ -40,7 +39,7 @@ impl Walk {
     /// The [`Walk`] over `space`'s tiles
     /// Comptime for `Static` axes, runtime for `Dynamic`.
     pub fn over(space: Space) -> Walk {
-        let mut counts = Sequence::<usize>::new();
+        let mut counts = Coords::<usize>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let edge = comptime!(space.partitioner().edge(space.axis_at(p)));
@@ -64,17 +63,17 @@ impl Walk {
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
     /// `Spatial` axis's hardware decode (invariant across the walk, so paid once here).
-    fn from_counts(#[comptime] space: Space, grid: Sequence<usize>) -> Walk {
+    fn from_counts(#[comptime] space: Space, grid: Coords<usize>) -> Walk {
         let rank = comptime!(space.rank());
-        let mut counts = Sequence::<usize>::new();
-        let mut positions = Sequence::<usize>::new();
-        let mut scales = Sequence::<usize>::new();
+        let mut counts = Coords::<usize>::new();
+        let mut positions = Coords::<usize>::new();
+        let mut scales = Coords::<usize>::new();
 
         #[unroll]
         for p in 0..rank {
             let axis = comptime!(space.axis_at(p));
             let dist = comptime!(space.partitioner().distribution(axis));
-            let count = axis_count(*grid.index(p), dist);
+            let count = axis_count(grid.at(p), dist);
             counts.push(count);
 
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
@@ -89,13 +88,13 @@ impl Walk {
                     let other_dist = comptime!(space.partitioner().distribution(other));
                     if comptime!(other_dist.scope() == dist.scope()) {
                         inner_weight *=
-                            instance_count(*grid.index(q), comptime!(other_dist.coverage()));
+                            instance_count(grid.at(q), comptime!(other_dist.coverage()));
                     }
                 }
-                let instances = instance_count(*grid.index(p), comptime!(dist.coverage()));
+                let instances = instance_count(grid.at(p), comptime!(dist.coverage()));
                 positions.push((hardware_pos(comptime!(dist.unit())) / inner_weight) % instances);
                 if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-                    scales.push(tiles_per_instance(*grid.index(p), comptime!(dist.coverage())));
+                    scales.push(tiles_per_instance(grid.at(p), comptime!(dist.coverage())));
                 } else {
                     scales.push(instances);
                 }
@@ -147,8 +146,8 @@ impl Walk {
     /// [`digit`](Walk::digit), [`fold`](Walk::fold)ed with its instance position. A
     /// constant `idx` (an unrolled walk's) folds through, so a static walk's regions
     /// carry comptime coordinates and can select fragments.
-    fn resolve(&self, idx: usize) -> CoordsDyn {
-        let mut coords = CoordsDyn::new();
+    fn resolve(&self, idx: usize) -> Coords<u32> {
+        let mut coords = Coords::<u32>::new();
 
         #[unroll]
         for p in 0..comptime!(self.space.rank()) {
@@ -167,7 +166,7 @@ impl Walk {
         if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
             quot
         } else {
-            quot.frem(*self.counts.index(p))
+            quot.frem(self.counts.at(p))
         }
     }
 
@@ -183,9 +182,9 @@ impl Walk {
         if comptime!(matches!(dist, Distribution::Sequential)) {
             digit
         } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-            digit.fadd((*self.positions.index(p)).fmul(*self.scales.index(p)))
+            digit.fadd(self.positions.at(p).fmul(self.scales.at(p)))
         } else {
-            digit.fmul(*self.scales.index(p)).fadd(*self.positions.index(p))
+            digit.fmul(self.scales.at(p)).fadd(self.positions.at(p))
         }
     }
 }

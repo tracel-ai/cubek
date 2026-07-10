@@ -211,25 +211,20 @@ impl<T: Numeric> Tile<T> {
             // A resident fragment passes through unchanged (nothing to window).
             TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
             // A partition *selects* its `(mi, ni)` fragment at the last level (the one
-            // whose divide is the fragment itself) — which needs comptime coordinates,
-            // so the walk over it must be static (a static walk's fold to constants) —
-            // and passes through whole anywhere above it. Not `partition_level`: a 1×1
-            // partition is an instance level to it, yet must still select.
+            // whose divide is the fragment itself) when the region's trailing
+            // coordinates are comptime (a static walk's fold to constants); a runtime
+            // region passes it through whole — fragments cannot be runtime-indexed,
+            // so the static fragment walk below does the selecting.
             TileKind::CmmaPartition(p) => {
-                if comptime!(!self.space.divide().is_final()) {
-                    TileKind::new_CmmaPartition(p.clone())
-                } else {
-                    let rank = comptime!(self.space.rank());
-                    let mi = region.coord(comptime!(self.space.axis_at(rank - 2))).constant();
-                    let ni = region.coord(comptime!(self.space.axis_at(rank - 1))).constant();
-                    let sel = comptime!(mi.zip(ni));
-                    comptime!(assert!(
-                        sel.is_some(),
-                        "Tile::at: fragments cannot be runtime-indexed — the walk over a \
-                         partition's last level must be static"
-                    ));
-                    let (mi, ni) = comptime!(sel.unwrap());
-                    TileKind::new_Cmma(p.at(comptime!(mi as usize), comptime!(ni as usize)))
+                let rank = comptime!(self.space.rank());
+                let mi = region.coord(comptime!(self.space.axis_at(rank - 2))).constant();
+                let ni = region.coord(comptime!(self.space.axis_at(rank - 1))).constant();
+                let sel = comptime!(self.space.divide().is_final().then_some(()).and(mi.zip(ni)));
+                match comptime!(sel) {
+                    None => TileKind::new_CmmaPartition(p.clone()),
+                    Some((mi, ni)) => {
+                        TileKind::new_Cmma(p.at(comptime!(mi as usize), comptime!(ni as usize)))
+                    }
                 }
             }
         };
@@ -245,7 +240,7 @@ impl<T: Numeric> Tile<T> {
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let p = comptime!(self.space.position(axis));
         let raw = match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.bound[p].fcast::<usize>(),
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.bound.at(p).fcast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
                 panic!("Tile::runtime_extent: a cmma fragment has no extent")

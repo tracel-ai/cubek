@@ -1,20 +1,20 @@
 use super::Space;
-use crate::{Axis, Fold, FoldExpand};
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use crate::{Axis, Coords, Fold, FoldExpand};
+use cubecl::prelude::*;
 
 /// One region of a partitioned [`Space`]: the subset the walk visits at a step,
 /// a `Space` at an origin. Coordinates carry their constness: a static walk's fold
 /// to comptime constants, so a region can select fragments as well as window memory.
 #[derive(CubeType)]
 pub struct Region {
-    coords: CoordsDyn,
+    coords: Coords<u32>,
     #[cube(comptime)]
     space: Space,
 }
 
 #[cube]
 impl Region {
-    pub fn new(coords: CoordsDyn, #[comptime] space: Space) -> Region {
+    pub fn new(coords: Coords<u32>, #[comptime] space: Space) -> Region {
         Region { coords, space }
     }
 
@@ -26,7 +26,7 @@ impl Region {
         #[comptime] c1: usize,
     ) -> Region {
         let rank = comptime!(space.rank());
-        let mut coords = CoordsDyn::new();
+        let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
             let c = comptime!(if p == rank - 2 {
@@ -45,7 +45,7 @@ impl Region {
     /// the tile spans all of it).
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         if comptime!(self.space.contains(axis)) {
-            self.coords[comptime!(self.space.position(axis))].fcast::<usize>()
+            self.coords.at(comptime!(self.space.position(axis))).fcast::<usize>()
         } else {
             0usize.runtime()
         }

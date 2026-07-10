@@ -22,12 +22,12 @@ pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 /// A static window's extents are constant handles, so the decode divides by constants.
 #[derive(CubeType, Clone)]
 pub struct FlatLayout {
-    shape: CoordsDyn,
+    shape: Coords<u32>,
 }
 
 #[cube]
 impl FlatLayout {
-    pub fn new(shape: CoordsDyn) -> Self {
+    pub fn new(shape: Coords<u32>) -> Self {
         FlatLayout { shape }
     }
 }
@@ -46,7 +46,7 @@ impl Layout for FlatLayout {
         #[unroll]
         for i in 0..rank {
             let dim = rank - i - 1;
-            let extent = self.shape[dim];
+            let extent = self.shape.at(dim);
             out.push(offs % extent);
             offs /= extent;
         }
@@ -60,7 +60,7 @@ impl Layout for FlatLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        let rank = self.shape.len().comptime();
+        let rank = self.shape.len();
         self.shape
             .fproduct(comptime!((0..rank).collect::<Vec<_>>()))
             .fcast::<usize>()

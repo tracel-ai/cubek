@@ -85,13 +85,8 @@ impl<T: Numeric> Tile<T> {
 
         #[unroll]
         for p in 0..rank - 2 {
-            let mut weight = 1;
-
-            #[unroll]
-            for q in comptime!(p + 1)..rank - 2 {
-                weight *= shape[q];
-            }
-            batches.push((i as u32 / weight) % shape[p]);
+            let weight = shape.fproduct(comptime!(((p + 1)..(rank - 2)).collect::<Vec<_>>()));
+            batches.push(i.fcast::<u32>().fdiv(weight).frem(shape.at(p)));
         }
 
         BatchMatrix::new(batches, rows, cols)

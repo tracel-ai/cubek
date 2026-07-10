@@ -6,6 +6,7 @@
 //! values through walks and layouts, and one code path serves both.
 
 use cubecl::ir::{ConstantValue, Scope, Value};
+use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
@@ -166,6 +167,148 @@ impl<C: Int> FoldSeqExpand<C> for SequenceExpand<C> {
         for i in picks {
             let e = *self.__expand_index_method(scope, NativeExpand::from_lit(scope, i));
             acc = fold_add(scope, acc, e);
+        }
+        acc
+    }
+}
+
+/// An immutable coordinate/extent list: [`CoordsDyn`]'s stored-data sibling, whose
+/// expand's `IntoMut` is the identity. Elements are never reassigned after
+/// construction, so a `let mut` holder (a staging slot, a windowed tile) must not
+/// copy them into mutable slots — `Sequence` does, and that copy erases constness:
+/// the crack the comptime twin fields grew out of, closed at the type.
+pub struct Coords<C: Int> {
+    _c: core::marker::PhantomData<C>,
+}
+
+impl<C: Int> Clone for Coords<C> {
+    fn clone(&self) -> Self {
+        Coords {
+            _c: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: Int> Coords<C> {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new() -> Self {
+        unexpanded!()
+    }
+    pub fn push(&mut self, _v: C) {
+        unexpanded!()
+    }
+    /// The element at comptime `i`.
+    pub fn at(&self, _i: usize) -> C {
+        unexpanded!()
+    }
+    /// The comptime length.
+    pub fn len(&self) -> usize {
+        unexpanded!()
+    }
+    /// Re-view as boundary [`CoordsDyn`] (same handles; cubecl layouts flow those).
+    pub fn to_dyn(&self) -> CoordsDyn {
+        unexpanded!()
+    }
+    /// Product of the elements at comptime `picks` (empty picks fold to `1`).
+    pub fn fproduct(&self, _picks: Vec<usize>) -> C {
+        unexpanded!()
+    }
+    /// Sum of the elements at comptime `picks` (empty picks fold to `0`).
+    pub fn fsum(&self, _picks: Vec<usize>) -> C {
+        unexpanded!()
+    }
+
+    pub fn __expand_new(_scope: &Scope) -> CoordsExpand<C> {
+        CoordsExpand { values: Vec::new() }
+    }
+}
+
+pub struct CoordsExpand<C: Int> {
+    values: Vec<NativeExpand<C>>,
+}
+
+impl<C: Int> CubeType for Coords<C> {
+    type ExpandType = CoordsExpand<C>;
+}
+
+impl<C: Int> IntoExpand for CoordsExpand<C> {
+    type Expand = Self;
+    fn into_expand(self, _scope: &Scope) -> Self {
+        self
+    }
+}
+
+/// Identity: the whole point of the type (see [`Coords`]).
+impl<C: Int> IntoMut for CoordsExpand<C> {
+    fn into_mut(self, _scope: &Scope) -> Self {
+        self
+    }
+}
+
+impl<C: Int> CubeDebug for CoordsExpand<C> {}
+
+impl<C: Int> Clone for CoordsExpand<C> {
+    fn clone(&self) -> Self {
+        CoordsExpand {
+            values: self.values.clone(),
+        }
+    }
+}
+
+impl<C: Int> ExpandTypeClone for CoordsExpand<C> {
+    fn clone_unchecked(&self) -> Self {
+        self.clone()
+    }
+}
+
+impl<C: Int> AsRefExpand for CoordsExpand<C> {
+    fn __expand_ref_method(&self, _scope: &Scope) -> &Self {
+        self
+    }
+}
+
+impl<C: Int> AsMutExpand for CoordsExpand<C> {
+    fn __expand_ref_mut_method(&mut self, _scope: &Scope) -> &mut Self {
+        self
+    }
+}
+
+impl<C: Int> CoordsExpand<C> {
+    pub fn __expand_push_method(&mut self, _scope: &Scope, v: NativeExpand<C>) {
+        self.values.push(v);
+    }
+    pub fn __expand_at_method(&self, _scope: &Scope, i: NativeExpand<usize>) -> NativeExpand<C> {
+        let i = i
+            .expand
+            .as_const()
+            .expect("Coords::at: comptime index only")
+            .as_i64() as usize;
+        self.values[i]
+    }
+    pub fn __expand_len_method(&self, _scope: &Scope) -> usize {
+        self.values.len()
+    }
+    pub fn __expand_to_dyn_method(&self, scope: &Scope) -> SequenceExpand<u32> {
+        let mut out = Sequence::<u32>::__expand_new(scope);
+        for v in &self.values {
+            // Same handles, re-typed to the boundary element (u32 coordinates).
+            out.__expand_push_method(scope, unsafe { *v.as_type_ref_unchecked::<u32>() });
+        }
+        out
+    }
+    pub fn __expand_fproduct_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
+        let mut acc: NativeExpand<C> =
+            Value::constant(1u64.into(), C::__expand_as_type(scope)).into();
+        for i in picks {
+            acc = fold_mul(scope, acc, self.values[i]);
+        }
+        acc
+    }
+    pub fn __expand_fsum_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
+        let mut acc: NativeExpand<C> =
+            Value::constant(0u64.into(), C::__expand_as_type(scope)).into();
+        for i in picks {
+            acc = fold_add(scope, acc, self.values[i]);
         }
         acc
     }

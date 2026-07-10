@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Distribution, Leaf, MAX_AXES, Partitioner, Schedule};
+use crate::{Axis, Leaf, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -267,31 +267,6 @@ impl Space {
     /// merge can be dynamic.
     pub fn is_static(&self) -> bool {
         self.axes().all(|axis| !self.is_dynamic(axis))
-    }
-
-    /// Whether any level strictly below this one stages: an unrolled walk re-traces
-    /// its body per step, so a staging descendant would allocate one slot per copy.
-    pub(crate) fn stages_below(&self) -> bool {
-        let mut level = self.divide();
-        while !level.is_final() {
-            if !matches!(level.partitioner().schedule(), Schedule::Direct) {
-                return true;
-            }
-            level = level.divide();
-        }
-        false
-    }
-
-    /// Whether this level's walk folds to host data when unrolled: every extent
-    /// `Static` and every axis `Sequential` (no hardware digit).
-    pub(crate) fn static_walkable(&self) -> bool {
-        self.is_static()
-            && self.axes().all(|axis| {
-                matches!(
-                    self.partitioner().distribution(axis),
-                    Distribution::Sequential
-                )
-            })
     }
 
     pub fn extent_at(&self, i: usize) -> usize {
