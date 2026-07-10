@@ -1,92 +1,18 @@
-//! The tile-loading API: the one place a launched tensor becomes a [`TileArgLaunch`]. Every client
-//! (matmul, dequantize, …) loads tiles through these constructors, so the layout/broadcast wiring
-//! lives here, not at each call site.
+//! The [`TileSource`] builder: the one place a launched tensor becomes a
+//! [`TileArgLaunch`]. Every client (matmul, dequantize, …) loads tiles through it, so
+//! the layout/broadcast wiring lives here, not at each call site.
 
 use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use cubecl::quant::scheme::QuantScheme;
-
-use crate::{Axis, ConcreteLayout, PhysicalAxis, QuantArgLaunch, Space, Storage, TileArgLaunch};
+use crate::{Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, TileArgLaunch};
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
 /// is `start_axis`, its storage-tiling depth is `levels`.
 impl From<&ConcreteLayout> for Storage {
     fn from(layout: &ConcreteLayout) -> Self {
         Storage::passthrough(layout.passthrough(), layout.levels())
-    }
-}
-
-impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
-    /// Start describing a strided tile kernel argument sourced from `binding`: a
-    /// [`TileSource`] builder. Set the required [`space`](TileSource::space) and
-    /// [`subspace`](TileSource::subspace) (`build` won't compile until both are set), then
-    /// optionally [`batches`](TileSource::batches), [`levels`](TileSource::levels),
-    /// [`vectorize`](TileSource::vectorize), or [`checked`](TileSource::checked).
-    /// Optional defaults are the safe ones, so a forgotten optional setter degrades
-    /// performance, never correctness.
-    pub fn source<'a>(binding: TensorBinding<R>) -> TileSource<'a, Unset, Unset, E, R> {
-        TileSource {
-            data: TileSourceData {
-                binding,
-                space: None,
-                concrete: None,
-                subspace: &[],
-                batch_axes: &[],
-                levels: 0,
-                v: 1,
-                check: None,
-                _ty: PhantomData,
-            },
-            _state: PhantomData,
-        }
-    }
-
-    /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned
-    /// axes and the tiling [`Storage`] from the layout, and project `space` onto those
-    /// axes. The innermost axis is served as `Vector<E, v>` lines, re-lined in-kernel so
-    /// the scalar buffer's shape/strides pass through untouched.
-    pub fn from_concrete(
-        binding: TensorBinding<R>,
-        layout: &ConcreteLayout,
-        space: &Space,
-        v: usize,
-        check: bool,
-    ) -> Self {
-        Self::strided(
-            binding.into_tensor_arg(),
-            v,
-            space.project(&layout.distinct_axes()),
-            Storage::from(layout).checked(check),
-        )
-    }
-
-    /// Load a strided global tensor as a tile served in `vector_size`-wide lines. Its
-    /// `[pre…, grid…, tile…]` buffer is tiled in-kernel over `space` (the [`Tile`](crate::Tile) reads
-    /// the physical shape/strides off the tensor). The [`Storage`] carries the tiling depth and the
-    /// overhang bounds-check.
-    pub fn strided(
-        tensor: TensorArg<R>,
-        vector_size: usize,
-        space: Space,
-        storage: Storage,
-    ) -> Self {
-        Self::new(
-            tensor,
-            vector_size,
-            space,
-            storage,
-            ComptimeOptionArgs::None,
-        )
-    }
-
-    /// Mark the operand as quantized: its tensor holds the storage element, and `scales` +
-    /// `scheme` let reads dequantize into the kernel's served type
-    /// ([`tile_dequant`](crate::TileArg::tile_dequant)).
-    pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
-        self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
-        self
     }
 }
 
@@ -107,6 +33,7 @@ struct TileSourceData<'a, E, R: Runtime> {
     levels: usize,
     v: usize,
     check: Option<bool>,
+    stage: Option<StageStorage>,
     _ty: PhantomData<E>,
 }
 
@@ -116,6 +43,26 @@ struct TileSourceData<'a, E, R: Runtime> {
 pub struct TileSource<'a, Sp, Sub, E, R: Runtime> {
     data: TileSourceData<'a, E, R>,
     _state: PhantomData<(Sp, Sub)>,
+}
+
+impl<'a, E, R: Runtime> TileSource<'a, Unset, Unset, E, R> {
+    pub(crate) fn new(binding: TensorBinding<R>) -> Self {
+        TileSource {
+            data: TileSourceData {
+                binding,
+                space: None,
+                concrete: None,
+                subspace: &[],
+                batch_axes: &[],
+                levels: 0,
+                v: 1,
+                check: None,
+                stage: None,
+                _ty: PhantomData,
+            },
+            _state: PhantomData,
+        }
+    }
 }
 
 impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
@@ -168,6 +115,13 @@ impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
         self
     }
 
+    /// The [`StageStorage`] layout of the smem stages derived from this operand. Default
+    /// [`StageStorage::for_space`]: storage-tiled for a cmma leaf, plain strided otherwise.
+    pub fn stage(mut self, stage: StageStorage) -> Self {
+        self.data.stage = Some(stage);
+        self
+    }
+
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
     pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
@@ -190,6 +144,7 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
             levels,
             v,
             check,
+            stage,
             ..
         } = self.data;
         let space = space.unwrap();
@@ -254,6 +209,11 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
 
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        TileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check)
+        let mut arg =
+            TileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check);
+        if let Some(stage) = stage {
+            arg = arg.stage(stage);
+        }
+        arg
     }
 }

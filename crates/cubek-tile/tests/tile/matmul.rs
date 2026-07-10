@@ -628,7 +628,7 @@ fn matmul_multilevel_staged_then_direct() {
         ]),
     )
     .direct();
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
 }
 
 #[test]
@@ -651,7 +651,7 @@ fn matmul_multilevel_staged_then_staged() {
         ]),
     )
     .staged();
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
 }
 
 /// Double buffering at the higher level
@@ -677,7 +677,7 @@ fn matmul_multilevel_double_then_direct() {
     )
     .direct();
 
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
 }
 
 /// Double buffering at the lower level
@@ -693,7 +693,23 @@ fn matmul_multilevel_staged_then_double() {
     let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).staged();
     let l1 =
         Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).double_buffered();
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
+}
+
+/// A storage-tiled stage on a register leaf: the stage layout knob off its default,
+/// on any backend (each 4×4 stage cut into contiguous 2×2 blocks).
+#[test]
+fn matmul_multilevel_tiled_stage() {
+    let seq = || {
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ])
+    };
+    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).staged();
+    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).direct();
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Tiled);
 }
 
 #[test]
@@ -716,7 +732,15 @@ fn matmul_double_buffered() {
 
 /// Drives the staged lowering with a two-level partitioner stack `[l0, l1]`. `l1`'s
 /// edge sizes the final tile (and the data tiling); the coarse `l0` drives launch geometry.
-fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Partitioner) {
+/// `stage` is the operands' stage-layout knob (the output is never staged).
+fn check_matmul_multilevel(
+    m: usize,
+    n: usize,
+    k: usize,
+    l0: Partitioner,
+    l1: Partitioner,
+    stage: StageStorage,
+) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let final_edge = l1.edge(M);
     let dtype = f32::as_type_native_unchecked().storage_type();
@@ -738,8 +762,8 @@ fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Pa
         &client,
         space.cube_count(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()).stage(stage),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()).stage(stage),
         TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
@@ -901,7 +925,11 @@ fn cmma_roundtrip<E: Numeric>(
     let a = input.tile();
     let space = comptime!(a.space.clone());
 
-    let mut a_smem = MemData::smem(comptime!(space.clone()), 1usize);
+    let mut a_smem = MemData::smem(
+        comptime!(space.clone()),
+        1usize,
+        comptime!(StageStorage::for_space(&space)),
+    );
     a_smem.copy_from(&a);
     sync_cube();
 
@@ -915,7 +943,11 @@ fn cmma_roundtrip<E: Numeric>(
     );
     frag.copy_from(&a_smem);
 
-    let mut c_smem = MemData::smem(comptime!(space.clone()), 1usize);
+    let mut c_smem = MemData::smem(
+        comptime!(space.clone()),
+        1usize,
+        comptime!(StageStorage::for_space(&space)),
+    );
     c_smem.copy_from(&frag);
     sync_cube();
 
@@ -990,11 +1022,18 @@ fn cmma_matmul_double_buffered_odd_k_walk() {
     check_cmma_matmul_k_walk(24, Schedule::DoubleBuffered);
 }
 
-fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
-    check_cmma_matmul_k_walk_v(k, schedule, 1)
+/// The K walk staged into a plain strided stage (the legacy `sync_full_strided` storage):
+/// the cmma window transport reads through the layout stack either way.
+#[test]
+fn cmma_matmul_staged_k_walk_strided_stage() {
+    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 1, StageStorage::Strided);
 }
 
-fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
+fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
+    check_cmma_matmul_k_walk_v(k, schedule, 1, StageStorage::Tiled)
+}
+
+fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: StageStorage) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if client.properties().features.matmul.cmma.is_empty() {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -1029,8 +1068,8 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()),
+        TileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()).stage(stage),
+        TileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()).stage(stage),
         TileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
         dtype,
     );
@@ -1206,13 +1245,25 @@ fn cmma_matmul<E: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
 
-    let mut a_smem_tile = MemData::smem(comptime!(a.space.clone()), 1usize);
+    let mut a_smem_tile = MemData::smem(
+        comptime!(a.space.clone()),
+        1usize,
+        comptime!(StageStorage::for_space(&a.space)),
+    );
     a_smem_tile.copy_from(&a);
 
-    let mut b_smem_tile = MemData::smem(comptime!(b.space.clone()), 1usize);
+    let mut b_smem_tile = MemData::smem(
+        comptime!(b.space.clone()),
+        1usize,
+        comptime!(StageStorage::for_space(&b.space)),
+    );
     b_smem_tile.copy_from(&b);
 
-    let mut c_smem_tile = MemData::smem(comptime!(c.space.clone()), 1usize);
+    let mut c_smem_tile = MemData::smem(
+        comptime!(c.space.clone()),
+        1usize,
+        comptime!(StageStorage::for_space(&c.space)),
+    );
     c_smem_tile.copy_from(&c);
     sync_cube();
 
@@ -1326,5 +1377,5 @@ fn check_matmul_vectorized(schedule: Schedule) {
 /// moves lines, the cmma transport addresses the scalar buffer underneath.
 #[test]
 fn cmma_matmul_staged_k_walk_vectorized() {
-    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 2);
+    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 2, StageStorage::Tiled);
 }

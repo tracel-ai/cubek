@@ -295,3 +295,15 @@ fn cyclic_cmma_batched_f32() {
     );
     test_matmul_strategy(client(), problem, Strategy::CyclicCmma(Default::default()));
 }
+
+/// The TMA twin. On a backend without TMA (Metal, wgpu, CPU) the launch returns
+/// `Unavailable`, which the strict test policy surfaces; on CUDA it runs or fails to
+/// compile — never silently degrades.
+#[test]
+fn cyclic_cmma_tma_square_f16() {
+    test_matmul_strategy(
+        client(),
+        square(256, f16_elems()),
+        Strategy::CyclicCmmaTma(Default::default()),
+    );
+}

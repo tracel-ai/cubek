@@ -192,6 +192,9 @@ pub enum Strategy {
     CpuGemm(BlueprintStrategy<(), CpuGemmRoutine>),
     /// The simple cyclic cmma matmul on the tile DSL (vs the legacy `SimpleCyclicCmma`).
     CyclicCmma(BlueprintStrategy<(), CyclicCmmaRoutine>),
+    /// [`Strategy::CyclicCmma`] with both operands delivered by TMA bulk copies;
+    /// `Unavailable` on backends without TMA.
+    CyclicCmmaTma(BlueprintStrategy<(), CyclicCmmaRoutine>),
     Naive,
     #[default]
     Auto,
@@ -250,6 +253,7 @@ impl Display for Strategy {
             Strategy::Gemm(s) => write!(f, "gemm{}", s),
             Strategy::CpuGemm(s) => write!(f, "cpu_gemm{}", s),
             Strategy::CyclicCmma(s) => write!(f, "cyclic_cmma{}", s),
+            Strategy::CyclicCmmaTma(s) => write!(f, "cyclic_cmma_tma{}", s),
         }
     }
 }
@@ -558,6 +562,14 @@ impl Strategy {
                 dtypes,
             ),
             Strategy::CyclicCmma(strategy) => cyclic_cmma::launch_ref(
+                client,
+                into_contiguous_if_highly_permuted(client, lhs)?,
+                into_contiguous_if_highly_permuted(client, rhs)?,
+                out,
+                strategy,
+                dtypes,
+            ),
+            Strategy::CyclicCmmaTma(strategy) => cyclic_cmma::launch_tma_ref(
                 client,
                 into_contiguous_if_highly_permuted(client, lhs)?,
                 into_contiguous_if_highly_permuted(client, rhs)?,

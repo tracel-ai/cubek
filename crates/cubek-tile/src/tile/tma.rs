@@ -1,6 +1,6 @@
 //! The TMA backing store ([`TmaData`], a tensor-map source): not element-addressable, its
 //! only sink is a bulk copy into shared memory, blocking ([`TmaData::load_into`]) or pipelined
-//! under a caller-hoisted barrier ([`TmaData::stage_into`]).
+//! under a caller-owned barrier ([`TmaData::stage_into`]).
 
 use cubecl::{
     prelude::barrier::Barrier,
@@ -29,9 +29,9 @@ pub struct TmaData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> TmaData<T> {
-    /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side) as a `TmaGmem` tile. `pos`
-    /// starts at the origin and advances on [`at`](Tile::at); the box shape is carried comptime
-    /// for the `tensor_map_load`. Dormant: no launch path builds this yet.
+    /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side, [`TmaArg`]) as a `TmaGmem`
+    /// tile. `pos` starts at the origin and advances on [`at`](Tile::at); the box shape is
+    /// carried comptime for the `tensor_map_load`.
     pub fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
@@ -62,7 +62,7 @@ impl<T: Numeric> TmaData<T> {
 #[cube]
 impl<T: Numeric> TmaData<T> {
     /// TMA transport leaf, pipelined: issue the elected `tensor_map_load` into `dst`
-    /// onto `barrier`, without arriving or waiting; the caller hoists those so the copy
+    /// onto `barrier`, without arriving or waiting; the caller issues those itself so the copy
     /// overlaps compute.
     pub(crate) fn stage_into(&self, dst: &mut MemData<T>, barrier: &Shared<Barrier>) {
         // One elected issuer only: the declared transaction count is that unit's alone, so
@@ -74,7 +74,7 @@ impl<T: Numeric> TmaData<T> {
     }
 
     /// TMA transport leaf, blocking: bulk-copy into `dst` (shared memory) and wait. Owns its
-    /// mbarrier locally; the pipelined path hoists it out via [`stage_into`](TmaData::stage_into).
+    /// mbarrier locally; the pipelined path leaves it to the caller via [`stage_into`](TmaData::stage_into).
     pub(crate) fn load_into(&self, dst: &mut MemData<T>) {
         let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
         sync_async_proxy_shared();

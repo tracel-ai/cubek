@@ -1,16 +1,24 @@
-//! Launch wiring for the CyclicCmma routine.
+//! Launch wiring for the CyclicCmma routine: the strided entry ([`launch_ref`]) and its
+//! TMA twin ([`launch_tma_ref`]), sharing the blueprint/space derivation and the 3-line
+//! kernel body.
 
+use cubecl::features::Tma as TmaFeature;
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Space, Strided, Tiling, Tma, WalkOrder};
 
 use crate::{
     definition::{
-        AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+        AvailableVectorSizes, MatmulAvailabilityError, MatmulElems, MatmulProblem,
+        MatmulSetupError, broadcast_batches,
     },
     routines::{
         BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
-        cyclic_cmma::{base::CyclicCmmaRoutine, kernel::cyclic_cmma_kernel},
+        cyclic_cmma::{
+            base::{CyclicCmmaBlueprint, CyclicCmmaRoutine},
+            kernel::cyclic_cmma_kernel,
+        },
+        tma_tile::operand_tma,
     },
 };
 
@@ -27,15 +35,18 @@ fn validate_row_major(strides: &[usize]) -> Result<(), MatmulSetupError> {
     }
 }
 
-#[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
+/// The derivation both entries share: reject what the routine can't run, build the
+/// [`MatmulProblem`], and resolve the [`CyclicCmmaBlueprint`]. Returns the problem, the
+/// plan, and the output's broadcast batch shape.
+#[allow(clippy::result_large_err, clippy::type_complexity)]
+fn setup<R: Runtime>(
     client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+    lhs: &InputBinding<R>,
+    rhs: &InputBinding<R>,
+    out: &TensorBinding<R>,
     strategy: &BlueprintStrategy<(), CyclicCmmaRoutine>,
     dtypes: &MatmulElems,
-) -> Result<(), MatmulSetupError> {
+) -> Result<(MatmulProblem, CyclicCmmaBlueprint, Vec<usize>), MatmulSetupError> {
     if matches!(lhs, InputBinding::Quantized { .. })
         || matches!(rhs, InputBinding::Quantized { .. })
     {
@@ -90,24 +101,31 @@ pub fn launch_ref<R: Runtime>(
     };
 
     let blueprint = CyclicCmmaRoutine::blueprint(strategy, &problem, &device_settings)?;
+    Ok((problem, blueprint, out_batches.to_vec()))
+}
+
+/// The routine's 4-level space: the cube grid (double-buffered smem stages along `K`);
+/// one partition per plane; the contraction-step walk staging each step's operand
+/// fragments (`Staged`); the fragment grid the step contracts (`Direct`, walked
+/// statically). `batch` lists the surviving (extent > 1) output batch axes, one per
+/// cube on `Z`.
+fn tile_space(
+    blueprint: &CyclicCmmaBlueprint,
+    (m, n, k): (usize, usize, usize),
+    batch: &[(Axis, usize)],
+) -> Space {
     let (i, c) = (blueprint.instruction, blueprint.partition);
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
 
-    // Output batch dims that survive (extent > 1) ride one-per-cube on Z.
-    let batch: Vec<usize> = (0..out_batches.len())
-        .filter(|&p| out_batches[p] > 1)
-        .collect();
-    let batch_axes: Vec<_> = batch.iter().map(|&p| batch_axis(p)).collect();
-    let extents: Vec<_> = (batch_axes.iter().zip(&batch))
-        .map(|(&a, &p)| (a, out_batches[p]))
+    let batch_axes: Vec<_> = batch.iter().map(|&(a, _)| a).collect();
+    let extents: Vec<_> = batch
+        .iter()
+        .copied()
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // Four levels: the cube grid (double-buffered smem stages along `K`); one partition
-    // per plane; the contraction-step walk staging each step's operand fragments
-    // (`Staged`); the fragment grid the step contracts (`Direct`, walked statically).
-    let space = Tiling::new()
+    Tiling::new()
         .extents(&extents)
         .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
@@ -133,7 +151,27 @@ pub fn launch_ref<R: Runtime>(
                 .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .leaf(Leaf::Cmma { k: i.k });
+        .leaf(Leaf::Cmma { k: i.k })
+}
+
+#[allow(clippy::result_large_err)]
+pub fn launch_ref<R: Runtime>(
+    client: &ComputeClient<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
+    out: TensorBinding<R>,
+    strategy: &BlueprintStrategy<(), CyclicCmmaRoutine>,
+    dtypes: &MatmulElems,
+) -> Result<(), MatmulSetupError> {
+    let (problem, blueprint, out_batches) = setup(client, &lhs, &rhs, &out, strategy, dtypes)?;
+    let (m, n, k) = (problem.m, problem.n, problem.k);
+
+    // Output batch dims that survive (extent > 1) ride one-per-cube on Z.
+    let batch: Vec<(Axis, usize)> = (0..out_batches.len())
+        .filter(|&p| out_batches[p] > 1)
+        .map(|p| (batch_axis(p), out_batches[p]))
+        .collect();
+    let space = tile_space(&blueprint, (m, n, k), &batch);
 
     let launch = space.launcher(client);
 
@@ -148,7 +186,7 @@ pub fn launch_ref<R: Runtime>(
     // Every operand gets the full output batch-axis list; the builder right-aligns it to each
     // operand's leading dims (numpy broadcast, size-1 dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
-    cyclic_cmma_kernel::launch::<R>(
+    cyclic_cmma_kernel::launch::<Strided, R>(
         client,
         launch.cube_count(),
         launch.cube_dim(),
@@ -164,6 +202,87 @@ pub fn launch_ref<R: Runtime>(
             .batches(&out_batch_axes)
             .vectorize(v_rhs)
             .build(),
+        launch
+            .arg(out)
+            .subspace(&[M, N])
+            .batches(&out_batch_axes)
+            .vectorize(v_out)
+            .build(),
+        dtypes.lhs_global,
+        dtypes.rhs_global,
+        dtypes.acc_global,
+    );
+
+    Ok(())
+}
+
+/// The TMA twin of [`launch_ref`]: both operands delivered by tensor-map bulk copies
+/// (`Sync::of` rejects a mix, so the matrix is both-strided or both-TMA — one twin).
+/// Gated host-side on the client's TMA feature: `Unavailable` on backends without it
+/// (e.g. Metal), so on CUDA it runs or fails to compile — never silently degrades.
+#[allow(clippy::result_large_err)]
+pub fn launch_tma_ref<R: Runtime>(
+    client: &ComputeClient<R>,
+    lhs: InputBinding<R>,
+    rhs: InputBinding<R>,
+    out: TensorBinding<R>,
+    strategy: &BlueprintStrategy<(), CyclicCmmaRoutine>,
+    dtypes: &MatmulElems,
+) -> Result<(), MatmulSetupError> {
+    if !client.properties().features.tma.contains(TmaFeature::Base) {
+        return Err(MatmulSetupError::Unavailable(
+            MatmulAvailabilityError::TmaUnavailable,
+        ));
+    }
+
+    let (problem, blueprint, out_batches) = setup(client, &lhs, &rhs, &out, strategy, dtypes)?;
+    let (m, n, k) = (problem.m, problem.n, problem.k);
+
+    // The descriptor is 3-D `(batch, row, col)` and the operands' bounds are read off it;
+    // surviving batch dims need a batch-aware descriptor path not wired yet.
+    if out_batches.iter().any(|&b| b > 1) {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(
+            "CyclicCmma TMA: batched problems are not supported yet".to_string(),
+        )));
+    }
+
+    let space = tile_space(&blueprint, (m, n, k), &[]);
+    let (stage_m, stage_n) = blueprint.stage();
+    let stage_k = blueprint.stage_k;
+
+    let launch = space.launcher(client);
+    let lhs = lhs.into_data();
+    let rhs = rhs.into_data();
+    // TMA moves whole boxes, so the operands stay scalar; only the strided output lines up.
+    let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
+
+    // One bulk copy fills one double-buffered smem stage: the box is the stage.
+    let a = operand_tma(
+        lhs,
+        (1, m, k),
+        MatrixLayout::RowMajor,
+        (stage_m, stage_k),
+        dtypes.lhs_global,
+        launch.space().project(&[M, K]),
+    );
+    let b = operand_tma(
+        rhs,
+        (1, k, n),
+        MatrixLayout::RowMajor,
+        (stage_k, stage_n),
+        dtypes.rhs_global,
+        launch.space().project(&[K, N]),
+    );
+
+    // The out binding may carry unit batch dims; labeling them lets the builder drop
+    // them as broadcast omissions (surviving batches were rejected above).
+    let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
+    cyclic_cmma_kernel::launch::<Tma, R>(
+        client,
+        launch.cube_count(),
+        launch.cube_dim(),
+        a,
+        b,
         launch
             .arg(out)
             .subspace(&[M, N])

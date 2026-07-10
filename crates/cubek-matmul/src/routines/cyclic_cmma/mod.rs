@@ -3,4 +3,4 @@ mod kernel;
 mod launch;
 
 pub use base::{CyclicCmmaBlueprint, CyclicCmmaRoutine, CyclicCmmaStrategy, Partition};
-pub use launch::launch_ref;
+pub use launch::{launch_ref, launch_tma_ref};

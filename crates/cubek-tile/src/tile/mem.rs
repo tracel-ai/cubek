@@ -44,6 +44,9 @@ pub struct MemData<T: Numeric> {
     /// never overhangs); gmem inherits its operand's launch-time flag.
     #[cube(comptime)]
     check: bool,
+    /// Storage layout the stages derived from this store take.
+    #[cube(comptime)]
+    pub(crate) stage: StageStorage,
     /// Present when the buffer physically holds quantized data (see [`QuantInfo`]): reads through
     /// [`Tile::flat`] dequantize into `T`; every other element view refuses the tile.
     pub(crate) quant: ComptimeOption<QuantInfo>,
@@ -59,12 +62,14 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
+        #[comptime] stage: StageStorage,
     ) -> Tile<T> {
         MemData::<T>::from_tensor_quant::<T>(
             tensor,
             vector_size,
             space,
             storage,
+            stage,
             ComptimeOption::new_None(),
         )
     }
@@ -77,6 +82,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
+        #[comptime] stage: StageStorage,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
         let start_axis = comptime!(storage.start_axis);
@@ -129,6 +135,7 @@ impl<T: Numeric> MemData<T> {
                 num_tiled,
                 levels,
                 check: comptime!(storage.check_bounds),
+                stage,
                 quant,
             }),
             space: comptime!(space),
@@ -136,17 +143,25 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
-    /// `operand`, at the same physical width.
+    /// `operand`, at the same physical width and the operand's [`StageStorage`].
     pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
-        MemData::smem(comptime!(operand.space.divide()), operand.vector_size())
+        MemData::smem(
+            comptime!(operand.space.divide()),
+            operand.vector_size(),
+            operand.stage_storage(),
+        )
     }
 
-    /// Allocate a shared-memory tile over `space`, at physical `vector_size`. A stage bound for
-    /// the cmma instruction is storage-tiled at the final tile (one contiguous block per
-    /// fragment) so the cmma transaction reads it unstrided; anything else is plain row-major.
-    pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
-        let levels =
-            comptime!((!space.is_final() && space.partitioner().leaf().is_cmma()) as usize);
+    /// Allocate a shared-memory tile over `space`, at physical `vector_size`. A `Tiled` stage
+    /// is storage-tiled at the final tile (one contiguous block per fragment, what a cmma
+    /// transaction wants); `Strided` is plain row-major. A final-space stage has no grid to
+    /// tile, so it is always plain.
+    pub fn smem(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] stage: StageStorage,
+    ) -> Tile<T> {
+        let levels = comptime!((!space.is_final() && stage == StageStorage::Tiled) as usize);
         let smem = Shared::<[T]>::new_slice(space.tile_size());
         let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
         let (physical_shape, physical_strides) =
@@ -167,6 +182,7 @@ impl<T: Numeric> MemData<T> {
                 num_tiled: comptime!(space.rank()),
                 levels,
                 check: comptime!(false),
+                stage,
                 quant: ComptimeOption::new_None(),
             }),
             space: comptime!(space),
@@ -468,6 +484,7 @@ impl<T: Numeric> MemData<T> {
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
             check: comptime!(self.check),
+            stage: comptime!(self.stage),
             quant: self.quant.clone(),
         }
     }
