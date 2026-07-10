@@ -104,12 +104,13 @@ pub fn launch_ref<R: Runtime>(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // Four levels: the cube grid (double-buffered smem stages along `K`); one partition
-    // per plane; the contraction-step walk staging each step's operand fragments
-    // (`Staged`); the fragment grid the step contracts (`Direct`, walked statically).
+    // Four levels: the cube grid, one smem stage per `K` step like the legacy Simple
+    // (double-buffering earns nothing on Metal's synchronous fills and pays 2x smem);
+    // one partition per plane; the contraction-step walk staging each step's operand
+    // fragments (`Staged`); the fragment grid the step contracts (`Direct`, static).
     let space = Tiling::new()
         .extents(&extents)
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, stage_m))
                 .axis(N, Cut::cube(CubeAxis::Y, stage_n))

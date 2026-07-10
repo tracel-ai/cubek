@@ -70,6 +70,10 @@ pub struct Storage {
     /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
     /// keeps the unchecked (divisible) fast path.
     pub check_bounds: bool,
+    /// The launch's cube size (units per cube), `0` when unknown. Comptime knowledge of
+    /// the cooperative worker count lets a fill emit straight-line tasks instead of a
+    /// rolled loop whose runtime `CUBE_DIM` stride blocks unrolling.
+    pub units: usize,
 }
 
 impl Storage {
@@ -79,6 +83,7 @@ impl Storage {
             start_axis: 0,
             levels: physical_rank / logical_rank - 1,
             check_bounds: false,
+            units: 0,
         }
     }
 
@@ -87,12 +92,19 @@ impl Storage {
             start_axis,
             levels,
             check_bounds: false,
+            units: 0,
         }
     }
 
     /// Set whether edge reads/writes must be bounds-checked.
     pub fn checked(mut self, check_bounds: bool) -> Self {
         self.check_bounds = check_bounds;
+        self
+    }
+
+    /// Set the launch's cube size (units per cube).
+    pub fn units(mut self, units: usize) -> Self {
+        self.units = units;
         self
     }
 }
@@ -210,6 +222,17 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.vector_size,
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(1usize),
             TileKind::TmaGmem(_) => comptime!(1usize),
+        }
+    }
+
+    /// The launch's cube size carried by a memory tile's [`Storage`], `0` when unknown
+    /// (or for a non-memory tile).
+    pub fn units(&self) -> comptime_type!(usize) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.units(),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(0usize)
+            }
         }
     }
 

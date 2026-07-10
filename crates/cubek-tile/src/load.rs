@@ -39,6 +39,7 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
                 levels: 0,
                 v: 1,
                 check: None,
+                units: 0,
                 _ty: PhantomData,
             },
             _state: PhantomData,
@@ -55,12 +56,13 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         space: &Space,
         v: usize,
         check: bool,
+        units: usize,
     ) -> Self {
         Self::strided(
             binding.into_tensor_arg(),
             v,
             space.project(&layout.distinct_axes()),
-            Storage::from(layout).checked(check),
+            Storage::from(layout).checked(check).units(units),
         )
     }
 
@@ -110,6 +112,8 @@ struct TileSourceData<'a, E, R: Runtime> {
     levels: usize,
     v: usize,
     check: Option<bool>,
+    /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
+    units: usize,
     _ty: PhantomData<E>,
 }
 
@@ -177,6 +181,12 @@ impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
         self.data.concrete = Some(space);
         self
     }
+
+    /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
+    pub(crate) fn cube_units(mut self, units: usize) -> Self {
+        self.data.units = units;
+        self
+    }
 }
 
 impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
@@ -193,6 +203,7 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
             levels,
             v,
             check,
+            units,
             ..
         } = self.data;
         let space = space.unwrap();
@@ -257,6 +268,6 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
 
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        TileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check)
+        TileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check, units)
     }
 }

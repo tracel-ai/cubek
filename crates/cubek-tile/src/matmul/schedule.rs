@@ -40,11 +40,11 @@ impl<Acc: Numeric> Tile<Acc> {
     /// legacy single-buffered register budget. `consume_final` every region, since no
     /// later fill publishes within an iteration.
     ///
-    /// The walk unrolls only when it must: a level that *cuts* a fragment-partition
-    /// output selects per region, which takes comptime coordinates. Anywhere else the
-    /// compact runtime loop stays — unrolling a register-tier k-step walk keeps its
-    /// transients live (the ~2x ki cliff), and unrolling an smem-staged level would
-    /// re-stage the recursion's shared memory per copy.
+    /// The walk unrolls when the level *cuts* a fragment-partition output (each region
+    /// selects its block, which takes comptime coordinates) and on a static
+    /// register-staged level (comptime regions land window offsets as immediates — the
+    /// fill-side win at the thin selector point). An smem-staged level stays rolled:
+    /// unrolling would re-stage the recursion's shared memory per copy.
     pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -61,7 +61,13 @@ impl<Acc: Numeric> Tile<Acc> {
         let lhs_once = comptime!(split && spec.walk_invariant(&lhs.space));
         let rhs_once = comptime!(split && spec.walk_invariant(&rhs.space));
 
-        let unroll = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
+        let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
+        let register = comptime!(
+            self.space.partitioner().leaf().is_cmma()
+                && partition_level(&self.space.divide()).is_some()
+                && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
+        );
+        let unroll = comptime!(cuts || register);
 
         let mut slot = Staging::new(lhs, rhs, comptime!(self.space.clone()));
         let walk = Walk::over(space);

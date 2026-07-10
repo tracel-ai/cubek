@@ -53,6 +53,10 @@ pub struct MemData<T: Numeric> {
     /// never overhangs); gmem inherits its operand's launch-time flag.
     #[cube(comptime)]
     check: bool,
+    /// The launch's cube size (units per cube), `0` when unknown; carried from the
+    /// operand's [`Storage`] so a cooperative fill can emit straight-line tasks.
+    #[cube(comptime)]
+    units: usize,
     /// Present when the buffer physically holds quantized data (see [`QuantInfo`]): reads through
     /// [`Tile::flat`] dequantize into `T`; every other element view refuses the tile.
     pub(crate) quant: ComptimeOption<QuantInfo>,
@@ -146,6 +150,7 @@ impl<T: Numeric> MemData<T> {
                 num_tiled,
                 levels,
                 check: comptime!(storage.check_bounds),
+                units: comptime!(storage.units),
                 quant,
             }),
             space: comptime!(space),
@@ -153,16 +158,25 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
-    /// `operand`, at the same physical width.
+    /// `operand`, at the same physical width and worker count.
     pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
-        MemData::smem(comptime!(operand.space.divide()), operand.vector_size())
+        MemData::smem(
+            comptime!(operand.space.divide()),
+            operand.vector_size(),
+            operand.units(),
+        )
     }
 
     /// Allocate a shared-memory tile over `space`, at physical `vector_size` (the slice is
     /// allocated natively wide, then scalar-erased). A stage bound for the cmma instruction is
     /// storage-tiled at the final tile (one contiguous block per fragment) so the cmma
-    /// transaction reads it unstrided; anything else is plain row-major.
-    pub fn smem(#[comptime] space: Space, #[comptime] vector_size: usize) -> Tile<T> {
+    /// transaction reads it unstrided; anything else is plain row-major. `units` is the
+    /// launch's cube size, `0` when unknown.
+    pub fn smem(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] units: usize,
+    ) -> Tile<T> {
         let levels =
             comptime!((!space.is_final() && space.partitioner().leaf().is_cmma()) as usize);
         let size!(W) = vector_size;
@@ -192,6 +206,7 @@ impl<T: Numeric> MemData<T> {
                 num_tiled: comptime!(space.rank()),
                 levels,
                 check: comptime!(false),
+                units,
                 quant: ComptimeOption::new_None(),
             }),
             space: comptime!(space),
@@ -268,14 +283,50 @@ impl<T: Numeric> MemData<T> {
             let start_axis = comptime!(self.start_axis);
             let num_tiled = comptime!(self.num_tiled);
             let levels = comptime!(self.levels);
+            // A comptime worker count emits the tasks straight-line: a rolled loop's
+            // runtime `CUBE_DIM` stride blocks unrolling, and on Metal's in-order pipe
+            // each line's smem store then stalls the next line's read. Only a spilling
+            // last task needs its guard; unknown or tiny cubes take the rolled loop.
+            // `constant()` bridges the folded total back to host data — a whole smem
+            // stage's shape is static, so it always folds.
+            let units = comptime!(self.units);
+            let total_c = total.constant();
+            let straight = comptime!(
+                matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8)
+            );
             let d = self.lines_mut::<W>();
-            let workers = CUBE_DIM as usize;
-            let mut i = UNIT_POS as usize;
-            while i < total {
-                // `src` zeroes reads past its logical bound (the partial-tile overhang);
-                // the staged buffer is unchecked, so the full padded cell is still written.
-                d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
-                i += workers;
+            if comptime!(straight) {
+                let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
+                #[unroll]
+                for t in 0..tasks {
+                    let i = UNIT_POS as usize + comptime!(t * units);
+                    if comptime!((t + 1) * units > total_c.unwrap() as usize) {
+                        if i < total {
+                            d[i] = s.read(physical_coord(
+                                i,
+                                shape.clone(),
+                                start_axis,
+                                num_tiled,
+                                levels,
+                            ));
+                        }
+                    } else {
+                        d[i] = s.read(physical_coord(
+                            i,
+                            shape.clone(),
+                            start_axis,
+                            num_tiled,
+                            levels,
+                        ));
+                    }
+                }
+            } else {
+                let workers = CUBE_DIM as usize;
+                let mut i = UNIT_POS as usize;
+                while i < total {
+                    d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                    i += workers;
+                }
             }
         } else {
             let s = src.flat_transparent::<T, W>();
@@ -290,6 +341,11 @@ impl<T: Numeric> MemData<T> {
                 i += workers;
             }
         }
+    }
+
+    /// The launch's cube size carried from the operand's [`Storage`], `0` when unknown.
+    pub(crate) fn units(&self) -> comptime_type!(usize) {
+        comptime!(self.units)
     }
 
     /// This buffer's byte length (its length is in native lines, so widened by the vector
@@ -533,6 +589,7 @@ impl<T: Numeric> MemData<T> {
             num_tiled: comptime!(self.num_tiled),
             levels: comptime!(self.levels),
             check: comptime!(self.check),
+            units: comptime!(self.units),
             quant: self.quant.clone(),
         }
     }
