@@ -43,6 +43,21 @@ impl<T: Numeric> TileKind<T> {
             }
         }
     }
+
+    /// Whether a staged walk at this level must be unrolled for correctness: the level
+    /// cuts a fragment partition, so each region selects its block of fragments, which
+    /// takes compile-time coordinates. `(1, 1)` counts (a k-step walk) cut nothing and
+    /// pass the partition through, so they keep the compact runtime loop. Comptime.
+    pub(crate) fn cuts_partition(&self, #[comptime] space: Space) -> comptime_type!(bool) {
+        match self {
+            TileKind::CmmaPartition(_) => {
+                comptime!(matches!(partition_level(&space), Some(c) if c != (1, 1)))
+            }
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                comptime!(false)
+            }
+        }
+    }
 }
 
 /// How a launched tensor's `[pre…, grid…, tile…]` buffer maps to the logical
@@ -210,20 +225,43 @@ impl<T: Numeric> Tile<T> {
             }
             // A resident fragment passes through unchanged (nothing to window).
             TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
-            // A partition *selects* its `(mi, ni)` fragment at the last level (the one
-            // whose divide is the fragment itself) when the region's trailing
-            // coordinates are comptime (a static walk's fold to constants); a runtime
-            // region passes it through whole — fragments cannot be runtime-indexed,
-            // so the static fragment walk below does the selecting.
+            // A partition *selects* under a region with comptime coordinates (an
+            // unrolled walk's fold to constants): each region owns a `sub_m × sub_n`
+            // block of the fragments — a level that doesn't cut the partition selects
+            // the whole of it, a 1×1 block is the fragment itself. A runtime region
+            // passes the partition through whole, legal exactly when this level cuts
+            // nothing (a k-step walk); the static fragment walk below then selects.
             TileKind::CmmaPartition(p) => {
                 let rank = comptime!(self.space.rank());
                 let mi = region.coord(comptime!(self.space.axis_at(rank - 2))).constant();
                 let ni = region.coord(comptime!(self.space.axis_at(rank - 1))).constant();
-                let sel = comptime!(self.space.divide().is_final().then_some(()).and(mi.zip(ni)));
-                match comptime!(sel) {
-                    None => TileKind::new_CmmaPartition(p.clone()),
-                    Some((mi, ni)) => {
-                        TileKind::new_Cmma(p.at(comptime!(mi as usize), comptime!(ni as usize)))
+                match comptime!(mi.zip(ni)) {
+                    Some((c0, c1)) => {
+                        let (sub_m, sub_n) = comptime!({
+                            let a0 = self.space.axis_at(rank - 2);
+                            let a1 = self.space.axis_at(rank - 1);
+                            let (cm, cn) = (self.space.count(a0), self.space.count(a1));
+                            assert!(
+                                p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),
+                                "Tile::at: the level's grid must divide the fragment partition"
+                            );
+                            (p.m_tiles / cm, p.n_tiles / cn)
+                        });
+                        let mi = comptime!(c0 as usize * sub_m);
+                        let ni = comptime!(c1 as usize * sub_n);
+                        if comptime!(sub_m == 1 && sub_n == 1) {
+                            TileKind::new_Cmma(p.at(mi, ni))
+                        } else {
+                            TileKind::new_CmmaPartition(p.window(mi, ni, sub_m, sub_n))
+                        }
+                    }
+                    None => {
+                        comptime!(assert!(
+                            matches!(partition_level(&self.space), None | Some((1, 1))),
+                            "Tile::at: a level that cuts a fragment partition must be \
+                             walked with compile-time coordinates (an unrolled walk)"
+                        ));
+                        TileKind::new_CmmaPartition(p.clone())
                     }
                 }
             }

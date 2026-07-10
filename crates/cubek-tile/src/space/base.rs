@@ -328,6 +328,15 @@ impl Space {
         }
     }
 
+    /// Reorder so `fastest` walks innermost (last axis fastest): each coarser-axis
+    /// window then feeds a consecutive burst of steps — the unrolled fragment walk's
+    /// emission order.
+    pub fn with_fastest(&self, fastest: Axis) -> Space {
+        let mut axes: Vec<Axis> = self.axes().filter(|&a| a != fastest).collect();
+        axes.push(fastest);
+        self.project(&axes)
+    }
+
     pub fn project(&self, axes: &[Axis]) -> Space {
         let entries = axes
             .iter()
@@ -365,6 +374,15 @@ impl Space {
             partitioner = partitioner.next();
         }
         false
+    }
+
+    /// Whether a walk over this level leaves `operand`'s window unchanged: every axis the
+    /// walk actually steps (more than one tile) is absent from the operand — the same
+    /// structural fact as broadcast omission. A [`Staged`](crate::Schedule::Staged) walk
+    /// fills such an operand once, above the loop. Host-side, static extents.
+    pub fn walk_invariant(&self, operand: &Space) -> bool {
+        self.axes()
+            .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.

@@ -54,9 +54,7 @@ impl Walk {
     pub fn over_fastest(#[comptime] space: Space, #[comptime] fastest: Axis) -> Walk {
         let reordered = comptime!({
             assert!(space.is_static(), "Walk::over_fastest: static spaces only");
-            let mut axes: Vec<Axis> = space.axes().filter(|&a| a != fastest).collect();
-            axes.push(fastest);
-            space.project(&axes)
+            space.with_fastest(fastest)
         });
         Walk::over(Space::with_sizes(reordered, Sequence::new()))
     }

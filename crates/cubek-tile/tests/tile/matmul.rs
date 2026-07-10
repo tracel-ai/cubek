@@ -696,6 +696,142 @@ fn matmul_multilevel_staged_then_double() {
     check_matmul_multilevel(8, 8, 8, l0, l1);
 }
 
+/// A staged level whose walk leaves the lhs unchanged (an N-only walk at L1): the
+/// invariant operand fills its slot once, above the loop.
+#[test]
+fn matmul_staged_invariant_lhs() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (8usize, 8usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4))
+        })
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4))
+        })
+        .leaf(Leaf::Register);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The legacy register budget as a level structure: a Direct contraction-step walk
+/// (windowing only), a `Staged` N-walk refilling one B fragment per step while the A
+/// column fills once above it, and an M-only fragment walk below. Exercises sub-block
+/// partition selection (the N-walk's regions each own a column of the accumulator) and
+/// the correctness-driven staged unroll. Tensor-core only.
+#[test]
+fn cmma_matmul_staged_n_walk_partition() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no cmma (tensor-core) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k) = (32usize, 32usize, 32usize);
+    let (part, i, stage_k) = (16usize, 8usize, 16usize);
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
+        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
+        })
+        // L1: the stage split one `part×part` partition per plane (2×2 planes).
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::plane(part))
+                .axis(N, Cut::plane(part))
+                .axis(K, seq(stage_k))
+        })
+        // L2: the contraction-step walk, windowing only.
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i))
+        })
+        // L3: the N-walk: one B fragment per step, the A column filled once above it.
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        // L4: the M-only fragment walk.
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        .leaf(Leaf::Cmma { k: i });
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 #[test]
 fn matmul_double_buffered() {
     check_matmul(

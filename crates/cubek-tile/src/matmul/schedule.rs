@@ -33,21 +33,60 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it
-    /// into the recursion. `consume_final` every region, since no later fill publishes
-    /// within an iteration. The walk stays a runtime loop even when static: at the
-    /// register tier, unrolling the contraction steps keeps their transients live
-    /// (the ~2x ki-unroll cliff).
+    /// into the recursion. An operand the walk leaves unchanged (its space lacks every
+    /// walked axis — the same structural fact as broadcast omission) fills its slot once,
+    /// above the loop: re-filling it per region would move the same window again. E.g. an
+    /// N-walk refills one B fragment per step while the whole A partition stays put — the
+    /// legacy single-buffered register budget. `consume_final` every region, since no
+    /// later fill publishes within an iteration.
+    ///
+    /// The walk unrolls only when it must: a level that *cuts* a fragment-partition
+    /// output selects per region, which takes comptime coordinates. Anywhere else the
+    /// compact runtime loop stays — unrolling a register-tier k-step walk keeps its
+    /// transients live (the ~2x ki cliff), and unrolling an smem-staged level would
+    /// re-stage the recursion's shared memory per copy.
     pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         space: Space,
     ) {
+        // A barrier pipeline arrives `full` once per fill, so a TMA pair keeps the joint
+        // per-region fill; splitting an invariant fill out would corrupt its phase. A
+        // dynamic level can't decide invariance at comptime, so it keeps it too.
+        let lhs_tma = lhs.is_tma();
+        let rhs_tma = rhs.is_tma();
+        let spec = comptime!(space.clone());
+        let split = comptime!(spec.is_static() && !lhs_tma && !rhs_tma);
+        let lhs_once = comptime!(split && spec.walk_invariant(&lhs.space));
+        let rhs_once = comptime!(split && spec.walk_invariant(&rhs.space));
+
+        let unroll = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
+
         let mut slot = Staging::new(lhs, rhs, comptime!(self.space.clone()));
-        for region in Walk::over(space) {
+        let walk = Walk::over(space);
+        if comptime!(lhs_once || rhs_once) {
+            // An invariant operand's window ignores the walked axes, so the first
+            // region's window is every region's window.
+            let first = walk.region(0);
             slot.fill(|s, pipe| {
-                pipe.fill(&mut s.0, &lhs.at(&region));
-                pipe.fill(&mut s.1, &rhs.at(&region));
+                if comptime!(lhs_once) {
+                    pipe.fill(&mut s.0, &lhs.at(&first));
+                }
+                if comptime!(rhs_once) {
+                    pipe.fill(&mut s.1, &rhs.at(&first));
+                }
+            });
+        }
+        let walk = if comptime!(unroll) { walk.unrolled() } else { walk };
+        for region in walk {
+            slot.fill(|s, pipe| {
+                if comptime!(!lhs_once) {
+                    pipe.fill(&mut s.0, &lhs.at(&region));
+                }
+                if comptime!(!rhs_once) {
+                    pipe.fill(&mut s.1, &rhs.at(&region));
+                }
             });
             slot.consume_final(|a, b| self.at(&region).mma(a, b));
         }

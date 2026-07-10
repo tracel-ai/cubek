@@ -41,6 +41,31 @@ impl<T: Numeric> CmmaPartition<T> {
         self.frags.index(comptime!(mi * self.n_tiles + ni)).clone()
     }
 
+    /// The `m_tiles × n_tiles` sub-partition at `(mi, ni)` (handle clones, so its
+    /// fragments are the parent's): a stacked partition level selects a block of
+    /// fragments where the fragment grid itself selects one.
+    pub(crate) fn window(
+        &self,
+        #[comptime] mi: usize,
+        #[comptime] ni: usize,
+        #[comptime] m_tiles: usize,
+        #[comptime] n_tiles: usize,
+    ) -> CmmaPartition<T> {
+        let mut frags = Sequence::<CmmaData<T>>::new();
+        #[unroll]
+        for i in 0..m_tiles {
+            #[unroll]
+            for j in 0..n_tiles {
+                frags.push(self.at(comptime!(mi + i), comptime!(ni + j)));
+            }
+        }
+        CmmaPartition::<T> {
+            frags,
+            m_tiles,
+            n_tiles,
+        }
+    }
+
     /// The register form of an accumulator over `space`: a partition mirroring its
     /// fragment grid, fragments uninitialized. `k` is the instruction's contraction
     /// depth (the space's own axes only give `m`/`n`).
@@ -153,20 +178,35 @@ impl<T: Numeric> CmmaPartition<T> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Descend to the `(mi, ni)` fragment's final window: an instance level hands this
-    /// instance a single region; the partition level takes the region at the
-    /// partition coordinates (comptime, so it selects).
+    /// instance a single region; a partition level takes its own digit of the fragment
+    /// coordinates — the grid may be split across stacked levels, so each consumes the
+    /// high digits (the levels below it are the place value) and passes the rest down.
     fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
         let space = comptime!(self.space.clone());
-        let sub = match comptime!(partition_level(&space)) {
+        match comptime!(partition_level(&space)) {
             None => {
                 let walk = Walk::over(self.runtime_space());
-                self.at(&walk.region(0))
+                let sub = self.at(&walk.region(0));
+                match comptime!(sub.space.partitioner()) {
+                    Partitioner::Final(_) => sub,
+                    Partitioner::Level(_) => sub.fragment_window(mi, ni),
+                }
             }
-            Some(_) => self.at(&Region::trailing(space, mi, ni)),
-        };
-        match comptime!(sub.space.partitioner()) {
-            Partitioner::Final(_) => sub,
-            Partitioner::Level(_) => sub.fragment_window(mi, ni),
+            Some(_) => {
+                let (bm, bn) = comptime!(partition_shape(&space.divide()));
+                let region = Region::trailing(
+                    comptime!(space.clone()),
+                    comptime!(mi / bm),
+                    comptime!(ni / bn),
+                );
+                let sub = self.at(&region);
+                match comptime!(sub.space.partitioner()) {
+                    Partitioner::Final(_) => sub,
+                    Partitioner::Level(_) => {
+                        sub.fragment_window(comptime!(mi % bm), comptime!(ni % bn))
+                    }
+                }
+            }
         }
     }
 }
@@ -225,17 +265,15 @@ pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
 }
 
 /// The whole remaining walk's fragment grid for one instance: `(1, 1)` when every level
-/// is an instance level, else the single partition level's tile counts.
+/// is an instance level, else the componentwise product of the partition levels' tile
+/// counts (the grid may be split across stacked levels, e.g. an N-walk staging level
+/// over an M-only static walk).
 fn partition_shape(space: &Space) -> (usize, usize) {
     let mut shape = (1usize, 1usize);
     let mut level = space.clone();
     while !level.is_final() {
-        if let Some(counts) = partition_level(&level) {
-            assert!(
-                shape == (1, 1),
-                "cmma accumulator: at most one partition level"
-            );
-            shape = counts;
+        if let Some((m, n)) = partition_level(&level) {
+            shape = (shape.0 * m, shape.1 * n);
         }
         level = level.divide();
     }
