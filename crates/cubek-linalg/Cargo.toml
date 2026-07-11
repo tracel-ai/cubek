@@ -26,14 +26,11 @@ cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.1", default-features 
 cubek-matmul = { path = "../cubek-matmul", version = "=0.3.0-pre.1", default-features = false }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
 
-num-traits = { workspace = true }
-pretty_assertions = { workspace = true, optional = true }
-serde = { workspace = true }
-half = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
-rand = { workspace = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
+num-traits = { workspace = true }
 paste = "1.0"

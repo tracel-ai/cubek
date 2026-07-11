@@ -20,7 +20,7 @@ impl QRProblem {
     /// Build a problem description from a tensor shape, validating that it
     /// describes a supported (`m >= n`) matrix.
     pub fn from_shape(shape: &[usize], dtype: StorageType) -> Result<Self, QRSetupError> {
-        if shape.len() != 2 || shape[0] < shape[1] {
+        if shape.len() != 2 || shape[0] < shape[1] || shape[1] == 0 {
             return Err(QRSetupError::InvalidShape);
         }
         Ok(Self {

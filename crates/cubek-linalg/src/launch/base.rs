@@ -1,5 +1,5 @@
 use cubecl::prelude::*;
-use cubecl::std::tensor::{TensorHandle, identity};
+use cubecl::std::tensor::{TensorHandle, identity, into_contiguous};
 
 use crate::{
     components,
@@ -18,6 +18,7 @@ fn initialize<R: Runtime>(
     problem: &QRProblem,
 ) -> QRTuple<R> {
     let m = problem.rows;
+    let n = problem.cols;
     let dtype = problem.dtype;
 
     // Allocate Q as identity (col-major [rows, rows]).
@@ -38,18 +39,21 @@ fn initialize<R: Runtime>(
     identity::launch::<R>(client, &q_contig);
     let q = TensorHandle::<R>::new(q_handle, q_shape, vec![1, m], dtype);
 
-    // Build R as a tight col-major copy of A.  We must NOT use into_contiguous here
-    // because that produces row-major output, which would make R's bytes inconsistent
-    // with the col-major strides [1, m] the BAHT/CGR kernels expect.
-    //
-    // Instead: read A via its own strides (using into_contiguous which copies elements
-    // in logical order from the source) then re-declare the output as col-major — BUT
-    // only if A is already col-major.  The simplest safe approach: read A's raw bytes
-    // directly (the test uses create_from_slice so no padding) and declare [1, m].
-    let a_bytes = client.read_one(a.handle.clone()).unwrap();
-    let a_handle = client.create_from_slice(&a_bytes);
-    let a_strides = a.strides().to_vec(); // preserve the original strides
-    let r = TensorHandle::<R>::new(a_handle, a.shape().to_vec(), a_strides, dtype);
+    // Build R as a tight col-major copy of A, entirely on-device and accepting
+    // any input layout (row-major, col-major, pitch-padded): a tight col-major
+    // `[m, n]` buffer is byte-identical to a tight row-major `[n, m]` buffer of
+    // the transpose, so run `into_contiguous` (tight `client.empty` output,
+    // reads the source through its strides) on a transposed *view* of A and
+    // re-declare the result with col-major strides `[1, m]`.
+    let a_strides = a.strides();
+    let a_t = TensorHandle::<R>::new(
+        a.handle.clone(),
+        vec![n, m],
+        vec![a_strides[1], a_strides[0]],
+        dtype,
+    );
+    let r_t = into_contiguous::<R>(client, a_t.binding(), dtype);
+    let r = TensorHandle::<R>::new(r_t.handle, vec![m, n], vec![1, m], dtype);
 
     (q, r)
 }
@@ -64,6 +68,13 @@ pub fn qr<R: Runtime, EG: Float + CubeElement>(
     a: &TensorHandle<R>,
 ) -> Result<QRTuple<R>, QRSetupError> {
     let problem = QRProblem::from_shape(a.shape(), a.dtype)?;
+    let launched = EG::as_type_native_unchecked().storage_type();
+    if problem.dtype != launched {
+        return Err(QRSetupError::TypeMismatch {
+            launched,
+            actual: problem.dtype,
+        });
+    }
     let (q, r) = initialize::<R>(client, a, &problem);
 
     let (_blueprint, settings) = BahtTsqrRoutine::prepare(
@@ -71,7 +82,7 @@ pub fn qr<R: Runtime, EG: Float + CubeElement>(
         &problem,
         BlueprintStrategy::Inferred(Default::default()),
     )?;
-    components::baht_tsqr::launch::<R, EG>(client, &q, &r, settings);
+    components::baht_tsqr::launch::<R, EG>(client, &q, &r, settings)?;
 
     Ok((q, r))
 }

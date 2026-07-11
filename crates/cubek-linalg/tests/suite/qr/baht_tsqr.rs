@@ -1,10 +1,11 @@
-use std::fmt::Display;
-
-use cubecl::{TestRuntime, prelude::*, std::tensor::{TensorHandle, into_contiguous}};
+use cubecl::{
+    TestRuntime,
+    prelude::*,
+    std::tensor::{TensorHandle, into_contiguous},
+};
 
 use crate::suite::utils::{
-    assert_equals_approx, dtype_unsupported, tensorhandler_from_data,
-    tensorhandler_from_data_col_major,
+    assert_equals_approx, col_major_input, dtype_unsupported, row_major_input,
 };
 
 /// Run into_contiguous on a tensor and read the resulting tight row-major bytes.
@@ -41,10 +42,12 @@ fn reconstruct_qr<F: Float + CubeElement>(
             out[i * cols + j] = sum;
         }
     }
-    out.iter().map(|&v| <F as num_traits::NumCast>::from(v).unwrap()).collect()
+    out.iter()
+        .map(|&v| <F as num_traits::NumCast>::from(v).unwrap())
+        .collect()
 }
 
-fn run_qr_square<F: Float + CubeElement + Display>(dim: u32) {
+fn run_qr_square<F: Float + CubeElement>(dim: u32) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -53,6 +56,8 @@ fn run_qr_square<F: Float + CubeElement + Display>(dim: u32) {
 
     let shape = vec![dim_usize, dim_usize];
     let num_elements = shape.iter().product();
+    // Ones with 2s on the anti-diagonal (a symmetric matrix, logical
+    // row-major).
     let mut data = vec![F::from_int(1); num_elements];
     let mut pos = dim_usize - 1;
     for _i in 0..dim {
@@ -60,35 +65,30 @@ fn run_qr_square<F: Float + CubeElement + Display>(dim: u32) {
         pos += dim_usize - 1;
     }
 
-    let a = tensorhandler_from_data_col_major(
-        &client,
-        shape.clone(),
-        &data,
-        F::as_type_native_unchecked(),
-    );
+    let a = col_major_input(&client, shape.clone(), &data);
 
     let (q_t, r) = match cubek_linalg::qr::<TestRuntime, F>(&client, &a) {
         Ok((q_t, r)) => (q_t, r),
-        Err(_) => (
-            TensorHandle::empty(&client, shape.clone(), a.dtype),
-            TensorHandle::empty(&client, shape.clone(), a.dtype),
-        ),
+        Err(e) => panic!("QR launch failed: {e:?}"),
     };
 
     let (q_t_vals, _) = read_contig::<F>(&client, &q_t);
     let (r_vals_out, _) = read_contig::<F>(&client, &r);
 
     // Reconstruct in f64 for accurate verification.
-    let out_data = reconstruct_qr(&q_t_vals, &r_vals_out, dim_usize, dim_usize, dim_usize, dim_usize);
+    let out_data = reconstruct_qr(
+        &q_t_vals,
+        &r_vals_out,
+        dim_usize,
+        dim_usize,
+        dim_usize,
+        dim_usize,
+    );
 
-    let out = tensorhandler_from_data(&client, shape.clone(), &out_data, F::as_type_native_unchecked());
-
-    if let Err(e) = assert_equals_approx(&client, &out, &data, 2e-3) {
-        panic!("{}", e);
-    }
+    assert_equals_approx::<F>(&out_data, &data, shape, 2e-3);
 }
 
-fn run_qr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
+fn run_qr_rect<F: Float + CubeElement>(rows: u32, cols: u32, row_major: bool) {
     let client = TestRuntime::client(&Default::default());
     if dtype_unsupported::<F>(&client) {
         return;
@@ -104,23 +104,17 @@ fn run_qr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
         row_major_data[i * cols_usize + i] = F::from_int(2);
     }
 
-    let mut col_major_data = vec![F::from_int(0); num_elements];
-    for i in 0..rows_usize {
-        for j in 0..cols_usize {
-            col_major_data[j * rows_usize + i] = row_major_data[i * cols_usize + j];
-        }
-    }
-
-    let a = tensorhandler_from_data_col_major(
-        &client,
-        shape.clone(),
-        &col_major_data,
-        F::as_type_native_unchecked(),
-    );
+    // `qr` normalizes any input layout to its internal col-major form, so
+    // both layouts must factorize the same logical matrix identically.
+    let a = if row_major {
+        row_major_input(&client, shape.clone(), &row_major_data)
+    } else {
+        col_major_input(&client, shape.clone(), &row_major_data)
+    };
 
     let (q_t, r) = match cubek_linalg::qr::<TestRuntime, F>(&client, &a) {
         Ok((q_t, r)) => (q_t, r),
-        Err(e) => panic!("QR launch failed: {:?}", e),
+        Err(e) => panic!("QR launch failed: {e:?}"),
     };
 
     // Q^T row-major [rows × rows], R row-major [rows × cols].
@@ -128,19 +122,26 @@ fn run_qr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
     let (q_t_vals, qt_shape) = read_contig::<F>(&client, &q_t);
     let (r_vals_out, _) = read_contig::<F>(&client, &r);
 
-    let out_data = reconstruct_qr(&q_t_vals, &r_vals_out, rows_usize, cols_usize, qt_shape[0], qt_shape[1]);
+    let out_data = reconstruct_qr(
+        &q_t_vals,
+        &r_vals_out,
+        rows_usize,
+        cols_usize,
+        qt_shape[0],
+        qt_shape[1],
+    );
 
-    let out = tensorhandler_from_data(&client, shape.clone(), &out_data, F::as_type_native_unchecked());
-
-    if let Err(e) = assert_equals_approx(&client, &out, &row_major_data, 2e-3) {
-        panic!("{}", e);
-    }
+    assert_equals_approx::<F>(&out_data, &row_major_data, shape, 2e-3);
 }
 
-pub fn test_qr<F: Float + CubeElement + Display>(dim: u32) {
+pub fn test_qr<F: Float + CubeElement>(dim: u32) {
     run_qr_square::<F>(dim);
 }
 
-pub fn test_qr_rect<F: Float + CubeElement + Display>(rows: u32, cols: u32) {
-    run_qr_rect::<F>(rows, cols);
+pub fn test_qr_rect<F: Float + CubeElement>(rows: u32, cols: u32) {
+    run_qr_rect::<F>(rows, cols, false);
+}
+
+pub fn test_qr_rect_row_major<F: Float + CubeElement>(rows: u32, cols: u32) {
+    run_qr_rect::<F>(rows, cols, true);
 }

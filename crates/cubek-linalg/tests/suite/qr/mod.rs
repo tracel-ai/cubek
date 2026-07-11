@@ -1,50 +1,56 @@
+pub mod errors;
 pub mod solve;
-pub mod tsqr;
+pub mod baht_tsqr;
 
 #[macro_export]
-macro_rules! testgen_qr_tsqr {
+macro_rules! testgen_qr_baht_tsqr {
    ($float:ident) => {
             pub type FloatT = $float;
 
             #[test]
             pub fn test_tiny() {
-                crate::suite::qr::tsqr::test_qr::<FloatT>(3);
+                crate::suite::qr::baht_tsqr::test_qr::<FloatT>(3);
             }
 
             #[test]
             pub fn test_small() {
-                crate::suite::qr::tsqr::test_qr::<FloatT>(47);
+                crate::suite::qr::baht_tsqr::test_qr::<FloatT>(47);
             }
 
             #[test]
             pub fn test_medium() {
-                crate::suite::qr::tsqr::test_qr::<FloatT>(157);
+                crate::suite::qr::baht_tsqr::test_qr::<FloatT>(157);
             }
 
             #[test]
             pub fn test_big() {
-                crate::suite::qr::tsqr::test_qr::<FloatT>(517);
+                crate::suite::qr::baht_tsqr::test_qr::<FloatT>(517);
             }
 
             #[test]
             pub fn test_rect() {
-                crate::suite::qr::tsqr::test_qr_rect::<FloatT>(517, 157);
+                crate::suite::qr::baht_tsqr::test_qr_rect::<FloatT>(517, 157);
+            }
+
+            #[test]
+            pub fn test_rect_row_major() {
+                crate::suite::qr::baht_tsqr::test_qr_rect_row_major::<FloatT>(157, 47);
             }
 
     };
     ([$($float:ident),*]) => {
-        mod tsqr {
+        mod baht_tsqr {
             ::paste::paste! {
                 $(mod [<$float _ty>] {
-                    $crate::testgen_qr_tsqr!($float);
+                    $crate::testgen_qr_baht_tsqr!($float);
                 })*
             }
         }
     };
 }
 
-mod test_tsqr {
-    testgen_qr_tsqr!([f32, f64]);
+mod test_baht_tsqr {
+    testgen_qr_baht_tsqr!([f32, f64]);
 }
 
 #[macro_export]

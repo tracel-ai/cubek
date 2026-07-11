@@ -74,7 +74,6 @@ cubek-std = { path = "../crates/cubek-std", version = "=0.3.0-pre.1", features =
 ] }
 cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.3.0-pre.1" }
 half = { workspace = true }
-rand = { workspace = true }
 
 [[bench]]
 harness = false

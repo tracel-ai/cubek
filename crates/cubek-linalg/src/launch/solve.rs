@@ -27,6 +27,16 @@ pub fn solve<R: Runtime, E: Float + CubeElement>(
         return Err(QRSetupError::InvalidShape);
     }
 
+    // `qr` checks `a` against `E`; `b` must match as well since the solve
+    // kernels read it as `E` too.
+    let launched = E::as_type_native_unchecked().storage_type();
+    if b.dtype != launched {
+        return Err(QRSetupError::TypeMismatch {
+            launched,
+            actual: b.dtype,
+        });
+    }
+
     // 1. A = QR
     let (q, r) = crate::launch::qr::<R, E>(client, a)?;
 
@@ -51,7 +61,6 @@ pub fn solve<R: Runtime, E: Float + CubeElement>(
 
     // 3. Rx = y (first n elements of y if m > n)
     let x = TensorHandle::zeros(client, vec![n], a.dtype);
-    let is_col_major = 1u32;
 
     // For back substitution, we use a single cube since it's sequential
     unsafe {
@@ -64,7 +73,6 @@ pub fn solve<R: Runtime, E: Float + CubeElement>(
             r.clone().into_arg(),
             y.clone().into_arg(),
             x.clone().into_arg(),
-            is_col_major,
         );
     }
 

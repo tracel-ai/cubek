@@ -1,8 +1,8 @@
-use std::fmt::Display;
-
 use cubecl::features::TypeUsage;
-use cubecl::{TestRuntime, prelude::*};
 use cubecl::std::tensor::TensorHandle;
+use cubecl::zspace::{Shape, Strides};
+use cubecl::{TestRuntime, prelude::*};
+use cubek_test_utils::{HostData, HostDataVec, StridedLayout, TestInput, ValidationResult};
 
 /// Returns `true` (and prints a skip notice) when the active backend can't do
 /// reliable arithmetic in `F`, so the precision-sensitive QR tests would fail
@@ -38,64 +38,75 @@ pub(crate) fn dtype_unsupported<F: Float + CubeElement>(
     }
 }
 
-pub(crate) fn tensorhandler_from_data<R: Runtime, F: Float + CubeElement>(
-    client: &ComputeClient<R>,
+/// Build a device tensor from logical row-major values via the shared
+/// `TestInput` builder (which owns the stride math). The builder's payload
+/// type is f32; the QR test matrices hold small integers, so the round-trip
+/// is lossless for both f32 and f64.
+fn device_input<F: Float + CubeElement>(
+    client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    data: &[F],
-    dtype: cubecl::ir::Type,
-) -> TensorHandle<R> {
-    let handle = client.create_from_slice(F::as_bytes(data));
-    let mut strides = vec![1; shape.len()];
+    data_row_major: &[F],
+    layout: StridedLayout,
+) -> TensorHandle<TestRuntime> {
+    TestInput::builder(client.clone(), Shape::from(shape))
+        .dtype(F::as_type_native_unchecked().storage_type())
+        .layout(layout)
+        .custom(data_row_major.iter().map(|v| v.to_f32().unwrap()).collect())
+        .generate_without_host_data()
+}
+
+pub(crate) fn col_major_input<F: Float + CubeElement>(
+    client: &ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    data_row_major: &[F],
+) -> TensorHandle<TestRuntime> {
+    // ColMajor requires rank >= 2; for vectors both layouts are the same.
+    let layout = if shape.len() >= 2 {
+        StridedLayout::ColMajor
+    } else {
+        StridedLayout::RowMajor
+    };
+    device_input(client, shape, data_row_major, layout)
+}
+
+pub(crate) fn row_major_input<F: Float + CubeElement>(
+    client: &ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    data_row_major: &[F],
+) -> TensorHandle<TestRuntime> {
+    device_input(client, shape, data_row_major, StridedLayout::RowMajor)
+}
+
+/// Wrap logical row-major host values in a `HostData` blob (f64 payload for
+/// f64 tensors, f32 otherwise) for the shared comparator.
+fn host_data<F: Float + CubeElement>(shape: Vec<usize>, values: &[F]) -> HostData {
+    let storage = F::as_type_native_unchecked().storage_type();
+    let mut strides = vec![1usize; shape.len()];
     for i in (0..shape.len().saturating_sub(1)).rev() {
         strides[i] = strides[i + 1] * shape[i + 1];
     }
-    TensorHandle::new(handle, shape, strides, dtype)
-}
-
-pub(crate) fn tensorhandler_from_data_col_major<R: Runtime, F: Float + CubeElement>(
-    client: &ComputeClient<R>,
-    shape: Vec<usize>,
-    data: &[F],
-    dtype: cubecl::ir::Type,
-) -> TensorHandle<R> {
-    let handle = client.create_from_slice(F::as_bytes(data));
-    let mut strides = vec![1; shape.len()];
-    for i in 1..shape.len() {
-        strides[i] = strides[i - 1] * shape[i - 1];
+    let values: Vec<f64> = values.iter().map(|v| v.to_f64().unwrap()).collect();
+    HostData {
+        data: HostDataVec::from((values, storage)),
+        shape: Shape::from(shape),
+        strides: Strides::from(strides),
     }
-    TensorHandle::new(handle, shape, strides, dtype)
 }
 
-/// Compares the content of a handle to a given slice of f32.
-pub(crate) fn assert_equals_approx<F: Float + CubeElement + Display>(
-    client: &ComputeClient<TestRuntime>,
-    out: &TensorHandle<TestRuntime>,
+/// Compare two logical row-major value slices through cubek-test-utils'
+/// shared comparator (relative epsilon with an absolute floor), panicking
+/// with its mismatch report on failure.
+pub(crate) fn assert_equals_approx<F: Float + CubeElement>(
+    actual: &[F],
     expected: &[F],
+    shape: Vec<usize>,
     epsilon: f32,
-) -> Result<(), String> {
-    let actual_bytes = client.read_one(out.handle.clone()).unwrap();
-    let actual = F::from_bytes(&actual_bytes);
-
-    // normalize to type epsilon
-    let epsilon = (epsilon / f32::EPSILON * F::EPSILON.to_f32().unwrap()).max(epsilon);
-
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        // account for lower precision at higher values
-        let allowed_error = (epsilon * e.to_f32().unwrap().abs()).max(epsilon);
-
-        if f32::is_nan(a.to_f32().unwrap())
-            || f32::abs(a.to_f32().unwrap() - e.to_f32().unwrap()) >= allowed_error
-        {
-            return Err(format!(
-                "Values differ more than epsilon: index={} actual={}, expected={}, difference={}, epsilon={}",
-                i,
-                *a,
-                *e,
-                f32::abs(a.to_f32().unwrap() - e.to_f32().unwrap()),
-                epsilon
-            ));
-        }
+) {
+    let actual = host_data::<F>(shape.clone(), actual);
+    let expected = host_data::<F>(shape, expected);
+    match cubek_test_utils::assert_equals_approx(&actual, &expected, epsilon) {
+        ValidationResult::Pass => {}
+        ValidationResult::Fail(msg) | ValidationResult::Error(msg) => panic!("{msg}"),
+        ValidationResult::Skipped(msg) => panic!("unexpected validation skip: {msg}"),
     }
-
-    Ok(())
 }

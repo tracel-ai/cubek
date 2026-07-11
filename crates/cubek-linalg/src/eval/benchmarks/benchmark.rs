@@ -25,7 +25,6 @@ pub fn bench(
     let bench = QrBench::<f32> {
         m: problem.m,
         n: problem.n,
-        device,
         client,
         samples: num_samples,
         _e: PhantomData,
@@ -42,7 +41,6 @@ pub fn bench(
 struct QrBench<E> {
     m: usize,
     n: usize,
-    device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     samples: usize,
     _e: PhantomData<E>,
@@ -53,11 +51,12 @@ impl<E: Float + CubeElement> Benchmark for QrBench<E> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
         let storage = E::as_type_native_unchecked().storage_type();
 
-        TestInput::builder(client, Shape::from(vec![self.m, self.n]))
-            .layout(StridedLayout::RowMajor)
+        // Col-major input: the layout the QR kernels work in, so the timed
+        // run measures the factorization rather than a layout conversion.
+        TestInput::builder(self.client.clone(), Shape::from(vec![self.m, self.n]))
+            .layout(StridedLayout::ColMajor)
             .dtype(storage)
             .uniform(0, -1., 1.)
             .generate_without_host_data()
