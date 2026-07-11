@@ -146,6 +146,11 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             "CpuGemm (tile-DSL CPU)",
             Strategy::CpuGemm(BlueprintStrategy::default()),
         ),
+        CatalogEntry::new(
+            "cyclic_cmma",
+            "CyclicCmma (tile-DSL)",
+            Strategy::CyclicCmma(BlueprintStrategy::default()),
+        ),
         cpu_gemm_forced(
             "cpu_gemm_t64",
             "CpuGemm (forced 64³, maskless on 512)",

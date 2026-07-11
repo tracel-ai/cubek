@@ -4,6 +4,7 @@ use crate::{
     routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
+use serde::{Deserialize, Serialize};
 
 // Base trait for interpolation algorithms.
 #[cube]
@@ -16,7 +17,7 @@ pub trait Interpolate {
 }
 
 /// Algorithm used for upsampling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType, Serialize, Deserialize)]
 pub enum InterpolateMode {
     /// Nearest-neighbor interpolation.
     /// <https://en.wikipedia.org/wiki/Nearest-neighbor_interpolation>
@@ -35,7 +36,7 @@ pub enum InterpolateMode {
     Lanczos3,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, CubeType, Serialize, Deserialize)]
 pub enum NearestMode {
     // Matches Scikit-Image and PIL nearest neighbours interpolation algorithms.
     Exact,
@@ -255,7 +256,7 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
     }
 
     if I::REQUIRES_BOUND_CHECK {
-        let epsilon = Vector::cast_from(P::EA::new(1e-7));
+        let epsilon = Vector::cast_from(P::EA::new(1e-7_f32));
         Vector::cast_from(final_value / total_weight.max(epsilon))
     } else {
         Vector::cast_from(final_value)

@@ -1,15 +1,12 @@
 use cubek_test_utils::CatalogEntry;
 
-/// Which backward slice to benchmark. The forward-vs-backward ratio plot
-/// runs both a forward (with `lse` emission) and the full backward, then
-/// compares; the runner just records the backward time for now.
+/// Which backward slice to benchmark.
 #[derive(Clone, Debug)]
 pub enum BackwardStrategy {
     Prepass,
     Dq,
     Dkdv,
     EndToEnd,
-    ForwardVsBackward,
 }
 
 pub fn strategies() -> Vec<CatalogEntry<BackwardStrategy>> {
@@ -25,11 +22,6 @@ pub fn strategies() -> Vec<CatalogEntry<BackwardStrategy>> {
             "end_to_end",
             "End-to-end (prepass + dQ + dK/dV)",
             BackwardStrategy::EndToEnd,
-        ),
-        CatalogEntry::new(
-            "forward_vs_backward",
-            "Forward (with lse) vs. backward ratio",
-            BackwardStrategy::ForwardVsBackward,
         ),
     ]
 }

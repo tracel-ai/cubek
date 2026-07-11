@@ -16,8 +16,9 @@ pub struct MaskConfig {
 }
 
 #[derive(CubeType)]
-/// Mask tile for Tile Attention. It is an additive mask: the result of `apply`
-/// should be added, not multiplied.
+/// Mask tile for Tile Attention. A boolean predicate: `should_mask` decides
+/// per element and masked scores are driven to -inf; mask values are never
+/// added to scores.
 pub enum MaskTile<F: Float> {
     /// When a mask tensor is supplied. Also contains a logical part.
     Materialized(MaterializedTileMask<F>),

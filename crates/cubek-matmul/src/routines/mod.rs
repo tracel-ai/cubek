@@ -2,6 +2,7 @@
 pub mod naive;
 
 pub mod cpu_gemm;
+pub mod cyclic_cmma;
 pub mod gemm;
 pub mod gemv_unit_perpendicular;
 

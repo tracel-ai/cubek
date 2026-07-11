@@ -5,7 +5,8 @@
 //! operands. Every strategy fixes the register-fit leaf and plane grid and varies only the storage
 //! packing, so `strided_pN` vs `tiled_pN` isolates the storage layout.
 //!
-//! Finding: with tiled reads vectorized (`launch.rs::vectorizes_n` no longer gates on `levels == 0`)
+//! Finding: with tiled reads vectorized (`Launcher::vector_size` accepts tiled operands whose
+//! leaf tile is `N`-contiguous)
 //! the tiled path is ~10× faster than when it was scalar, but still ~1.5× *slower* than strided and
 //! **insensitive to block size** (a 16²→256² sweep was flat) — it is addressing-bound on the
 //! `TiledViewLayout` coord math, never reaching the memory wall. Storage packing buys no locality

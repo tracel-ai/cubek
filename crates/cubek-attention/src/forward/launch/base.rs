@@ -28,32 +28,6 @@ pub enum Strategy {
     Unit(BlueprintStrategy<UnitRoutine>),
 }
 
-/// FlashAttention forward, with optional per-row log-sum-exp output for training.
-///
-/// `lse` (when `Some`) is a `[B, H, seq_q]` fp32 tensor that receives
-/// `m_i + log(ℓ_i)` for each row — the value the backward pass needs to
-/// recompute `P` without materializing the full attention matrix. Pass
-/// `None` for inference; pass `Some(binding)` from a framework's training
-/// hook.
-///
-/// Allocating the lse output and threading it through is the only difference
-/// from [`launch_ref`]; the existing entry point delegates here with `None`.
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_ref_with_lse<R: Runtime>(
-    _strategy: Strategy,
-    _client: &ComputeClient<R>,
-    _query: TensorBinding<R>,
-    _key: TensorBinding<R>,
-    _value: TensorBinding<R>,
-    _mask: Option<TensorBinding<R>>,
-    _out: TensorBinding<R>,
-    _lse: Option<TensorBinding<R>>,
-    _attention_global_types: &AttentionGlobalTypes,
-    _attention_options: AttentionOptions,
-) -> Result<(), AttentionSetupError> {
-    todo!("forward with lse output not yet implemented")
-}
-
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_ref<R: Runtime>(
     strategy: Strategy,

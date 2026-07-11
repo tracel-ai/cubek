@@ -6,15 +6,14 @@ use crate::{dequantize::schedule::dequantize_direct, *};
 
 #[cube]
 impl<O: Numeric> Tile<O> {
-    /// naive implementation only for per tensor native
-    pub fn dequantize<I: Numeric, S: Numeric>(&mut self, input: &Tile<I>, scales: &Tile<S>)
-    where
-        O: Dequantize<I, S>,
-    {
+    /// Copy `input` into `self`. Both tiles serve `O`; a quantized input dequantizes on read
+    /// ([`Tile::flat`]), so the body is a plain flat copy. `I` is the input's storage element,
+    /// threaded from the kernel (unused on a plain input). Per-tensor native only.
+    pub fn dequantize<I: Numeric>(&mut self, input: &Tile<O>) {
         match comptime!(self.space.partitioner()) {
-            Partitioner::Final => Dequantize::dequantize(input, scales, self),
+            Partitioner::Final(_) => dequantize_leaf::<I, O>(input, self),
             Partitioner::Level(level) => match level.schedule() {
-                Schedule::Direct => dequantize_direct(input, scales, self),
+                Schedule::Direct => dequantize_direct::<I, O>(input, self),
                 _ => {
                     unimplemented!(
                         "currently unsupported schedule: {:?}. only {:?} is supported",
@@ -26,39 +25,23 @@ impl<O: Numeric> Tile<O> {
         }
     }
 
-    pub fn dequantize_at<I: Numeric, S: Numeric>(
-        &mut self,
-        input: &Tile<I>,
-        scales: &Tile<S>,
-        region: &Region,
-    ) where
-        O: Dequantize<I, S>,
-    {
-        self.at(region).dequantize(&input.at(region), scales);
+    pub fn dequantize_at<I: Numeric>(&mut self, input: &Tile<O>, region: &Region) {
+        self.at(region).dequantize::<I>(&input.at(region));
     }
 }
 
+/// The leaf: a flat elementwise copy; the read side dequantizes transparently when the input's
+/// store carries [`QuantInfo`].
 #[cube]
-pub trait Dequantize<I: Numeric, S: Numeric>: Numeric {
-    fn dequantize(input: &Tile<I>, scales: &Tile<S>, output: &mut Tile<Self>);
-}
+pub(crate) fn dequantize_leaf<I: Numeric, O: Numeric>(input: &Tile<O>, output: &mut Tile<O>) {
+    // The physical widths are storage detail; input and output share the logical shape, so they
+    // scan at the same width.
+    let size!(W) = output.vector_size();
 
-#[cube]
-impl<I: Numeric, S: Numeric, O: Numeric> Dequantize<I, S> for O {
-    fn dequantize(input: &Tile<I>, scales: &Tile<S>, output: &mut Tile<O>) {
-        // The physical widths are storage detail; reconstruct each operand's lines. Input and
-        // output share the logical shape, so they scan at the same width.
-        let size!(W) = comptime!(output.vector_size);
-        let size!(SW) = comptime!(scales.vector_size);
+    let values = input.flat::<I, W>();
+    let mut out = output.flat_mut::<W>();
 
-        // per-tensor: one scale at flat position 0, broadcast across the output line.
-        let scale = Vector::<O, W>::cast_from(scales.view::<SW>().read(seq![0]));
-
-        let values = input.flat::<W>();
-        let mut out = output.flat_mut::<W>();
-
-        for i in 0..out.shape() {
-            out.write(i, Vector::<O, W>::cast_from(values.read(i)) * scale);
-        }
+    for i in 0..out.shape() {
+        out.write(i, values.read(i));
     }
 }

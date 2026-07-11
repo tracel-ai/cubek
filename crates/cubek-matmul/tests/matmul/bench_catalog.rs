@@ -99,3 +99,35 @@ fn gemv_vecmat_b2_out4096_k8192_rr() {
 fn gemv_matvec_b2_out4096_k8192_rr() {
     run_gemv("simple_vecmat", "matvec_b2_out4096_k8192_rr");
 }
+
+/// Timing probe: the tile-DSL cyclic cmma vs the legacy SimpleAlgorithm it ports.
+/// Run manually: `cargo test-metal-benchmark gemm_cyclic_cmma_timing -- --ignored --nocapture`
+#[test]
+#[ignore = "timing probe, run manually"]
+fn gemm_cyclic_cmma_timing_vs_legacy() {
+    use cubek_matmul::eval::benchmarks::gemm::{bench, problems, strategies};
+
+    let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
+    for id in ["cyclic_cmma", "simple_cyclic_cmma"] {
+        let strategy: Strategy = lookup(strategies(), id);
+        let samples = bench(&strategy, &problem, 10).unwrap();
+        let mut ds = samples.durations.clone();
+        ds.sort();
+        println!(
+            "{id}: median {:?} over {} samples, {:.2} TFLOPS",
+            ds[ds.len() / 2],
+            ds.len(),
+            samples.tflops.unwrap_or(0.0)
+        );
+    }
+}
+
+/// Print the backend's cmma configs (debugging aid).
+#[test]
+#[ignore = "debug probe"]
+fn print_cmma_configs() {
+    let client = cubecl::TestRuntime::client(&Default::default());
+    for c in client.properties().features.matmul.cmma.iter() {
+        println!("{:?}", c);
+    }
+}

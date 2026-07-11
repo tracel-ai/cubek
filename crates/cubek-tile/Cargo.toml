@@ -25,6 +25,7 @@ half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
+cubek-quant = { path = "./../cubek-quant/", version = "=0.3.0-pre.1", default-features = false }
 cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.1", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

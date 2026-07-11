@@ -18,7 +18,6 @@ use crate::eval::problem::{AttentionSpec, build_problem};
 use crate::forward::definition::{
     AttentionGlobalTypes, AttentionIdent, AttentionPrecision, AttentionProblem, attention_types::*,
 };
-use crate::forward::launch::{BlueprintStrategy, Strategy, launch_ref_with_lse};
 
 /// Run one `(strategy, spec)` pair on `cubecl::TestRuntime` with `f16`
 /// precision and return the raw samples.
@@ -200,39 +199,6 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
                 &self.problem.global_dtypes,
                 cfg,
             ),
-            BackwardStrategy::ForwardVsBackward => {
-                // Forward first (with lse emission), then the full backward.
-                // For now we record the combined time; the ratio plot can
-                // split the two when the kernels start producing real
-                // numbers. Both legs are `todo!()` stubs.
-                launch_ref_with_lse(
-                    Strategy::Unit(BlueprintStrategy::Inferred(())),
-                    &self.client,
-                    input.q.clone().binding(),
-                    input.k.clone().binding(),
-                    input.v.clone().binding(),
-                    None,
-                    input.o.clone().binding(),
-                    Some(input.lse.clone().binding()),
-                    &self.problem.global_dtypes,
-                    self.problem.options.clone(),
-                )
-                .map_err(|e| format!("{e:?}"))?;
-                flash_attention_backward(
-                    &self.client,
-                    input.q.binding(),
-                    input.k.binding(),
-                    input.v.binding(),
-                    input.o.binding(),
-                    input.lse.binding(),
-                    input.do_.binding(),
-                    input.dq.binding(),
-                    input.dk.binding(),
-                    input.dv.binding(),
-                    &self.problem.global_dtypes,
-                    cfg,
-                )
-            }
         }
         .map_err(|e| format!("{e:?}"))
     }

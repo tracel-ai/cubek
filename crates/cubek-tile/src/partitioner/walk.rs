@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Region, RegionExpand, Space, instance_count, tiles_per_instance};
+use crate::{Axis, Region, RegionExpand, Space, StaticRegion, instance_count, tiles_per_instance};
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
@@ -141,6 +141,49 @@ impl Iterable for WalkExpand {
     }
 }
 
+/// [`Walk`]'s static sibling, for the register tier: fragments are comptime-indexed, so
+/// this odometer is host data and its loop unrolls where the runtime walk loops.
+/// `Static` axes only, no hardware folding; the level it walks is instance-owned wholesale.
+pub struct StaticWalk {
+    counts: Vec<usize>,
+    space: Space,
+}
+
+impl StaticWalk {
+    pub fn over(space: &Space) -> StaticWalk {
+        let counts = space.axes().map(|axis| space.count(axis)).collect();
+        StaticWalk {
+            counts,
+            space: space.clone(),
+        }
+    }
+
+    /// The walk over `space` with `fastest` walked innermost, so each operand fragment
+    /// feeds a consecutive burst of executes (the legacy emission order, ~1.3% on Metal).
+    pub fn over_fastest(space: &Space, fastest: Axis) -> StaticWalk {
+        let mut axes: Vec<Axis> = space.axes().filter(|&a| a != fastest).collect();
+        axes.push(fastest);
+        StaticWalk::over(&space.project(&axes))
+    }
+
+    pub fn total(&self) -> usize {
+        self.counts.iter().product()
+    }
+
+    /// The `i`th region, row-major (last axis fastest); the register walk's steps are
+    /// independent MMAs, so no [`WalkOrder`] plugs in.
+    pub fn region(&self, i: usize) -> StaticRegion {
+        let rank = self.space.rank();
+        let mut coords = vec![0; rank];
+        let mut rem = i;
+        for p in (0..rank).rev() {
+            coords[p] = rem % self.counts[p];
+            rem /= self.counts[p];
+        }
+        StaticRegion::new(coords, self.space.clone())
+    }
+}
+
 /// Whole `grid` when `Sequential`, else this instance's `Spatial` share.
 #[cube]
 fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
@@ -190,9 +233,9 @@ fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
             };
             cube_pos as usize
         }
-        ComputeScope::Plane => UNIT_POS as usize,
-        ComputeScope::Unit => {
-            panic!("hardware_pos: Unit spreading is an inner-level seam, not yet implemented")
-        }
+        // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, the flat
+        // position the unit index. Lanes agree on UNIT_POS_Y, so they cooperate.
+        ComputeScope::Plane => UNIT_POS_Y as usize,
+        ComputeScope::Unit => UNIT_POS as usize,
     }
 }

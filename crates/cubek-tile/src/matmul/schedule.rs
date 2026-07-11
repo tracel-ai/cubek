@@ -1,114 +1,117 @@
-//! The three lowering schedules behind [`Tile::mma`](super::Tile): [`Direct`](Schedule::Direct)
-//! (no staging), [`Staged`](Schedule::Staged), and [`DoubleBuffered`](Schedule::DoubleBuffered).
-//! Each receives the level's [`Walk`] from `Tile::mma`, so the schedules themselves carry no
-//! extent or merge logic.
+//! The walks behind [`Tile::mma`](super::Tile), one per [`Schedule`]. A schedule's body
+//! is pure structure; kind decisions (slot store, rendezvous, fill dispatch) are
+//! delegated, chiefly to [`Staging::new`].
 
 use cubecl::prelude::*;
 
 use crate::*;
 
-/// `Direct`: no staging
 #[cube]
-pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric, Acc>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-    space: Space,
-) where
-    Acc: Numeric,
-{
-    for region in Walk::over(space) {
-        out.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
-    }
-}
-
-/// `Staged`: stage each operand sub-tile into shared memory, then recurse. Each buffer keeps
-/// its own served type.
-#[cube]
-pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric, Acc>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-    space: Space,
-) where
-    Acc: Numeric,
-{
-    // The buffer's space is this level's divide, so it mirrors what `at` produces and
-    // carries any remaining finer levels. Each smem buffer is staged at its source operand's
-    // physical width, so the scalar slice holds `tile_size * width` entries.
-    let a_sub = comptime!(lhs.space.divide());
-    let b_sub = comptime!(rhs.space.divide());
-    let a_width = comptime!(lhs.vector_size);
-    let b_width = comptime!(rhs.vector_size);
-    let a_smem = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
-    let b_smem = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
-    let mut a_tile = Tile::smem(&a_smem, a_sub, a_width);
-    let mut b_tile = Tile::smem(&b_smem, b_sub, b_width);
-
-    for region in Walk::over(space) {
-        a_tile.stage(&lhs.at(&region));
-        b_tile.stage(&rhs.at(&region));
-        out.at(&region).mma(&a_tile, &b_tile);
-    }
-}
-
-/// `DoubleBuffered`: two staged buffers per operand, prefetching the next region into the idle
-/// slot while computing the current one.
-#[cube]
-pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric, Acc>(
-    lhs: &Tile<Lhs>,
-    rhs: &Tile<Rhs>,
-    out: &mut Tile<Acc>,
-    space: Space,
-) where
-    Acc: Numeric,
-{
-    // Allocated here in caller scope because a view-backed buffer must outlive the ring. Each smem
-    // buffer is staged at its source operand's physical width (`tile_size * width` scalar entries).
-    let a_sub = comptime!(lhs.space.divide());
-    let b_sub = comptime!(rhs.space.divide());
-    let a_width = comptime!(lhs.vector_size);
-    let b_width = comptime!(rhs.vector_size);
-    let a0 = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
-    let a1 = Shared::<[Lhs]>::new_slice(a_sub.tile_size() * a_width);
-    let b0 = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
-    let b1 = Shared::<[Rhs]>::new_slice(b_sub.tile_size() * b_width);
-    let mut a_buf = Sequence::new();
-    a_buf.push(Tile::smem(&a0, comptime!(a_sub.clone()), a_width));
-    a_buf.push(Tile::smem(&a1, comptime!(a_sub.clone()), a_width));
-    let mut b_buf = Sequence::new();
-    b_buf.push(Tile::smem(&b0, comptime!(b_sub.clone()), b_width));
-    b_buf.push(Tile::smem(&b1, comptime!(b_sub.clone()), b_width));
-    let mut a = Ring::new(a_buf);
-    let mut b = Ring::new(b_buf);
-
-    // Double-buffering needs random access (prefetch the next region), so it indexes the `walk`
-    // by hand rather than iterating.
-    let walk = Walk::over(space);
-
-    // prologue: prime slot 0 with region 0.
-    let r0 = walk.region(0);
-    a.stage(0usize, &lhs.at(&r0));
-    b.stage(0usize, &rhs.at(&r0));
-    sync_cube();
-
-    let n = walk.total();
-    for p in 0..n / 2 {
-        let even = p * 2;
-        let odd = even + 1;
-
-        // phase 0: prefetch the odd region into slot 1, compute the even region.
-        a.stage(1usize, &lhs.at(&walk.region(even + 1)));
-        b.stage(1usize, &rhs.at(&walk.region(even + 1)));
-        out.at(&walk.region(even)).mma(a.get(0usize), b.get(0usize));
-        sync_cube();
-
-        // phase 1: prefetch the next even region into slot 0, compute the odd region.
-        if odd + 1 < n {
-            a.stage(0usize, &lhs.at(&walk.region(odd + 1)));
-            b.stage(0usize, &rhs.at(&walk.region(odd + 1)));
+impl<Acc: Numeric> Tile<Acc> {
+    /// `Direct`: no staging, every read goes to where the operand lives. The static twin
+    /// steps with indexed `comptime!` because each unrolled copy stamps different host
+    /// data, which the runtime iterator sugar cannot carry.
+    pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        space: Space,
+    ) {
+        if self.tile_kind.static_level(comptime!(self.space.clone())) {
+            let walk = comptime!(StaticWalk::over_fastest(
+                &Space::merge(&[&lhs.space, &rhs.space]),
+                self.space.axis_at(self.space.rank() - 2),
+            ));
+            #[unroll]
+            for i in 0..comptime!(walk.total()) {
+                let region = comptime!(walk.region(i));
+                self.at_static(&region)
+                    .mma(&lhs.at_static(&region), &rhs.at_static(&region));
+            }
+        } else {
+            for region in Walk::over(space) {
+                self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+            }
         }
-        out.at(&walk.region(odd)).mma(a.get(1usize), b.get(1usize));
-        sync_cube();
+    }
+
+    /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it
+    /// into the recursion. `consume_final` every region, since no later fill publishes
+    /// within an iteration.
+    pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        space: Space,
+    ) {
+        let mut slot = Staging::new(lhs, rhs, comptime!(self.space.clone()));
+        for region in Walk::over(space) {
+            slot.fill(|s, pipe| {
+                pipe.fill(&mut s.0, &lhs.at(&region));
+                pipe.fill(&mut s.1, &rhs.at(&region));
+            });
+            slot.consume_final(|a, b| self.at(&region).mma(a, b));
+        }
+    }
+
+    /// `DoubleBuffered`: two [`Staging`] slots driven `fill`/`consume` on alternating
+    /// regions so one slot's fill overlaps the other's compute.
+    pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        space: Space,
+    ) {
+        let mut s0 = Staging::new(lhs, rhs, comptime!(self.space.clone()));
+        let mut s1 = Staging::new(lhs, rhs, comptime!(self.space.clone()));
+
+        // Double-buffering needs random access (prefetch the next region), so it indexes the
+        // `walk` by hand rather than iterating.
+        let walk = Walk::over(space);
+        let n = walk.total();
+
+        // prologue: prime slot 0 with region 0.
+        let first = walk.region(0);
+        s0.fill(|s, pipe| {
+            pipe.fill(&mut s.0, &lhs.at(&first));
+            pipe.fill(&mut s.1, &rhs.at(&first));
+        });
+
+        for p in 0..n / 2 {
+            let even = p * 2;
+            let odd = even + 1;
+
+            // prefetch the odd region into slot 1 (its fill overlaps the compute below), then
+            // compute the even region on slot 0.
+            let odd_region = walk.region(odd);
+            s1.fill(|s, pipe| {
+                pipe.fill(&mut s.0, &lhs.at(&odd_region));
+                pipe.fill(&mut s.1, &rhs.at(&odd_region));
+            });
+            let even_region = walk.region(even);
+            s0.consume(|a, b| self.at(&even_region).mma(a, b));
+
+            // prefetch the next even region back into slot 0 (if it exists), then compute
+            // the odd region on slot 1; on the walk's final region no fill follows, so
+            // `consume_final` publishes slot 1 itself.
+            let odd_region = walk.region(odd);
+            if odd + 1 < n {
+                let next_even = walk.region(odd + 1);
+                s0.fill(|s, pipe| {
+                    pipe.fill(&mut s.0, &lhs.at(&next_even));
+                    pipe.fill(&mut s.1, &rhs.at(&next_even));
+                });
+                s1.consume(|a, b| self.at(&odd_region).mma(a, b));
+            } else {
+                s1.consume_final(|a, b| self.at(&odd_region).mma(a, b));
+            }
+        }
+
+        // An odd total leaves the last region primed in slot 0 with no consumer in the
+        // loop; no fill follows, so `consume_final` publishes it.
+        if n % 2 == 1 {
+            let last = walk.region(n - 1);
+            s0.consume_final(|a, b| self.at(&last).mma(a, b));
+        }
     }
 }

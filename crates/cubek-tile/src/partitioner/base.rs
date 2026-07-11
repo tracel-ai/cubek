@@ -13,11 +13,30 @@ pub enum Schedule {
     DoubleBuffered,
 }
 
+/// The instruction that contracts a final tile. Declared in the plan because pre-leaf
+/// code (residency, staging-store deduction, cmma smem tiling) reads it before the leaf
+/// runs. `Cmma` carries the contraction depth `k`, which an accumulator's axes never give.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum Leaf {
+    #[default]
+    Register,
+    Cmma {
+        k: usize,
+    },
+}
+
+impl Leaf {
+    pub fn is_cmma(&self) -> bool {
+        matches!(self, Leaf::Cmma { .. })
+    }
+}
+
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
-/// hands [`next`](Partitioner::next) down.
+/// hands [`next`](Partitioner::next) down. A `Level` carries how to walk its regions
+/// ([`Schedule`]); `Final` carries how to contract the terminal tile ([`Leaf`]).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
-    Final,
+    Final(Leaf),
     Level(Box<Level>),
 }
 
@@ -38,7 +57,27 @@ impl Level {
 
 impl Partitioner {
     pub fn is_final(&self) -> bool {
-        matches!(self, Partitioner::Final)
+        matches!(self, Partitioner::Final(_))
+    }
+
+    /// The [`Leaf`] instruction at the end of the chain.
+    pub fn leaf(&self) -> Leaf {
+        match self {
+            Partitioner::Final(leaf) => *leaf,
+            Partitioner::Level(level) => level.next.leaf(),
+        }
+    }
+
+    /// Set the chain-end [`Leaf`], after all levels are stacked (appending a level
+    /// resets it to the tail's).
+    pub(crate) fn with_leaf(self, leaf: Leaf) -> Partitioner {
+        match self {
+            Partitioner::Final(_) => Partitioner::Final(leaf),
+            Partitioner::Level(mut level) => {
+                level.next = level.next.with_leaf(leaf);
+                Partitioner::Level(level)
+            }
+        }
     }
 
     pub fn next(&self) -> &Partitioner {
@@ -63,7 +102,7 @@ impl Partitioner {
 
     pub(crate) fn append(self, tail: Partitioner) -> Partitioner {
         match self {
-            Partitioner::Final => tail,
+            Partitioner::Final(_) => tail,
             Partitioner::Level(level) => {
                 let Level {
                     edges: sub_tile,
@@ -87,7 +126,7 @@ impl Partitioner {
     fn level(&self) -> &Level {
         match self {
             Partitioner::Level(level) => level,
-            Partitioner::Final => {
+            Partitioner::Final(_) => {
                 panic!(
                     "Partitioner: the final partitioner carries no level (check `is_final` first)"
                 )
@@ -125,7 +164,7 @@ impl PartitionerBuilder {
             dists: self.dists,
             order: self.order,
             schedule,
-            next: Partitioner::Final,
+            next: Partitioner::Final(Leaf::Register),
         }))
     }
 

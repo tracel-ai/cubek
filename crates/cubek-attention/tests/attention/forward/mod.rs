@@ -3,6 +3,7 @@ pub mod basic;
 pub mod bench_catalog;
 #[cfg(feature = "extended")]
 pub mod extended;
+pub mod masking;
 
 pub(crate) mod launcher;
 

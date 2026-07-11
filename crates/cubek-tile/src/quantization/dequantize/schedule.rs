@@ -1,14 +1,10 @@
 use cubecl::prelude::*;
 
-use crate::{dequantize::Dequantize, *};
+use crate::*;
 
 #[cube]
-pub(crate) fn dequantize_direct<I: Numeric, S: Numeric, O: Numeric + Dequantize<I, S>>(
-    input: &Tile<I>,
-    scales: &Tile<S>,
-    output: &mut Tile<O>,
-) {
+pub(crate) fn dequantize_direct<I: Numeric, O: Numeric>(input: &Tile<O>, output: &mut Tile<O>) {
     for region in Walk::over(input.runtime_space()) {
-        output.dequantize_at(input, scales, &region);
+        output.dequantize_at::<I>(input, &region);
     }
 }

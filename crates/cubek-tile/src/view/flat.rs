@@ -76,20 +76,27 @@ impl Layout for FlatLayout {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A flat 1-D masked view over `Vector<T, W>` lines (`W` = [`width`](Tile::width)): a row-major
-    /// scan over the tile's window, masking the overhang per its comptime `check` flag. The
-    /// elementwise twin of [`matrix`](Tile::matrix).
-    pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+    /// A flat 1-D quantization-transparent view over `Vector<T, W>` lines (`W` =
+    /// [`vector_size`](Tile::vector_size)): a row-major scan over the tile's window, masking the
+    /// overhang per its comptime `check` flag. `I` is the quantized storage element, threaded by
+    /// the calling kernel (bound via `#[define]` at launch); unused on the plain path.
+    pub fn flat<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
         match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat::<W>(),
-            TileKind::Cmma(_) => panic!("Tile::flat: a cmma fragment has no memory view"),
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_transparent::<I, W>(),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("Tile::flat: a cmma fragment has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
         }
     }
 
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
-            TileKind::Cmma(_) => panic!("Tile::flat_mut: a cmma fragment has no memory view"),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("Tile::flat_mut: a cmma fragment has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
         }
     }
 }

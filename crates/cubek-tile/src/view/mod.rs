@@ -1,82 +1,38 @@
 pub mod flat;
+pub mod masked;
 pub mod matrix;
+pub mod quant;
 
 pub use flat::*;
+pub use masked::*;
 pub use matrix::*;
+pub use quant::*;
 
-use cubecl::{
-    prelude::*,
-    std::tensor::{View, ViewMut, layout::Coordinates},
-};
+use cubecl::{prelude::*, std::tensor::layout::Coordinates};
 
-/// A masked view over a [`Tile`](crate::Tile): a [`View`] re-shaped by some
-/// [`Layout`](cubecl::std::tensor::layout::Layout) (a 2-D [`BatchMatrix`] or a 1-D [`FlatLayout`])
-/// plus its own comptime bounds-check flag, so the
-/// leaf reads it without being asked. `check` zeroes reads / skips writes past the operand's
-/// logical bound (the partial-tile overhang); `false` is the unchecked fast path. The coordinate
-/// type `C` is whatever the layout exposes — `Coords2d` for a matrix, `Coords1d` for a flat scan.
+/// A quantization-transparent read view over a [`Tile`](crate::Tile) serving `O`: `Direct` reads
+/// the buffer as-is; `Quantized` reads the storage element `I` and dequantizes per the store's
+/// [`QuantInfo`](crate::QuantInfo). Which variant a tile yields is comptime, so the plain path
+/// compiles to a bare masked read.
 #[derive(CubeType)]
-pub struct MaskedView<'a, T: CubePrimitive, C: Coordinates + 'a> {
-    view: View<'a, T, C>,
-    #[cube(comptime)]
-    pub(crate) check: bool,
+pub enum TileView<'a, O: Numeric, I: Numeric, W: Size, C: Coordinates + 'a> {
+    Direct(MaskedView<'a, Vector<O, W>, C>),
+    Quantized(QuantizedView<'a, O, I, W, C>),
 }
 
 #[cube]
-impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
-    pub fn new(view: View<'a, T, C>, #[comptime] check: bool) -> Self {
-        MaskedView::<'a, T, C> { view, check }
-    }
-
-    pub fn read(&self, pos: C) -> T {
-        if comptime!(self.check) {
-            self.view.read_checked(pos)
-        } else {
-            // `check == false` means the launch proved this access in-bounds, so the inner
-            // view's memory-safety index clamp (`index.min(len)`) is redundant. Dropping it
-            // via `read_unchecked` removes a per-read clamp from the hot leaf loop and lets the
-            // address strength-reduce.
-            self.view.read_unchecked(pos)
+impl<'a, O: Numeric, I: Numeric, W: Size, C: Coordinates + 'a> TileView<'a, O, I, W, C> {
+    pub fn read(&self, pos: C) -> Vector<O, W> {
+        match self {
+            TileView::Direct(direct) => direct.read(pos),
+            TileView::Quantized(quant) => quant.read(pos),
         }
     }
 
     pub fn shape(&self) -> C {
-        self.view.shape()
-    }
-}
-
-/// The mutable twin of [`MaskedView`]. Its `write` skips the overhang under `check`, matching
-/// the masked reads.
-#[derive(CubeType)]
-pub struct MaskedViewMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
-    view: ViewMut<'a, T, C>,
-    #[cube(comptime)]
-    pub(crate) check: bool,
-}
-
-#[cube]
-impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
-    pub fn new(view: ViewMut<'a, T, C>, #[comptime] check: bool) -> Self {
-        MaskedViewMut::<'a, T, C> { view, check }
-    }
-
-    pub fn read(&self, pos: C) -> T {
-        if comptime!(self.check) {
-            self.view.read_checked(pos)
-        } else {
-            self.view.read_unchecked(pos)
+        match self {
+            TileView::Direct(direct) => direct.shape(),
+            TileView::Quantized(quant) => quant.shape(),
         }
-    }
-
-    pub fn write(&mut self, pos: C, value: T) {
-        if comptime!(self.check) {
-            self.view.write_checked(pos, value);
-        } else {
-            self.view.write(pos, value);
-        }
-    }
-
-    pub fn shape(&self) -> C {
-        self.view.shape()
     }
 }

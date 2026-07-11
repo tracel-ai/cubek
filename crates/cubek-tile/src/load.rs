@@ -6,7 +6,9 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use crate::{Axis, ConcreteLayout, PhysicalAxis, Space, Storage, TileArgLaunch};
+use cubecl::quant::scheme::QuantScheme;
+
+use crate::{Axis, ConcreteLayout, PhysicalAxis, QuantArgLaunch, Space, Storage, TileArgLaunch};
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
 /// is `start_axis`, its storage-tiling depth is `levels`.
@@ -17,34 +19,34 @@ impl From<&ConcreteLayout> for Storage {
 }
 
 impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
-    /// Start describing a strided tile kernel argument sourced from `binding` — a [`TileSource`]
-    /// builder. Set the two required parts — the [`space`](TileSource::space) it projects from and the
-    /// [`subspace`](TileSource::subspace) block it iterates (`build` won't compile until both are set) —
-    /// then optionally complementary outer [`batches`](TileSource::batches), a
-    /// [`vectorize`](TileSource::vectorize) line size, or opt out of the bounds-check
-    /// ([`checked`](TileSource::checked)). Optional defaults are the safe ones — scalar, batchless,
-    /// checked — so a forgotten *optional* setter degrades performance, never correctness.
+    /// Start describing a strided tile kernel argument sourced from `binding`: a
+    /// [`TileSource`] builder. Set the required [`space`](TileSource::space) and
+    /// [`subspace`](TileSource::subspace) (`build` won't compile until both are set), then
+    /// optionally [`batches`](TileSource::batches), [`levels`](TileSource::levels),
+    /// [`vectorize`](TileSource::vectorize), or [`checked`](TileSource::checked).
+    /// Optional defaults are the safe ones, so a forgotten optional setter degrades
+    /// performance, never correctness.
     pub fn source<'a>(binding: TensorBinding<R>) -> TileSource<'a, Unset, Unset, E, R> {
         TileSource {
             data: TileSourceData {
                 binding,
                 space: None,
+                concrete: None,
                 subspace: &[],
                 batch_axes: &[],
+                levels: 0,
                 v: 1,
-                check: true,
+                check: None,
                 _ty: PhantomData,
             },
             _state: PhantomData,
         }
     }
 
-    /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned axes
-    /// ([`distinct_axes`](ConcreteLayout::distinct_axes)) and the tiling [`Storage`] from the layout,
-    /// and project `space` onto those axes. The innermost (`cols`) axis is served as `Vector<E, v>`
-    /// lines — the re-lining happens in-kernel from the comptime `vector_size`, so the scalar
-    /// buffer's shape/strides pass through untouched. The matmul-agnostic loader — the `layout`'s axes are in
-    /// the binding's dim order — so a client just builds the operand's layout and hands it here.
+    /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned
+    /// axes and the tiling [`Storage`] from the layout, and project `space` onto those
+    /// axes. The innermost axis is served as `Vector<E, v>` lines, re-lined in-kernel so
+    /// the scalar buffer's shape/strides pass through untouched.
     pub fn from_concrete(
         binding: TensorBinding<R>,
         layout: &ConcreteLayout,
@@ -70,7 +72,21 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         space: Space,
         storage: Storage,
     ) -> Self {
-        Self::new(tensor, vector_size, space, storage)
+        Self::new(
+            tensor,
+            vector_size,
+            space,
+            storage,
+            ComptimeOptionArgs::None,
+        )
+    }
+
+    /// Mark the operand as quantized: its tensor holds the storage element, and `scales` +
+    /// `scheme` let reads dequantize into the kernel's served type
+    /// ([`tile_dequant`](crate::TileArg::tile_dequant)).
+    pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
+        self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
+        self
     }
 }
 
@@ -83,21 +99,20 @@ pub struct Unset;
 struct TileSourceData<'a, E, R: Runtime> {
     binding: TensorBinding<R>,
     space: Option<&'a Space>,
+    /// The concrete (real-extent) space, when minted by a [`Launcher`](crate::Launcher):
+    /// lets [`build`](TileSource::build) derive the bounds-check from overhang.
+    concrete: Option<&'a Space>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
+    levels: usize,
     v: usize,
-    check: bool,
+    check: Option<bool>,
     _ty: PhantomData<E>,
 }
 
-/// Typestate builder for a strided tile kernel argument, started with [`TileArgLaunch::source`]. The
-/// argument occupies a subspace of the global space, named by two complementary axis groups: the
-/// inner [`subspace`](Self::subspace) block (the tile it iterates — its trailing buffer dims,
-/// storage-tiled so labels repeat level-major: dim `i` is `subspace[i % subspace.len()]`) and the
-/// outer [`batches`](Self::batches) (its leading dims, one axis each, dropped when size 1 — numpy
-/// broadcast omission). The binding is set at construction; the `Sp`/`Sub` markers track the two
-/// remaining required setters, so [`build`](Self::build) exists only once both [`space`](Self::space)
-/// and [`subspace`](Self::subspace) are [`Set`]. Borrows the axis slices + `space` for the chain.
+/// Typestate builder for a strided tile kernel argument, started with
+/// [`TileArgLaunch::source`]. The `Sp`/`Sub` markers make [`build`](Self::build) exist
+/// only once both required setters are [`Set`].
 pub struct TileSource<'a, Sp, Sub, E, R: Runtime> {
     data: TileSourceData<'a, E, R>,
     _state: PhantomData<(Sp, Sub)>,
@@ -123,10 +138,18 @@ impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
         }
     }
 
-    /// The outer (batch) axes, complementary to the [`subspace`](Self::subspace) block: one per
-    /// leading buffer dim, dropped when size 1 (numpy broadcast). Default none (unbatched).
+    /// The outer (batch) axes in the output's order, right-aligned to this operand's leading
+    /// dims (numpy broadcast): pass the full list, extra leading axes are the ones this operand
+    /// omits, and a size-1 dim drops out. Default none (unbatched).
     pub fn batches(mut self, axes: &'a [Axis]) -> Self {
         self.data.batch_axes = axes;
+        self
+    }
+
+    /// Storage-tiling depth: `levels` nested `[grid…, leaf]` splits per subspace axis, so the
+    /// trailing block is `subspace × (levels + 1)` buffer dims. Default `0` (plain strided).
+    pub fn levels(mut self, levels: usize) -> Self {
+        self.data.levels = levels;
         self
     }
 
@@ -137,10 +160,18 @@ impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
         self
     }
 
-    /// Bounds-check the operand's overhang against `space` (default `true`); pass `false` to skip the
-    /// check when the tiling is known to divide evenly.
+    /// Force the overhang bounds-check on or off. Default: derived from the concrete space when
+    /// minted by a [`Launcher`](crate::Launcher) (checked exactly when a subspace axis
+    /// [`overhangs`](Space::overhangs)), else `true`.
     pub fn checked(mut self, check: bool) -> Self {
-        self.data.check = check;
+        self.data.check = Some(check);
+        self
+    }
+
+    /// The concrete (real-extent) space the bounds-check derives from; set by
+    /// [`Launcher::arg`](crate::Launcher::arg).
+    pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
+        self.data.concrete = Some(space);
         self
     }
 }
@@ -153,13 +184,50 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
         let TileSourceData {
             mut binding,
             space,
+            concrete,
             batch_axes,
             subspace,
+            levels,
             v,
             check,
             ..
         } = self.data;
         let space = space.unwrap();
+
+        // The trailing block is `subspace × (levels + 1)` buffer dims; whatever leads it is this
+        // operand's batches, labeled by the trailing (right-aligned) slice of `batch_axes`.
+        let n = subspace.len();
+        let rank = binding.shape.len();
+        let block_dims = n * (levels + 1);
+        assert!(
+            rank >= block_dims,
+            "TileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({n} axes, levels = {levels})"
+        );
+        let batch_dims = rank - block_dims;
+        assert!(
+            batch_dims <= batch_axes.len(),
+            "TileSource: {batch_dims} batch dims but only {} batch axes given",
+            batch_axes.len()
+        );
+        let batch_axes = &batch_axes[batch_axes.len() - batch_dims..];
+
+        // Explicit override wins; a Launcher-minted source derives the check from overhang, and
+        // the free-standing path stays conservatively checked.
+        let check = check.unwrap_or_else(|| match concrete {
+            Some(concrete) => (subspace.iter().chain(batch_axes))
+                // A batch axis absent from the space is a broadcast omission (its size-1
+                // dim drops out below): nothing to overhang.
+                .filter(|&&axis| concrete.contains(axis))
+                .any(|&axis| concrete.overhangs(axis)),
+            None => true,
+        });
+        // A masked access counts its length in lines and would clip valid rows, so a
+        // bounds-checked operand must stay scalar.
+        assert!(
+            !(check && v > 1),
+            "TileSource: a bounds-checked operand cannot be vectorized"
+        );
+
         let mut phys = Vec::new();
         let mut shape = Vec::new();
         let mut strides = Vec::new();
@@ -174,10 +242,9 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
             strides.push(binding.strides[i]);
         }
 
-        let n = subspace.len();
-        let block = binding.shape[batch_axes.len()..]
+        let block = binding.shape[batch_dims..]
             .iter()
-            .zip(&binding.strides[batch_axes.len()..])
+            .zip(&binding.strides[batch_dims..])
             .enumerate();
         for (i, (&extent, &stride)) in block {
             phys.push(PhysicalAxis::new(subspace[i % n], extent));

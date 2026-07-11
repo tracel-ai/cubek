@@ -242,3 +242,56 @@ fn ordered_double_mma() {
         Strategy::OrderedDoubleMma(Default::default()),
     );
 }
+
+// ---- the tile-DSL port of the simple cyclic cmma matmul --------------------------------
+
+#[test]
+fn cyclic_cmma_square_f32() {
+    test_matmul_strategy(
+        client(),
+        square(256, super::common::f32_elems()),
+        Strategy::CyclicCmma(Default::default()),
+    );
+}
+
+#[test]
+fn cyclic_cmma_square_f16() {
+    test_matmul_strategy(
+        client(),
+        square(256, f16_elems()),
+        Strategy::CyclicCmma(Default::default()),
+    );
+}
+
+#[test]
+fn cyclic_cmma_rect_f32() {
+    test_matmul_strategy(
+        client(),
+        super::common::rect(64, 128, 32, super::common::f32_elems()),
+        Strategy::CyclicCmma(Default::default()),
+    );
+}
+
+#[test]
+fn cyclic_cmma_batched_f32() {
+    use cubecl::{ir::AddressType, zspace::shape};
+    use cubek_matmul::definition::MatmulProblem;
+    use cubek_std::MatrixLayout;
+
+    let elems = super::common::f32_elems();
+    let problem = MatmulProblem::from_parameters(
+        64,
+        64,
+        64,
+        shape![3],
+        shape![3],
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        elems,
+        AddressType::U32,
+    );
+    test_matmul_strategy(client(), problem, Strategy::CyclicCmma(Default::default()));
+}
