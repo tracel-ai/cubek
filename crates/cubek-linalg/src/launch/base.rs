@@ -77,12 +77,12 @@ pub fn qr<R: Runtime, EG: Float + CubeElement>(
     }
     let (q, r) = initialize::<R>(client, a, &problem);
 
-    let (_blueprint, settings) = BahtTsqrRoutine::prepare(
+    let (blueprint, settings) = BahtTsqrRoutine::prepare(
         client,
         &problem,
         BlueprintStrategy::Inferred(Default::default()),
     )?;
-    components::baht_tsqr::launch::<R, EG>(client, &q, &r, settings)?;
+    components::baht_tsqr::launch::<R, EG>(client, &q, &r, blueprint, settings)?;
 
     Ok((q, r))
 }

@@ -1,3 +1,4 @@
+use cubecl::features::Plane;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubek_matmul::strategy::Strategy;
@@ -22,9 +23,14 @@ pub struct BahtTsqrRoutine;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BahtTsqrStrategy;
 
-/// The TSQR kernels have no comptime specialization settings.
+/// Comptime specialization settings for the TSQR kernels.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct BahtTsqrBlueprint;
+pub struct BahtTsqrBlueprint {
+    /// Fold the panel reductions with the hardware `plane_sum` (one shared
+    /// slot per plane, two barriers) instead of the generic shared-memory
+    /// tree. Requires plane-op support and a uniform plane size.
+    pub use_plane_reduce: bool,
+}
 
 /// Runtime launch parameters for the TSQR kernels and GEMM updates.
 #[derive(Clone)]
@@ -54,12 +60,26 @@ impl QRRoutine for BahtTsqrRoutine {
         problem: &QRProblem,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<(Self::Blueprint, Self::LaunchSettings), QRSetupError> {
-        let blueprint = match strategy {
-            BlueprintStrategy::Forced(blueprint) => blueprint,
-            BlueprintStrategy::Inferred(_) => BahtTsqrBlueprint,
-        };
-
         let hardware = &client.properties().hardware;
+
+        let plane_reduce_supported = client.properties().features.plane.contains(Plane::Ops)
+            && hardware.plane_size_min == hardware.plane_size_max
+            && hardware.plane_size_min > 0;
+
+        let blueprint = match strategy {
+            BlueprintStrategy::Forced(blueprint) => {
+                if blueprint.use_plane_reduce && !plane_reduce_supported {
+                    return Err(QRSetupError::InvalidBlueprint(
+                        "use_plane_reduce requires plane-op support and a uniform plane size"
+                            .to_string(),
+                    ));
+                }
+                blueprint
+            }
+            BlueprintStrategy::Inferred(_) => BahtTsqrBlueprint {
+                use_plane_reduce: plane_reduce_supported,
+            },
+        };
         let thread_block_size = (hardware.max_cube_dim.0 as f64).sqrt() as u32;
         let max_cube_dim = hardware.max_cube_dim.0.min(256);
         let tile = 32u32.min(problem.cols as u32).min(max_cube_dim);

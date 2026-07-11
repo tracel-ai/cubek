@@ -1,6 +1,6 @@
+pub mod baht_tsqr;
 pub mod errors;
 pub mod solve;
-pub mod baht_tsqr;
 
 #[macro_export]
 macro_rules! testgen_qr_baht_tsqr {

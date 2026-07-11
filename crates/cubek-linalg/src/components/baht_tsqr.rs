@@ -13,7 +13,7 @@ use cubek_matmul::strategy::Strategy;
 use cubek_std::InputBinding;
 
 use crate::definition::QRSetupError;
-use crate::routines::BahtTsqrLaunchSettings;
+use crate::routines::{BahtTsqrBlueprint, BahtTsqrLaunchSettings};
 
 #[cube(launch_unchecked)]
 fn clear_buffer_kernel<F: Float + CubeElement>(buf: &mut [F], n: u32) {
@@ -23,21 +23,51 @@ fn clear_buffer_kernel<F: Float + CubeElement>(buf: &mut [F], n: u32) {
     }
 }
 
-/// Sum-reduce `reduce` (one partial per unit) in shared memory with a
-/// power-of-two tree; every unit returns the total. Callers must have written
-/// their partial and issued a `sync_cube()` beforehand.
+/// Sum-reduce each unit's `local` partial across the cube; every unit
+/// returns the total and the shared buffer is free for reuse on return.
+///
+/// With `use_plane_reduce` (blueprint-gated on plane-op support and a uniform
+/// plane size) the partials are folded by the hardware `plane_sum`, one value
+/// per plane is merged through `reduce`, and only two barriers are needed.
+/// Otherwise a power-of-two shared-memory tree (`log2(cube_dim)` barriers)
+/// does the same job on any hardware.
 #[cube]
-fn tree_reduce_sum<F: Float>(reduce: &mut Shared<[F]>, tdx: u32, cube_dim_x: u32) -> F {
-    let mut pow2 = 1u32;
-    while pow2 < cube_dim_x {
-        if (tdx as usize).is_multiple_of((pow2 as usize) * 2) && (tdx + pow2 < cube_dim_x) {
-            let val = reduce[(tdx + pow2) as usize];
-            reduce[tdx as usize] += val;
+fn cube_reduce_sum<F: Float>(
+    reduce: &mut Shared<[F]>,
+    local: F,
+    tdx: u32,
+    cube_dim_x: u32,
+    #[comptime] use_plane_reduce: bool,
+) -> F {
+    let total = if comptime![use_plane_reduce] {
+        let plane_total = plane_sum(local);
+        if UNIT_POS_PLANE == 0 {
+            reduce[(tdx / PLANE_DIM) as usize] = plane_total;
         }
-        pow2 *= 2;
         sync_cube();
-    }
-    reduce[0]
+        let num_planes = cube_dim_x.div_ceil(PLANE_DIM);
+        let mut acc = F::cast_from(0.0);
+        for p in 0..num_planes {
+            acc += reduce[p as usize];
+        }
+        acc
+    } else {
+        reduce[tdx as usize] = local;
+        sync_cube();
+        let mut pow2 = 1u32;
+        while pow2 < cube_dim_x {
+            if (tdx as usize).is_multiple_of((pow2 as usize) * 2) && (tdx + pow2 < cube_dim_x) {
+                let val = reduce[(tdx + pow2) as usize];
+                reduce[tdx as usize] += val;
+            }
+            pow2 *= 2;
+            sync_cube();
+        }
+        reduce[0]
+    };
+    // Every unit finishes reading before the caller may reuse the buffer.
+    sync_cube();
+    total
 }
 
 /// Compute the Householder reflector for one panel column and write it
@@ -57,6 +87,7 @@ fn householder_kernel<F: Float + CubeElement>(
     beta_vec: &mut [F],
     j: u32,
     #[comptime] shared_size: usize,
+    #[comptime] use_plane_reduce: bool,
 ) {
     let tdx = UNIT_POS_X;
     let cube_dim_x = CUBE_DIM_X;
@@ -75,10 +106,8 @@ fn householder_kernel<F: Float + CubeElement>(
         local = fma(v, v, local);
         i += cube_dim_x;
     }
-    reduce[tdx as usize] = local;
-    sync_cube();
 
-    let sigma = tree_reduce_sum::<F>(&mut reduce, tdx, cube_dim_x);
+    let sigma = cube_reduce_sum::<F>(&mut reduce, local, tdx, cube_dim_x, use_plane_reduce);
 
     if tdx == 0 {
         if sigma == zero {
@@ -126,6 +155,7 @@ fn apply_householder_kernel<F: Float + CubeElement>(
     beta_vec: &[F],
     j: u32,
     #[comptime] shared_size: usize,
+    #[comptime] use_plane_reduce: bool,
 ) {
     let tdx = UNIT_POS_X;
     let cube_dim_x = CUBE_DIM_X;
@@ -141,10 +171,9 @@ fn apply_householder_kernel<F: Float + CubeElement>(
         local = fma(v_buf[v_base + k as usize], r[r_base + k as usize], local);
         k += cube_dim_x;
     }
-    reduce[tdx as usize] = local;
-    sync_cube();
 
-    let dot_f = tree_reduce_sum::<F>(&mut reduce, tdx, cube_dim_x) * beta_vec[j as usize];
+    let dot_f = cube_reduce_sum::<F>(&mut reduce, local, tdx, cube_dim_x, use_plane_reduce)
+        * beta_vec[j as usize];
 
     let mut k2 = tdx;
     while k2 < dim {
@@ -231,10 +260,12 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     client: &ComputeClient<R>,
     q_handle: &TensorHandle<R>,
     r_handle: &TensorHandle<R>,
+    blueprint: BahtTsqrBlueprint,
     settings: BahtTsqrLaunchSettings,
 ) -> Result<(), QRSetupError> {
     let rows = r_handle.shape()[0] as u32;
     let cols = r_handle.shape()[1] as u32;
+    let use_plane_reduce = blueprint.use_plane_reduce;
 
     let BahtTsqrLaunchSettings {
         tile,
@@ -329,6 +360,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     BufferArg::from_raw_parts(beta_vec.clone(), tile_us),
                     j,
                     shared_size,
+                    use_plane_reduce,
                 );
             }
 
@@ -346,6 +378,7 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                     BufferArg::from_raw_parts(beta_vec.clone(), tile_us),
                     j,
                     shared_size,
+                    use_plane_reduce,
                 );
             }
         }
