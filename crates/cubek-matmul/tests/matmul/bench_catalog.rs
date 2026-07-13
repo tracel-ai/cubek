@@ -171,20 +171,18 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
 
     // The tile DSL forced to the legacy selector's point: 8x8x8 instruction, each plane
     // 1x4 tiles, 4x1 planes (128 units), stage 32x32, stage_k 32.
-    let dsl_at_legacy_point = Strategy::CyclicCmma(BlueprintStrategy::Forced(
-        CyclicCmmaBlueprint {
+    let dsl_at_legacy_point =
+        Strategy::CyclicCmma(BlueprintStrategy::Forced(CyclicCmmaBlueprint {
             instruction: Instruction { m: 8, n: 8, k: 8 },
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k: 32,
-        },
-    ));
+        }));
 
     // The legacy engine forced to the DSL selector's point: partition 2x8x4 per plane,
     // 4x2 planes (256 units), stage 64x128, stage_k 32.
-    let f16 = cubecl::ir::StorageType::Scalar(cubecl::ir::ElemType::Float(
-        cubecl::ir::FloatKind::F16,
-    ));
+    let f16 =
+        cubecl::ir::StorageType::Scalar(cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16));
     let matmul_problem = MatmulProblem::from_parameters(
         4096,
         4096,
@@ -253,7 +251,10 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     use cubek_matmul::eval::benchmarks::gemm::strategies;
     for (id, strategy) in [
         ("dsl_at_own_point", lookup(strategies(), "cyclic_cmma")),
-        ("legacy_at_own_point", lookup(strategies(), "simple_cyclic_cmma")),
+        (
+            "legacy_at_own_point",
+            lookup(strategies(), "simple_cyclic_cmma"),
+        ),
         ("dsl_at_legacy_point", dsl_at_legacy_point),
         ("legacy_at_dsl_point", legacy_at_dsl_point),
         ("legacy_own_no_swizzle", legacy_no_swizzle),
