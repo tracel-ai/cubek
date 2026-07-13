@@ -94,13 +94,14 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The [`StageStorage`] layout a stage derived from this tile takes. A TMA bulk copy
-    /// writes its box rows raw, so its stages stay plain strided.
-    pub fn stage_storage(&self) -> comptime_type!(StageStorage) {
+    /// The [`StagePlan`] a stage derived from this tile takes: its [`StageStorage`] layout
+    /// and the launch's cube size. A TMA bulk copy writes its box rows raw and a fragment
+    /// is never a fill source, so both report the plain default (strided, units unknown).
+    pub fn stage(&self) -> comptime_type!(StagePlan) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.stage,
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.stage(),
             TileKind::TmaGmem(_) | TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                comptime!(StageStorage::Strided)
+                comptime!(StagePlan::strided())
             }
         }
     }
@@ -113,17 +114,6 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.vector_size,
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(1usize),
             TileKind::TmaGmem(_) => comptime!(1usize),
-        }
-    }
-
-    /// The launch's cube size carried by a memory tile's [`Storage`], `0` when unknown
-    /// (or for a non-memory tile).
-    pub fn units(&self) -> comptime_type!(usize) {
-        match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.units(),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
-                comptime!(0usize)
-            }
         }
     }
 

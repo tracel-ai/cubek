@@ -11,7 +11,7 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RowState, Space, StageStorage, Storage, StridedTileArg,
+    Axis, MaskProbe, MemData, RowState, Space, StagePlan, Storage, StridedTileArg,
     StridedTileArgLaunch,
 };
 
@@ -35,8 +35,9 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile();
     let mask_tile = mask.tile();
-    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let mut score =
+        MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));

@@ -70,6 +70,43 @@ impl StageStorage {
     }
 }
 
+/// How an operand's shared-memory stages are laid out and cooperatively filled: the tile
+/// `layout` and the launch's `units` (cube size). One comptime value threaded from the
+/// operand's [`Storage`] to every stage derived from it, so a fill never re-derives either.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct StagePlan {
+    pub layout: StageStorage,
+    /// The launch's cube size (units per cube), `0` when unknown. A comptime worker count
+    /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
+    /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
+    pub units: usize,
+}
+
+impl StagePlan {
+    /// The default layout for `space` (tiled for a cmma leaf, else strided) with an unknown
+    /// worker count. A [`Launcher`](crate::Launcher) stamps `units` on top.
+    pub fn for_space(space: &Space) -> Self {
+        StagePlan {
+            layout: StageStorage::for_space(space),
+            units: 0,
+        }
+    }
+
+    /// A plain strided stage with an unknown worker count.
+    pub fn strided() -> Self {
+        StagePlan {
+            layout: StageStorage::Strided,
+            units: 0,
+        }
+    }
+}
+
+impl Default for StagePlan {
+    fn default() -> Self {
+        StagePlan::strided()
+    }
+}
+
 /// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a
 /// kernel serves that argument as a [`Tile`]. A kernel body written over
 /// `D: DeliveryFamily` runs strided or TMA unchanged; the launch entry picks the family.
