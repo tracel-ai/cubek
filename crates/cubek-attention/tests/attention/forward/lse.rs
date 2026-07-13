@@ -89,10 +89,10 @@ fn direct_lse(
         if problem.options.causal && j > i {
             continue;
         }
-        if let Some(mask) = mask {
-            if mask.get_bool(&[b, h, i, j]) {
-                continue;
-            }
+        if let Some(mask) = mask
+            && mask.get_bool(&[b, h, i, j])
+        {
+            continue;
         }
         let mut dot = 0.;
         for d in 0..dims.head_dim {

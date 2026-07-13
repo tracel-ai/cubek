@@ -1,6 +1,5 @@
 //! The fold's running state and the masking probe.
 
-use cubecl;
 use cubecl::prelude::*;
 
 use crate::*;

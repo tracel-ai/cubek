@@ -10,7 +10,7 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{Axis, MaskProbe, RowState, Space, Storage, Tile, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, MaskProbe, MemData, RowState, Space, Storage, TileArg, TileArgLaunch};
 
 const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
@@ -32,8 +32,8 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile();
     let mask_tile = mask.tile();
-    let mut score = Tile::<f32>::smem(block_space.clone(), 1usize);
-    let mut p = Tile::<f32>::smem(block_space.clone(), 1usize);
+    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize);
+    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -256,7 +256,7 @@ fn run(
 /// Rows 0..2 fully masked, row 2 first-half, row 3 second-half (running max
 /// starts at -inf / all-masked late blocks), scattered elsewhere.
 fn crafted_mask(i: usize, j: usize) -> bool {
-    i < 2 || (i == 2 && j < 16) || (i == 3 && j >= 16) || (i + j) % 5 == 0
+    i < 2 || (i == 2 && j < 16) || (i == 3 && j >= 16) || (i + j).is_multiple_of(5)
 }
 
 /// One unit owns every row: the unit/CPU shape (`SoftmaxKind::Direct` twin).
