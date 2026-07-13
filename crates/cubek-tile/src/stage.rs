@@ -10,6 +10,8 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
+use crate::Region;
+
 use crate::{
     CmmaPartition, MemData, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
 };
@@ -111,6 +113,13 @@ impl Pipeline {
 pub struct Staging<T: CubeType> {
     data: T,
     pipeline: Pipeline,
+    /// Operands the walk leaves invariant: filled once by [`fill_pinned`](Staging::fill_pinned),
+    /// skipped by [`fill_streamed`](Staging::fill_streamed). Only the `(Tile, Tile)` payload sets
+    /// these; a generic slot pins nothing.
+    #[cube(comptime)]
+    pin_lhs: bool,
+    #[cube(comptime)]
+    pin_rhs: bool,
 }
 
 #[cube]
@@ -118,8 +127,18 @@ impl<T: CubeType> Staging<T> {
     /// Wrap an already-built payload and pipeline. Private: the public entry is the operand-deducing
     /// [`new`](Staging::new). (Split out so the tuple `T` never sits in a struct-literal turbofish,
     /// which `#[cube]` can't parse; `Staging::<T>` can.)
-    fn wrap(data: T, pipeline: Pipeline) -> Staging<T> {
-        Staging::<T> { data, pipeline }
+    fn wrap(
+        data: T,
+        pipeline: Pipeline,
+        #[comptime] pin_lhs: bool,
+        #[comptime] pin_rhs: bool,
+    ) -> Staging<T> {
+        Staging::<T> {
+            data,
+            pipeline,
+            pin_lhs,
+            pin_rhs,
+        }
     }
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`
@@ -186,10 +205,18 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn new(
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
+        #[comptime] walk: Space,
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_tma = lhs.is_tma();
         let rhs_tma = rhs.is_tma();
+        // Pin an operand only when its window is genuinely fixed across the walk. A barrier
+        // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
+        // splitting an invariant out would corrupt its phase. A dynamic level can't decide
+        // invariance at comptime. Both fall back to streaming (pin = false).
+        let split = comptime!(walk.is_static() && !lhs_tma && !rhs_tma);
+        let pin_lhs = comptime!(split && walk.walk_invariant(&lhs.space));
+        let pin_rhs = comptime!(split && walk.walk_invariant(&rhs.space));
         let register = comptime!(
             out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
         );
@@ -200,14 +227,49 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             ));
             let a = CmmaPartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
             let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
-            Staging::wrap((a, b), Pipeline::new(Sync::Solo))
+            Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
         } else {
             let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
             Staging::wrap(
                 (MemData::smem_like(lhs), MemData::smem_like(rhs)),
                 Pipeline::new(sync),
+                pin_lhs,
+                pin_rhs,
             )
         }
+    }
+
+    /// Fill the pinned operand(s), those the walk leaves invariant, from `region`'s window.
+    /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
+    /// A no-op when nothing is pinned (both operands stream).
+    pub fn fill_pinned(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
+        let pin_lhs = comptime!(self.pin_lhs);
+        let pin_rhs = comptime!(self.pin_rhs);
+        if comptime!(pin_lhs || pin_rhs) {
+            self.fill(|s, pipe| {
+                if comptime!(pin_lhs) {
+                    pipe.fill(&mut s.0, &lhs.at(region));
+                }
+                if comptime!(pin_rhs) {
+                    pipe.fill(&mut s.1, &rhs.at(region));
+                }
+            });
+        }
+    }
+
+    /// Fill the streamed operand(s), everything not pinned, from `region`'s window. Runs per
+    /// region inside the walk.
+    pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
+        let pin_lhs = comptime!(self.pin_lhs);
+        let pin_rhs = comptime!(self.pin_rhs);
+        self.fill(|s, pipe| {
+            if comptime!(!pin_lhs) {
+                pipe.fill(&mut s.0, &lhs.at(region));
+            }
+            if comptime!(!pin_rhs) {
+                pipe.fill(&mut s.1, &rhs.at(region));
+            }
+        });
     }
 }
 

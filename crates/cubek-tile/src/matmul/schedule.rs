@@ -59,16 +59,6 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         space: Space,
     ) {
-        // A barrier pipeline arrives `full` once per fill, so a TMA pair keeps the joint
-        // per-region fill; splitting an invariant fill out would corrupt its phase. A
-        // dynamic level can't decide invariance at comptime, so it keeps it too.
-        let lhs_tma = lhs.is_tma();
-        let rhs_tma = rhs.is_tma();
-        let spec = comptime!(space.clone());
-        let split = comptime!(spec.is_static() && !lhs_tma && !rhs_tma);
-        let lhs_once = comptime!(split && spec.walk_invariant(&lhs.space));
-        let rhs_once = comptime!(split && spec.walk_invariant(&rhs.space));
-
         let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
         let register = comptime!(
             self.space.partitioner().leaf().is_cmma()
@@ -77,35 +67,23 @@ impl<Acc: Numeric> Tile<Acc> {
         );
         let unroll = comptime!(cuts || register);
 
-        let mut slot = Staging::new(lhs, rhs, comptime!(self.space.clone()));
+        // `Staging` decides which operand (if any) is pinned: walk-invariant, so its window
+        // never moves and it fills once, above the loop. The rest stream, refilled per region.
+        let mut slot = Staging::new(
+            lhs,
+            rhs,
+            comptime!(space.clone()),
+            comptime!(self.space.clone()),
+        );
         let walk = Walk::over(space);
-        if comptime!(lhs_once || rhs_once) {
-            // An invariant operand's window ignores the walked axes, so the first
-            // region's window is every region's window.
-            let first = walk.region(0);
-            slot.fill(|s, pipe| {
-                if comptime!(lhs_once) {
-                    pipe.fill(&mut s.0, &lhs.at(&first));
-                }
-                if comptime!(rhs_once) {
-                    pipe.fill(&mut s.1, &rhs.at(&first));
-                }
-            });
-        }
+        slot.fill_pinned(lhs, rhs, &walk.region(0));
         let walk = if comptime!(unroll) {
             walk.unrolled()
         } else {
             walk
         };
         for region in walk {
-            slot.fill(|s, pipe| {
-                if comptime!(!lhs_once) {
-                    pipe.fill(&mut s.0, &lhs.at(&region));
-                }
-                if comptime!(!rhs_once) {
-                    pipe.fill(&mut s.1, &rhs.at(&region));
-                }
-            });
+            slot.fill_streamed(lhs, rhs, &region);
             slot.consume_final(|a, b| self.at(&region).mma(a, b));
         }
     }
@@ -118,8 +96,20 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         space: Space,
     ) {
-        let mut s0 = Staging::new(lhs, rhs, comptime!(self.space.clone()));
-        let mut s1 = Staging::new(lhs, rhs, comptime!(self.space.clone()));
+        // Double-buffering fills both operands every region (see the raw `fill`s below), so the
+        // pin flags go unread; pass the walk space only to satisfy `new`.
+        let mut s0 = Staging::new(
+            lhs,
+            rhs,
+            comptime!(space.clone()),
+            comptime!(self.space.clone()),
+        );
+        let mut s1 = Staging::new(
+            lhs,
+            rhs,
+            comptime!(space.clone()),
+            comptime!(self.space.clone()),
+        );
 
         // Double-buffering needs random access (prefetch the next region), so it indexes the
         // `walk` by hand rather than iterating.
