@@ -9,8 +9,9 @@ use crate::{Space, Tile, TileArg, TmaArg};
 /// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
 /// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
 /// comes from it.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Delivery {
+    #[default]
     Strided,
     Tma,
 }

@@ -34,7 +34,7 @@ use crate::{
             specialized::{SpecializedAlgorithm, SpecializedStrategy},
         },
         cpu_gemm::{self, CpuGemmRoutine, WithLayout},
-        cyclic_cmma::{self, CyclicCmmaRoutine},
+        cmma::{self, CmmaRoutine},
         gemm::{GemmRoutine, launch as launch_gemm},
         gemv_unit_perpendicular::{
             GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
@@ -191,10 +191,8 @@ pub enum Strategy {
     Gemm(BlueprintStrategy<(), GemmRoutine>),
     CpuGemm(BlueprintStrategy<(), CpuGemmRoutine>),
     /// The simple cyclic cmma matmul on the tile DSL (vs the legacy `SimpleCyclicCmma`).
-    CyclicCmma(BlueprintStrategy<(), CyclicCmmaRoutine>),
-    /// [`Strategy::CyclicCmma`] with both operands delivered by TMA bulk copies;
-    /// `Unavailable` on backends without TMA.
-    CyclicCmmaTma(BlueprintStrategy<(), CyclicCmmaRoutine>),
+    /// The strategy's `delivery` picks strided or TMA operands (`Unavailable` without TMA).
+    Cmma(BlueprintStrategy<(), CmmaRoutine>),
     Naive,
     #[default]
     Auto,
@@ -252,8 +250,7 @@ impl Display for Strategy {
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
             Strategy::Gemm(s) => write!(f, "gemm{}", s),
             Strategy::CpuGemm(s) => write!(f, "cpu_gemm{}", s),
-            Strategy::CyclicCmma(s) => write!(f, "cyclic_cmma{}", s),
-            Strategy::CyclicCmmaTma(s) => write!(f, "cyclic_cmma_tma{}", s),
+            Strategy::Cmma(s) => write!(f, "cmma{}", s),
         }
     }
 }
@@ -561,15 +558,7 @@ impl Strategy {
                 strategy,
                 dtypes,
             ),
-            Strategy::CyclicCmma(strategy) => cyclic_cmma::launch_ref(
-                client,
-                into_contiguous_if_highly_permuted(client, lhs)?,
-                into_contiguous_if_highly_permuted(client, rhs)?,
-                out,
-                strategy,
-                dtypes,
-            ),
-            Strategy::CyclicCmmaTma(strategy) => cyclic_cmma::launch_tma_ref(
+            Strategy::Cmma(strategy) => cmma::launch_ref(
                 client,
                 into_contiguous_if_highly_permuted(client, lhs)?,
                 into_contiguous_if_highly_permuted(client, rhs)?,

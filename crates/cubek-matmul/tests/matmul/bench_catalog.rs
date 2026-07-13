@@ -101,14 +101,14 @@ fn gemv_matvec_b2_out4096_k8192_rr() {
 }
 
 /// Timing probe: the tile-DSL cyclic cmma vs the legacy SimpleAlgorithm it ports.
-/// Run manually: `cargo test-metal-benchmark gemm_cyclic_cmma_timing -- --ignored --nocapture`
+/// Run manually: `cargo test-metal-benchmark gemm_cmma_timing -- --ignored --nocapture`
 #[test]
 #[ignore = "timing probe, run manually"]
-fn gemm_cyclic_cmma_timing_vs_legacy() {
+fn gemm_cmma_timing_vs_legacy() {
     use cubek_matmul::eval::benchmarks::gemm::{bench, problems, strategies};
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
-    for id in ["cyclic_cmma", "simple_cyclic_cmma"] {
+    for id in ["cmma", "simple_cyclic_cmma"] {
         let strategy: Strategy = lookup(strategies(), id);
         let samples = bench(&strategy, &problem, 10).unwrap();
         let mut ds = samples.durations.clone();

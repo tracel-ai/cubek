@@ -11,34 +11,21 @@ use cubecl::{
 use crate::*;
 
 /// A TMA tensor-map source: the launch-built `ViewMut`, the current global box origin
-/// `pos`, the logical `bound`, and the comptime box shape. `at` advances `pos`; the
-/// descriptor and bound ride along unchanged.
+/// `pos`, and the logical `bound`. `at` advances `pos`; the descriptor (which owns the
+/// box shape) and bound ride along unchanged.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct TmaData<T: Numeric> {
     view: ViewMut<'static, T, CoordsDyn>,
     pos: CoordsDyn,
     pub(crate) bound: CoordsDyn,
-    #[cube(comptime)]
-    box_rows: u32,
-    #[cube(comptime)]
-    box_cols: u32,
-    #[cube(comptime)]
-    transposed: bool,
 }
 
 #[cube]
 impl<T: Numeric> TmaData<T> {
     /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side, [`TmaArg`]) as a `TmaGmem`
-    /// tile. `pos` starts at the origin and advances on [`at`](Tile::at); the box shape is
-    /// carried comptime for the `tensor_map_load`.
-    pub fn from_tensor_map(
-        view: ViewMut<'static, T, CoordsDyn>,
-        #[comptime] space: Space,
-        #[comptime] box_rows: u32,
-        #[comptime] box_cols: u32,
-        #[comptime] transposed: bool,
-    ) -> Tile<T> {
+    /// tile. `pos` starts at the origin and advances on [`at`](Tile::at).
+    pub fn from_tensor_map(view: ViewMut<'static, T, CoordsDyn>, #[comptime] space: Space) -> Tile<T> {
         let bound = view.shape();
         let mut pos = CoordsDyn::new();
         #[unroll]
@@ -46,14 +33,7 @@ impl<T: Numeric> TmaData<T> {
             pos.push(0u32);
         }
         Tile::<T> {
-            tile_kind: TileKind::new_TmaGmem(TmaData::<T> {
-                view,
-                pos,
-                bound,
-                box_rows,
-                box_cols,
-                transposed,
-            }),
+            tile_kind: TileKind::new_TmaGmem(TmaData::<T> { view, pos, bound }),
             space: comptime!(space),
         }
     }
@@ -101,9 +81,6 @@ impl<T: Numeric> TmaData<T> {
             view: self.view.clone(),
             pos,
             bound: self.bound.clone(),
-            box_rows: comptime!(self.box_rows),
-            box_cols: comptime!(self.box_cols),
-            transposed: comptime!(self.transposed),
         }
     }
 }

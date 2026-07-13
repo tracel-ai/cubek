@@ -127,24 +127,15 @@ pub struct QuantArg {
     pub scheme: QuantScheme,
 }
 
-/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier plus the comptime
-/// [`Space`] and box geometry. [`TileArg`]'s twin — a `CubeLaunch` type cannot hold both
-/// a `&Tensor` and a tensor map, so each family has its own argument and
-/// [`DeliveryFamily`] lets one kernel body take either. Built by
-/// [`TmaArgLaunch::tensor_map`](crate::TmaArgLaunch::tensor_map).
+/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor
+/// owns the box, the [`TmaDynLayout`] the coordinate rules) plus the comptime [`Space`].
+/// [`TileArg`]'s twin, since a `CubeLaunch` type cannot hold both a `&Tensor` and a
+/// tensor map. Built by [`TmaArgLaunch::tensor_map`](crate::TmaArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaArg<E: Numeric> {
     pub view: ViewMut<'static, E, CoordsDyn>,
     #[cube(comptime)]
     pub space: Space,
-    /// The descriptor's box (what one `tensor_map_load` copies), in descriptor order.
-    #[cube(comptime)]
-    pub box_rows: u32,
-    #[cube(comptime)]
-    pub box_cols: u32,
-    /// Whether the descriptor swapped its inner pair (a col-major operand).
-    #[cube(comptime)]
-    pub transposed: bool,
 }
 
 #[cube]
@@ -152,13 +143,7 @@ impl<E: Numeric> TmaArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile: not
     /// element-addressable, its only sink is a hardware bulk copy into shared memory.
     pub fn tile(&self) -> Tile<E> {
-        TmaData::from_tensor_map(
-            self.view.clone(),
-            comptime!(self.space.clone()),
-            comptime!(self.box_rows),
-            comptime!(self.box_cols),
-            comptime!(self.transposed),
-        )
+        TmaData::from_tensor_map(self.view.clone(), comptime!(self.space.clone()))
     }
 }
 
@@ -231,18 +216,14 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
 }
 
 impl<E: Numeric, R: Runtime> TmaArgLaunch<E, R> {
-    /// Load a TMA tensor-map as a tile argument, [`TileArg`](crate::TileArg)'s delivery twin.
-    /// The hardware bulk-copies the descriptor's box per `tensor_map_load`; `box_shape` is
-    /// that box in *logical* `(rows, cols)`. `dims` is the operand's logical
-    /// `(batch, rows, cols)` (runtime, so shapes never specialize the kernel) and
-    /// `transposed` flags a col-major operand whose descriptor swapped its inner pair (the
-    /// layout swaps coords back). `space` is the operand's already-projected tile space:
-    /// rank 3 with a leading batch axis, rank 2 without.
+    /// Load a TMA tensor-map as a tile argument. `dims` is the operand's logical runtime
+    /// `(batch, rows, cols)`; `transposed` flags a col-major operand whose descriptor
+    /// swapped its inner pair (the layout swaps coords back). `space` is the operand's
+    /// already-projected tile space: rank 3 with a leading batch axis, rank 2 without.
     pub fn tensor_map(
         tensor_map: TensorMapArg<R, Tiled>,
         space: Space,
         dims: (u32, u32, u32),
-        box_shape: (u32, u32),
         transposed: bool,
     ) -> Self {
         let batched = match space.rank() {
@@ -250,10 +231,9 @@ impl<E: Numeric, R: Runtime> TmaArgLaunch<E, R> {
             3 => true,
             r => panic!("TmaArg: the descriptor is (batch, row, col); rank {r} space unsupported"),
         };
-        let (box_rows, box_cols) = box_shape;
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, space, box_rows, box_cols, transposed)
+        Self::new(view, space)
     }
 }
 
@@ -261,7 +241,8 @@ impl<E: Numeric, R: Runtime> TmaArgLaunch<E, R> {
 /// descriptor's 3-D `(batch, row, col)`. A batchless (rank-2) operand gets batch `0`, a
 /// unit batch broadcasts; a col-major (`transposed`) descriptor swapped its inner pair, so
 /// the layout swaps coords back. `shape()` stays logical, so a tile's `bound` aligns with
-/// its space whatever the descriptor order.
+/// its space whatever the descriptor order. Same rules as cubek-matmul's legacy
+/// `SimpleTmaGlobalLayout` (tuple coords); keep the two in step.
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct TmaDynLayout {
     /// Logical `(batch, rows, cols)` of the operand.

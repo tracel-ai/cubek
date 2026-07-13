@@ -1,4 +1,4 @@
-//! The CyclicCmma kernel: promote the accumulator, contract, copy back.
+//! The Cmma kernel: promote the accumulator, contract, copy back.
 
 use cubecl::prelude::*;
 use cubek_tile::{DeliveryFamily, TileArg};
@@ -7,7 +7,7 @@ use cubek_tile::{DeliveryFamily, TileArg};
 /// (strided cooperative copy or TMA bulk copy; the output is always strided). Each
 /// operand keeps its own element type, matching the hardware's `MmaConfig`.
 #[cube(launch)]
-pub fn cyclic_cmma_kernel<E: Numeric, EL: Numeric, ER: Numeric, D: DeliveryFamily>(
+pub fn cmma_kernel<E: Numeric, EL: Numeric, ER: Numeric, D: DeliveryFamily>(
     a: &D::Arg<EL>,
     b: &D::Arg<ER>,
     c: &TileArg<'_, E>,
