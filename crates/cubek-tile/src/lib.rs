@@ -8,9 +8,11 @@ mod partitioner;
 mod quantization;
 mod resident;
 mod scalar;
+mod softmax;
 mod space;
 mod stage;
 mod tile;
+mod vec_tensor;
 mod view;
 
 // `Axis`/`MAX_AXES` and `ConcreteLayout` are the storage-layout vocabulary; clients reach them
@@ -20,7 +22,9 @@ pub use load::*;
 pub use partitioner::*;
 pub use quantization::*;
 pub use scalar::*;
+pub use softmax::*;
 pub use space::*;
 pub use stage::*;
 pub use tile::*;
+pub use vec_tensor::*;
 pub use view::*;

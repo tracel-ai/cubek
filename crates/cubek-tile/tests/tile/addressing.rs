@@ -1,15 +1,17 @@
-//! Backend probes for the vectorized addressing contract: a regrouped
-//! `&[Vector<E, W>]` slice is **line-unit indexed** (cubecl's `with_vector_size` divides
-//! the slice offset/length by the width), so `slice[i]` touches scalars
-//! `[i·W, i·W + W)`. The tile engine's layouts must therefore emit line-unit offsets.
+//! Backend probes for the vectorized addressing contract: a [`VecTensor`] binding is typed
+//! `Vector<E, W>` at launch, so the engine-shaped regroup
+//! (`Box<[T]> → as_vectorized → with_vector_size::<W>`) is a no-op and `slice[i]` is a
+//! **line-unit** native access on every backend. The tile engine's layouts must therefore
+//! emit line-unit offsets.
 
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
+use cubek_tile::{VecTensor, VecTensorArg};
 
-/// Write a broadcast `Vector<f32, 2>` at line index 1 of a regrouped slice; line-unit
-/// indexing lands it on scalars 2..4.
+/// Write a broadcast `Vector<f32, 2>` at line index 1 of a regrouped 2-wide binding;
+/// line-unit indexing lands it on scalars 2..4.
 #[cube(launch)]
-fn write_line_index_one(t: &Tensor<f32>) {
+fn write_line_index_one(t: &VecTensor<f32>) {
     if UNIT_POS == 0 {
         let mut buf = unsafe { t.as_slice().as_boxed_unchecked() };
         let lines = buf.as_vectorized_mut().with_vector_size_mut::<Const<2>>();
@@ -17,8 +19,8 @@ fn write_line_index_one(t: &Tensor<f32>) {
     }
 }
 
-/// The engine-shaped regroup (`Box<[T]> → as_vectorized → with_vector_size`) must index
-/// in line units on every backend.
+/// The engine-shaped regroup over a natively-wide binding must index in line units on
+/// every backend, including wgpu (no `memory_reinterpret` there).
 #[test]
 fn regrouped_slice_indexes_in_line_units() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -30,7 +32,7 @@ fn regrouped_slice_indexes_in_line_units() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_single(),
-        input.clone().binding().into_tensor_arg(),
+        VecTensorArg::new(input.clone().binding().into_tensor_arg(), 2),
     );
 
     let got = HostData::from_tensor_handle(&client, input, HostDataType::F32);

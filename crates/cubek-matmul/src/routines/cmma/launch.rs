@@ -6,7 +6,7 @@ use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
     Axis, CubeAxis, Cut, Delivery, DeliveryFamily, Launcher, Leaf, Schedule, Space, Strided,
-    TileArgLaunch, Tiling, Tma, TmaArgLaunch, WalkOrder,
+    StridedTileArgLaunch, Tiling, Tma, TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -249,7 +249,7 @@ impl OperandLaunch for Strided {
         operand: Operand,
         out_batch_axes: &[Axis],
         dtype: StorageType,
-    ) -> TileArgLaunch<'static, E, R> {
+    ) -> StridedTileArgLaunch<'static, E, R> {
         let [outer, inner] = operand.axes;
         let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
         launch
@@ -270,7 +270,7 @@ impl OperandLaunch for Tma {
         operand: Operand,
         _out_batch_axes: &[Axis],
         dtype: StorageType,
-    ) -> TmaArgLaunch<E, R> {
+    ) -> TmaTileArgLaunch<E, R> {
         let (map, transposed) = tma_operand(
             binding,
             1,
@@ -280,7 +280,7 @@ impl OperandLaunch for Tma {
             TensorMapSwizzle::None,
         );
         let (rows, cols) = operand.extent;
-        TmaArgLaunch::tensor_map(
+        TmaTileArgLaunch::tensor_map(
             map,
             launch.space().project(&operand.axes),
             (1, rows, cols),

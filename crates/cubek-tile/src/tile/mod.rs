@@ -28,7 +28,7 @@ pub enum TileKind<T: Numeric> {
     /// statically ([`at_static`](Tile::at_static)).
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
-    /// copy into shared memory. Launched via [`TmaArg`], the twin of [`TileArg`].
+    /// copy into shared memory. Launched via [`TmaTileArg`], the twin of [`StridedTileArg`].
     TmaGmem(TmaData<T>),
 }
 

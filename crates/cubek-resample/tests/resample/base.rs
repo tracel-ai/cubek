@@ -48,14 +48,14 @@ pub fn run_test(
     let input = input_handle.clone().binding();
 
     let output_handle = build_output_tensor(
-        &client,
+        client,
         output_shape.clone(),
         f32::as_type_native_unchecked().storage_type(),
     );
     let output = output_handle.clone().binding();
 
     resample(
-        &client,
+        client,
         input,
         output,
         args,
@@ -63,12 +63,12 @@ pub fn run_test(
         f32::as_type_native_unchecked().storage_type(),
     );
 
-    let actual = output_host_f32(&client, output_handle);
+    let actual = output_host_f32(client, output_handle);
     let expected_handle = TestInput::builder(client.clone(), output_shape)
         .dtype(f32::as_type_native_unchecked().storage_type())
         .custom(expected_data)
         .generate_without_host_data();
-    let expected = output_host_f32(&client, expected_handle);
+    let expected = output_host_f32(client, expected_handle);
 
     validate_test(actual, expected, 1e-6);
 }

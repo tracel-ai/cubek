@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Space, Tile, TileArg, TmaArg};
+use crate::{Space, Tile, StridedTileArg, TmaTileArg};
 
 /// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
 /// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
@@ -51,7 +51,7 @@ impl Delivery {
 
 /// How a derived smem stage lays out its buffer: storage-tiled at the final tile (one
 /// contiguous block per fragment) or plain strided rows (legacy `sync_full_strided`).
-/// A per-operand comptime plan config ([`stage`](crate::TileSource::stage)).
+/// A per-operand comptime plan config ([`stage`](crate::StridedTileSource::stage)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StageStorage {
     Tiled,
@@ -84,15 +84,15 @@ pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     fn tile<E: Numeric>(arg: &Self::Arg<E>) -> Tile<E>;
 }
 
-/// [`Delivery::Strided`]'s family: a plain tensor ([`TileArg`]), cooperatively copied.
+/// [`Delivery::Strided`]'s family: a plain tensor ([`StridedTileArg`]), cooperatively copied.
 pub struct Strided;
 
-/// [`Delivery::Tma`]'s family: a tensor map ([`TmaArg`]), hardware bulk-copied.
+/// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
 pub struct Tma;
 
 #[cube]
 impl DeliveryFamily for Strided {
-    type Arg<E: Numeric> = TileArg<'static, E>;
+    type Arg<E: Numeric> = StridedTileArg<'static, E>;
 
     fn tile<E: Numeric>(arg: &Self::Arg<E>) -> Tile<E> {
         arg.tile()
@@ -101,7 +101,7 @@ impl DeliveryFamily for Strided {
 
 #[cube]
 impl DeliveryFamily for Tma {
-    type Arg<E: Numeric> = TmaArg<E>;
+    type Arg<E: Numeric> = TmaTileArg<E>;
 
     fn tile<E: Numeric>(arg: &Self::Arg<E>) -> Tile<E> {
         arg.tile()

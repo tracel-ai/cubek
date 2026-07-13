@@ -1,12 +1,12 @@
-//! The [`TileSource`] builder: the one place a launched tensor becomes a
-//! [`TileArgLaunch`]. Every client (matmul, dequantize, …) loads tiles through it, so
+//! The [`StridedTileSource`] builder: the one place a launched tensor becomes a
+//! [`StridedTileArgLaunch`]. Every client (matmul, dequantize, …) loads tiles through it, so
 //! the layout/broadcast wiring lives here, not at each call site.
 
 use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use crate::{Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, TileArgLaunch};
+use crate::{Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, StridedTileArgLaunch};
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
 /// is `start_axis`, its storage-tiling depth is `levels`.
@@ -16,17 +16,17 @@ impl From<&ConcreteLayout> for Storage {
     }
 }
 
-/// Typestate marker: a required [`TileSource`] field has been set.
+/// Typestate marker: a required [`StridedTileSource`] field has been set.
 pub struct Set;
-/// Typestate marker: a required [`TileSource`] field is still missing.
+/// Typestate marker: a required [`StridedTileSource`] field is still missing.
 pub struct Unset;
 
-/// The fields an [`TileSource`] accumulates; the typestate lives in the wrapper, not here.
+/// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a, E, R: Runtime> {
     binding: TensorBinding<R>,
     space: Option<&'a Space>,
     /// The concrete (real-extent) space, when minted by a [`Launcher`](crate::Launcher):
-    /// lets [`build`](TileSource::build) derive the bounds-check from overhang.
+    /// lets [`build`](StridedTileSource::build) derive the bounds-check from overhang.
     concrete: Option<&'a Space>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
@@ -38,16 +38,16 @@ struct TileSourceData<'a, E, R: Runtime> {
 }
 
 /// Typestate builder for a strided tile kernel argument, started with
-/// [`TileArgLaunch::source`]. The `Sp`/`Sub` markers make [`build`](Self::build) exist
+/// [`StridedTileArgLaunch::source`]. The `Sp`/`Sub` markers make [`build`](Self::build) exist
 /// only once both required setters are [`Set`].
-pub struct TileSource<'a, Sp, Sub, E, R: Runtime> {
+pub struct StridedTileSource<'a, Sp, Sub, E, R: Runtime> {
     data: TileSourceData<'a, E, R>,
     _state: PhantomData<(Sp, Sub)>,
 }
 
-impl<'a, E, R: Runtime> TileSource<'a, Unset, Unset, E, R> {
+impl<'a, E, R: Runtime> StridedTileSource<'a, Unset, Unset, E, R> {
     pub(crate) fn new(binding: TensorBinding<R>) -> Self {
-        TileSource {
+        StridedTileSource {
             data: TileSourceData {
                 binding,
                 space: None,
@@ -65,11 +65,11 @@ impl<'a, E, R: Runtime> TileSource<'a, Unset, Unset, E, R> {
     }
 }
 
-impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
+impl<'a, Sp, Sub, E, R: Runtime> StridedTileSource<'a, Sp, Sub, E, R> {
     /// The global iteration space this argument projects from (required).
-    pub fn space(mut self, space: &'a Space) -> TileSource<'a, Set, Sub, E, R> {
+    pub fn space(mut self, space: &'a Space) -> StridedTileSource<'a, Set, Sub, E, R> {
         self.data.space = Some(space);
-        TileSource {
+        StridedTileSource {
             data: self.data,
             _state: PhantomData,
         }
@@ -77,9 +77,9 @@ impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
 
     /// The inner block of axes the operand iterates — its `[row, col]` for a matmul (required,
     /// non-empty). Complementary to [`batches`](Self::batches), the outer dims.
-    pub fn subspace(mut self, axes: &'a [Axis]) -> TileSource<'a, Sp, Set, E, R> {
+    pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, E, R> {
         self.data.subspace = axes;
-        TileSource {
+        StridedTileSource {
             data: self.data,
             _state: PhantomData,
         }
@@ -130,11 +130,11 @@ impl<'a, Sp, Sub, E, R: Runtime> TileSource<'a, Sp, Sub, E, R> {
     }
 }
 
-impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
+impl<'a, E: Numeric, R: Runtime> StridedTileSource<'a, Set, Set, E, R> {
     /// Build the operand's [`ConcreteLayout`] from its labeled dims and load it via
-    /// [`from_concrete`](TileArgLaunch::from_concrete). Available only once space and subspace are
+    /// [`from_concrete`](StridedTileArgLaunch::from_concrete). Available only once space and subspace are
     /// both set, so the `unwrap` below cannot fire.
-    pub fn build(self) -> TileArgLaunch<'static, E, R> {
+    pub fn build(self) -> StridedTileArgLaunch<'static, E, R> {
         let TileSourceData {
             mut binding,
             space,
@@ -156,12 +156,12 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
         let block_dims = n * (levels + 1);
         assert!(
             rank >= block_dims,
-            "TileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({n} axes, levels = {levels})"
+            "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({n} axes, levels = {levels})"
         );
         let batch_dims = rank - block_dims;
         assert!(
             batch_dims <= batch_axes.len(),
-            "TileSource: {batch_dims} batch dims but only {} batch axes given",
+            "StridedTileSource: {batch_dims} batch dims but only {} batch axes given",
             batch_axes.len()
         );
         let batch_axes = &batch_axes[batch_axes.len() - batch_dims..];
@@ -180,7 +180,7 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
         // bounds-checked operand must stay scalar.
         assert!(
             !(check && v > 1),
-            "TileSource: a bounds-checked operand cannot be vectorized"
+            "StridedTileSource: a bounds-checked operand cannot be vectorized"
         );
 
         let mut phys = Vec::new();
@@ -210,7 +210,7 @@ impl<'a, E: Numeric, R: Runtime> TileSource<'a, Set, Set, E, R> {
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
         let mut arg =
-            TileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check);
+            StridedTileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check);
         if let Some(stage) = stage {
             arg = arg.stage(stage);
         }

@@ -17,8 +17,9 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct MemData<T: Numeric> {
-    /// Scalar-typed backing store; its physical vectorization is erased from the type and
-    /// held in [`vector_size`](MemData::vector_size).
+    /// Backing store, scalar-typed by Rust-side erasure only: the real binding/alloc element is
+    /// `Vector<T, vector_size>` (see [`VecTensor`](crate::VecTensor)), so re-grouping to lines
+    /// at that width is a no-op.
     pub(crate) buffer: Box<[T]>,
     /// Physical line size (`Vector<T, vector_size>`) of the backing store, `1` when
     /// unvectorized; held comptime so `size!` can read it.
@@ -54,11 +55,12 @@ pub struct MemData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// Wrap a launched scalar [`Tensor`] into a whole `Gmem` tile. Shape and strides are held
-    /// *line-unit* (the cubecl contract for `Vector<T, w>` slices): the contiguous innermost axis
-    /// counts lines, coarser strides divide by `w`; the launcher gates `w > 1` on divisibility.
+    /// Wrap a launched [`VecTensor`] into a whole `Gmem` tile. Shape and strides come in
+    /// scalar-unit and convert here to *line-unit* (the buffer indexes in lines): the contiguous
+    /// innermost axis counts lines, coarser strides divide by `w`; the launcher gates `w > 1`
+    /// on divisibility.
     pub fn from_tensor(
-        tensor: &Tensor<T>,
+        tensor: &VecTensor<T>,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
@@ -76,15 +78,21 @@ impl<T: Numeric> MemData<T> {
 
     /// [`from_tensor`](MemData::from_tensor) from a storage-typed tensor: the buffer physically
     /// holds `I` while the tile serves `T`, dequantizing on read per `quant`. The plain path is
-    /// `I == T` with `quant == None`; [`TileArg::tile_dequant`] is the kernel-side constructor.
+    /// `I == T` with `quant == None`; [`StridedTileArg::tile_dequant`] is the kernel-side constructor.
     pub fn from_tensor_quant<I: Numeric>(
-        tensor: &Tensor<I>,
+        tensor: &VecTensor<I>,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
         #[comptime] stage: StageStorage,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
+        let tensor_vector_size = tensor.vector_size();
+        comptime!(assert!(
+            tensor_vector_size == vector_size,
+            "MemData::from_tensor: comptime vector_size differs from the binding's width"
+        ));
+
         let start_axis = comptime!(storage.start_axis);
         let num_tiled = comptime!(space.rank() - storage.start_axis);
         let levels = comptime!(storage.levels);
@@ -152,18 +160,24 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// Allocate a shared-memory tile over `space`, at physical `vector_size`. A `Tiled` stage
-    /// is storage-tiled at the final tile (one contiguous block per fragment, what a cmma
-    /// transaction wants); `Strided` is plain row-major. A final-space stage has no grid to
-    /// tile, so it is always plain.
+    /// Allocate a shared-memory tile over `space`, at physical `vector_size` (the slice is
+    /// allocated natively wide, then scalar-erased). A `Tiled` stage is storage-tiled at the
+    /// final tile (one contiguous block per fragment, what a cmma transaction wants) so the cmma
+    /// transaction reads it unstrided; `Strided` is plain row-major. A final-space stage has no
+    /// grid to tile, so it is always plain.
     pub fn smem(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] stage: StageStorage,
     ) -> Tile<T> {
         let levels = comptime!((!space.is_final() && stage == StageStorage::Tiled) as usize);
-        let smem = Shared::<[T]>::new_slice(space.tile_size());
-        let buffer = unsafe { smem.inner_ref().as_boxed_unchecked() };
+        let size!(W) = vector_size;
+        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(space.tile_size() / vector_size));
+        let buffer = unsafe {
+            smem.inner_ref()
+                .downcast_unchecked::<T>()
+                .as_boxed_unchecked()
+        };
         let (physical_shape, physical_strides) =
             storage_layout(comptime!(space.clone()), vector_size, levels);
         let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
@@ -256,9 +270,10 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// This buffer's byte length: the transaction count a TMA fill into it lands.
+    /// This buffer's byte length (its length is in native lines, so widened by the vector
+    /// size): the transaction count a TMA fill into it lands.
     pub(crate) fn size_bytes(&self) -> u32 {
-        self.buffer.len() as u32 * comptime!(T::type_size() as u32)
+        self.buffer.len() as u32 * comptime!(T::type_size() as u32 * self.vector_size as u32)
     }
 
     /// The base layout: the `[grid…, tile…]` split (gmem, `levels > 0`) or a plain
@@ -277,8 +292,14 @@ impl<T: Numeric> MemData<T> {
         Window::new(self.origin.clone(), self.extent.clone(), self.bound.clone())
     }
 
-    /// The scalar buffer re-grouped into `Vector<T, W>` lines, which the line-unit
-    /// base/window layouts address. Only the cmma transactions widen back to scalars.
+    /// The window extent, for shape-only readers that must not regroup the buffer.
+    pub(crate) fn extent(&self) -> CoordsDyn {
+        self.extent.clone()
+    }
+
+    /// The buffer re-grouped into `Vector<T, W>` lines, which the line-unit base/window
+    /// layouts address. `W` is the width the buffer already has, so the regroup is a
+    /// no-op; only the cmma row stride widens back to scalars ([`row_stride`](MemData::row_stride)).
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.buffer.as_vectorized().with_vector_size::<W>()
     }
@@ -295,9 +316,10 @@ impl<T: Numeric> MemData<T> {
         storage.as_vectorized().with_vector_size::<W>()
     }
 
-    /// The scalar buffer from this window's origin on: the base a cmma load/store
-    /// addresses, rows stepping by [`row_stride`](MemData::row_stride). Requires an
-    /// unmasked store whose window doesn't split rows across storage tiles.
+    /// The buffer from this window's origin on: the base a cmma load/store addresses,
+    /// rows stepping by the scalar [`row_stride`](MemData::row_stride) (cmma takes a line
+    /// slice with a scalar stride). Requires an unmasked store whose window doesn't split
+    /// rows across storage tiles.
     pub(crate) fn window_slice(&self) -> &[T] {
         let offset = self.window_offset();
         self.buffer.slice(offset, self.buffer.len())
@@ -310,14 +332,14 @@ impl<T: Numeric> MemData<T> {
         self.buffer.slice_mut(offset, end)
     }
 
-    /// Scalar offset of the window origin: the origin through the base layout, widened
-    /// back to scalars. On a tiled store the window must lie within one storage tile.
+    /// Line offset of the window origin: the origin through the base layout. On a tiled
+    /// store the window must lie within one storage tile.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             !self.check,
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
-        self.base().to_source_pos(self.origin.clone()) * comptime!(self.vector_size)
+        self.base().to_source_pos(self.origin.clone())
     }
 
     /// Scalar stride between matrix rows: the line-unit physical stride of the leaf
@@ -430,12 +452,8 @@ impl<T: Numeric> MemData<T> {
         let rows = comptime!(space.extent_at(rank - 2));
         // The `Space` is scalar; `cols` counts lines, so divide the innermost extent by the width.
         let cols = comptime!(space.extent_at(rank - 1) / self.vector_size);
-        // Leading (batch) extents are width-invariant, so a `Const<1>` regroup gives the right shape.
-        let shape = self
-            .lines::<Const<1>>()
-            .view(self.base())
-            .view(self.window())
-            .shape();
+        // Leading (batch) extents are width-invariant; the window extent is the view's shape.
+        let shape = self.extent();
         let mut batches = CoordsDyn::new();
         #[unroll]
         for p in 0..rank - 2 {

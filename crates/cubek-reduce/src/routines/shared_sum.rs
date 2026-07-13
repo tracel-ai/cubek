@@ -108,8 +108,18 @@ pub fn shared_sum<R: Runtime>(
         linear_view(input)
     };
 
-    // Compute extra parameters.
-    let cube_dim = CubeDim::new_2d(32, 8); // NOTE: If you change that, keep the unit count a power of 2.
+    // Compute extra parameters. The tree reduce in the kernel requires a power-of-two unit
+    // count, and the device caps how many units a cube may hold (e.g. the core count on the
+    // CPU runtime), so clamp 256 to the largest power of two the device supports.
+    let max_units = client.properties().hardware.max_units_per_cube;
+    let cap = u32::min(256, max_units.max(1));
+    let units = if cap.is_power_of_two() {
+        cap
+    } else {
+        cap.next_power_of_two() >> 1
+    };
+    let dim_x = u32::min(32, units);
+    let cube_dim = CubeDim::new_2d(dim_x, units / dim_x);
     let num_units = cube_count * cube_dim.num_elems();
     let num_vectors_per_unit = input_len.div_ceil(num_units as usize * vector_size);
     let cube_count = CubeCount::new_1d(cube_count);

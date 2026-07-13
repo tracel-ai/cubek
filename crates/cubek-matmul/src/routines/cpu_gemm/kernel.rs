@@ -1,7 +1,7 @@
 //! The CpuGemm kernel: the whole body is `c.mma(a, b)`.
 
 use cubecl::prelude::*;
-use cubek_tile::TileArg;
+use cubek_tile::StridedTileArg;
 
 /// The whole body is `c.mma(a, b)`. `a` stays scalar (broadcast per `K`); `b` and `c` carry the
 /// launch-chosen line size along their contiguous `N` axis (set on each operand's builder). Each keeps its own
@@ -10,9 +10,9 @@ use cubek_tile::TileArg;
 /// `EL = ER = E` case, where the casts fold away).
 #[cube(launch)]
 pub fn cpu_gemm_kernel<E: Numeric, EL: Numeric, ER: Numeric>(
-    a: &TileArg<'_, EL>,
-    b: &TileArg<'_, ER>,
-    c: &TileArg<'_, E>,
+    a: &StridedTileArg<'_, EL>,
+    b: &StridedTileArg<'_, ER>,
+    c: &StridedTileArg<'_, E>,
     #[define(EL)] _lhs_dtype: StorageType,
     #[define(ER)] _rhs_dtype: StorageType,
     #[define(E)] _acc_dtype: StorageType,

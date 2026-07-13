@@ -1,4 +1,4 @@
-//! The launchable arguments an operand rides — [`TileArg`] (strided) and [`TmaArg`]
+//! The launchable arguments an operand rides — [`StridedTileArg`] (strided) and [`TmaTileArg`]
 //! (tensor map) — plus their constructors and the [`Storage`]/quantization plan config
 //! they carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
 
@@ -49,16 +49,17 @@ impl Storage {
     }
 }
 
-/// The strided [`Delivery`]'s argument: a scalar `&Tensor` plus its comptime line
+/// The strided [`Delivery`]'s argument: a [`VecTensor`] plus its comptime line
 /// [`vector_size`](Self::vector_size), [`Space`], [`Storage`] and load knobs;
-/// [`tile`](TileArg::tile) turns it into a `Tile` in-kernel. For a quantized operand,
-/// `E` is the storage element and [`tile_dequant`](TileArg::tile_dequant) picks the
+/// [`tile`](StridedTileArg::tile) turns it into a `Tile` in-kernel. For a quantized operand,
+/// `E` is the storage element and [`tile_dequant`](StridedTileArg::tile_dequant) picks the
 /// served type.
 #[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric> {
-    pub tensor: &'a Tensor<E>,
+pub struct StridedTileArg<'a, E: Numeric> {
+    pub tensor: &'a VecTensor<E>,
     /// Physical vectorization (`Vector<E, vector_size>` line size) of the operand's contiguous
-    /// innermost axis; `1` is scalar.
+    /// innermost axis; `1` is scalar. Always equals the binding's width
+    /// ([`MemData::from_tensor`] asserts it).
     #[cube(comptime)]
     pub vector_size: usize,
     #[cube(comptime)]
@@ -69,17 +70,17 @@ pub struct TileArg<'a, E: Numeric> {
     #[cube(comptime)]
     pub stage: StageStorage,
     /// Quantization side-channel, `None` for a plain operand (every constructor's default;
-    /// [`quantized`](TileArgLaunch::quantized) opts in).
+    /// [`quantized`](StridedTileArgLaunch::quantized) opts in).
     pub quant: ComptimeOption<QuantArg>,
 }
 
 #[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
+impl<'a, E: Numeric> StridedTileArg<'a, E> {
     /// Serve the tensor's own element type. The plain path; a quantized operand goes
     /// through [`tile_dequant`](Self::tile_dequant) to name its served type.
     pub fn tile(&self) -> Tile<E> {
         if comptime!(self.quant.is_some()) {
-            panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
+            panic!("StridedTileArg::tile: a quantized operand is served via StridedTileArg::tile_dequant")
         }
         MemData::from_tensor(
             self.tensor,
@@ -116,7 +117,7 @@ impl<'a, E: Numeric> TileArg<'a, E> {
     }
 }
 
-/// The quantization side-channel of a [`TileArg`]: the scale grid plus the comptime
+/// The quantization side-channel of a [`StridedTileArg`]: the scale grid plus the comptime
 /// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
 /// quantized or not (the tile dequantizes on read).
 #[derive(CubeType, CubeLaunch)]
@@ -129,17 +130,17 @@ pub struct QuantArg {
 
 /// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor
 /// owns the box, the [`TmaDynLayout`] the coordinate rules) plus the comptime [`Space`].
-/// [`TileArg`]'s twin, since a `CubeLaunch` type cannot hold both a `&Tensor` and a
-/// tensor map. Built by [`TmaArgLaunch::tensor_map`](crate::TmaArgLaunch::tensor_map).
+/// [`StridedTileArg`]'s twin, since a `CubeLaunch` type cannot hold both a `&Tensor` and a
+/// tensor map. Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]
-pub struct TmaArg<E: Numeric> {
+pub struct TmaTileArg<E: Numeric> {
     pub view: ViewMut<'static, E, CoordsDyn>,
     #[cube(comptime)]
     pub space: Space,
 }
 
 #[cube]
-impl<E: Numeric> TmaArg<E> {
+impl<E: Numeric> TmaTileArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile: not
     /// element-addressable, its only sink is a hardware bulk copy into shared memory.
     pub fn tile(&self) -> Tile<E> {
@@ -147,16 +148,16 @@ impl<E: Numeric> TmaArg<E> {
     }
 }
 
-impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
+impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
     /// Start describing a strided tile kernel argument sourced from `binding`: a
-    /// [`TileSource`] builder. Set the required [`space`](TileSource::space) and
-    /// [`subspace`](TileSource::subspace) (`build` won't compile until both are set), then
-    /// optionally [`batches`](TileSource::batches), [`levels`](TileSource::levels),
-    /// [`vectorize`](TileSource::vectorize), or [`checked`](TileSource::checked).
+    /// [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space) and
+    /// [`subspace`](StridedTileSource::subspace) (`build` won't compile until both are set), then
+    /// optionally [`batches`](StridedTileSource::batches), [`levels`](StridedTileSource::levels),
+    /// [`vectorize`](StridedTileSource::vectorize), or [`checked`](StridedTileSource::checked).
     /// Optional defaults are the safe ones, so a forgotten optional setter degrades
     /// performance, never correctness.
-    pub fn source<'a>(binding: TensorBinding<R>) -> TileSource<'a, Unset, Unset, E, R> {
-        TileSource::new(binding)
+    pub fn source<'a>(binding: TensorBinding<R>) -> StridedTileSource<'a, Unset, Unset, E, R> {
+        StridedTileSource::new(binding)
     }
 
     /// Load a strided operand from its realized [`ConcreteLayout`]: derive the spanned
@@ -178,7 +179,8 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
         )
     }
 
-    /// Load a strided global tensor as a tile served in `vector_size`-wide lines. Its
+    /// Load a strided global tensor as a tile served in `vector_size`-wide lines (the binding is
+    /// typed `Vector<E, vector_size>`, see [`VecTensor`](crate::VecTensor)). Its
     /// `[pre…, grid…, tile…]` buffer is tiled in-kernel over `space` (the [`Tile`](crate::Tile) reads
     /// the physical shape/strides off the tensor). The [`Storage`] carries the tiling depth and the
     /// overhang bounds-check.
@@ -190,7 +192,7 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
     ) -> Self {
         let stage = StageStorage::for_space(&space);
         Self::new(
-            tensor,
+            VecTensorArg::new(tensor, vector_size),
             vector_size,
             space,
             storage,
@@ -208,14 +210,14 @@ impl<E: Numeric, R: Runtime> TileArgLaunch<'static, E, R> {
 
     /// Mark the operand as quantized: its tensor holds the storage element, and `scales` +
     /// `scheme` let reads dequantize into the kernel's served type
-    /// ([`tile_dequant`](crate::TileArg::tile_dequant)).
+    /// ([`tile_dequant`](crate::StridedTileArg::tile_dequant)).
     pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
         self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
         self
     }
 }
 
-impl<E: Numeric, R: Runtime> TmaArgLaunch<E, R> {
+impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
     /// Load a TMA tensor-map as a tile argument. `dims` is the operand's logical runtime
     /// `(batch, rows, cols)`; `transposed` flags a col-major operand whose descriptor
     /// swapped its inner pair (the layout swaps coords back). `space` is the operand's
@@ -229,7 +231,7 @@ impl<E: Numeric, R: Runtime> TmaArgLaunch<E, R> {
         let batched = match space.rank() {
             2 => false,
             3 => true,
-            r => panic!("TmaArg: the descriptor is (batch, row, col); rank {r} space unsupported"),
+            r => panic!("TmaTileArg: the descriptor is (batch, row, col); rank {r} space unsupported"),
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
