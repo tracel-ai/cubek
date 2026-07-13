@@ -13,7 +13,7 @@ use cubek_matmul::routines::cpu_gemm::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, Space, StridedTileArg, StridedTileArgLaunch};
 
 use super::Dims;
 use crate::matmul::assert_result;
@@ -30,8 +30,8 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+    src: &StridedTileArg<'_, E>,
+    dst: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let src = src.tile();
@@ -122,12 +122,15 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
     binding
 }
 
-/// The operand's launchable `TileArg`, viewed in `space`: its tensor arg (with the
+/// The operand's launchable `StridedTileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric>(op: &Operand, space: Space) -> TileArgLaunch<'static, E, TestRuntime> {
+fn tile_arg<E: Numeric>(
+    op: &Operand,
+    space: Space,
+) -> StridedTileArgLaunch<'static, E, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    TileArgLaunch::strided(tensor, 1, space, storage)
+    StridedTileArgLaunch::strided(tensor, 1, space, storage)
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.

@@ -3,7 +3,7 @@ use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, Quant
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TileInput, assert_equals_approx,
 };
-use cubek_tile::{Axis, Space, Storage, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, Space, Storage, StridedTileArg, StridedTileArgLaunch};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -30,9 +30,9 @@ fn scalar_add_quantized_matches_reference() {
 /// scalar: the scalar to add
 /// output: the output tensor
 pub fn scalar_add<I: Numeric, O: Numeric>(
-    input: &TileArg<'_, I>,
+    input: &StridedTileArg<'_, I>,
     scalar: f32,
-    output: &TileArg<'_, O>,
+    output: &StridedTileArg<'_, O>,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
@@ -56,9 +56,9 @@ fn run_non_quantized(m: usize, n: usize, scalar: f32) {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
+        StridedTileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
         scalar,
-        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         dtype,
         dtype,
     );
@@ -120,10 +120,10 @@ fn run_quantized(m: usize, n: usize, scalar: f32) {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
+        StridedTileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
             .quantized(scales.binding().into_tensor_arg(), scheme),
         scalar,
-        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         input_dtype,
         out_dtype,
     );

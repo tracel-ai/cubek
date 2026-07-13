@@ -1,6 +1,7 @@
 //! The [`Tile`]: one operand's data, a [`TileKind`] backing store plus the comptime
-//! [`Space`] it projects. This module holds the tile-level surface; each backing
-//! store's own data and leaves live in its file ([`mem`], [`cmma`], [`tma`]).
+//! [`Space`] it projects. Kernel-side structure only; each backing store's own data and
+//! leaves live in its file ([`mem`], [`cmma`], [`tma`]), and the launch surface (the
+//! arguments, deliveries and builder a tile is loaded through) lives in [`crate::load`].
 
 mod cmma;
 mod mem;
@@ -27,7 +28,7 @@ pub enum TileKind<T: Numeric> {
     /// static walk's regions (constant coordinates) can select through it.
     CmmaPartition(CmmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
-    /// copy into shared memory. Dormant: no launch-side constructor wires it yet.
+    /// copy into shared memory. Launched via [`TmaTileArg`], the twin of [`StridedTileArg`].
     TmaGmem(TmaData<T>),
 }
 
@@ -60,134 +61,12 @@ impl<T: Numeric> TileKind<T> {
     }
 }
 
-/// How a launched tensor's `[pre…, grid…, tile…]` buffer maps to the logical
-/// [`Space`]. A property of the tensor, distinct from the space's partitioner.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Storage {
-    pub start_axis: usize,
-    pub levels: usize,
-    /// Whether this operand's logical extent can overhang its tile grid, so edge
-    /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
-    /// keeps the unchecked (divisible) fast path.
-    pub check_bounds: bool,
-    /// The launch's cube size (units per cube), `0` when unknown. Comptime knowledge of
-    /// the cooperative worker count lets a fill emit straight-line tasks instead of a
-    /// rolled loop whose runtime `CUBE_DIM` stride blocks unrolling.
-    pub units: usize,
-}
-
-impl Storage {
-    /// Every axis tiled, no passthrough; `levels` read off the tensor's rank.
-    pub fn of(physical_rank: usize, logical_rank: usize) -> Self {
-        Storage {
-            start_axis: 0,
-            levels: physical_rank / logical_rank - 1,
-            check_bounds: false,
-            units: 0,
-        }
-    }
-
-    pub fn passthrough(start_axis: usize, levels: usize) -> Self {
-        Storage {
-            start_axis,
-            levels,
-            check_bounds: false,
-            units: 0,
-        }
-    }
-
-    /// Set whether edge reads/writes must be bounds-checked.
-    pub fn checked(mut self, check_bounds: bool) -> Self {
-        self.check_bounds = check_bounds;
-        self
-    }
-
-    /// Set the launch's cube size (units per cube).
-    pub fn units(mut self, units: usize) -> Self {
-        self.units = units;
-        self
-    }
-}
-
-/// The launchable form of a [`Tile`]: a [`VecTensor`] plus its comptime line
-/// [`vector_size`](Self::vector_size), [`Space`] and [`Storage`]; [`tile`](TileArg::tile) turns
-/// it into a `Tile` in-kernel. For a quantized operand, `E` is the storage element and
-/// [`tile_dequant`](TileArg::tile_dequant) picks the served type.
-#[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric> {
-    pub tensor: &'a VecTensor<E>,
-    /// Physical vectorization (`Vector<E, vector_size>` line size) of the operand's contiguous
-    /// innermost axis; `1` is scalar. Always equals the binding's width
-    /// ([`MemData::from_tensor`] asserts it).
-    #[cube(comptime)]
-    pub vector_size: usize,
-    #[cube(comptime)]
-    pub space: Space,
-    #[cube(comptime)]
-    pub storage: Storage,
-    /// Quantization side-channel, `None` for a plain operand (every constructor's default;
-    /// [`quantized`](TileArgLaunch::quantized) opts in).
-    pub quant: ComptimeOption<QuantArg>,
-}
-
-#[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
-    /// Serve the tensor's own element type. The plain path; a quantized operand goes
-    /// through [`tile_dequant`](Self::tile_dequant) to name its served type.
-    pub fn tile(&self) -> Tile<E> {
-        if comptime!(self.quant.is_some()) {
-            panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
-        }
-        MemData::from_tensor(
-            self.tensor,
-            comptime!(self.vector_size),
-            comptime!(self.space.clone()),
-            comptime!(self.storage),
-        )
-    }
-
-    /// Serve `O` from a storage-typed operand: `quant = Some` attaches the scale + scheme so reads
-    /// dequantize `E → O` transparently; `quant = None` is the plain path (the launch binds
-    /// `E == O`). For kernels that thread both types via `#[define]` and run quantized or not.
-    pub fn tile_dequant<O: Numeric>(&self) -> Tile<O> {
-        // `#[comptime]`: whether the operand is quantized is a trace-time fact, so the match
-        // resolves at expand and the plain path pays nothing.
-        let quant = #[comptime]
-        match &self.quant {
-            // Per-tensor native: a single scale at flat index 0.
-            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
-                scale: q.scales[0],
-                scheme: comptime!(q.scheme),
-            }),
-            ComptimeOption::None => ComptimeOption::new_None(),
-        };
-        MemData::<O>::from_tensor_quant::<E>(
-            self.tensor,
-            comptime!(self.vector_size),
-            comptime!(self.space.clone()),
-            comptime!(self.storage),
-            quant,
-        )
-    }
-}
-
 /// The quantization a tile's backing store carries so reads dequantize transparently: a
 /// runtime `scale` (per-tensor for now) plus the comptime [`QuantScheme`].
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
     pub scale: f32,
-    #[cube(comptime)]
-    pub scheme: QuantScheme,
-}
-
-/// The quantization side-channel of a [`TileArg`]: the scale grid plus the comptime
-/// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
-/// quantized or not (the tile dequantizes on read).
-#[derive(CubeType, CubeLaunch)]
-pub struct QuantArg {
-    /// Per-tensor scales (currently a single value at flat index 0).
-    pub scales: OwnedTensor<f32>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
 }
@@ -204,13 +83,25 @@ pub struct Tile<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Whether this operand is delivered by TMA (an async hardware bulk-copy source) rather than a
-    /// strided element copy. Comptime (the tile kind is fixed at trace); drives the staging sync.
-    #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
-    pub fn is_tma(&self) -> comptime_type!(bool) {
+    /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
+    /// copy. Comptime (the kind is fixed at trace); drives the staging sync. A resident
+    /// fragment is never a fill source, so it reports strided.
+    pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.tile_kind {
-            TileKind::TmaGmem(_) => true,
-            _ => false,
+            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
+            TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(Delivery::Strided),
+        }
+    }
+
+    /// The [`StageStorage`] layout a stage derived from this tile takes. A TMA bulk copy
+    /// writes its box rows raw, so its stages stay plain strided.
+    pub fn stage_storage(&self) -> comptime_type!(StageStorage) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.stage,
+            TileKind::TmaGmem(_) | TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                comptime!(StageStorage::Strided)
+            }
         }
     }
 

@@ -1,10 +1,12 @@
 //! Helpers for building TMA (Tensor Memory Accelerator) descriptors.
 
+use std::marker::PhantomData;
+
 use cubecl::ir::StorageType;
 use cubecl::prelude::*;
 use cubecl::server::TensorMapMeta;
 pub use cubecl::zspace::metadata::Metadata;
-use cubecl::zspace::{Shape, Strides};
+use cubecl::zspace::{Shape, Strides, shape, strides};
 
 use crate::MatrixLayout;
 
@@ -39,6 +41,52 @@ pub fn transpose_inner_for_tma(
     } else {
         false
     }
+}
+
+/// One matmul-style operand's tiled tensor map. Collapses the binding to the 3-D
+/// `(batch, rows, cols)` the descriptor expects, swaps the inner pair for a col-major
+/// operand (TMA discards the last stride) and keeps the batch stride outermost.
+/// `box_shape` is the box one bulk copy moves, in logical `(rows, cols)`; it rides the
+/// same swap. Returns the arg plus whether the swap occurred.
+pub fn tma_operand<R: Runtime>(
+    binding: TensorBinding<R>,
+    batches: usize,
+    layout: MatrixLayout,
+    box_shape: (usize, usize),
+    storage_ty: StorageType,
+    swizzle: TensorMapSwizzle,
+) -> (TensorMapArg<R, Tiled>, bool) {
+    let rank = binding.shape.len();
+    let mut shape = shape![batches, binding.shape[rank - 2], binding.shape[rank - 1]];
+    let mut strides: Strides = if rank > 2 {
+        binding.strides[rank - 3..].into()
+    } else {
+        strides![binding.strides[0], binding.strides[1]]
+    };
+    let transposed = transpose_inner_for_tma(&mut shape, &mut strides, layout);
+    // Re-insert the batch stride after the (possible) swap so it stays outermost.
+    if strides.len() == 2 {
+        let stride = strides[0];
+        strides.insert(0, stride);
+    }
+
+    let (box_rows, box_cols) = box_shape;
+    let tile_size = match transposed {
+        true => shape![1, box_cols, box_rows],
+        false => shape![1, box_rows, box_cols],
+    };
+    let meta = tma_meta_tiled(
+        Metadata::new(shape, strides),
+        tile_size,
+        remap_storage_for_tma(storage_ty),
+        swizzle,
+    );
+    let arg = TensorMapArg {
+        tensor: binding.into_tensor_arg(),
+        metadata: meta,
+        _kind: PhantomData,
+    };
+    (arg, transposed)
 }
 
 /// Build a tiled [`TensorMapMeta`] with the defaults shared by every current call site

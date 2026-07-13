@@ -10,18 +10,21 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{Axis, MaskProbe, MemData, RowState, Space, Storage, TileArg, TileArgLaunch};
+use cubek_tile::{
+    Axis, MaskProbe, MemData, RowState, Space, StageStorage, Storage, StridedTileArg,
+    StridedTileArgLaunch,
+};
 
 const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
 
 #[cube(launch)]
 fn softmax_walk_kernel(
-    score_in: &TileArg<'_, f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &TileArg<'_, u32>,     // {Q, S} boolean, nonzero = masked
-    values: &Tensor<f32>,        // [total_cols]
-    out: &mut Tensor<f32>,       // [rows]
-    lse: &mut Tensor<f32>,       // [rows]
+    score_in: &StridedTileArg<'_, f32>, // {Q: rows, S: total_cols} raw scores
+    mask: &StridedTileArg<'_, u32>,     // {Q, S} boolean, nonzero = masked
+    values: &Tensor<f32>,               // [total_cols]
+    out: &mut Tensor<f32>,              // [rows]
+    lse: &mut Tensor<f32>,              // [rows]
     scale: f32,
     bound_s: u32,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
@@ -32,8 +35,8 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile();
     let mask_tile = mask.tile();
-    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize);
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize);
+    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, 0usize);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -160,13 +163,13 @@ fn run(
         // Explicit x = units so UNIT_POS_X is the owner index on every
         // backend (CubeDim::new packs by plane size: y-major on CPU).
         CubeDim::new_2d(units as u32, 1),
-        TileArgLaunch::strided(
+        StridedTileArgLaunch::strided(
             score_handle.clone().binding().into_tensor_arg(),
             1,
             gmem_space.clone(),
             Storage::of(2, 2),
         ),
-        TileArgLaunch::strided(
+        StridedTileArgLaunch::strided(
             mask_handle.clone().binding().into_tensor_arg(),
             1,
             gmem_space,

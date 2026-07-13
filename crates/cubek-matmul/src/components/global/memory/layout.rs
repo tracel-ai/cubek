@@ -15,6 +15,7 @@ use crate::{
 };
 
 /// Global layout that uses the last two dimensions and ignores all others.
+/// Same rules as cubek-tile's `TmaDynLayout` (dyn coords); keep the two in step.
 #[derive(CubeType, CubeLaunch, Clone, Copy)]
 pub struct SimpleTmaGlobalLayout {
     #[cube(comptime)]

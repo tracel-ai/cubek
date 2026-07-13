@@ -1,16 +1,13 @@
 use std::marker::PhantomData;
 
+use cubecl::prelude::*;
 use cubecl::std::tensor::{
     View, ViewMut,
     launch::ViewArg,
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
 use cubecl::unexpanded;
-use cubecl::{
-    prelude::*,
-    zspace::{metadata::Metadata, shape, strides},
-};
-use cubek_std::launch::tma::{remap_storage_for_tma, tma_meta_tiled, transpose_inner_for_tma};
+use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 
 use crate::components::global::memory::{
@@ -398,128 +395,70 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRo
         let rhs = rhs_handle.into_data();
 
         let tiling_scheme = blueprint.tiling_scheme();
-        let stage_m = tiling_scheme.elements_per_stage_along_m();
-        let stage_n = tiling_scheme.elements_per_stage_along_n();
-        let stage_k = tiling_scheme.elements_per_stage_along_k();
-
-        // Loaders use dynamic layout based on swizzle setting. For no swizzle, contiguous tiles are
-        // loaded and TMA loads single tile wide columns.
-        // For swizzled, bank conflicts aren't an issue so the tile size is the full stage.
-        let stage_size_lhs = match blueprint.swizzle_modes().lhs {
-            SwizzleMode::None => match problem.lhs_layout {
-                MatrixLayout::RowMajor => {
-                    shape![1, stage_m as usize, tiling_scheme.tile_size.k as usize]
-                }
-                MatrixLayout::ColMajor => {
-                    shape![1, stage_k as usize, tiling_scheme.tile_size.m as usize]
-                }
-            },
-            _ => match problem.lhs_layout {
-                MatrixLayout::RowMajor => {
-                    shape![1, stage_m as usize, stage_k as usize]
-                }
-                MatrixLayout::ColMajor => {
-                    shape![1, stage_k as usize, stage_m as usize]
-                }
-            },
-        };
-        let stage_size_rhs = match blueprint.swizzle_modes().rhs {
-            SwizzleMode::None => match problem.rhs_layout {
-                MatrixLayout::RowMajor => {
-                    shape![1, stage_k as usize, tiling_scheme.tile_size.n as usize]
-                }
-                MatrixLayout::ColMajor => {
-                    shape![1, stage_n as usize, tiling_scheme.tile_size.k as usize]
-                }
-            },
-            _ => match problem.rhs_layout {
-                MatrixLayout::RowMajor => {
-                    shape![1, stage_k as usize, stage_n as usize]
-                }
-                MatrixLayout::ColMajor => {
-                    shape![1, stage_n as usize, stage_k as usize]
-                }
-            },
-        };
-
-        let lhs_rank = lhs.shape.len();
-        let mut lhs_shape = shape![
-            problem.lhs_batches.iter().product(),
-            lhs.shape[lhs_rank - 2],
-            lhs.shape[lhs_rank - 1],
-        ];
-        let mut lhs_strides = if lhs_rank > 2 {
-            lhs.strides[lhs_rank - 3..].into()
-        } else {
-            strides![lhs.strides[0], lhs.strides[1]]
-        };
-
-        let rhs_rank = rhs.shape.len();
-        let mut rhs_shape = shape![
-            problem.rhs_batches.iter().product(),
-            rhs.shape[rhs_rank - 2],
-            rhs.shape[rhs_rank - 1],
-        ];
-        let mut rhs_strides = if rhs_rank > 2 {
-            rhs.strides[rhs_rank - 3..].into()
-        } else {
-            strides![rhs.strides[0], rhs.strides[1]]
-        };
-
-        let lhs_transposed =
-            transpose_inner_for_tma(&mut lhs_shape, &mut lhs_strides, problem.lhs_layout);
-        let rhs_transposed =
-            transpose_inner_for_tma(&mut rhs_shape, &mut rhs_strides, problem.rhs_layout);
-
-        // Insert batch stride after swap so we can easily get the non-contiguous stride
-        if lhs_strides.len() == 2 {
-            let stride = lhs_strides[0];
-            lhs_strides.insert(0, stride);
-        }
-        if rhs_strides.len() == 2 {
-            let stride = rhs_strides[0];
-            rhs_strides.insert(0, stride);
-        }
-
-        let meta_lhs = tma_meta_tiled(
-            Metadata::new(lhs_shape.clone(), lhs_strides),
-            stage_size_lhs,
-            remap_storage_for_tma(dtypes.lhs_stage),
-            blueprint.swizzle_modes().lhs.into(),
+        let stage_m = tiling_scheme.elements_per_stage_along_m() as usize;
+        let stage_n = tiling_scheme.elements_per_stage_along_n() as usize;
+        let stage_k = tiling_scheme.elements_per_stage_along_k() as usize;
+        let (tile_m, tile_n, tile_k) = (
+            tiling_scheme.tile_size.m as usize,
+            tiling_scheme.tile_size.n as usize,
+            tiling_scheme.tile_size.k as usize,
         );
 
-        let meta_rhs = tma_meta_tiled(
-            Metadata::new(rhs_shape.clone(), rhs_strides),
-            stage_size_rhs,
-            remap_storage_for_tma(dtypes.rhs_stage),
+        // Boxes in logical (rows, cols); `tma_operand` puts them in descriptor order. Without
+        // swizzle, bank conflicts cap the box at a single-tile-wide strip along the contiguous
+        // axis; swizzled loads the full stage per box.
+        let box_lhs = match blueprint.swizzle_modes().lhs {
+            SwizzleMode::None => match problem.lhs_layout {
+                MatrixLayout::RowMajor => (stage_m, tile_k),
+                MatrixLayout::ColMajor => (tile_m, stage_k),
+            },
+            _ => (stage_m, stage_k),
+        };
+        let box_rhs = match blueprint.swizzle_modes().rhs {
+            SwizzleMode::None => match problem.rhs_layout {
+                MatrixLayout::RowMajor => (stage_k, tile_n),
+                MatrixLayout::ColMajor => (tile_k, stage_n),
+            },
+            _ => (stage_k, stage_n),
+        };
+
+        // Logical (batches, rows, cols), read before `tma_operand` consumes the bindings.
+        let dims = |binding: &TensorBinding<R>, batches: &[usize]| {
+            let rank = binding.shape.len();
+            (
+                batches.iter().product::<usize>(),
+                binding.shape[rank - 2] as u32,
+                binding.shape[rank - 1] as u32,
+            )
+        };
+        let lhs_dims = dims(&lhs, &problem.lhs_batches);
+        let rhs_dims = dims(&rhs, &problem.rhs_batches);
+
+        let (lhs, lhs_transposed) = tma_operand(
+            lhs,
+            lhs_dims.0,
+            problem.lhs_layout,
+            box_lhs,
+            dtypes.lhs_stage,
+            blueprint.swizzle_modes().lhs.into(),
+        );
+        let (rhs, rhs_transposed) = tma_operand(
+            rhs,
+            rhs_dims.0,
+            problem.rhs_layout,
+            box_rhs,
+            dtypes.rhs_stage,
             blueprint.swizzle_modes().rhs.into(),
         );
 
-        let lhs = TensorMapArg {
-            tensor: lhs.into_tensor_arg(),
-            metadata: meta_lhs,
-            _kind: PhantomData,
-        };
-        let rhs = TensorMapArg {
-            tensor: rhs.into_tensor_arg(),
-            metadata: meta_rhs,
-            _kind: PhantomData,
-        };
-
-        let view = |buffer, shape: &[usize], transposed| {
-            let batches = shape[0];
-            let (rows, cols) = match transposed {
-                true => (shape[2] as u32, shape[1] as u32),
-                false => (shape[1] as u32, shape[2] as u32),
-            };
-            let shape = (batches, rows, cols);
+        let view = |buffer, shape: (usize, u32, u32), transposed| {
             let layout = SimpleTmaGlobalLayoutLaunch::new(transposed, shape);
             ViewArg::new_tensor_map_tiled::<SimpleTmaGlobalLayout>(buffer, layout)
         };
 
         TensorMapInputsLaunch::new(
-            view(lhs, &lhs_shape, lhs_transposed),
-            view(rhs, &rhs_shape, rhs_transposed),
+            view(lhs, lhs_dims, lhs_transposed),
+            view(rhs, rhs_dims, rhs_transposed),
             ComptimeOptionArgs::None,
             ComptimeOptionArgs::None,
         )

@@ -4,7 +4,7 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
-use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, Space, StridedTileArg, StridedTileArgLaunch};
 
 use super::references;
 
@@ -33,8 +33,8 @@ fn recursive_two_level_tiled_view() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
-        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        StridedTileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
+        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         f32::as_type_native_unchecked().storage_type(),
     );
 
@@ -58,8 +58,8 @@ fn recursive_two_level_tiled_view() {
 /// Copy every logical element of `input` into `output` through their views.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &StridedTileArg<'_, E>,
+    output: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let input = input.tile();

@@ -13,7 +13,8 @@ use cubecl::unexpanded;
 use crate::Region;
 
 use crate::{
-    CmmaPartition, MemData, Space, Tile, TileExpand, TileKind, TileKindExpand, partition_level,
+    CmmaPartition, Delivery, MemData, Space, Tile, TileExpand, TileKind, TileKindExpand,
+    partition_level,
 };
 
 /// How a slot rendezvouses its fill against its read; fixed comptime at construction
@@ -31,14 +32,14 @@ pub enum Sync {
 }
 
 impl Sync {
-    /// Deduce the strategy from the operands' delivery: both async (TMA) → `Barrier`, both strided →
-    /// `Cube`. A mix is rejected.
-    pub fn of(lhs_tma: bool, rhs_tma: bool) -> Sync {
-        assert!(
-            lhs_tma == rhs_tma,
-            "Staging: mixed delivery — both operands must be TMA sources or neither"
-        );
-        if lhs_tma { Sync::Barrier } else { Sync::Cube }
+    /// Deduce the strategy from the operands' [`Delivery`]: both async (TMA) → `Barrier`,
+    /// both strided → `Cube`. A mix is rejected.
+    pub fn of(lhs: Delivery, rhs: Delivery) -> Sync {
+        match (lhs, rhs) {
+            (Delivery::Tma, Delivery::Tma) => Sync::Barrier,
+            (Delivery::Strided, Delivery::Strided) => Sync::Cube,
+            _ => panic!("Staging: mixed delivery — both operands must be TMA sources or neither"),
+        }
     }
 }
 
@@ -208,13 +209,14 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         #[comptime] op_space: Space,
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-        let lhs_tma = lhs.is_tma();
-        let rhs_tma = rhs.is_tma();
+        let lhs_delivery = lhs.delivery();
+        let rhs_delivery = rhs.delivery();
         // Pin an operand only when its window is genuinely fixed across the walk. A barrier
         // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
         // splitting an invariant out would corrupt its phase. A dynamic level can't decide
         // invariance at comptime. Both fall back to streaming (pin = false).
-        let split = comptime!(op_space.is_static() && !lhs_tma && !rhs_tma);
+        let split =
+            comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
         let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
         let register = comptime!(
@@ -222,14 +224,14 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         );
         if register {
             comptime!(assert!(
-                !lhs_tma && !rhs_tma,
+                !lhs_delivery.is_tma() && !rhs_delivery.is_tma(),
                 "Staging: a TMA source cannot stage into registers"
             ));
             let a = CmmaPartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
             let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
             Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
         } else {
-            let sync = comptime!(Sync::of(lhs_tma, rhs_tma));
+            let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
             Staging::wrap(
                 (MemData::smem_like(lhs), MemData::smem_like(rhs)),
                 Pipeline::new(sync),

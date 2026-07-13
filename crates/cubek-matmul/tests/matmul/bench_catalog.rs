@@ -101,14 +101,14 @@ fn gemv_matvec_b2_out4096_k8192_rr() {
 }
 
 /// Timing probe: the tile-DSL cyclic cmma vs the legacy SimpleAlgorithm it ports.
-/// Run manually: `cargo test-metal-benchmark gemm_cyclic_cmma_timing -- --ignored --nocapture`
+/// Run manually: `cargo test-metal-benchmark gemm_cmma_timing -- --ignored --nocapture`
 #[test]
 #[ignore = "timing probe, run manually"]
-fn gemm_cyclic_cmma_timing_vs_legacy() {
+fn gemm_cmma_timing_vs_legacy() {
     use cubek_matmul::eval::benchmarks::gemm::{bench, problems, strategies};
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
-    for id in ["cyclic_cmma", "simple_cyclic_cmma"] {
+    for id in ["cmma", "simple_cyclic_cmma"] {
         let strategy: Strategy = lookup(strategies(), id);
         let samples = bench(&strategy, &problem, 10).unwrap();
         let mut ds = samples.durations.clone();
@@ -130,15 +130,16 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
     use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, problems};
     use cubek_matmul::routines::BlueprintStrategy;
     use cubek_matmul::routines::cpu_gemm::{Instruction, PlaneGrid};
-    use cubek_matmul::routines::cyclic_cmma::{CyclicCmmaBlueprint, Partition};
+    use cubek_matmul::routines::cmma::{CmmaBlueprint, Partition};
     use cubek_test_utils::Correctness;
 
     let problem: GemmProblem = lookup(problems(), "rect_1x512x512x512_rr_f16");
-    let forced = Strategy::CyclicCmma(BlueprintStrategy::Forced(CyclicCmmaBlueprint {
+    let forced = Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
         instruction: Instruction { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
+        delivery: cubek_tile::Delivery::Strided,
     }));
     let actual = GemmCorrectness
         .kernel_result(&forced, &problem, &SEEDS)
@@ -164,7 +165,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     use cubek_matmul::eval::benchmarks::gemm::{bench, problems};
     use cubek_matmul::routines::BlueprintStrategy;
     use cubek_matmul::routines::cpu_gemm::{Instruction, PlaneGrid};
-    use cubek_matmul::routines::cyclic_cmma::{CyclicCmmaBlueprint, Partition};
+    use cubek_matmul::routines::cmma::{CmmaBlueprint, Partition};
     use cubek_std::MatrixLayout;
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
@@ -172,11 +173,12 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     // The tile DSL forced to the legacy selector's point: 8x8x8 instruction, each plane
     // 1x4 tiles, 4x1 planes (128 units), stage 32x32, stage_k 32.
     let dsl_at_legacy_point =
-        Strategy::CyclicCmma(BlueprintStrategy::Forced(CyclicCmmaBlueprint {
+        Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
             instruction: Instruction { m: 8, n: 8, k: 8 },
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k: 32,
+            delivery: cubek_tile::Delivery::Strided,
         }));
 
     // The legacy engine forced to the DSL selector's point: partition 2x8x4 per plane,
@@ -240,17 +242,18 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     // Thin tiling with deeper stages: the DSL fill phase is stage-count-bound, not
     // byte-bound, so fewer/deeper stages should shrink it at unchanged compute.
     let thin_deep = |stage_k: usize| {
-        Strategy::CyclicCmma(BlueprintStrategy::Forced(CyclicCmmaBlueprint {
+        Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
             instruction: Instruction { m: 8, n: 8, k: 8 },
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,
+            delivery: cubek_tile::Delivery::Strided,
         }))
     };
 
     use cubek_matmul::eval::benchmarks::gemm::strategies;
     for (id, strategy) in [
-        ("dsl_at_own_point", lookup(strategies(), "cyclic_cmma")),
+        ("dsl_at_own_point", lookup(strategies(), "cmma")),
         (
             "legacy_at_own_point",
             lookup(strategies(), "simple_cyclic_cmma"),
@@ -300,7 +303,7 @@ fn gemm_cyclic_cmma_sweep() {
         "square_2x1024_rr_f32",
         "square_1x1536_rr_f32",
     ];
-    let dsl: Strategy = lookup(strategies(), "cyclic_cmma");
+    let dsl: Strategy = lookup(strategies(), "cmma");
     let legacy: Strategy = lookup(strategies(), "simple_cyclic_cmma");
 
     for tag in shapes {

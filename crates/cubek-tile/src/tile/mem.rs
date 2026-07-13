@@ -57,6 +57,9 @@ pub struct MemData<T: Numeric> {
     /// operand's [`Storage`] so a cooperative fill can emit straight-line tasks.
     #[cube(comptime)]
     units: usize,
+    /// Storage layout the stages derived from this store take.
+    #[cube(comptime)]
+    pub(crate) stage: StageStorage,
     /// Present when the buffer physically holds quantized data (see [`QuantInfo`]): reads through
     /// [`Tile::flat`] dequantize into `T`; every other element view refuses the tile.
     pub(crate) quant: ComptimeOption<QuantInfo>,
@@ -73,24 +76,27 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
+        #[comptime] stage: StageStorage,
     ) -> Tile<T> {
         MemData::<T>::from_tensor_quant::<T>(
             tensor,
             vector_size,
             space,
             storage,
+            stage,
             ComptimeOption::new_None(),
         )
     }
 
     /// [`from_tensor`](MemData::from_tensor) from a storage-typed tensor: the buffer physically
     /// holds `I` while the tile serves `T`, dequantizing on read per `quant`. The plain path is
-    /// `I == T` with `quant == None`; [`TileArg::tile_dequant`] is the kernel-side constructor.
+    /// `I == T` with `quant == None`; [`StridedTileArg::tile_dequant`] is the kernel-side constructor.
     pub fn from_tensor_quant<I: Numeric>(
         tensor: &VecTensor<I>,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] storage: Storage,
+        #[comptime] stage: StageStorage,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
         let bound_width = tensor.vector_size();
@@ -151,6 +157,7 @@ impl<T: Numeric> MemData<T> {
                 levels,
                 check: comptime!(storage.check_bounds),
                 units: comptime!(storage.units),
+                stage,
                 quant,
             }),
             space: comptime!(space),
@@ -158,27 +165,28 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
-    /// `operand`, at the same physical width and worker count.
+    /// `operand`, at the same physical width, worker count, and the operand's [`StageStorage`].
     pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
         MemData::smem(
             comptime!(operand.space.divide()),
             operand.vector_size(),
+            operand.stage_storage(),
             operand.units(),
         )
     }
 
     /// Allocate a shared-memory tile over `space`, at physical `vector_size` (the slice is
-    /// allocated natively wide, then scalar-erased). A stage bound for the cmma instruction is
-    /// storage-tiled at the final tile (one contiguous block per fragment) so the cmma
-    /// transaction reads it unstrided; anything else is plain row-major. `units` is the
-    /// launch's cube size, `0` when unknown.
+    /// allocated natively wide, then scalar-erased). A `Tiled` stage is storage-tiled at the
+    /// final tile (one contiguous block per fragment, what a cmma transaction wants) so the cmma
+    /// transaction reads it unstrided; `Strided` is plain row-major. A final-space stage has no
+    /// grid to tile, so it is always plain. `units` is the launch's cube size, `0` when unknown.
     pub fn smem(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
+        #[comptime] stage: StageStorage,
         #[comptime] units: usize,
     ) -> Tile<T> {
-        let levels =
-            comptime!((!space.is_final() && space.partitioner().leaf().is_cmma()) as usize);
+        let levels = comptime!((!space.is_final() && stage == StageStorage::Tiled) as usize);
         let size!(W) = vector_size;
         let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(space.tile_size() / vector_size));
         let buffer = unsafe {
@@ -207,6 +215,7 @@ impl<T: Numeric> MemData<T> {
                 levels,
                 check: comptime!(false),
                 units,
+                stage,
                 quant: ComptimeOption::new_None(),
             }),
             space: comptime!(space),
@@ -598,6 +607,7 @@ impl<T: Numeric> MemData<T> {
             levels: comptime!(self.levels),
             check: comptime!(self.check),
             units: comptime!(self.units),
+            stage: comptime!(self.stage),
             quant: self.quant.clone(),
         }
     }

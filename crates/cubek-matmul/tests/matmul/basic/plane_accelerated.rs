@@ -4,6 +4,7 @@
 //! against a representative shape; that is enough to catch selector regressions
 //! without blowing up compile time.
 
+use cubek_matmul::routines::{BlueprintStrategy, cmma::CmmaStrategy};
 use cubek_matmul::strategy::Strategy;
 
 use super::common::{client, f16_elems, square};
@@ -246,34 +247,34 @@ fn ordered_double_mma() {
 // ---- the tile-DSL port of the simple cyclic cmma matmul --------------------------------
 
 #[test]
-fn cyclic_cmma_square_f32() {
+fn cmma_square_f32() {
     test_matmul_strategy(
         client(),
         square(256, super::common::f32_elems()),
-        Strategy::CyclicCmma(Default::default()),
+        Strategy::Cmma(Default::default()),
     );
 }
 
 #[test]
-fn cyclic_cmma_square_f16() {
+fn cmma_square_f16() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::CyclicCmma(Default::default()),
+        Strategy::Cmma(Default::default()),
     );
 }
 
 #[test]
-fn cyclic_cmma_rect_f32() {
+fn cmma_rect_f32() {
     test_matmul_strategy(
         client(),
         super::common::rect(64, 128, 32, super::common::f32_elems()),
-        Strategy::CyclicCmma(Default::default()),
+        Strategy::Cmma(Default::default()),
     );
 }
 
 #[test]
-fn cyclic_cmma_batched_f32() {
+fn cmma_batched_f32() {
     use cubecl::{ir::AddressType, zspace::shape};
     use cubek_matmul::definition::MatmulProblem;
     use cubek_std::MatrixLayout;
@@ -293,5 +294,62 @@ fn cyclic_cmma_batched_f32() {
         elems,
         AddressType::U32,
     );
-    test_matmul_strategy(client(), problem, Strategy::CyclicCmma(Default::default()));
+    test_matmul_strategy(client(), problem, Strategy::Cmma(Default::default()));
+}
+
+/// The TMA delivery. On a backend without TMA (Metal, wgpu, CPU) the blueprint returns
+/// `Unavailable`, which the strict test policy surfaces; on CUDA it runs or fails to
+/// compile, never silently degrades.
+#[test]
+fn cmma_tma_square_f16() {
+    test_matmul_strategy(
+        client(),
+        square(256, f16_elems()),
+        Strategy::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())),
+    );
+}
+
+/// A TMA plan whose stage exceeds the 256-per-axis box limit fails at blueprint time as a
+/// clean setup error, on any backend (the plan check precedes the availability gate).
+#[test]
+fn cmma_tma_rejects_oversized_box() {
+    use cubek_matmul::definition::{AvailableVectorSizes, MatmulSetupError};
+    use cubek_matmul::routines::{
+        DeviceSettings,
+        cmma::{CmmaBlueprint, CmmaRoutine, Partition},
+        cpu_gemm::{Instruction, PlaneGrid},
+    };
+    use cubek_tile::Delivery;
+
+    let client = client();
+    // stage_n = planes.n * partition.n * instruction.n = 512 > 256.
+    let blueprint = CmmaBlueprint {
+        instruction: Instruction {
+            m: 16,
+            n: 16,
+            k: 16,
+        },
+        partition: Partition { m: 2, n: 8 },
+        planes: PlaneGrid { m: 2, n: 4 },
+        stage_k: 16,
+        delivery: Delivery::Tma,
+    };
+    let problem = super::common::rect(64, 1024, 64, f16_elems());
+    let device_settings = DeviceSettings {
+        plane_dim: client.properties().hardware.plane_size_max,
+        max_cube_count: client.properties().hardware.max_cube_count,
+        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, 4, 4, 4)
+            .pick_max()
+            .unwrap(),
+        client,
+    };
+    let strategy = BlueprintStrategy::Forced(blueprint);
+    match CmmaRoutine::blueprint(&strategy, &problem, &device_settings) {
+        Err(MatmulSetupError::InvalidConfig(msg)) => {
+            let msg = msg.to_string();
+            assert!(msg.contains("box limit"), "wrong rejection: {msg}");
+        }
+        Err(other) => panic!("expected a box-limit rejection, got {other:?}"),
+        Ok(_) => panic!("expected a box-limit rejection, got a blueprint"),
+    }
 }

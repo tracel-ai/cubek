@@ -18,7 +18,7 @@ use crate::{
 /// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the
 /// binding's own shape/strides don't reveal — a tiled buffer just looks like a higher-rank strided
 /// one — so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
-/// view layout is built at load time by [`cubek_tile::TileArgLaunch`].
+/// view layout is built at load time by [`cubek_tile::StridedTileArgLaunch`].
 pub struct WithLayout<B> {
     pub binding: B,
     pub levels: usize,

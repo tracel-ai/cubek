@@ -10,7 +10,7 @@ use crate::{
     strategy::launch_kernel_concrete,
 };
 use cubecl::{
-    features::TypeUsage,
+    features::{Tma, TypeUsage},
     std::tensor::{MatrixBatchLayout, matrix_batch_layout},
     {Runtime, client::ComputeClient, frontend::TensorBinding},
 };
@@ -63,6 +63,12 @@ pub fn launch_ref_tma<R: Runtime, A: BatchMatmulRoutine<(), Blueprint = BatchMat
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    if !client.properties().features.tma.contains(Tma::Base) {
+        return Err(MatmulSetupError::Unavailable(
+            MatmulAvailabilityError::TmaUnavailable,
+        ));
+    }
+
     let lhs = match matrix_batch_layout(&lhs.data().strides, lhs.scheme()) {
         MatrixBatchLayout::Contiguous
         | MatrixBatchLayout::MildlyPermuted {
