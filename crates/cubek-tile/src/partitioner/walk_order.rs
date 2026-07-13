@@ -1,7 +1,7 @@
 //! Concrete walk orders: example traversal policies plugged into the partitioner.
 
 use super::{Distribution, Partitioner, PartitionerBuilder};
-use crate::ByAxis;
+use crate::{ByAxis, Fold, FoldExpand};
 use cubecl::prelude::*;
 
 /// A new order is a new variant here plus a [`walk_index`] arm.
@@ -28,6 +28,8 @@ impl Partitioner {
 pub(crate) fn walk_index(i: usize, total: usize, #[comptime] order: WalkOrder) -> usize {
     match order {
         WalkOrder::RowMajor => i,
-        WalkOrder::Reversed => total - i - 1,
+        // Folded: an unrolled walk's constant `i` must stay constant through the
+        // reversal, or its regions lose their comptime coordinates.
+        WalkOrder::Reversed => total.fsub(i).fsub(1),
     }
 }

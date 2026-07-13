@@ -173,13 +173,17 @@ impl Space {
         Space::with_sizes(merged, sizes)
     }
 
-    /// This (sized) space's runtime size along `axis`, read from the per-axis `sizes`. Only valid
-    /// once filled (a `Dynamic` axis on an unsized space has none).
+    /// This space's runtime size along `axis`: a `Static` axis folds to its comptime extent
+    /// (so a fully-static operand needs no `sizes` at all), a `Dynamic` one reads the
+    /// per-axis `sizes` — only valid once filled.
     fn size(&self, #[comptime] axis: Axis) -> usize {
-        *self
-            .extents
-            .sizes
-            .index(comptime!(self.clone().position(axis)))
+        match comptime!(self.clone().extent_raw(axis)) {
+            Extent::Static(n) => comptime!(n).runtime(),
+            Extent::Dynamic => *self
+                .extents
+                .sizes
+                .index(comptime!(self.clone().position(axis))),
+        }
     }
 }
 

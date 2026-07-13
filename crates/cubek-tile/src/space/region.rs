@@ -45,7 +45,9 @@ impl Region {
     /// the tile spans all of it).
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         if comptime!(self.space.contains(axis)) {
-            self.coords.at(comptime!(self.space.position(axis))).fcast::<usize>()
+            self.coords
+                .at(comptime!(self.space.position(axis)))
+                .fcast::<usize>()
         } else {
             0usize.runtime()
         }

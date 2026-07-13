@@ -246,8 +246,17 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
             }
-            // A resident fragment passes through unchanged (nothing to window).
-            TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
+            // A resident fragment passes through unchanged (nothing to window) — legal
+            // only on a level that cuts nothing on m/n, like a k-step walk; a cutting
+            // level would alias every region onto the one fragment.
+            TileKind::Cmma(c) => {
+                comptime!(assert!(
+                    matches!(partition_level(&self.space), None | Some((1, 1))),
+                    "Tile::at: a level that cuts tiles cannot select into a single cmma \
+                     fragment (it needs a fragment partition, or a memory output)"
+                ));
+                TileKind::new_Cmma(c.clone())
+            }
             // A partition *selects* under a region with comptime coordinates (an
             // unrolled walk's fold to constants): each region owns a `sub_m × sub_n`
             // block of the fragments — a level that doesn't cut the partition selects
@@ -256,8 +265,12 @@ impl<T: Numeric> Tile<T> {
             // nothing (a k-step walk); the static fragment walk below then selects.
             TileKind::CmmaPartition(p) => {
                 let rank = comptime!(self.space.rank());
-                let mi = region.coord(comptime!(self.space.axis_at(rank - 2))).constant();
-                let ni = region.coord(comptime!(self.space.axis_at(rank - 1))).constant();
+                let mi = region
+                    .coord(comptime!(self.space.axis_at(rank - 2)))
+                    .constant();
+                let ni = region
+                    .coord(comptime!(self.space.axis_at(rank - 1)))
+                    .constant();
                 match comptime!(mi.zip(ni)) {
                     Some((c0, c1)) => {
                         let (sub_m, sub_n) = comptime!({

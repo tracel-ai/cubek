@@ -5,8 +5,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, Coords, Fold, FoldExpand, Region, RegionExpand, Space, instance_count,
-    tiles_per_instance,
+    Axis, Coords, Fold, FoldExpand, Region, RegionExpand, Space, instance_count, tiles_per_instance,
 };
 
 use super::walk_order::walk_index;
@@ -67,6 +66,19 @@ impl Walk {
         let mut positions = Coords::<usize>::new();
         let mut scales = Coords::<usize>::new();
 
+        // Per-axis instance counts, `1` for `Sequential`. Folded, so a constant grid's
+        // decode below folds too (`/1` and `%1` vanish, `%` gets a constant divisor).
+        let mut instances = Coords::<usize>::new();
+        #[unroll]
+        for p in 0..rank {
+            let dist = comptime!(space.partitioner().distribution(space.axis_at(p)));
+            if comptime!(matches!(dist, Distribution::Spatial { .. })) {
+                instances.push(instance_count(grid.at(p), comptime!(dist.coverage())));
+            } else {
+                instances.push(1usize);
+            }
+        }
+
         #[unroll]
         for p in 0..rank {
             let axis = comptime!(space.axis_at(p));
@@ -77,24 +89,25 @@ impl Walk {
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
                 // Mixed-radix stride for axes sharing one hardware dim: the product of the
                 // later same-scope axes' instance counts (the earlier axis is the more
-                // significant digit). Computed from the runtime grid counts, so dynamic
-                // extents work; `1` when this axis owns its scope.
-                let mut inner_weight = 1usize;
-                #[unroll]
-                for q in comptime!(p + 1)..rank {
-                    let other = comptime!(space.axis_at(q));
-                    let other_dist = comptime!(space.partitioner().distribution(other));
-                    if comptime!(other_dist.scope() == dist.scope()) {
-                        inner_weight *=
-                            instance_count(grid.at(q), comptime!(other_dist.coverage()));
-                    }
-                }
-                let instances = instance_count(grid.at(p), comptime!(dist.coverage()));
-                positions.push((hardware_pos(comptime!(dist.unit())) / inner_weight) % instances);
+                // significant digit); `1` when this axis owns its scope.
+                let picks = comptime!(
+                    ((p + 1)..rank)
+                        .filter(|&q| {
+                            space.partitioner().distribution(space.axis_at(q)).scope()
+                                == dist.scope()
+                        })
+                        .collect::<Vec<_>>()
+                );
+                let inner_weight = instances.fproduct(picks);
+                positions.push(
+                    hardware_pos(comptime!(dist.unit()))
+                        .fdiv(inner_weight)
+                        .frem(instances.at(p)),
+                );
                 if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
                     scales.push(tiles_per_instance(grid.at(p), comptime!(dist.coverage())));
                 } else {
-                    scales.push(instances);
+                    scales.push(instances.at(p));
                 }
             } else {
                 positions.push(0usize);
@@ -158,7 +171,10 @@ impl Walk {
     /// the later axes' counts, keep the remainder of this one. Constant counts fold.
     fn digit(&self, idx: usize, #[comptime] p: usize) -> usize {
         let rank = comptime!(self.space.rank());
-        let quot = idx.fdiv(self.counts.fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())));
+        let quot = idx.fdiv(
+            self.counts
+                .fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())),
+        );
         // `% count` is a no-op when `idx` has no more significant digit: a range fact,
         // which folding (which only sees values) cannot know.
         if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
@@ -172,11 +188,7 @@ impl Walk {
     /// instance owns a contiguous run (`digit + pos·share`) or the instances take
     /// turns (`digit·instances + pos`); a sequential digit passes through.
     fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
-        let dist = comptime!(
-            self.space
-                .partitioner()
-                .distribution(self.space.axis_at(p))
-        );
+        let dist = comptime!(self.space.partitioner().distribution(self.space.axis_at(p)));
         if comptime!(matches!(dist, Distribution::Sequential)) {
             digit
         } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
@@ -256,6 +268,8 @@ fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
         // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, the flat
         // position the unit index. Lanes agree on UNIT_POS_Y, so they cooperate.
         ComputeScope::Plane => UNIT_POS_Y as usize,
-        ComputeScope::Unit => UNIT_POS as usize,
+        // Flat UNIT_POS would double-count the plane digit next to a Plane axis, and
+        // launch geometry allocates no units for a Unit axis — fail loud until both do.
+        ComputeScope::Unit => panic!("Unit spreading is an inner-level seam, not yet implemented"),
     }
 }

@@ -18,10 +18,18 @@ impl<Acc: Numeric> Tile<Acc> {
         space: Space,
     ) {
         if self.tile_kind.static_level(comptime!(self.space.clone())) {
-            let walk = Walk::over_fastest(
-                comptime!(Space::merge(&[&lhs.space, &rhs.space])),
-                comptime!(self.space.axis_at(self.space.rank() - 2)),
-            );
+            let merged = comptime!({
+                let merged = Space::merge(&[&lhs.space, &rhs.space]);
+                assert!(
+                    merged.is_static(),
+                    "Tile::mma: a fragment output's walk unrolls over the operand merge, \
+                     which must be static (a Dynamic extent cannot fold to the comptime \
+                     coordinates fragment selection takes)"
+                );
+                merged
+            });
+            let walk =
+                Walk::over_fastest(merged, comptime!(self.space.axis_at(self.space.rank() - 2)));
             for region in walk.unrolled() {
                 self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
@@ -84,7 +92,11 @@ impl<Acc: Numeric> Tile<Acc> {
                 }
             });
         }
-        let walk = if comptime!(unroll) { walk.unrolled() } else { walk };
+        let walk = if comptime!(unroll) {
+            walk.unrolled()
+        } else {
+            walk
+        };
         for region in walk {
             slot.fill(|s, pipe| {
                 if comptime!(!lhs_once) {

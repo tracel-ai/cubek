@@ -6,14 +6,18 @@
 //! values through walks and layouts, and one code path serves both.
 
 use cubecl::ir::{ConstantValue, Scope, Value};
-use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::unexpanded;
 
 /// Folding arithmetic on integer kernel values; `f` for folding.
 pub trait Fold: Sized {
     /// `self + rhs`; `x + 0` passes through.
     fn fadd(self, _rhs: Self) -> Self {
+        unexpanded!()
+    }
+    /// `self - rhs`; `x - 0` passes through.
+    fn fsub(self, _rhs: Self) -> Self {
         unexpanded!()
     }
     /// `self * rhs`; `x * 1` passes through, `x * 0` is `0`.
@@ -82,6 +86,14 @@ fn fold_add<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
     }
 }
 
+fn fold_sub<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
+    match (constant(&lhs), constant(&rhs)) {
+        (Some(a), Some(b)) if a >= b => constant_like(a - b, &lhs),
+        (None, Some(0)) => lhs,
+        _ => SubExpand::__expand_sub_method(lhs, scope, rhs),
+    }
+}
+
 fn fold_mul<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
     match (constant(&lhs), constant(&rhs)) {
         (Some(a), Some(b)) => constant_like(a * b, &lhs),
@@ -113,6 +125,7 @@ fn fold_rem<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
 /// Expand twin of [`Fold`]; blanket on integer expand elements.
 pub trait FoldExpand<C: Int>: Sized {
     fn __expand_fadd_method(self, scope: &Scope, rhs: Self) -> Self;
+    fn __expand_fsub_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_fmul_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_fdiv_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_frem_method(self, scope: &Scope, rhs: Self) -> Self;
@@ -123,6 +136,9 @@ pub trait FoldExpand<C: Int>: Sized {
 impl<C: Int> FoldExpand<C> for NativeExpand<C> {
     fn __expand_fadd_method(self, scope: &Scope, rhs: Self) -> Self {
         fold_add(scope, self, rhs)
+    }
+    fn __expand_fsub_method(self, scope: &Scope, rhs: Self) -> Self {
+        fold_sub(scope, self, rhs)
     }
     fn __expand_fmul_method(self, scope: &Scope, rhs: Self) -> Self {
         fold_mul(scope, self, rhs)

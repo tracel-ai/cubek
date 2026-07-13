@@ -1,6 +1,7 @@
 //! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`. The accumulator is
-//! always a resident fragment; the operands arrive as fragments or as memory windows,
-//! the latter loaded into transient `A`/`B` fragments here.
+//! always a resident fragment; the operands arrive as fragments or as staged smem
+//! windows (row-major by construction), the latter loaded into transient `A`/`B`
+//! fragments here. A gmem window's layout is unchecked, so it must be staged first.
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -12,13 +13,15 @@ use crate::*;
 #[cube]
 impl<A: Numeric> CmmaData<A> {
     /// Tensor-core contraction `self += lhs · rhs`. Fragment operands execute directly;
-    /// memory operands are loaded into transient `A`/`B` fragments each call.
+    /// smem operands are loaded into transient `A`/`B` fragments each call. Smem only:
+    /// the engine lays stages out row-major, which `cmma::load` assumes; a gmem
+    /// window's layout is unchecked here, so it must be staged first.
     pub(crate) fn mma<L: Numeric, R: Numeric>(&self, lhs: &Tile<L>, rhs: &Tile<R>) {
         match (&lhs.tile_kind, &rhs.tile_kind) {
             (TileKind::Cmma(a), TileKind::Cmma(b)) => {
                 cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
             }
-            (TileKind::Gmem(a) | TileKind::Smem(a), TileKind::Gmem(b) | TileKind::Smem(b)) => {
+            (TileKind::Smem(a), TileKind::Smem(b)) => {
                 // The tile is `m × k` on lhs and `k × n` on rhs (trailing two axes; any
                 // leading batch axes are extent-1 at a final tile).
                 let m = comptime!(lhs.space.extent_at(lhs.space.rank() - 2));
@@ -37,7 +40,7 @@ impl<A: Numeric> CmmaData<A> {
 
                 cmma::execute(&a_frag, &b_frag, &self.matrix, &self.matrix);
             }
-            _ => panic!("cmma accumulator requires cmma or memory lhs and rhs"),
+            _ => panic!("cmma operands must be fragments or staged smem windows"),
         }
     }
 }

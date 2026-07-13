@@ -80,9 +80,17 @@ impl<E: Numeric> LaunchArg for VecTensor<E> {
         let meta_arg = TensorMetaLaunch::new(len, arg.tensor.shape().len());
         let buffer = match &arg.tensor {
             TensorArg::Handle { .. } => BufferCompilationArg { inplace: None },
-            TensorArg::Alias { input_pos, .. } => BufferCompilationArg {
-                inplace: Some(*input_pos as Id),
-            },
+            TensorArg::Alias { input_pos, .. } => {
+                // An alias reuses the input's binding verbatim — `expand` cannot re-type
+                // it, so only the scalar width is provably consistent with the input's.
+                assert_eq!(
+                    arg.vector_size, 1,
+                    "VecTensor: an aliased tensor must be scalar (vector_size 1)"
+                );
+                BufferCompilationArg {
+                    inplace: Some(*input_pos as Id),
+                }
+            }
         };
         launcher.register_tensor(arg.tensor, ty);
         let meta = TensorMeta::register(meta_arg, launcher);

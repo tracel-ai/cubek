@@ -324,7 +324,13 @@ impl<T: Numeric> MemData<T> {
                 let workers = CUBE_DIM as usize;
                 let mut i = UNIT_POS as usize;
                 while i < total {
-                    d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                    d[i] = s.read(physical_coord(
+                        i,
+                        shape.clone(),
+                        start_axis,
+                        num_tiled,
+                        levels,
+                    ));
                     i += workers;
                 }
             }
@@ -424,7 +430,9 @@ impl<T: Numeric> MemData<T> {
     /// tile's row axis, widened back to scalars; a constant on a static store.
     pub(crate) fn row_stride(&self) -> u32 {
         let rows = comptime!(self.start_axis + (self.levels + 1) * self.num_tiled - 2);
-        self.physical_strides.at(rows).fmul(comptime!(self.vector_size as u32).runtime())
+        self.physical_strides
+            .at(rows)
+            .fmul(comptime!(self.vector_size as u32).runtime())
     }
 
     /// Re-view this buffer through `layout` as a [`MatrixView`], carrying its own `check` flag
