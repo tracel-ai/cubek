@@ -205,6 +205,7 @@ impl<C: Int> Clone for Coords<C> {
     }
 }
 
+#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
 impl<C: Int> Coords<C> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new() -> Self {
