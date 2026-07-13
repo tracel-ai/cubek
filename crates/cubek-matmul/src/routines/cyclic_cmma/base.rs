@@ -209,10 +209,10 @@ impl CyclicCmmaRoutine {
         let planes_m = divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS));
         let planes_n = 1;
 
-        // Stage depth: one instruction column per plane lane (the legacy partition_k),
-        // snapped down to the deepest `d·ik` dividing `k`. Deeper stages lose residency
-        // (measured 5.21 at 32 vs 4.68 at 128 on square_4096 f16).
-        let stage_k = (1..=(plane_dim / ik).max(1))
+        // Stage depth: two instruction columns per plane lane, snapped down to the
+        // deepest `d·ik` dividing `k`. Deeper stages lose residency (measured 4.87 at
+        // 64 vs 4.61 at 32 and 4.50 at 128 on square_4096 f16).
+        let stage_k = (1..=(2 * plane_dim / ik).max(1))
             .rev()
             .map(|d| d * ik)
             .find(|&sk| problem.k.is_multiple_of(sk))
