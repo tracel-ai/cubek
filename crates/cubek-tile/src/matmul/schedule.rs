@@ -15,7 +15,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        space: Space,
+        op_space: Space,
     ) {
         if self.tile_kind.static_level(comptime!(self.space.clone())) {
             let merged = comptime!({
@@ -34,7 +34,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
         } else {
-            for region in Walk::over(space) {
+            for region in Walk::over(op_space) {
                 self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
         }
@@ -57,7 +57,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        space: Space,
+        op_space: Space,
     ) {
         let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
         let register = comptime!(
@@ -69,22 +69,22 @@ impl<Acc: Numeric> Tile<Acc> {
 
         // `Staging` decides which operand (if any) is pinned: walk-invariant, so its window
         // never moves and it fills once, above the loop. The rest stream, refilled per region.
-        let mut slot = Staging::new(
+        let mut staging = Staging::new(
             lhs,
             rhs,
-            comptime!(space.clone()),
+            comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
-        let walk = Walk::over(space);
-        slot.fill_pinned(lhs, rhs, &walk.region(0));
+        let walk = Walk::over(op_space);
+        staging.fill_pinned(lhs, rhs, &walk.region(0));
         let walk = if comptime!(unroll) {
             walk.unrolled()
         } else {
             walk
         };
         for region in walk {
-            slot.fill_streamed(lhs, rhs, &region);
-            slot.consume_final(|a, b| self.at(&region).mma(a, b));
+            staging.fill_streamed(lhs, rhs, &region);
+            staging.consume_final(|a, b| self.at(&region).mma(a, b));
         }
     }
 
@@ -94,26 +94,26 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        space: Space,
+        op_space: Space,
     ) {
         // Double-buffering fills both operands every region (see the raw `fill`s below), so the
-        // pin flags go unread; pass the walk space only to satisfy `new`.
+        // pin flags go unread; pass the operation space only to satisfy `new`.
         let mut s0 = Staging::new(
             lhs,
             rhs,
-            comptime!(space.clone()),
+            comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
         let mut s1 = Staging::new(
             lhs,
             rhs,
-            comptime!(space.clone()),
+            comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
 
         // Double-buffering needs random access (prefetch the next region), so it indexes the
         // `walk` by hand rather than iterating.
-        let walk = Walk::over(space);
+        let walk = Walk::over(op_space);
         let n = walk.total();
 
         // prologue: prime slot 0 with region 0.

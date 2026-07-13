@@ -205,7 +205,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn new(
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        #[comptime] walk: Space,
+        #[comptime] op_space: Space,
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_tma = lhs.is_tma();
@@ -214,9 +214,9 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
         // splitting an invariant out would corrupt its phase. A dynamic level can't decide
         // invariance at comptime. Both fall back to streaming (pin = false).
-        let split = comptime!(walk.is_static() && !lhs_tma && !rhs_tma);
-        let pin_lhs = comptime!(split && walk.walk_invariant(&lhs.space));
-        let pin_rhs = comptime!(split && walk.walk_invariant(&rhs.space));
+        let split = comptime!(op_space.is_static() && !lhs_tma && !rhs_tma);
+        let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
+        let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
         let register = comptime!(
             out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
         );

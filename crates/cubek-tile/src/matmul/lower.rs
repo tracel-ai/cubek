@@ -17,11 +17,11 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Level(level) => {
                 // The level's operation space is the merge of the operands' runtime
                 // spaces; the output contributes no axis beyond `lhs ∪ rhs`.
-                let space = lhs.runtime_space().merge_with(&rhs.runtime_space());
+                let op_space = lhs.runtime_space().merge_with(&rhs.runtime_space());
                 match comptime!(level.schedule()) {
-                    Schedule::Direct => self.mma_direct(lhs, rhs, space),
-                    Schedule::Staged => self.mma_staged(lhs, rhs, space),
-                    Schedule::DoubleBuffered => self.mma_double(lhs, rhs, space),
+                    Schedule::Direct => self.mma_direct(lhs, rhs, op_space),
+                    Schedule::Staged => self.mma_staged(lhs, rhs, op_space),
+                    Schedule::DoubleBuffered => self.mma_double(lhs, rhs, op_space),
                 }
             }
         }
