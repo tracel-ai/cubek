@@ -16,9 +16,36 @@ pub enum Delivery {
     Tma,
 }
 
+/// CUDA caps each TMA box dimension at 256; a bulk copy fills one smem stage, so the
+/// stage edges are the box dims.
+const TMA_MAX_BOX_DIM: usize = 256;
+
 impl Delivery {
     pub fn is_tma(&self) -> bool {
         matches!(self, Delivery::Tma)
+    }
+
+    /// Reject a plan the TMA descriptor path can't encode, so a bad plan fails here as a
+    /// clean error instead of at descriptor encoding on the driver. `boxes` are the
+    /// bulk-copy box dims (one stage per box); `batched` = any surviving batch dim.
+    /// A no-op unless this is [`Delivery::Tma`].
+    pub fn validate_tma(&self, boxes: &[usize], batched: bool) -> Result<(), String> {
+        if !self.is_tma() {
+            return Ok(());
+        }
+        // The descriptor is 3-D `(batch, row, col)`; surviving batch dims need a
+        // batch-aware descriptor path not wired yet.
+        if batched {
+            return Err("TMA: batched problems are not supported yet".to_string());
+        }
+        if let Some(&max) = boxes.iter().max()
+            && max > TMA_MAX_BOX_DIM
+        {
+            return Err(format!(
+                "TMA: box {boxes:?} exceeds the {TMA_MAX_BOX_DIM}-per-axis box limit"
+            ));
+        }
+        Ok(())
     }
 }
 

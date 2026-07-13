@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Delivery, Leaf, Schedule, Space, Strided, Tiling, Tma, TmaArgLaunch,
-    WalkOrder,
+    Axis, CubeAxis, Cut, Delivery, DeliveryFamily, Launcher, Leaf, Schedule, Space, Strided,
+    TileArgLaunch, Tiling, Tma, TmaArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -198,93 +198,157 @@ pub fn launch_ref<R: Runtime>(
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 
+    let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
+    let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());
+
+    // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
+    // `launch_kernel` runs once for either and never branches on the delivery again.
+    match blueprint.delivery {
+        Delivery::Strided => launch_kernel::<Strided, R>(
+            client, &launch, cube_count, cube_dim, lhs, rhs, out, &out_batch_axes, &blueprint,
+            dtypes, (m, n, k),
+        ),
+        Delivery::Tma => launch_kernel::<Tma, R>(
+            client, &launch, cube_count, cube_dim, lhs, rhs, out, &out_batch_axes, &blueprint,
+            dtypes, (m, n, k),
+        ),
+    }
+
+    Ok(())
+}
+
+/// One operand's launch geometry: the two axes it spans (`outer`, then the innermost
+/// contiguous axis TMA boxes and vectorization key on), the TMA box (its stage edges),
+/// and the operand's runtime `(rows, cols)`.
+struct Operand {
+    axes: [Axis; 2],
+    box_dims: (usize, usize),
+    extent: (u32, u32),
+}
+
+/// Host-side counterpart to [`DeliveryFamily`]: how a delivery builds one operand's launch
+/// arg. Implemented for the tile crate's family markers. Lives here rather than on
+/// `cubek_tile`'s `Delivery` because building the arg reaches `cubek_std`'s [`tma_operand`]
+/// and the routine's own axes.
+trait OperandLaunch: DeliveryFamily {
+    fn operand<E: Numeric, R: Runtime>(
+        launch: &Launcher<'_, R>,
+        binding: TensorBinding<R>,
+        operand: Operand,
+        out_batch_axes: &[Axis],
+        dtype: StorageType,
+    ) -> <Self::Arg<E> as LaunchArg>::RuntimeArg<R>;
+}
+
+impl OperandLaunch for Strided {
+    /// Line the operand's innermost contiguous axis at the widest width the launcher's gate
+    /// allows (the box/extent are TMA-only).
+    fn operand<E: Numeric, R: Runtime>(
+        launch: &Launcher<'_, R>,
+        binding: TensorBinding<R>,
+        operand: Operand,
+        out_batch_axes: &[Axis],
+        dtype: StorageType,
+    ) -> TileArgLaunch<'static, E, R> {
+        let [outer, inner] = operand.axes;
+        let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
+        launch
+            .arg(binding)
+            .subspace(&[outer, inner])
+            .batches(out_batch_axes)
+            .vectorize(v)
+            .build()
+    }
+}
+
+impl OperandLaunch for Tma {
+    /// Encode a tensor map whose box is the stage; the operand stays scalar (TMA moves
+    /// whole boxes, so vectorization and the batch-axis list don't apply).
+    fn operand<E: Numeric, R: Runtime>(
+        launch: &Launcher<'_, R>,
+        binding: TensorBinding<R>,
+        operand: Operand,
+        _out_batch_axes: &[Axis],
+        dtype: StorageType,
+    ) -> TmaArgLaunch<E, R> {
+        let (map, transposed) = tma_operand(
+            binding,
+            1,
+            MatrixLayout::RowMajor,
+            operand.box_dims,
+            dtype,
+            TensorMapSwizzle::None,
+        );
+        let (rows, cols) = operand.extent;
+        TmaArgLaunch::tensor_map(
+            map,
+            launch.space().project(&operand.axes),
+            (1, rows, cols),
+            transposed,
+        )
+    }
+}
+
+/// The launch body, shared by every delivery: it asks the family `D` for each operand, and
+/// the out is strided under either. The args are built here, not returned, so the element
+/// types the launch macro erases stay inside one body.
+#[allow(clippy::too_many_arguments)]
+fn launch_kernel<D: OperandLaunch, R: Runtime>(
+    client: &ComputeClient<R>,
+    launch: &Launcher<'_, R>,
+    cube_count: CubeCount,
+    cube_dim: CubeDim,
+    lhs: TensorBinding<R>,
+    rhs: TensorBinding<R>,
+    out: TensorBinding<R>,
+    out_batch_axes: &[Axis],
+    blueprint: &CmmaBlueprint,
+    dtypes: &MatmulElems,
+    (m, n, k): (usize, usize, usize),
+) {
+    let (stage_m, stage_n) = blueprint.stage();
+    let stage_k = blueprint.stage_k;
+    let a = D::operand(
+        launch,
+        lhs,
+        Operand {
+            axes: [M, K],
+            box_dims: (stage_m, stage_k),
+            extent: (m as u32, k as u32),
+        },
+        out_batch_axes,
+        dtypes.lhs_global,
+    );
+    let b = D::operand(
+        launch,
+        rhs,
+        Operand {
+            axes: [K, N],
+            box_dims: (stage_k, stage_n),
+            extent: (k as u32, n as u32),
+        },
+        out_batch_axes,
+        dtypes.rhs_global,
+    );
     // The out is strided under either delivery: lined at the widest width the launcher's
     // gate allows, labeled with the full output batch-axis list (the builder right-aligns
     // it, numpy broadcast, size-1 dims drop out).
     let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
-    let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let c = launch
         .arg(out)
         .subspace(&[M, N])
-        .batches(&out_batch_axes)
+        .batches(out_batch_axes)
         .vectorize(v_out)
         .build();
-    let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());
-
-    match blueprint.delivery {
-        // Line each operand's contiguous innermost axis (`K` on lhs, `N` on rhs) at the
-        // widest width the launcher's gate allows, per-operand since dtypes differ.
-        Delivery::Strided => {
-            let v_lhs = launch.vector_size(K, &[(&lhs, &[M, K])], dtypes.lhs_global.size());
-            let v_rhs = launch.vector_size(N, &[(&rhs, &[K, N])], dtypes.rhs_global.size());
-            cmma_kernel::launch::<Strided, R>(
-                client,
-                cube_count,
-                cube_dim,
-                launch
-                    .arg(lhs)
-                    .subspace(&[M, K])
-                    .batches(&out_batch_axes)
-                    .vectorize(v_lhs)
-                    .build(),
-                launch
-                    .arg(rhs)
-                    .subspace(&[K, N])
-                    .batches(&out_batch_axes)
-                    .vectorize(v_rhs)
-                    .build(),
-                c,
-                dtypes.lhs_global,
-                dtypes.rhs_global,
-                dtypes.acc_global,
-            );
-        }
-        // One bulk copy fills one double-buffered smem stage: the box is the stage. The
-        // operands stay scalar (TMA moves whole boxes).
-        Delivery::Tma => {
-            let (stage_m, stage_n) = blueprint.stage();
-            let stage_k = blueprint.stage_k;
-            let (map_a, transposed_a) = tma_operand(
-                lhs,
-                1,
-                MatrixLayout::RowMajor,
-                (stage_m, stage_k),
-                dtypes.lhs_global,
-                TensorMapSwizzle::None,
-            );
-            let a = TmaArgLaunch::tensor_map(
-                map_a,
-                launch.space().project(&[M, K]),
-                (1, m as u32, k as u32),
-                transposed_a,
-            );
-            let (map_b, transposed_b) = tma_operand(
-                rhs,
-                1,
-                MatrixLayout::RowMajor,
-                (stage_k, stage_n),
-                dtypes.rhs_global,
-                TensorMapSwizzle::None,
-            );
-            let b = TmaArgLaunch::tensor_map(
-                map_b,
-                launch.space().project(&[K, N]),
-                (1, k as u32, n as u32),
-                transposed_b,
-            );
-            cmma_kernel::launch::<Tma, R>(
-                client,
-                cube_count,
-                cube_dim,
-                a,
-                b,
-                c,
-                dtypes.lhs_global,
-                dtypes.rhs_global,
-                dtypes.acc_global,
-            );
-        }
-    }
-
-    Ok(())
+    cmma_kernel::launch::<D, R>(
+        client,
+        cube_count,
+        cube_dim,
+        a,
+        b,
+        c,
+        dtypes.lhs_global,
+        dtypes.rhs_global,
+        dtypes.acc_global,
+    );
 }

@@ -27,9 +27,6 @@ use crate::{
     },
 };
 
-/// CUDA caps each TMA box dimension at 256; the boxes here are the smem stages.
-const TMA_MAX_BOX_DIM: usize = 256;
-
 /// Upper bound on planes along one stage axis; 2×4 or 4×2 tends to saturate without
 /// blowing the cube dim.
 const MAX_PLANES_PER_AXIS: usize = 4;
@@ -98,36 +95,11 @@ impl CmmaBlueprint {
                 problem.m, problem.n, problem.k, i.k, self.stage_k
             ))));
         }
-        if self.delivery.is_tma() {
-            self.validate_tma(problem, (stage_m, stage_n))?;
-        }
-        Ok(())
-    }
-
-    /// TMA-specific plan constraints, so a bad plan fails here as a clean error instead of
-    /// at descriptor encoding on the driver.
-    #[allow(clippy::result_large_err)]
-    fn validate_tma(
-        &self,
-        problem: &MatmulProblem,
-        (stage_m, stage_n): (usize, usize),
-    ) -> Result<(), MatmulSetupError> {
-        // The descriptor is 3-D `(batch, row, col)`; surviving batch dims need a
-        // batch-aware descriptor path not wired yet.
-        if problem.out_batches.iter().any(|&b| b > 1) {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(
-                "Cmma TMA: batched problems are not supported yet".to_string(),
-            )));
-        }
-        // One bulk copy fills one smem stage, so the stage edges are the box dims.
-        let max = stage_m.max(stage_n).max(self.stage_k);
-        if max > TMA_MAX_BOX_DIM {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Cmma TMA: stage {stage_m}x{stage_n} (stage_k {}) exceeds the \
-                 {TMA_MAX_BOX_DIM} TMA box limit",
-                self.stage_k
-            ))));
-        }
+        // The bulk-copy box is the stage; TMA owns which boxes it can encode.
+        let batched = problem.out_batches.iter().any(|&b| b > 1);
+        self.delivery
+            .validate_tma(&[stage_m, stage_n, self.stage_k], batched)
+            .map_err(|e| MatmulSetupError::InvalidConfig(Box::new(e)))?;
         Ok(())
     }
 }
