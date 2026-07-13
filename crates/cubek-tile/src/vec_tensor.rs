@@ -39,8 +39,8 @@ impl<E: Numeric> CubeType for VecTensor<E> {
 }
 
 /// The runtime argument: the plain tensor handle plus the width its binding is typed at.
-/// Shape/strides stay scalar-unit; the launcher gates `vector_size > 1` on contiguity and
-/// divisibility (see `Launcher::vector_size`).
+/// Shape/strides stay scalar-unit; `vector_size > 1` requires a contiguous innermost axis the
+/// width divides ([`new`](VecTensorArg::new) asserts it, `Launcher::vector_size` picks it).
 pub struct VecTensorArg<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
@@ -48,6 +48,20 @@ pub struct VecTensorArg<R: Runtime> {
 
 impl<R: Runtime> VecTensorArg<R> {
     pub fn new(tensor: TensorArg<R>, vector_size: usize) -> Self {
+        if vector_size > 1 {
+            assert_eq!(
+                tensor.strides().last(),
+                Some(&1),
+                "VecTensorArg: a wide binding needs a contiguous innermost axis"
+            );
+            assert!(
+                tensor
+                    .shape()
+                    .last()
+                    .is_some_and(|e| e.is_multiple_of(vector_size)),
+                "VecTensorArg: vector_size must divide the innermost extent"
+            );
+        }
         VecTensorArg {
             tensor,
             vector_size,

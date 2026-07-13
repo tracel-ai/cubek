@@ -81,11 +81,12 @@ impl<T: Numeric> MemData<T> {
         #[comptime] storage: Storage,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
-        let bound_width = tensor.vector_size();
+        let tensor_vector_size = tensor.vector_size();
         comptime!(assert!(
-            bound_width == vector_size,
+            tensor_vector_size == vector_size,
             "MemData::from_tensor: comptime vector_size differs from the binding's width"
         ));
+
         let start_axis = comptime!(storage.start_axis);
         let num_tiled = comptime!(space.rank() - storage.start_axis);
         let levels = comptime!(storage.levels);
