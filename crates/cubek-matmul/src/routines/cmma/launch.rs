@@ -205,12 +205,30 @@ pub fn launch_ref<R: Runtime>(
     // `launch_kernel` runs once for either and never branches on the delivery again.
     match blueprint.delivery {
         Delivery::Strided => launch_kernel::<Strided, R>(
-            client, &launch, cube_count, cube_dim, lhs, rhs, out, &out_batch_axes, &blueprint,
-            dtypes, (m, n, k),
+            client,
+            &launch,
+            cube_count,
+            cube_dim,
+            lhs,
+            rhs,
+            out,
+            &out_batch_axes,
+            &blueprint,
+            dtypes,
+            (m, n, k),
         ),
         Delivery::Tma => launch_kernel::<Tma, R>(
-            client, &launch, cube_count, cube_dim, lhs, rhs, out, &out_batch_axes, &blueprint,
-            dtypes, (m, n, k),
+            client,
+            &launch,
+            cube_count,
+            cube_dim,
+            lhs,
+            rhs,
+            out,
+            &out_batch_axes,
+            &blueprint,
+            dtypes,
+            (m, n, k),
         ),
     }
 

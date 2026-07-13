@@ -6,7 +6,9 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use crate::{Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, StridedTileArgLaunch};
+use crate::{
+    Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, StridedTileArgLaunch,
+};
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
 /// is `start_axis`, its storage-tiling depth is `levels`.
@@ -209,8 +211,13 @@ impl<'a, E: Numeric, R: Runtime> StridedTileSource<'a, Set, Set, E, R> {
 
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        let mut arg =
-            StridedTileArgLaunch::from_concrete(binding, &ConcreteLayout::new(&phys), space, v, check);
+        let mut arg = StridedTileArgLaunch::from_concrete(
+            binding,
+            &ConcreteLayout::new(&phys),
+            space,
+            v,
+            check,
+        );
         if let Some(stage) = stage {
             arg = arg.stage(stage);
         }

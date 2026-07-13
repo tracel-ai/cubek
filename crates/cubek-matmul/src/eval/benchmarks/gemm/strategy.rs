@@ -7,8 +7,8 @@ use crate::routines::{
         ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
         simple_unit::SimpleUnitSelectionArgs,
     },
-    cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid},
     cmma::CmmaStrategy,
+    cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid},
     gemm::GemmStrategy,
 };
 use crate::strategy::Strategy;

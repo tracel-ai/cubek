@@ -33,8 +33,8 @@ use crate::{
             simple_unit::SimpleUnitAlgorithm,
             specialized::{SpecializedAlgorithm, SpecializedStrategy},
         },
-        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
         cmma::{self, CmmaRoutine},
+        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
         gemm::{GemmRoutine, launch as launch_gemm},
         gemv_unit_perpendicular::{
             GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,

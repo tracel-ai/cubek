@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Space, Tile, StridedTileArg, TmaTileArg};
+use crate::{Space, StridedTileArg, Tile, TmaTileArg};
 
 /// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
 /// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync

@@ -316,15 +316,19 @@ fn cmma_tma_rejects_oversized_box() {
     use cubek_matmul::definition::{AvailableVectorSizes, MatmulSetupError};
     use cubek_matmul::routines::{
         DeviceSettings,
-        cpu_gemm::{Instruction, PlaneGrid},
         cmma::{CmmaBlueprint, CmmaRoutine, Partition},
+        cpu_gemm::{Instruction, PlaneGrid},
     };
     use cubek_tile::Delivery;
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.
     let blueprint = CmmaBlueprint {
-        instruction: Instruction { m: 16, n: 16, k: 16 },
+        instruction: Instruction {
+            m: 16,
+            n: 16,
+            k: 16,
+        },
         partition: Partition { m: 2, n: 8 },
         planes: PlaneGrid { m: 2, n: 4 },
         stage_k: 16,

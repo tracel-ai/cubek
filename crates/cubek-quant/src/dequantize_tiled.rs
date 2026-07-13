@@ -4,7 +4,9 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, StridedTileArg, StridedTileArgLaunch};
+use cubek_tile::{
+    Axis, ByAxis, Distribution, Partitioner, Space, Storage, StridedTileArg, StridedTileArgLaunch,
+};
 
 // Input axes
 const M: Axis = Axis(0);

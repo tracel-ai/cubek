@@ -80,7 +80,9 @@ impl<'a, E: Numeric> StridedTileArg<'a, E> {
     /// through [`tile_dequant`](Self::tile_dequant) to name its served type.
     pub fn tile(&self) -> Tile<E> {
         if comptime!(self.quant.is_some()) {
-            panic!("StridedTileArg::tile: a quantized operand is served via StridedTileArg::tile_dequant")
+            panic!(
+                "StridedTileArg::tile: a quantized operand is served via StridedTileArg::tile_dequant"
+            )
         }
         MemData::from_tensor(
             self.tensor,
@@ -231,7 +233,9 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         let batched = match space.rank() {
             2 => false,
             3 => true,
-            r => panic!("TmaTileArg: the descriptor is (batch, row, col); rank {r} space unsupported"),
+            r => panic!(
+                "TmaTileArg: the descriptor is (batch, row, col); rank {r} space unsupported"
+            ),
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);

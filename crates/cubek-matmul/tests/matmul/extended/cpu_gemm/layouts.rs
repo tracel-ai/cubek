@@ -125,7 +125,10 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
 /// The operand's launchable `StridedTileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric>(op: &Operand, space: Space) -> StridedTileArgLaunch<'static, E, TestRuntime> {
+fn tile_arg<E: Numeric>(
+    op: &Operand,
+    space: Space,
+) -> StridedTileArgLaunch<'static, E, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
     StridedTileArgLaunch::strided(tensor, 1, space, storage)
 }

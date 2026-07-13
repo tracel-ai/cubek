@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
+use cubecl::prelude::*;
 use cubecl::std::tensor::{
     View, ViewMut,
     launch::ViewArg,
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
 use cubecl::unexpanded;
-use cubecl::prelude::*;
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 
