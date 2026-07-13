@@ -11,6 +11,6 @@ impl Interpolate for Nearest {
     const REQUIRES_BOUND_CHECK: bool = false;
 
     fn compute_weight<EA: Float>(_x: EA) -> EA {
-        EA::new(1.0)
+        EA::new(1.0_f32)
     }
 }

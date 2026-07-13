@@ -256,7 +256,7 @@ pub fn compute_value_default<I: Interpolate, P: InterpolatePrecision, N: Size>(
     }
 
     if I::REQUIRES_BOUND_CHECK {
-        let epsilon = Vector::cast_from(P::EA::new(1e-7));
+        let epsilon = Vector::cast_from(P::EA::new(1e-7_f32));
         Vector::cast_from(final_value / total_weight.max(epsilon))
     } else {
         Vector::cast_from(final_value)
