@@ -91,8 +91,8 @@ fn fft_butterfly_stages<F: Float>(
 
         let mut k = 0;
         while k < n {
-            let mut w_re = F::new(1.0);
-            let mut w_im = F::new(0.0);
+            let mut w_re = F::new(1.0_f32);
+            let mut w_im = F::new(0.0_f32);
 
             let mut j = 0;
             while j < half_m {
