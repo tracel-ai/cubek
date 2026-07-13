@@ -16,7 +16,7 @@ impl Semiring {
     /// Get the identity element for the semiring.
     pub fn identity<F: Float, N: Size>(#[comptime] this: &Self) -> Vector<F, N> {
         match this {
-            Semiring::Linear => Vector::new(F::new(0.0)),
+            Semiring::Linear => Vector::new(F::new(0.0_f32)),
             Semiring::Tropical | Semiring::Log => Vector::min_value(),
         }
     }
@@ -45,7 +45,7 @@ impl Semiring {
             Semiring::Log => {
                 let m = accumulator.max(value);
                 let diff = (accumulator - value).abs();
-                let zero = Vector::new(F::new(0.0));
+                let zero = Vector::new(F::new(0.0_f32));
                 m + (zero - diff).exp().log1p()
             }
         }
