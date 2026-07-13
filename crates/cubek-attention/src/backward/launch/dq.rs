@@ -45,7 +45,7 @@ fn flash_attention_backward_dq_kernel<E: Float>(
 
     let mut dq_acc = Array::new(head_dim);
     for dd in 0..head_dim {
-        dq_acc[dd] = E::new(0.0);
+        dq_acc[dd] = E::new(0.0_f32);
     }
 
     for j in 0..seq_kv {
@@ -54,14 +54,14 @@ fn flash_attention_backward_dq_kernel<E: Float>(
             let k_base = k_row_base + j * head_dim;
             let v_base = v_row_base + j * val_dim;
 
-            let mut dot = E::new(0.0);
+            let mut dot = E::new(0.0_f32);
             for dd in 0..head_dim {
                 dot += q[q_base + dd] * k[k_base + dd];
             }
             let s_ij = dot * scale_e;
             let p_ij = (s_ij - lse_i).exp();
 
-            let mut dp = E::new(0.0);
+            let mut dp = E::new(0.0_f32);
             for dd in 0..val_dim {
                 dp += do_[do_base + dd] * v[v_base + dd];
             }

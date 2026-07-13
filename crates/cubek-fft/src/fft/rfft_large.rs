@@ -283,11 +283,11 @@ fn rfft_pack_kernel<F: Float>(
     let odd = select(odd_active, odd, 0);
     packed_re_view.write_checked(
         k,
-        select(even_active, signal_view.read_checked(even), F::new(0.0)),
+        select(even_active, signal_view.read_checked(even), F::new(0.0_f32)),
     );
     packed_im_view.write_checked(
         k,
-        select(odd_active, signal_view.read_checked(odd), F::new(0.0)),
+        select(odd_active, signal_view.read_checked(odd), F::new(0.0_f32)),
     );
 }
 
@@ -330,12 +330,12 @@ fn rfft_post_kernel<F: Float>(
         let y0_re = packed_re_view.read_checked(0);
         let y0_im = packed_im_view.read_checked(0);
         spectrum_re_view.write_checked(k, y0_re + y0_im);
-        spectrum_im_view.write_checked(k, F::new(0.0));
+        spectrum_im_view.write_checked(k, F::new(0.0_f32));
     } else if k == m {
         let y0_re = packed_re_view.read_checked(0);
         let y0_im = packed_im_view.read_checked(0);
         spectrum_re_view.write_checked(k, y0_re - y0_im);
-        spectrum_im_view.write_checked(k, F::new(0.0));
+        spectrum_im_view.write_checked(k, F::new(0.0_f32));
     } else {
         let a_re = packed_re_view.read_checked(k);
         let a_im = packed_im_view.read_checked(k);
@@ -353,10 +353,10 @@ fn rfft_post_kernel<F: Float>(
         //   1 - i*W = (1 + s) - i*c
         //   1 + i*W = (1 - s) + i*c
         //   2 X[k]  = A*(1 - i*W) + B*(1 + i*W)
-        let one_plus_s = F::new(1.0) + s;
-        let one_minus_s = F::new(1.0) - s;
-        let x_re = F::new(0.5) * (a_re * one_plus_s + a_im * c + b_re * one_minus_s - b_im * c);
-        let x_im = F::new(0.5) * (a_im * one_plus_s - a_re * c + b_re * c + b_im * one_minus_s);
+        let one_plus_s = F::new(1.0_f32) + s;
+        let one_minus_s = F::new(1.0_f32) - s;
+        let x_re = F::new(0.5_f32) * (a_re * one_plus_s + a_im * c + b_re * one_minus_s - b_im * c);
+        let x_im = F::new(0.5_f32) * (a_im * one_plus_s - a_re * c + b_re * c + b_im * one_minus_s);
         spectrum_re_view.write_checked(k, x_re);
         spectrum_im_view.write_checked(k, x_im);
     }
@@ -400,26 +400,30 @@ fn irfft_pre_kernel<F: Float>(
         let has_nyquist = m < spec_bins as usize;
         let x0_re = spectrum_re_view.read_checked(0);
         let xm = select(has_nyquist, m, 0);
-        let xm_re = select(has_nyquist, spectrum_re_view.read_checked(xm), F::new(0.0));
-        packed_re_view.write_checked(k, F::new(0.5) * (x0_re + xm_re));
-        packed_im_view.write_checked(k, F::new(0.5) * (x0_re - xm_re));
+        let xm_re = select(
+            has_nyquist,
+            spectrum_re_view.read_checked(xm),
+            F::new(0.0_f32),
+        );
+        packed_re_view.write_checked(k, F::new(0.5_f32) * (x0_re + xm_re));
+        packed_im_view.write_checked(k, F::new(0.5_f32) * (x0_re - xm_re));
     } else {
         let active = k < spec_bins as usize;
         let src = select(active, k, 0);
-        let x_re = select(active, spectrum_re_view.read_checked(src), F::new(0.0));
-        let x_im = select(active, spectrum_im_view.read_checked(src), F::new(0.0));
+        let x_re = select(active, spectrum_re_view.read_checked(src), F::new(0.0_f32));
+        let x_im = select(active, spectrum_im_view.read_checked(src), F::new(0.0_f32));
         let mirror = m - k;
         let mirror_active = mirror < spec_bins as usize;
         let mirror = select(mirror_active, mirror, 0);
         let xm_re = select(
             mirror_active,
             spectrum_re_view.read_checked(mirror),
-            F::new(0.0),
+            F::new(0.0_f32),
         );
         let xm_im_raw = select(
             mirror_active,
             spectrum_im_view.read_checked(mirror),
-            F::new(0.0),
+            F::new(0.0_f32),
         );
         let xm_im = -xm_im_raw; // conj(X[M-k])
 
@@ -437,10 +441,12 @@ fn irfft_pre_kernel<F: Float>(
         //     Re = xm_re*(1+s) + xm_im*c   (xm_im is already negated here)
         //     Im = -xm_re*c   + xm_im*(1+s)
         //   2 Y[k] = A*(1 + i*W) + B*(1 - i*W).
-        let one_plus_s = F::new(1.0) + s;
-        let one_minus_s = F::new(1.0) - s;
-        let y_re = F::new(0.5) * (x_re * one_minus_s - x_im * c + xm_re * one_plus_s + xm_im * c);
-        let y_im = F::new(0.5) * (x_im * one_minus_s + x_re * c - xm_re * c + xm_im * one_plus_s);
+        let one_plus_s = F::new(1.0_f32) + s;
+        let one_minus_s = F::new(1.0_f32) - s;
+        let y_re =
+            F::new(0.5_f32) * (x_re * one_minus_s - x_im * c + xm_re * one_plus_s + xm_im * c);
+        let y_im =
+            F::new(0.5_f32) * (x_im * one_minus_s + x_re * c - xm_re * c + xm_im * one_plus_s);
         packed_re_view.write_checked(k, y_re);
         packed_im_view.write_checked(k, y_im);
     }
@@ -466,7 +472,7 @@ fn irfft_unpack_kernel<F: Float>(
     let packed_re_view = packed_re.view(BatchSignalLayout::new(packed_re, window, dim));
     let packed_im_view = packed_im.view(BatchSignalLayout::new(packed_im, window, dim));
     let mut signal_view = signal.view_mut(BatchSignalLayout::new(&*signal, window, dim));
-    let scale = F::new(1.0) / F::cast_from(m);
+    let scale = F::new(1.0_f32) / F::cast_from(m);
     signal_view.write_checked(2 * k, packed_re_view.read_checked(k) * scale);
     signal_view.write_checked(2 * k + 1, packed_im_view.read_checked(k) * scale);
 }

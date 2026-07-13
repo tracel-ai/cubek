@@ -23,7 +23,7 @@ fn flash_attention_backward_prepass_kernel<E: Float>(
     let head_dim = o.shape(o.rank() - 1);
     let base = row_idx * head_dim;
 
-    let mut acc = E::new(0.0);
+    let mut acc = E::new(0.0_f32);
     for k in 0..head_dim {
         acc += o[base + k] * do_[base + k];
     }
