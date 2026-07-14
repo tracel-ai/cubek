@@ -11,7 +11,10 @@ pub use cmma::*;
 pub use mem::*;
 pub use tma::*;
 
-use cubecl::{prelude::*, quant::scheme::QuantScheme};
+use cubecl::{
+    prelude::*,
+    quant::scheme::{QuantLevel, QuantScheme},
+};
 
 use crate::*;
 
@@ -61,14 +64,95 @@ impl<T: Numeric> TileKind<T> {
     }
 }
 
-/// The quantization a tile's backing store carries so reads dequantize transparently: a
-/// runtime `scale` (per-tensor for now) plus the comptime [`QuantScheme`].
+/// The quantization a tile's backing store carries so reads dequantize transparently. Holds the
+/// scales `buffer` plus enough to window it in lockstep with the values ([`MemData::at`]): the
+/// per-axis scale `strides`, a running flat `window_start`, and the comptime per-axis `block`
+/// edges (elements per block). The scalar a leaf broadcasts is `buffer[window_start]`. Per-tensor
+/// is the degenerate case: `strides` are all `0`, so `window_start` never leaves `0`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
-    pub scale: f32,
+    pub(crate) buffer: Box<[f32]>,
+    pub(crate) strides: Coords<u32>,
+    pub(crate) window_start: u32,
+    #[cube(comptime)]
+    pub(crate) block: Vec<usize>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
+}
+
+/// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
+/// tensor, so its edges are an unused placeholder ([`QuantInfo::native`] pairs them with `0`
+/// strides); a block scheme's edges come straight from the scheme.
+fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
+    match scheme.level {
+        QuantLevel::Tensor => vec![1; rank],
+        QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
+    }
+}
+
+#[cube]
+impl QuantInfo {
+    /// Build the native (unpacked) quant side-channel from a launched [`QuantArg`]: capture the
+    /// whole scales buffer, plus per logical axis the block edge and the scale stride that indexes
+    /// one scale per block. Per-tensor is the degenerate single scale — every stride `0`, so the
+    /// window never leaves index `0`; a block scheme reads the scales tensor's own strides.
+    pub(crate) fn native(
+        q: &QuantArg,
+        #[comptime] rank: usize,
+        #[comptime] vector_size: usize,
+    ) -> QuantInfo {
+        let block = comptime!(block_edges(q.scheme, rank));
+        comptime!(assert!(
+            vector_size == 1 || block[rank - 1] % vector_size == 0,
+            "QuantInfo::native: block on the vectorized inner axis must be a multiple of the line \
+             width, else a line straddles two scales"
+        ));
+        let mut strides = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            if comptime!(q.scheme.level == QuantLevel::Tensor) {
+                strides.push(0u32);
+            } else {
+                strides.push(q.scales.stride(p) as u32);
+            }
+        }
+        QuantInfo {
+            buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
+            strides,
+            window_start: 0u32,
+            block: comptime!(block),
+            scheme: comptime!(q.scheme),
+        }
+    }
+
+    /// Re-window the scales onto a tile whose absolute logical origin is `origin`: the block index
+    /// on each axis is `origin / block`, dotted with the scale strides, summed into a flat start.
+    /// Element units on every axis (blocks are logical); the inner axis's line origin scales back
+    /// by `vector_size`. Per-tensor keeps `strides = 0`, so this stays `0`.
+    pub(crate) fn window(
+        &self,
+        origin: &Coords<u32>,
+        #[comptime] rank: usize,
+        #[comptime] vector_size: usize,
+    ) -> QuantInfo {
+        let last = comptime!(rank - 1);
+        let mut advances = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            let w = comptime!(if p == last { vector_size } else { 1usize });
+            let origin_elem = origin.at(p).fmul(comptime!(w as u32).runtime());
+            let block = comptime!(self.block[p] as u32).runtime();
+            advances.push(origin_elem.fdiv(block).fmul(self.strides.at(p)));
+        }
+        QuantInfo {
+            buffer: unsafe { self.buffer.as_boxed_unchecked() },
+            strides: self.strides.clone(),
+            window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
+            block: comptime!(self.block.clone()),
+            scheme: comptime!(self.scheme),
+        }
+    }
 }
 
 /// One operand's data: the runtime [`TileKind`] and the comptime [`Space`] it projects. The

@@ -114,11 +114,11 @@ impl<'a, E: Numeric> StridedTileArg<'a, E> {
         // resolves at expand and the plain path pays nothing.
         let quant = #[comptime]
         match &self.quant {
-            // Per-tensor native: a single scale at flat index 0.
-            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
-                scale: q.scales[0],
-                scheme: comptime!(q.scheme),
-            }),
+            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo::native(
+                q,
+                comptime!(self.space.rank()),
+                comptime!(self.vector_size),
+            )),
             ComptimeOption::None => ComptimeOption::new_None(),
         };
         MemData::<O>::from_tensor_quant::<E>(
