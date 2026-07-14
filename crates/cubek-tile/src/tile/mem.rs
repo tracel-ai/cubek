@@ -585,28 +585,11 @@ impl<T: Numeric> MemData<T> {
             .window_start
             .fadd(advances.fsum(comptime!((0..rank).collect::<Vec<_>>())));
 
-        // Window the scales alongside the values: the block index on each axis is the window's
-        // absolute logical element position folded by the block edge, dotted with the scale
-        // strides. Raw element units on every axis (unlike the value path's line-unit inner edge),
-        // since blocks are logical. Per-tensor keeps `strides = 0`, so this stays `0`.
+        // Re-window the scales alongside the values (a no-op for per-tensor's zero strides).
         let quant = #[comptime]
         match &self.quant {
             ComptimeOption::Some(info) => {
-                let mut scale_adv = Coords::<u32>::new();
-                #[unroll]
-                for p in 0..space.rank() {
-                    let w = comptime!(if p == last { self.vector_size } else { 1usize });
-                    let origin_elem = origin.at(p).fmul(comptime!(w as u32).runtime());
-                    let block = comptime!(info.block[p] as u32).runtime();
-                    scale_adv.push(origin_elem.fdiv(block).fmul(info.strides.at(p)));
-                }
-                ComptimeOption::new_Some(QuantInfo {
-                    buffer: unsafe { info.buffer.as_boxed_unchecked() },
-                    strides: info.strides.clone(),
-                    window_start: scale_adv.fsum(comptime!((0..rank).collect::<Vec<_>>())),
-                    block: comptime!(info.block.clone()),
-                    scheme: comptime!(info.scheme),
-                })
+                ComptimeOption::new_Some(info.window(&origin, rank, comptime!(self.vector_size)))
             }
             ComptimeOption::None => ComptimeOption::new_None(),
         };

@@ -3,7 +3,7 @@
 //! they carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantLevel, QuantScheme};
+use cubecl::quant::scheme::QuantScheme;
 use cubecl::std::tensor::{
     ViewMut,
     layout::{CoordsDyn, Layout, LayoutExpand},
@@ -114,40 +114,11 @@ impl<'a, E: Numeric> StridedTileArg<'a, E> {
         // resolves at expand and the plain path pays nothing.
         let quant = #[comptime]
         match &self.quant {
-            ComptimeOption::Some(q) => {
-                let rank = comptime!(self.space.rank());
-                // Per-axis block edges (elements per block) and the scale strides that index
-                // one scale per block. Per-tensor is a single scale: `block` a placeholder and
-                // every stride `0`, so `MemData::at` never advances `window_start` off 0. A
-                // block scheme reads the scales tensor's strides, one scale per block.
-                let block = comptime!(match q.scheme.level {
-                    QuantLevel::Tensor => vec![1usize; rank],
-                    QuantLevel::Block(bs) => {
-                        bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
-                    }
-                });
-                comptime!(assert!(
-                    self.vector_size == 1 || block[rank - 1] % self.vector_size == 0,
-                    "tile_dequant: block on the vectorized inner axis must be a multiple of the \
-                     line width, else a line straddles two scales"
-                ));
-                let mut strides = Coords::<u32>::new();
-                #[unroll]
-                for p in 0..rank {
-                    if comptime!(q.scheme.level == QuantLevel::Tensor) {
-                        strides.push(0u32);
-                    } else {
-                        strides.push(q.scales.stride(p) as u32);
-                    }
-                }
-                ComptimeOption::new_Some(QuantInfo {
-                    buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
-                    strides,
-                    window_start: 0u32,
-                    block: comptime!(block),
-                    scheme: comptime!(q.scheme),
-                })
-            }
+            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo::native(
+                q,
+                comptime!(self.space.rank()),
+                comptime!(self.vector_size),
+            )),
             ComptimeOption::None => ComptimeOption::new_None(),
         };
         MemData::<O>::from_tensor_quant::<E>(
