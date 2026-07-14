@@ -141,17 +141,11 @@ impl<
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<'static, AP> {
-        // The reader addresses the underlying storage linearly, so it needs
-        // the tensor's actual seq-row stride: query views are often permuted
-        // (`(b, seq, heads, hd)` swapped to `(b, heads, seq, hd)`), where
-        // consecutive rows are `heads * hd` apart, not `hd`.
-        let stride_row = query.stride(2) as u32;
         let layout = AttentionGlobalLayout::new(&query, batch_index, config.query_gmem_config);
 
         QueryReader::<AP>::new(
             stage_q_offset,
             query.into_view(layout),
-            stride_row,
             config.query_gmem_config,
         )
     }
