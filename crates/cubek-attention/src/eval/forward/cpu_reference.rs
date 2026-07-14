@@ -192,6 +192,22 @@ pub fn assert_result(
     elems: AttentionElems,
 ) -> ValidationResult {
     let epsilon = attention_epsilon(&elems, 0.01);
+    assert_result_with_epsilon(query, key, value, mask, problem, client, out, epsilon)
+}
+
+/// [`assert_result`] with an explicit epsilon, for inputs outside the default
+/// unit range where the absolute tolerance must scale with magnitude.
+#[allow(clippy::too_many_arguments)]
+pub fn assert_result_with_epsilon(
+    query: &HostData,
+    key: &HostData,
+    value: &HostData,
+    mask: Option<&HostData>,
+    problem: &AttentionProblem,
+    client: &ComputeClient<TestRuntime>,
+    out: TensorHandle<TestRuntime>,
+    epsilon: f32,
+) -> ValidationResult {
     let expected = flash_attention_v2_reference(query, key, value, mask, problem, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
@@ -289,7 +305,10 @@ pub fn flash_attention_v2_reference_with_lse(
                     }
                     dot *= scale;
 
-                    let s_val = if problem.options.causal && j > i {
+                    // Bottom-right-aligned causality: the last query row
+                    // attends the whole key sequence, so a short query block
+                    // against a longer KV (cached decode) sees all past keys.
+                    let s_val = if problem.options.causal && j + seq_q > i + seq_kv {
                         f32::NEG_INFINITY
                     } else if let Some(mask) = mask {
                         m_index = [b, h, i, j];

@@ -37,30 +37,43 @@ impl<'a, AP: AttentionPrecision> QueryReader<'a, AP> {
         tile: Coords2d,
         #[comptime] tile_size: AttentionTileSize,
         #[comptime] partition_seq_q: u32,
-        #[comptime] partition_head_dim: u32,
+        #[comptime] _partition_head_dim: u32,
     ) -> StridedTile<QG<AP>, QGS<AP>> {
         let (row_in_partition, col) = tile;
 
         let row = row_in_partition + P::seq_q_index() * partition_seq_q;
 
         let vector_size = self.gmem_config.vector_size.comptime() as u32;
+        let vectors_per_row = comptime!(tile_size.head_dim / vector_size);
+        let num_vectors = comptime!((tile_size.seq_q * vectors_per_row) as usize);
 
-        let view = self.query.slice(
-            (row * tile_size.seq_q, col * tile_size.head_dim),
-            (tile_size.seq_q, tile_size.head_dim).runtime(),
-        );
-        let slice = view.as_linear_slice();
+        let row_base = row * tile_size.seq_q;
+        let col_base = col * tile_size.head_dim;
 
-        let start = 0;
-        let vectors_per_tile = tile_size.seq_q * tile_size.head_dim / vector_size;
-        let end = start + vectors_per_tile;
-        let vectors_per_partition_row = partition_head_dim * tile_size.head_dim / vector_size;
+        // Stage the tile in registers through checked view reads: the view's
+        // layout resolves the tensor's real strides (query views are often
+        // permuted — `(b, seq, heads, hd)` swapped to `(b, heads, seq, hd)`),
+        // and rows past `seq_q` read zero instead of out of bounds. The
+        // q-stage span rarely divides `seq_q`, so tail tiles overhang the
+        // tensor — and the memory behind it may end right there (exact-sized
+        // persistent allocations do). When `seq_q` divides the span the
+        // bounds check is compiled out.
+        let mut staged = Array::<Vector<QG<AP>, QGS<AP>>>::new(num_vectors);
+        #[unroll]
+        for r in 0..tile_size.seq_q {
+            #[unroll]
+            for v in 0..vectors_per_row {
+                staged[(r * vectors_per_row + v) as usize] = self
+                    .query
+                    .read_checked((row_base + r, col_base + v * vector_size));
+            }
+        }
 
         StridedTile::<QG<AP>, QGS<AP>>::new_strided(
-            slice,
-            start,
-            end,
-            vectors_per_partition_row,
+            staged.slice(0, num_vectors),
+            0,
+            comptime!(num_vectors as u32).runtime(),
+            vectors_per_row.runtime(),
             Swizzle::none(),
             self.gmem_config.matrix_layout,
         )

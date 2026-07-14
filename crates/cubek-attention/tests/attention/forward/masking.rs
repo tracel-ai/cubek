@@ -65,9 +65,10 @@ fn problem(
     }
 }
 
-// Causal: square and both rectangular orientations. Rectangular causal keeps
-// the plain `j > i` index comparison (no diagonal offset), matching the
-// reference.
+// Causal: square and both rectangular orientations. Rectangular causal is
+// bottom-right aligned (`j > i + seq_kv - seq_q`), matching burn's fallback
+// and the KV-cache decode contract: the last query row always attends the
+// whole key sequence.
 
 #[test]
 fn causal_square_unit() {
@@ -125,6 +126,41 @@ fn causal_rect_q_gt_kv_blackbox() {
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (128, 32, 32, 32), true, false),
+        blackbox_accelerated_inferred(),
+    )
+}
+
+// Cached-decode shapes: with bottom-right alignment the single query row of a
+// decode step attends every cached key (top-left alignment would wrongly
+// restrict it to the first key), and a short continuation block attends the
+// whole prefix plus its own causal triangle.
+
+#[test]
+fn causal_decode_single_query_unit() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    test_launch(
+        client.clone(),
+        problem(f16_dtypes(&client), (1, 128, 32, 32), true, false),
+        unit_inferred(),
+    )
+}
+
+#[test]
+fn causal_cached_prefill_unit() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    test_launch(
+        client.clone(),
+        problem(f16_dtypes(&client), (4, 128, 32, 32), true, false),
+        unit_inferred(),
+    )
+}
+
+#[test]
+fn causal_cached_prefill_blackbox() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    test_launch(
+        client.clone(),
+        problem(f16_dtypes(&client), (16, 128, 32, 32), true, false),
         blackbox_accelerated_inferred(),
     )
 }

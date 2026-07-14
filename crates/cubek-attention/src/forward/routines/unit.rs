@@ -1,7 +1,4 @@
-use cubecl::{
-    prelude::CubePrimitive as _,
-    {CubeDim, Runtime},
-};
+use cubecl::{CubeDim, Runtime};
 use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
 use cubek_std::{CubeDimResource, cube_count::CubeCountStrategy};
 
@@ -59,7 +56,7 @@ impl Routine for UnitRoutine {
 
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
-            half::f16::as_type_native_unchecked().storage_type(),
+            AttentionElems::register_tile_type(problem.global_dtypes.query),
             &problem.options.accumulator_precision,
         );
 

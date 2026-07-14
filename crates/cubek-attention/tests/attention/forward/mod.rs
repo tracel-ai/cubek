@@ -5,6 +5,7 @@ pub mod bench_catalog;
 pub mod extended;
 pub mod lse;
 pub mod masking;
+pub mod tail;
 
 pub(crate) mod launcher;
 
