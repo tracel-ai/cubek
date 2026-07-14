@@ -9,7 +9,7 @@ impl<O: Numeric> Tile<O> {
     /// Copy `input` into `self`. Both tiles serve `O`; a quantized input dequantizes on read
     /// ([`Tile::flat`]), so the body is a plain flat copy. `I` is the input's storage element,
     /// threaded from the kernel (unused on a plain input). Per-tensor native only.
-    pub fn dequantize<I: Numeric>(&mut self, input: &Tile<O>) {
+    pub fn dequantize_from<I: Numeric>(&mut self, input: &Tile<O>) {
         match comptime!(self.space.partitioner()) {
             Partitioner::Final(_) => dequantize_leaf::<I, O>(input, self),
             Partitioner::Level(level) => match level.schedule() {
@@ -25,8 +25,8 @@ impl<O: Numeric> Tile<O> {
         }
     }
 
-    pub fn dequantize_at<I: Numeric>(&mut self, input: &Tile<O>, region: &Region) {
-        self.at(region).dequantize::<I>(&input.at(region));
+    pub fn dequantize_from_at<I: Numeric>(&mut self, input: &Tile<O>, region: &Region) {
+        self.at(region).dequantize_from::<I>(&input.at(region));
     }
 }
 

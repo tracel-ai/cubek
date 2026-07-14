@@ -115,25 +115,36 @@ impl<'a, E: Numeric> StridedTileArg<'a, E> {
         let quant = #[comptime]
         match &self.quant {
             ComptimeOption::Some(q) => {
-                comptime!(assert!(
-                    q.scheme.level == QuantLevel::Tensor,
-                    "tile_dequant: only per-tensor quantization is wired for now; block \
-                     windowing lands next"
-                ));
-                // Per-tensor: one scale shared by the whole tensor. Encode it as a zero scale
-                // stride on every axis, so `MemData::at` never advances `window_start` off 0.
-                // `block` is an unused placeholder until block layouts fill these for real.
                 let rank = comptime!(self.space.rank());
+                // Per-axis block edges (elements per block) and the scale strides that index
+                // one scale per block. Per-tensor is a single scale: `block` a placeholder and
+                // every stride `0`, so `MemData::at` never advances `window_start` off 0. A
+                // block scheme reads the scales tensor's strides, one scale per block.
+                let block = comptime!(match q.scheme.level {
+                    QuantLevel::Tensor => vec![1usize; rank],
+                    QuantLevel::Block(bs) => {
+                        bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
+                    }
+                });
+                comptime!(assert!(
+                    self.vector_size == 1 || block[rank - 1] % self.vector_size == 0,
+                    "tile_dequant: block on the vectorized inner axis must be a multiple of the \
+                     line width, else a line straddles two scales"
+                ));
                 let mut strides = Coords::<u32>::new();
                 #[unroll]
-                for _ in 0..rank {
-                    strides.push(0u32);
+                for p in 0..rank {
+                    if comptime!(q.scheme.level == QuantLevel::Tensor) {
+                        strides.push(0u32);
+                    } else {
+                        strides.push(q.scales.stride(p) as u32);
+                    }
                 }
                 ComptimeOption::new_Some(QuantInfo {
                     buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
                     strides,
                     window_start: 0u32,
-                    block: comptime!(vec![1usize; rank]),
+                    block: comptime!(block),
                     scheme: comptime!(q.scheme),
                 })
             }
