@@ -77,7 +77,7 @@ impl<T: Numeric> Tile<T> {
     /// [`vector_size`](Tile::vector_size)): a row-major scan over the tile's window, masking the
     /// overhang per its comptime `check` flag. `I` is the quantized storage element, threaded by
     /// the calling kernel (bound via `#[define]` at launch); unused on the plain path.
-    pub fn flat<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
+    pub fn flat<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_transparent::<I, W>(),
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
