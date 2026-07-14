@@ -3,7 +3,7 @@
 //! they carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{QuantLevel, QuantScheme};
 use cubecl::std::tensor::{
     ViewMut,
     layout::{CoordsDyn, Layout, LayoutExpand},
@@ -114,11 +114,29 @@ impl<'a, E: Numeric> StridedTileArg<'a, E> {
         // resolves at expand and the plain path pays nothing.
         let quant = #[comptime]
         match &self.quant {
-            // Per-tensor native: a single scale at flat index 0.
-            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
-                scale: q.scales[0],
-                scheme: comptime!(q.scheme),
-            }),
+            ComptimeOption::Some(q) => {
+                comptime!(assert!(
+                    q.scheme.level == QuantLevel::Tensor,
+                    "tile_dequant: only per-tensor quantization is wired for now; block \
+                     windowing lands next"
+                ));
+                // Per-tensor: one scale shared by the whole tensor. Encode it as a zero scale
+                // stride on every axis, so `MemData::at` never advances `window_start` off 0.
+                // `block` is an unused placeholder until block layouts fill these for real.
+                let rank = comptime!(self.space.rank());
+                let mut strides = Coords::<u32>::new();
+                #[unroll]
+                for _ in 0..rank {
+                    strides.push(0u32);
+                }
+                ComptimeOption::new_Some(QuantInfo {
+                    buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
+                    strides,
+                    window_start: 0u32,
+                    block: comptime!(vec![1usize; rank]),
+                    scheme: comptime!(q.scheme),
+                })
+            }
             ComptimeOption::None => ComptimeOption::new_None(),
         };
         MemData::<O>::from_tensor_quant::<E>(

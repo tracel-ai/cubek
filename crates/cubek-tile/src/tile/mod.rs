@@ -61,12 +61,19 @@ impl<T: Numeric> TileKind<T> {
     }
 }
 
-/// The quantization a tile's backing store carries so reads dequantize transparently: a
-/// runtime `scale` (per-tensor for now) plus the comptime [`QuantScheme`].
+/// The quantization a tile's backing store carries so reads dequantize transparently. Holds the
+/// scales `buffer` plus enough to window it in lockstep with the values ([`MemData::at`]): the
+/// per-axis scale `strides`, a running flat `window_start`, and the comptime per-axis `block`
+/// edges (elements per block). The scalar a leaf broadcasts is `buffer[window_start]`. Per-tensor
+/// is the degenerate case: `strides` are all `0`, so `window_start` never leaves `0`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
-    pub scale: f32,
+    pub(crate) buffer: Box<[f32]>,
+    pub(crate) strides: Coords<u32>,
+    pub(crate) window_start: u32,
+    #[cube(comptime)]
+    pub(crate) block: Vec<usize>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
 }
