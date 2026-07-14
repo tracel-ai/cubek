@@ -5,8 +5,8 @@
 
 use cubecl::prelude::*;
 
-use crate::*;
 use super::register::mma_register_memory;
+use crate::*;
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
 /// storage config

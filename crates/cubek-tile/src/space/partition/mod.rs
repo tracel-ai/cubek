@@ -8,9 +8,9 @@ mod tiling;
 mod walk;
 mod walk_order;
 
-pub use partitioner::*;
 pub use distribution::*;
 pub use launcher::*;
+pub use partitioner::*;
 pub use tiling::*;
 pub use walk::*;
 pub use walk_order::*;

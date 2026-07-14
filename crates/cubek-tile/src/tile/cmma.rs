@@ -376,6 +376,11 @@ impl<T: Numeric> CmmaData<T> {
     pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
         let stride = mem.row_stride();
         let casted: Matrix<Out> = cmma::cast(&self.matrix);
-        cmma::store(mem.window_slice_mut(), &casted, stride, comptime!(self.layout))
+        cmma::store(
+            mem.window_slice_mut(),
+            &casted,
+            stride,
+            comptime!(self.layout),
+        )
     }
 }
