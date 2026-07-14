@@ -55,7 +55,12 @@ fn problem_heads(
     num_heads: usize,
     (seq_q, seq_kv, head_dim, val_dim): (usize, usize, usize, usize),
 ) -> AttentionProblem {
-    problem_heads_causal(global_dtypes, num_heads, (seq_q, seq_kv, head_dim, val_dim), false)
+    problem_heads_causal(
+        global_dtypes,
+        num_heads,
+        (seq_q, seq_kv, head_dim, val_dim),
+        false,
+    )
 }
 
 fn problem_heads_causal(
