@@ -2,7 +2,8 @@ pub mod schedule;
 
 use cubecl::prelude::*;
 
-use crate::{dequantize::schedule::dequantize_direct, *};
+use crate::*;
+use self::schedule::dequantize_direct;
 
 #[cube]
 impl<O: Numeric> Tile<O> {

@@ -6,10 +6,12 @@
 mod cmma;
 mod mem;
 mod tma;
+mod view;
 
 pub use cmma::*;
 pub use mem::*;
 pub use tma::*;
+pub use view::*;
 
 use cubecl::{prelude::*, quant::scheme::QuantScheme};
 
@@ -245,6 +247,20 @@ impl<T: Numeric> Tile<T> {
                     }
                     _ => panic!("Tile::copy_from: unsupported kind pairing"),
                 }
+            }
+        }
+    }
+
+    /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s
+    /// element type. The cross-type epilogue [`copy_from`](Self::copy_from) cannot express:
+    /// its memory transports move bytes and so stay same-type, but a register accumulator
+    /// (e.g. `f32`) is wider than the output it writes (e.g. `f16`). Only a fragment
+    /// partition drains this way.
+    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+        match &self.tile_kind {
+            TileKind::CmmaPartition(s) => s.drain_cast_into(dst),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                panic!("Tile::drain_cast_into: only a fragment partition drains with a cast")
             }
         }
     }
