@@ -118,5 +118,5 @@ pub fn dequantize<I: Numeric, O: Numeric>(
 ) {
     let input = input.tile_dequant::<O>();
     let mut output = output.tile();
-    output.dequantize::<I>(&input);
+    output.dequantize_from::<I>(&input);
 }

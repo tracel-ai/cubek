@@ -387,6 +387,20 @@ pub struct AttentionElems {
 }
 
 impl AttentionElems {
+    /// Tile storage for a routine whose tile math runs on regular registers
+    /// (no instruction-imposed dtype): the tile follows the global dtype so
+    /// the kernel never computes below the problem's precision — softmax
+    /// turns logit rounding into exponential weight distortion, so f16 tiles
+    /// under an f32 problem diverge as input magnitude grows. f64 is capped
+    /// at f32, mirroring [`StagedMatrixPrecision`] for f64.
+    pub fn register_tile_type(global: StorageType) -> StorageType {
+        if global == f64::as_type_native_unchecked().storage_type() {
+            f32::as_type_native_unchecked().storage_type()
+        } else {
+            global
+        }
+    }
+
     pub fn from_global_types(
         global_dtypes: &AttentionGlobalTypes,
         tile_type: StorageType,

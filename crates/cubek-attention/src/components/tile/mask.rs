@@ -133,7 +133,16 @@ impl LogicalTileMask {
 
         let pos = Coords2d::add(self.logical_iter_origin.read(), pos_in_tile);
 
-        let causal_masked = self.causal && pos.0 < pos.1;
+        // Bottom-right-aligned causality, matching burn's fallback and the
+        // KV-cache decode contract: mask where `col > row + (seq_kv - seq_q)`,
+        // rearranged to stay in unsigned arithmetic. `bounds` is
+        // `(seq_q, seq_kv)`; without it only the square case is well-defined,
+        // where the alignment reduces to the plain `col > row`.
+        #[comptime]
+        let causal_masked = match self.out_of_bounds {
+            ComptimeOption::Some(bounds) => self.causal && pos.1 + bounds.0 > pos.0 + bounds.1,
+            ComptimeOption::None => self.causal && pos.0 < pos.1,
+        };
 
         #[comptime]
         let oob_masked = match self.out_of_bounds {
