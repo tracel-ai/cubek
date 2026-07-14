@@ -3,7 +3,10 @@ use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, Quant
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TileInput, assert_equals_approx,
 };
-use cubek_tile::{Axis, Space, Storage, StridedTileArg, StridedTileArgLaunch};
+use cubek_tile::{
+    Axis, Cut, Leaf, Schedule, Space, Storage, StridedTileArg, StridedTileArgLaunch, Tiling,
+    WalkOrder,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -23,6 +26,16 @@ fn scalar_add_non_quantized_matches_reference() {
 #[test]
 fn scalar_add_quantized_matches_reference() {
     run_quantized(8, 8, -3.0);
+}
+
+/// Block-quantized: each `bm×bn` block carries its own scale. Validates that the tile's
+/// scale windows in lockstep with the values, so a leaf reads its block's scale.
+#[test]
+fn scalar_add_quantized_block_matches_reference() {
+    run_quantized_block(8, 8, 4, 4, -3.0); // square 2×2 grid of blocks
+    run_quantized_block(8, 8, 8, 4, 1.5); // blocks along N only (per-column-group)
+    run_quantized_block(8, 8, 4, 8, 1.5); // blocks along M only (per-row-group)
+    run_quantized_block(16, 8, 4, 4, -0.5); // non-square tensor, 4×2 grid
 }
 
 #[cube(launch)]
@@ -134,6 +147,79 @@ fn run_quantized(m: usize, n: usize, scalar: f32) {
             input_host
                 .iter_indices()
                 .map(|idx| input_host.get_f32(&idx) * scale + scalar)
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
+/// Launch `scalar_add` over a `bm×bn` block-scaled Q8S input and check each element uses its
+/// own block's scale: `out == q * scale[i/bm, j/bn] + scalar`. The space tiles into block-sized
+/// leaves so each leaf reads exactly one scale.
+fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, scalar: f32) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        return; // backend has no native i8 (e.g. wgpu); native dequant can't run here
+    }
+
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, bn as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    let shape = Shape::from(vec![m, n]);
+    let input_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
+        .dtype(input_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+
+    // A space that tiles into `bm×bn` blocks, one cube walking them: each leaf is one block.
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
+        })
+        .leaf(Leaf::Register);
+    let storage = Storage::of(2, space.rank());
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    // One distinct scale per block, row-major over the `(m/bm, n/bn)` block grid.
+    let (sm, sn) = (m / bm, n / bn);
+    let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
+    let out_dtype = f32::as_type_native_unchecked().storage_type();
+    scalar_add::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        StridedTileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        scalar,
+        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        input_dtype,
+        out_dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            input_host
+                .iter_indices()
+                .map(|idx| {
+                    let scale = scale_vals[(idx[0] / bm) * sn + (idx[1] / bn)];
+                    input_host.get_f32(&idx) * scale + scalar
+                })
                 .collect(),
         ),
         strides: StridedLayout::RowMajor.compute_strides(&shape),
