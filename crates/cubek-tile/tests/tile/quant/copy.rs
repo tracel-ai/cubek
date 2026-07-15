@@ -166,7 +166,8 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let space = Space::new(&[(M, m), (N, n)]);
     let input = TileInput::builder(&client, space.clone())
         .untiled()
-        .packed(&scheme);
+        .packed(&scheme)
+        .arange();
     let output = TileInput::builder(&client, space).untiled().zeros();
 
     let input_dtype = u32::as_type_native_unchecked().storage_type();

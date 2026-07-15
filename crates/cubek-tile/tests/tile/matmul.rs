@@ -2340,7 +2340,8 @@ fn run_register_matmul_quant_packed(
 
     let a = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
         .untiled()
-        .packed(&scheme);
+        .packed(&scheme)
+        .arange();
 
     let a_dtype = u32::as_type_native_unchecked().storage_type();
     let q: Vec<f32> = a.q.iter().map(|&v| v as f32).collect();
@@ -2528,7 +2529,8 @@ fn run_register_matmul_quant_rhs(
     // The weight and its per-(k, N-group) scales, minted together.
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
-        .packed(&scheme);
+        .packed(&scheme)
+        .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
