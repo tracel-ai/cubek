@@ -40,7 +40,7 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
     }
 
     /// Dequantize the line at `pos` into `W` served values, `W` the physical line times the
-    /// scheme's packing factor (asserted at expand).
+    /// scheme's packing factor (the launch narrowed the binding by exactly that).
     ///
     /// One scale per line, broadcast across it: a line never straddles a block
     /// ([`quantized`](crate::StridedTileArgLaunch::quantized) rejects that at launch), so the
@@ -52,31 +52,22 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
             QuantStore::Native => {
                 Vector::<O, W>::cast_from(self.values.read(pos)) * Vector::new(scale)
             }
-            // Each element carries `num_quants` values: unpack every physical lane in turn and
-            // lay its values down contiguously, so served lane `i · pack + j` is value `j` of
+            // Each element carries `pack` values: served lane `i · pack + j` is value `j` of
             // element `i` — the order the buffer already has.
             QuantStore::PackedU32(_) => {
                 let raw = self.values.read(pos);
-                let mut out = Vector::<O, W>::empty();
+                let bits = comptime!(self.scheme.size_bits_value());
                 let pack = comptime!(self.scheme.num_quants());
-                // `.vector_size()` reads a width where `Size::value()` cannot go (it is
-                // unexpanded in a `#[cube]` body — calling it kills the trace).
-                let wp = raw.vector_size();
-                comptime!(assert!(
-                    out.vector_size() == wp * pack,
-                    "QuantizedView::read: the served line must be the physical line ({wp}) \
-                     times the scheme's packing factor ({pack})"
-                ));
-                let size!(P) = pack;
+                let mut out = Vector::<O, W>::empty();
                 #[unroll]
-                for i in 0..wp {
-                    // The store is a `u32` by construction, whatever `I` the buffer was erased
-                    // to; shifting needs a concrete integer, so recover it here.
-                    let values =
-                        unpack_q::<O, P>(u32::cast_from(raw.extract(i)), comptime!(self.scheme));
+                for i in 0..raw.vector_size() {
+                    // The store is a `u32` by construction, whatever `I` the buffer was
+                    // erased to; shifting needs a concrete integer, so recover it here.
+                    let word = u32::cast_from(raw.extract(i));
                     #[unroll]
                     for j in 0..pack {
-                        out.insert(comptime!(i * pack + j), values.extract(j) * scale);
+                        let q = unpack_signed(word, comptime!(j * bits), bits);
+                        out.insert(comptime!(i * pack + j), O::cast_from(q) * scale);
                     }
                 }
                 out
@@ -93,38 +84,17 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
     }
 }
 
-/// Unpack one packed `u32` into its `NF` quantized values, sign-extended.
-///
-/// Value `j` lives in bits `[j · size_quant, (j+1) · size_quant)`; anything `≥ 2^(bits-1)` folds
-/// to `value - 2^bits` branchlessly (two's complement). Twin of `cubek-quant`'s `unpack_q` —
-/// forked rather than shared, since that crate depends on this one.
+/// The `bits`-wide value at `offset` in a packed `u32`, sign-extended: anything
+/// `≥ 2^(bits-1)` folds to `value - 2^bits` branchlessly (two's complement).
 #[cube]
-pub(crate) fn unpack_q<O: Numeric, NF: Size>(
-    value: u32,
-    #[comptime] scheme: QuantScheme,
-) -> Vector<O, NF> {
-    let size_quant = comptime!(scheme.size_bits_value());
-    let num_quant = comptime!(scheme.num_quants());
+fn unpack_signed(word: u32, #[comptime] offset: usize, #[comptime] bits: usize) -> i32 {
+    let mask = u32::from_int((1 << bits) - 1);
+    let sign_bit = u32::from_int(1 << (bits - 1));
+    let two_pow_bits = 1 << bits;
 
-    let mask = u32::from_int((1 << size_quant) - 1);
-    let sign_bit = u32::from_int(1 << (size_quant - 1));
-    let two_pow_n = 1 << size_quant;
-
-    let mut output = Vector::<O, NF>::empty();
-    comptime!(assert!(
-        output.vector_size() == num_quant,
-        "unpack_q: the output line must hold the store's {num_quant} values"
-    ));
-    #[unroll]
-    for position in 0..num_quant {
-        let offset = u32::cast_from(comptime!(position * size_quant));
-        let raw = (value >> offset) & mask;
-
-        let raw_i32 = i32::cast_from(raw);
-        let is_negative = i32::cast_from(raw >= sign_bit);
-        output.insert(position, O::cast_from(raw_i32 - is_negative * two_pow_n));
-    }
-    output
+    let raw = (word >> u32::cast_from(offset)) & mask;
+    let is_negative = i32::cast_from(raw >= sign_bit);
+    i32::cast_from(raw) - is_negative * two_pow_bits
 }
 
 /// The scales' [`GmemLayout`]: a window coordinate to the flat index of its block's scale, the dot

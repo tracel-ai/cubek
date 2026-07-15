@@ -2447,14 +2447,26 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric>(
 #[test]
 fn register_matmul_quant_rhs_packed_q8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    run_register_matmul_quant_rhs(client, (8, 8, 8), (4, 4), QuantValue::Q8S, 4);
+    run_register_matmul_quant_rhs(
+        client,
+        (8, 8, 8),
+        register_staged_partitioner(4, 4, 4),
+        QuantValue::Q8S,
+        4,
+    );
 }
 
 /// The `q4s` twin (8 values per word): needs 8-wide bindings, so cpu/cuda only.
 #[test]
 fn register_matmul_quant_rhs_packed_q4() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    run_register_matmul_quant_rhs(client, (8, 16, 8), (4, 8), QuantValue::Q4S, 8);
+    run_register_matmul_quant_rhs(
+        client,
+        (8, 16, 8),
+        register_staged_partitioner(4, 8, 4),
+        QuantValue::Q4S,
+        8,
+    );
 }
 
 /// The decode shape itself: a single activation row (`m = 1`) against the packed weight —
@@ -2462,7 +2474,31 @@ fn register_matmul_quant_rhs_packed_q4() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    run_register_matmul_quant_rhs(client, (1, 8, 8), (1, 4), QuantValue::Q8S, 4);
+    run_register_matmul_quant_rhs(
+        client,
+        (1, 8, 8),
+        register_staged_partitioner(1, 4, 4),
+        QuantValue::Q8S,
+        4,
+    );
+}
+
+/// The decode shape spread across the device: `N` across cubes on `X`, the geometry a gemv
+/// selector emits (`M = 1` leaves nothing else to spread).
+#[test]
+fn register_matmul_quant_rhs_gemv_row_multi_cube() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 1), (N, 16), (K, 8)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(1))
+                .axis(N, Cut::cube(CubeAxis::X, 4))
+                .axis(K, Cut::sequential(4))
+        })
+        .leaf(Leaf::Register)
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(client, (1, 16, 8), plan, QuantValue::Q8S, 4);
 }
 
 /// Drive [`launch_staged_matmul_quant_rhs`] and check
@@ -2470,7 +2506,7 @@ fn register_matmul_quant_rhs_gemv_row() {
 fn run_register_matmul_quant_rhs(
     client: ComputeClient<TestRuntime>,
     (m, n, k): (usize, usize, usize),
-    (tm, tn): (usize, usize),
+    plan: Partitioner,
     value: QuantValue,
     bn: usize,
 ) {
@@ -2511,8 +2547,7 @@ fn run_register_matmul_quant_rhs(
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    let space = Space::new(&[(M, m), (N, n), (K, k)])
-        .with_partitioner(register_staged_partitioner(tm, tn, 4));
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(plan);
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
@@ -2525,8 +2560,8 @@ fn run_register_matmul_quant_rhs(
 
     launch_staged_matmul_quant_rhs::launch::<TestRuntime>(
         &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
+        space.cube_count(),
+        space.cube_dim(&client),
         StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
         StridedTileArgLaunch::strided(
             b_input.into_tensor_arg(),

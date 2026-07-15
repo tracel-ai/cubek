@@ -4,9 +4,6 @@
 mod fold;
 mod ops;
 mod physical;
-/// Launchable routines — namespaced (`routine::matmul`), not glob-exported, since each
-/// routine names its entry after its algorithm.
-pub mod routine;
 mod space;
 mod staging;
 mod tile;
