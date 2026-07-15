@@ -10,7 +10,7 @@ use cubecl::std::tensor::{
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
 use cubecl::{
-    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg, prelude::TensorBinding,
+    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
     quant::scheme::QuantScheme, zspace::Shape,
 };
 use cubek_tile::{Space, Storage};
@@ -201,6 +201,47 @@ impl TileInputBuilder {
         self.build(|b: TestInputBuilder| b.uniform(seed, lo, hi))
     }
 
+    /// Packed-u32 quantized values, declared **in values**: the handle's shape and strides
+    /// count them while the device buffer holds the packed words (`num_quants` per `u32`,
+    /// low bits first along the innermost axis) — the binding convention the tile launch
+    /// expects for a packed operand. Pair with a scales tensor on the scheme's block grid.
+    /// Untiled only: packed storage has no physically tiled layout.
+    pub fn packed(self, q: &[i32], scheme: &QuantScheme) -> TileInput {
+        let levels = self
+            .levels
+            .expect("TileInput: set .untiled() before a finalizer");
+        assert!(
+            levels.is_empty(),
+            "TileInput::packed: a packed input is untiled"
+        );
+        let rank = self.space.rank();
+        let shape: Vec<usize> = (0..rank)
+            .map(|i| self.space.extent(self.space.axis_at(i)))
+            .collect();
+        assert_eq!(
+            q.len(),
+            shape.iter().product::<usize>(),
+            "TileInput::packed: {} values do not fill the space {shape:?}",
+            q.len()
+        );
+        let words = crate::stubs::quant::pack_q_values(q, scheme);
+        let mut strides = vec![1usize; rank];
+        for i in (0..rank - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        let handle = self.client.create(Bytes::from_elems(words));
+        TileInput {
+            handle: TensorHandle::new(
+                handle,
+                shape,
+                strides,
+                u32::as_type_native_unchecked().storage_type(),
+            ),
+            space: self.space,
+            levels: 0,
+        }
+    }
+
     /// Build the `[grid…, level…, finest…]` device buffer, filled by `fill` (a
     /// `TestInput` finalizer like `arange`/`zeros`) in physical row-major order.
     /// Walking coarse→fine, each level becomes one block of `rank` dims and the
@@ -256,35 +297,5 @@ impl TileInputBuilder {
             space: self.space,
             levels: levels.len(),
         }
-    }
-}
-
-/// A packed-u32 quantized test input, declared **in values**: `shape` and the derived
-/// row-major strides count values, while the device buffer holds the packed words
-/// (`num_quants` per `u32`, low bits first along the innermost axis). This is the binding
-/// convention the tile launch expects for a packed operand; pair it with a scales tensor
-/// shaped to the scheme's block grid.
-pub fn packed_q_input(
-    client: &ComputeClient<TestRuntime>,
-    shape: &[usize],
-    q: &[i32],
-    scheme: &QuantScheme,
-) -> TensorBinding<TestRuntime> {
-    assert_eq!(
-        q.len(),
-        shape.iter().product::<usize>(),
-        "packed_q_input: {} values do not fill the shape {shape:?}",
-        q.len()
-    );
-    let words = crate::stubs::quant::pack_q_values(q, scheme);
-    let mut strides = vec![1usize; shape.len()];
-    for i in (0..shape.len() - 1).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    TensorBinding {
-        handle: client.create(Bytes::from_elems(words)).binding(),
-        strides: strides.into(),
-        shape: shape.to_vec().into(),
-        runtime: core::marker::PhantomData,
     }
 }

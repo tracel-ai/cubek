@@ -2,7 +2,7 @@ use cubecl::{TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace:
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
-    ValidationResult, assert_equals_approx, packed_q_input,
+    ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
     Axis, Cut, Leaf, Schedule, Space, Storage, StridedTileArg, StridedTileArgLaunch, Tiling,
@@ -170,11 +170,11 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let span = hi - lo + 1;
     let q: Vec<i32> = (0..m * n).map(|k| lo + (k as i32 % span)).collect();
 
-    let input = packed_q_input(&client, &[m, n], &q, &scheme);
-
     let space = Space::new(&[(M, m), (N, n)]);
-    let storage = Storage::of(2, 2);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let input = TileInput::builder(&client, space.clone())
+        .untiled()
+        .packed(&q, &scheme);
+    let output = TileInput::builder(&client, space).untiled().zeros();
 
     let (sm, sn) = (m / bm, n / bn);
     let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
@@ -189,7 +189,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         CubeCount::new_single(),
         CubeDim::new_single(),
         // The served line is one whole `u32`: `pack` values, so a physical width of 1.
-        StridedTileArgLaunch::strided(input.into_tensor_arg(), pack, space, storage)
+        StridedTileArgLaunch::strided(input.tensor_arg(1), pack, input.space(), input.storage())
             .quantized(scales.binding().into_tensor_arg(), scheme),
         // The copy moves whole lines, so the destination is lined at the served width too
         // (the arg stays scalar-unit; `strided` does the lining).

@@ -12,7 +12,7 @@ use cubecl::{
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
-    assert_equals_approx, packed_q_input,
+    assert_equals_approx,
 };
 
 use cubek_tile::*;
@@ -2337,7 +2337,9 @@ fn run_register_matmul_quant_packed(
     let span = hi - lo + 1;
     let q: Vec<i32> = (0..m * k).map(|idx| lo + (idx as i32 % span)).collect();
 
-    let a_input = packed_q_input(&client, &[m, k], &q, &scheme);
+    let a_input = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
+        .untiled()
+        .packed(&q, &scheme);
 
     let a_dtype = u32::as_type_native_unchecked().storage_type();
     let q: Vec<f32> = q.iter().map(|&v| v as f32).collect();
@@ -2345,7 +2347,7 @@ fn run_register_matmul_quant_packed(
         client,
         (m, n, k),
         tk,
-        a_input.into_tensor_arg(),
+        a_input.tensor_arg(1),
         pack,
         a_dtype,
         scheme,
@@ -2524,8 +2526,6 @@ fn run_register_matmul_quant_rhs(
     let span = hi - lo + 1;
     let q: Vec<i32> = (0..k * n).map(|idx| lo + (idx as i32 % span)).collect();
 
-    let b_input = packed_q_input(&client, &[k, n], &q, &scheme);
-
     // One scale per (k row, N-group), k-major like the weight.
     let sn = n / bn;
     let scale_vals: Vec<f32> = (0..k * sn).map(|g| 0.05 * (g + 1) as f32).collect();
@@ -2538,26 +2538,35 @@ fn run_register_matmul_quant_rhs(
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .packed(&q, &scheme);
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
     let b_dtype = u32::as_type_native_unchecked().storage_type();
     let e_dtype = f32::as_type_native_unchecked().storage_type();
 
+    // Routine-like: the launcher derives geometry and argument wiring from the plan; the
+    // quantized RHS goes through the source builder, which binds it at the storage width.
+    let launcher = space.launcher(&client);
     launch_staged_matmul_quant_rhs::launch::<TestRuntime>(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        StridedTileArgLaunch::strided(
-            b_input.into_tensor_arg(),
-            pack,
-            space.project(&[K, N]),
-            Storage::of(2, 2),
-        )
-        .quantized(scales.binding().into_tensor_arg(), scheme),
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        launcher.arg(a.handle().binding()).subspace(&[M, K]).build(),
+        launcher
+            .arg(b.handle().binding())
+            .subspace(&[K, N])
+            .vectorize(pack)
+            .quantized(scales.binding().into_tensor_arg(), scheme)
+            .build(),
         // The register microkernel lines the accumulator at the RHS's served width.
-        StridedTileArgLaunch::strided(c.tensor_arg(1), pack, c.space(), c.storage()),
+        launcher
+            .arg(c.handle().binding())
+            .subspace(&[M, N])
+            .vectorize(pack)
+            .build(),
         b_dtype,
         e_dtype,
     );
