@@ -36,6 +36,7 @@ fn scalar_add_quantized_block_matches_reference() {
     run_quantized_block(8, 8, 8, 4, 1.5); // blocks along N only (per-column-group)
     run_quantized_block(8, 8, 4, 8, 1.5); // blocks along M only (per-row-group)
     run_quantized_block(16, 8, 4, 4, -0.5); // non-square tensor, 4×2 grid
+    run_quantized_block(6, 8, 4, 4, -0.5); // M's last block is half-filled: the overhang is masked
 }
 
 #[cube(launch)]
@@ -160,7 +161,8 @@ fn run_quantized(m: usize, n: usize, scalar: f32) {
 
 /// Launch `scalar_add` over a `bm×bn` block-scaled Q8S input and check each element uses its
 /// own block's scale: `out == q * scale[i/bm, j/bn] + scalar`. The space tiles into block-sized
-/// leaves so each leaf reads exactly one scale.
+/// leaves so each leaf reads exactly one scale. A tensor that doesn't fill its last block
+/// overhangs, and the checked path masks values and scales alike.
 fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, scalar: f32) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -188,11 +190,13 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, scalar: f32) {
             l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
         })
         .leaf(Leaf::Register);
-    let storage = Storage::of(2, space.rank());
+    // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
+    let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
+    let storage = Storage::of(2, space.rank()).checked(check);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    // One distinct scale per block, row-major over the `(m/bm, n/bn)` block grid.
-    let (sm, sn) = (m / bm, n / bn);
+    // One distinct scale per block, row-major over the block grid; a partial block still has one.
+    let (sm, sn) = (m.div_ceil(bm), n.div_ceil(bn));
     let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
     let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
         .custom(scale_vals.clone())
@@ -206,7 +210,12 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, scalar: f32) {
         StridedTileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
             .quantized(scales.binding().into_tensor_arg(), scheme),
         scalar,
-        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        StridedTileArgLaunch::strided(
+            output.tensor_arg(1),
+            1,
+            output.space(),
+            output.storage().checked(check),
+        ),
         input_dtype,
         out_dtype,
     );

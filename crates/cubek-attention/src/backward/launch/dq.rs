@@ -49,7 +49,7 @@ fn flash_attention_backward_dq_kernel<E: Float>(
     }
 
     for j in 0..seq_kv {
-        let masked = causal && j > i;
+        let masked = causal && j + seq_q > i + seq_kv;
         if !masked {
             let k_base = k_row_base + j * head_dim;
             let v_base = v_row_base + j * val_dim;

@@ -67,8 +67,9 @@ impl<T: Numeric> CmmaPartition<T> {
     }
 
     /// The register form of an accumulator over `space`: a partition mirroring its
-    /// fragment grid, fragments uninitialized. `k` is the instruction's contraction
-    /// depth (the space's own axes only give `m`/`n`).
+    /// fragment grid, each fragment zeroed (`c = a·b` starts from the additive
+    /// identity, `beta = 0`). `k` is the instruction's contraction depth (the space's
+    /// own axes only give `m`/`n`).
     pub(crate) fn mirror(#[comptime] space: Space, #[comptime] k: usize) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
@@ -80,7 +81,9 @@ impl<T: Numeric> CmmaPartition<T> {
         for _mi in 0..m_tiles {
             #[unroll]
             for _ni in 0..n_tiles {
-                frags.push(CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k));
+                let mut frag = CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k);
+                cmma::fill(&mut frag.matrix, T::from_int(0));
+                frags.push(frag);
             }
         }
         Tile::<T> {
@@ -168,6 +171,27 @@ impl<T: Numeric> CmmaPartition<T> {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
                     TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
                         panic!("CmmaPartition::drain_into: the sink must be memory")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drain each fragment into its final window of `dst`, casting `T` to `dst`'s element
+    /// type first. The cross-type epilogue: a register accumulator (e.g. `f32`) written to
+    /// a narrower output (e.g. `f16`). Same as [`drain_into`](Self::drain_into) when the
+    /// types match (the cast is a no-op).
+    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let frag = self.at(mi, ni);
+                let mut window = dst.fragment_window(mi, ni);
+                match &mut window.tile_kind {
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g),
+                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                        panic!("CmmaPartition::drain_cast_into: the sink must be memory")
                     }
                 }
             }
@@ -341,6 +365,20 @@ impl<T: Numeric> CmmaData<T> {
         cmma::store(
             mem.window_slice_mut(),
             &self.matrix,
+            stride,
+            comptime!(self.layout),
+        )
+    }
+
+    /// Drain this fragment into `mem`'s *window*, casting `T` down to the sink's element
+    /// type first: a register accumulator (e.g. `f32`) is wider than the stored output
+    /// (e.g. `f16`). The cast is a no-op when the types match.
+    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
+        let stride = mem.row_stride();
+        let casted: Matrix<Out> = cmma::cast(&self.matrix);
+        cmma::store(
+            mem.window_slice_mut(),
+            &casted,
             stride,
             comptime!(self.layout),
         )

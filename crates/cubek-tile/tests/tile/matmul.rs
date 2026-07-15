@@ -996,6 +996,26 @@ fn launch_resident_matmul<E: Numeric>(
     c.copy_from(&acc);
 }
 
+/// Quantized `A` through the resident K walk: `A` is served via `tile_dequant`, so `acc.mma`
+/// dequantizes each K-stage's smem fill on its own — the fill recovers the storage element from
+/// the scheme, so the kernel threads no `I` into the walk and the body is [`launch_resident_matmul`]
+/// verbatim but for `A`'s served type. Tensor-core only.
+#[cube(launch)]
+fn launch_resident_matmul_quant<I: Numeric, E: Numeric>(
+    a: &StridedTileArg<'_, I>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
+    #[define(I)] _idtype: StorageType,
+    #[define(E)] _edtype: StorageType,
+) {
+    let a = a.tile_dequant::<E>();
+    let b = b.tile();
+    let mut c = c.tile();
+    let mut acc = c.promote();
+    acc.mma(&a, &b);
+    c.copy_from(&acc);
+}
+
 /// The CPU kernel: the same `c.mma(a, b)`; the partitioner's `Direct` schedule
 /// selects the no-staging move. Operands are size-free — vectorization is a launch
 /// concern, not threaded through the DSL.
@@ -1759,6 +1779,368 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         })
         .collect();
     let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Per-tensor-quantized `A` (i8) through the resident K walk, staged: `K = 16` runs in two
+/// `8`-deep K regions, and each region's smem fill dequantizes `A` on its own — the same
+/// `launch_resident_matmul_quant` body as the plain K walk, no `dequantize_from` spelled out.
+/// The self-describing fill in action. Tensor-core only.
+#[test]
+fn cmma_matmul_quant_k_walk() {
+    check_cmma_matmul_quant_k_walk(16, Schedule::Staged);
+}
+
+/// The same self-describing quant K walk driven double-buffered: both slots' fills dequantize.
+#[test]
+fn cmma_matmul_quant_double_buffered_k_walk() {
+    check_cmma_matmul_quant_k_walk(32, Schedule::DoubleBuffered);
+}
+
+fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, edge) = (8usize, 8usize, 8usize); // K walked in `edge`-deep stages
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, schedule, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    let scale = 0.05f32;
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::Tensor)
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    // A: i8 quantized (m×k), with host values for the reference.
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, 1])
+        .custom(vec![scale])
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale) · (p·n + j), p over all of K.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-M-quantized `A` through the resident K walk: one K stage stages the whole `M = 8`, which
+/// spans two `bm = 4` scale blocks, so a single cooperative fill dequantizes across two scales —
+/// the per-line scale lookup, not the one-scale-per-window assumption. `acc.mma` still just works.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_m_k_walk() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bm) = (8usize, 8usize, 16usize, 8usize, 4usize); // 2 M-blocks
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per M-block, over the full K: block `[bm, k]`, scales shaped (m/bm, 1).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[i/bm]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[i / bm]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-K-quantized `A` through the resident K walk (the quantized-weight case): the scale
+/// changes partway through each `8`-deep K stage (`bk = 4`), and it changes again between stages —
+/// so the per-line scale lookup must fold in the stage's `window_start`. `acc.mma` just works.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_k_k_walk() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bk) = (8usize, 8usize, 16usize, 8usize, 4usize); // 4 K-blocks, 2 per stage
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, k / bk])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[p/bk]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[p / bk]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-K-quantized `A` served in 2-wide lines: the blocks sit on the vectorized inner axis, so
+/// a line's coordinate counts lines while its scale block is cut in elements — the widening
+/// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a stage's scale still changes mid-fill.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_k_k_walk_vectorized() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bk, v) = (8usize, 8usize, 16usize, 8usize, 4usize, 2usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, k / bk])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), v, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[p/bk]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[p / bk]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
         .custom(expected)
         .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)

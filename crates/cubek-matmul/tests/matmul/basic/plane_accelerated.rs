@@ -344,7 +344,13 @@ fn cmma_tma_rejects_oversized_box() {
         client,
     };
     let strategy = BlueprintStrategy::Forced(blueprint);
-    match CmmaRoutine::blueprint(&strategy, &problem, &device_settings) {
+    // Forced path: only `validate` runs (the acc type keys `select`'s config lookup, unused here).
+    match CmmaRoutine::blueprint(
+        &strategy,
+        &problem,
+        &device_settings,
+        problem.global_dtypes.out,
+    ) {
         Err(MatmulSetupError::InvalidConfig(msg)) => {
             let msg = msg.to_string();
             assert!(msg.contains("box limit"), "wrong rejection: {msg}");

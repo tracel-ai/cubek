@@ -125,7 +125,7 @@ fn compute_backward_inner(
                 let mut s_row = vec![f32::NEG_INFINITY; seq_kv];
                 let mut m_i = f32::NEG_INFINITY;
                 for j in 0..seq_kv {
-                    if causal && j > i {
+                    if causal && j + seq_q > i + seq_kv {
                         continue;
                     }
                     let mut dot = 0f32;
@@ -193,7 +193,7 @@ fn compute_backward_inner(
                 for i in 0..seq_q {
                     let lse_i = lse_buf[((b * num_heads) + h) * seq_q + i];
                     for j in 0..seq_kv {
-                        let masked = causal && j > i;
+                        let masked = causal && j + seq_q > i + seq_kv;
                         let p_ij = if masked {
                             0.0
                         } else {

@@ -3,6 +3,7 @@
 
 use cubecl::{
     prelude::*,
+    quant::scheme::QuantValue,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coords1d, CoordsDyn, Layout, LayoutExpand},
@@ -335,17 +336,40 @@ impl<T: Numeric> MemData<T> {
                 }
             }
         } else {
-            let s = src.flat_transparent::<T, W>();
-            let mut d = self.flat_mut::<W>();
-            let total = d.shape();
-            let workers = CUBE_DIM as usize;
-            let mut i = UNIT_POS as usize;
-            while i < total {
-                // `src` zeroes reads past its logical bound (the partial-tile overhang); the
-                // staged buffer is unchecked, so the full padded cell is still written.
-                d.write(i, s.read(i));
-                i += workers;
+            // The read decodes at the source's true storage element: `T` for a plain tile,
+            // else the quantized store's element recovered from its scheme (the tile serves
+            // `T`, so `I` was erased at construction and lives only on the scheme). This is
+            // what lets a plain `copy_from`/`fill` dequantize on its own — the kernel never
+            // threads `I`.
+            #[comptime]
+            match &src.quant {
+                ComptimeOption::None => self.scan_transparent::<T, W>(src),
+                ComptimeOption::Some(info) => match comptime!(info.scheme.value) {
+                    QuantValue::Q8F | QuantValue::Q8S => self.scan_transparent::<i8, W>(src),
+                    other => panic!(
+                        "MemData::fill_from: quant storage element {:?} is not wired (native i8 only)",
+                        other
+                    ),
+                },
             }
+        }
+    }
+
+    /// The cooperative flat scan behind [`fill_from`](MemData::fill_from)'s general path: cyclic
+    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …. Reads through
+    /// [`flat_transparent`](MemData::flat_transparent) at storage element `I`, so a quantized
+    /// source dequantizes into `T` transparently (`I == T` on a plain source).
+    fn scan_transparent<I: Numeric, W: Size>(&mut self, src: &MemData<T>) {
+        let s = src.flat_transparent::<I, W>();
+        let mut d = self.flat_mut::<W>();
+        let total = d.shape();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            // `src` zeroes reads past its logical bound (the partial-tile overhang); the
+            // staged buffer is unchecked, so the full padded cell is still written.
+            d.write(i, s.read(i));
+            i += workers;
         }
     }
 
@@ -494,17 +518,34 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    /// The scales as a third [`flat`](MemData::flat) over this same window: [`ScaleLayout`]
+    /// resolves a window coordinate to its block's scale, then the values' own [`FlatLayout`]
+    /// rides on top, so both views answer the same flat position. Masked like the values, so an
+    /// overhang line reads scale `0` rather than off the end of the scales.
+    fn flat_scales<'a>(&self, info: &'a QuantInfo) -> FlatView<'a, f32> {
+        FlatView::new(
+            info.buffer
+                .view(ScaleLayout::new(
+                    info.strides.clone(),
+                    info.window_start,
+                    comptime!(info.block.clone()),
+                    comptime!(self.vector_size),
+                ))
+                .view(FlatLayout::new(self.extent.clone())),
+            comptime!(self.check),
+        )
+    }
+
     /// Quantization-transparent [`flat`](MemData::flat): a plain store serves the bare
-    /// `Direct` read, a quantized one re-types to the storage element `I` and dequantizes
-    /// each read into `T`. `#[comptime]`, so the plain path pays nothing.
-    pub(crate) fn flat_transparent<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
+    /// `Direct` read, a quantized one re-types to the storage element `I` and pairs it with the
+    /// scales over the same window, dequantizing each read into `T`. `#[comptime]`, so the plain
+    /// path pays nothing.
+    pub(crate) fn flat_transparent<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W> {
         #[comptime]
         match &self.quant {
             ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
                 self.flat_storage::<I, W>(),
-                // The tile is windowed down to one block, so its single scale sits at
-                // `window_start`; broadcast it across the block.
-                T::cast_from(info.buffer[info.window_start.fcast::<usize>()]),
+                self.flat_scales(info),
                 comptime!(info.scheme),
             )),
             ComptimeOption::None => TileView::new_Direct(self.flat::<W>()),

@@ -54,7 +54,7 @@ fn flash_attention_backward_dv_kernel<E: Float>(
     }
 
     for i in 0..seq_q {
-        let masked = causal && j > i;
+        let masked = causal && j + seq_q > i + seq_kv;
         if !masked {
             let q_base = q_row_base + i * head_dim;
             let do_base = do_row_base + i * val_dim;
@@ -119,7 +119,7 @@ fn flash_attention_backward_dk_kernel<E: Float>(
     }
 
     for i in 0..seq_q {
-        let masked = causal && j > i;
+        let masked = causal && j + seq_q > i + seq_kv;
         if !masked {
             let q_base = q_row_base + i * head_dim;
             let do_base = do_row_base + i * val_dim;
