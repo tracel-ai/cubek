@@ -233,36 +233,15 @@ fn arg_more_batch_dims_than_axes_panics() {
 
 // ---- StridedTileArgLaunch::quantized ---------------------------------------
 
-/// A quantized operand whose scale blocks are cut by its own tiling: `K` is cut into 16-element
-/// tiles, so a 6-element block puts a tile origin mid-block, where the tile's window-relative
-/// scale lookup would silently read a neighbour's scale. The launch must refuse it — an in-kernel
-/// assert would fire on a device thread, which surfaces as zeroed output, not a rejection.
-#[test]
-#[should_panic(expected = "straddle its 6-element scale blocks")]
-fn quantized_block_straddling_a_cut_panics() {
+/// Attach `scheme` to an `M×K` operand served in `v`-wide lines. Every rule below is also an
+/// in-kernel assumption, so the launch is the one place a violation can still be seen: an
+/// in-kernel assert fires on a device thread, which surfaces as zeroed output.
+fn quantize(v: usize, scheme: QuantScheme) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
-    let scheme = quant_scheme(QuantLevel::block([64, 6]));
     let _ = StridedTileArgLaunch::<i8, _>::strided(
         binding(&client, &[64, 16]).into_tensor_arg(),
-        1,
-        space.clone(),
-        Storage::of(2, space.rank()),
-    )
-    .quantized(binding(&client, &[1, 3]).into_tensor_arg(), scheme);
-}
-
-/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine — but a line is one
-/// read, and a 4-wide line spans two of them.
-#[test]
-#[should_panic(expected = "straddles two scales")]
-fn quantized_line_straddling_two_blocks_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
-    let scheme = quant_scheme(QuantLevel::block([64, 2]));
-    let _ = StridedTileArgLaunch::<i8, _>::strided(
-        binding(&client, &[64, 16]).into_tensor_arg(),
-        4,
+        v,
         space.clone(),
         Storage::of(2, space.rank()),
     )
@@ -275,4 +254,42 @@ fn quant_scheme(level: QuantLevel) -> QuantScheme {
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S)
         .with_param(QuantParam::F32)
+}
+
+/// Scale blocks cut by the operand's own tiling: `K` is cut into 16-element tiles, so a 6-element
+/// block leaves a tile origin mid-block, where the tile's window-relative lookup would silently
+/// read a neighbour's scale.
+#[test]
+#[should_panic(expected = "straddle its 6-element scale blocks")]
+fn quantized_block_straddling_a_cut_panics() {
+    quantize(1, quant_scheme(QuantLevel::block([64, 6])));
+}
+
+/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine — but a line is one
+/// read, and a 4-wide line spans two of them.
+#[test]
+#[should_panic(expected = "straddles two scales")]
+fn quantized_line_straddling_two_blocks_panics() {
+    quantize(4, quant_scheme(QuantLevel::block([64, 2])));
+}
+
+/// Scales ride an `f32` buffer read straight through, so a narrower param would reinterpret its
+/// bytes rather than convert them.
+#[test]
+#[should_panic(expected = "scales are read as f32")]
+fn quantized_non_f32_param_panics() {
+    quantize(
+        1,
+        quant_scheme(QuantLevel::Tensor).with_param(QuantParam::F16),
+    );
+}
+
+/// Unpacking a packed store isn't wired: the values are read as the native storage element.
+#[test]
+#[should_panic(expected = "only native")]
+fn quantized_packed_store_panics() {
+    quantize(
+        1,
+        quant_scheme(QuantLevel::Tensor).with_store(QuantStore::PackedU32(2)),
+    );
 }

@@ -3,7 +3,7 @@
 //! they carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{QuantParam, QuantScheme, QuantStore};
 use cubecl::std::tensor::{
     ViewMut,
     layout::{CoordsDyn, Layout, LayoutExpand},
@@ -134,7 +134,8 @@ impl<'a, E: Numeric> StridedTileArg<'a, E> {
 /// quantized or not (the tile dequantizes on read).
 #[derive(CubeType, CubeLaunch)]
 pub struct QuantArg {
-    /// Per-tensor scales (currently a single value at flat index 0).
+    /// One scale per block, on the scheme's own block grid; per-tensor is the single-scale
+    /// degenerate case. Read as `f32` straight through, so the scheme's param must say so.
     pub scales: OwnedTensor<f32>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
@@ -224,25 +225,39 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
 
     /// Mark the operand as quantized: its tensor holds the storage element, and `scales` +
     /// `scheme` let reads dequantize into the kernel's served type
-    /// ([`tile_dequant`](crate::StridedTileArg::tile_dequant)). Panics on a scheme whose scale
-    /// blocks this operand's tiling cannot serve.
+    /// ([`tile_dequant`](crate::StridedTileArg::tile_dequant)). Panics on a scheme this operand
+    /// cannot serve.
     pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
-        validate_blocks(&self.space, self.vector_size, scheme);
+        validate_scheme(&self.space, self.vector_size, scheme);
         self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
         self
     }
 }
 
-/// Reject a [`QuantScheme`] whose scale blocks don't line up with how `space` is cut, at launch
-/// and on the caller's thread (a kernel-side assert would fire on a device thread, where it reads
-/// as zeroed output rather than a rejection).
+/// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread. Every
+/// rule here is also an in-kernel assumption, but a kernel-side assert fires on a device thread,
+/// where it reads as zeroed output rather than as a rejection — so this is the one gate.
 ///
 /// A tile reads a scale as its window's own start plus the block index *within* the window
 /// ([`ScaleLayout`]), which is the true block only if no window straddles a block edge. Every
 /// window is a level's cut, and its origin is a multiple of that cut, so per axis each level's
 /// edge must tile whole blocks or fit inside one. A line is one read, so it may not straddle
 /// either. Per-tensor's block edges are `1` and divide everything.
-fn validate_blocks(space: &Space, vector_size: usize, scheme: QuantScheme) {
+fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
+    // The scales ride a `f32` buffer ([`QuantArg`]) read straight through, so a narrower param
+    // would reinterpret its bytes; unpacking a sub-byte store isn't wired at all.
+    assert!(
+        scheme.store == QuantStore::Native,
+        "StridedTileArgLaunch::quantized: only native (unpacked) quantization storage is \
+         supported, got {:?}",
+        scheme.store
+    );
+    assert!(
+        scheme.param == QuantParam::F32,
+        "StridedTileArgLaunch::quantized: scales are read as f32, got {:?}",
+        scheme.param
+    );
+
     let rank = space.rank();
     let block = block_edges(scheme, rank);
     let inner = block[rank - 1];
