@@ -16,6 +16,7 @@ pub use progress::Progress;
 pub use registry::{
     BenchmarkCategory, CatalogEntry, Category, Correctness, ItemDescriptor, RunSamples,
 };
+pub use stubs::quant::pack_q_values;
 pub use test_mode::*;
 pub use test_tensor::*;
 pub use tile_input::*;

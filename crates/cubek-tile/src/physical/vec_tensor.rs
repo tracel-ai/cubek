@@ -44,6 +44,10 @@ impl<E: Numeric> CubeType for VecTensor<E> {
 pub struct VecTensorArg<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
+    /// Scalar-unit values per stored element: `1` for a plain tensor, the scheme's packing
+    /// factor after [`narrowed`](VecTensorArg::narrowed). The shape stays in values either
+    /// way; this keeps the registered buffer length a true line count.
+    pack: usize,
 }
 
 impl<R: Runtime> VecTensorArg<R> {
@@ -65,6 +69,25 @@ impl<R: Runtime> VecTensorArg<R> {
         VecTensorArg {
             tensor,
             vector_size,
+            pack: 1,
+        }
+    }
+
+    /// This binding re-typed `pack`× narrower: a packed quantized store carries `pack` values
+    /// per stored element, so the buffer holds — and must be bound at — a line that much
+    /// narrower than the width the values are served at
+    /// ([`MemData::from_tensor_quant`](crate::MemData) asserts the relation kernel-side).
+    pub fn narrowed(self, pack: usize) -> Self {
+        assert!(
+            self.vector_size.is_multiple_of(pack),
+            "VecTensorArg::narrowed: the served width ({}) must be a multiple of the packing \
+             factor ({pack}), else a line splits a stored element",
+            self.vector_size
+        );
+        VecTensorArg {
+            tensor: self.tensor,
+            vector_size: self.vector_size / pack,
+            pack,
         }
     }
 }
@@ -89,8 +112,9 @@ impl<E: Numeric> LaunchArg for VecTensor<E> {
         let ty = launcher
             .with_scope(|scope| E::__expand_as_type(scope))
             .with_vector_size(arg.vector_size);
-        // The binding indexes in lines, so its buffer length is a line count.
-        let len = arg.tensor.size() / arg.vector_size;
+        // The binding indexes in lines, so its buffer length is a line count. The shape is
+        // scalar-unit (values); a packed store holds `pack` of them per element.
+        let len = arg.tensor.size() / (arg.vector_size * arg.pack);
         let meta_arg = TensorMetaLaunch::new(len, arg.tensor.shape().len());
         let buffer = match &arg.tensor {
             TensorArg::Handle { .. } => BufferCompilationArg { inplace: None },

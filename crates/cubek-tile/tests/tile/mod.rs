@@ -4,5 +4,6 @@ mod matmul;
 mod quant;
 mod recursive;
 mod references;
+mod routine;
 mod softmax;
 mod space;

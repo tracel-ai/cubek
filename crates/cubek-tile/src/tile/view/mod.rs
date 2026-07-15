@@ -15,18 +15,21 @@ use cubecl::{prelude::*, std::tensor::layout::Coords1d};
 /// store's [`QuantInfo`](crate::QuantInfo). Which variant a tile yields is comptime, so the plain
 /// path compiles to a bare masked read. Always 1-D ([`Coords1d`]) — its only producer is
 /// [`flat`](crate::Tile::flat).
+///
+/// `WP` is the physical line width, `W` the served one; they coincide except on a packed store
+/// (see [`QuantizedView`]), and `Direct` — never quantized — always serves what it holds.
 #[derive(CubeType)]
-pub enum TileView<'a, O: Numeric, I: Numeric, W: Size> {
+pub enum TileView<'a, O: Numeric, I: Numeric, WP: Size, W: Size> {
     Direct(FlatView<'a, Vector<O, W>>),
-    Quantized(QuantizedView<'a, I, W>),
+    Quantized(QuantizedView<'a, I, WP>),
 }
 
 #[cube]
-impl<'a, O: Numeric, I: Numeric, W: Size> TileView<'a, O, I, W> {
+impl<'a, O: Numeric, I: Numeric, WP: Size, W: Size> TileView<'a, O, I, WP, W> {
     pub fn read(&self, pos: Coords1d) -> Vector<O, W> {
         match self {
             TileView::Direct(direct) => direct.read(pos),
-            TileView::Quantized(quant) => quant.read::<O>(pos),
+            TileView::Quantized(quant) => quant.read::<O, W>(pos),
         }
     }
 

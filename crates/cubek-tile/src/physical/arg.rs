@@ -229,6 +229,11 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
     /// cannot serve.
     pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
         validate_scheme(&self.space, self.vector_size, scheme);
+        // `vector_size` names the *served* width throughout; the binding is typed at the
+        // *storage* width, which a packed store narrows by its packing factor (a no-op for
+        // native's factor of 1). This is the only seam that knows the scheme, so the narrowing
+        // lives here rather than on every caller.
+        self.tensor = self.tensor.narrowed(scheme.num_quants());
         self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
         self
     }
@@ -244,14 +249,33 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
 /// edge must tile whole blocks or fit inside one. A line is one read, so it may not straddle
 /// either. Per-tensor's block edges are `1` and divide everything.
 fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
+    // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
+    // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
+    // vectorized) axis — that is the one whose lanes the view lays down contiguously. Sub-byte
+    // native stores aren't wired.
+    match scheme.store {
+        QuantStore::Native => {}
+        QuantStore::PackedU32(dim) => {
+            assert!(
+                dim == 0,
+                "StridedTileArgLaunch::quantized: a packed-u32 operand must pack along the \
+                 innermost axis (dim 0), got {dim}"
+            );
+            assert!(
+                vector_size.is_multiple_of(scheme.num_quants()),
+                "StridedTileArgLaunch::quantized: the innermost axis is served in \
+                 {vector_size}-wide lines, which must be a multiple of the {}-value packing \
+                 factor, else a line splits a u32",
+                scheme.num_quants()
+            );
+        }
+        other => panic!(
+            "StridedTileArgLaunch::quantized: quantization storage {other:?} is not supported \
+             (native or packed-u32)"
+        ),
+    }
     // The scales ride a `f32` buffer ([`QuantArg`]) read straight through, so a narrower param
-    // would reinterpret its bytes; unpacking a sub-byte store isn't wired at all.
-    assert!(
-        scheme.store == QuantStore::Native,
-        "StridedTileArgLaunch::quantized: only native (unpacked) quantization storage is \
-         supported, got {:?}",
-        scheme.store
-    );
+    // would reinterpret its bytes.
     assert!(
         scheme.param == QuantParam::F32,
         "StridedTileArgLaunch::quantized: scales are read as f32, got {:?}",

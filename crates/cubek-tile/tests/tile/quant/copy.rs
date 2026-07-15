@@ -1,8 +1,10 @@
-use cubecl::{TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape};
+use cubecl::{
+    TestRuntime, bytes::Bytes, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape,
+};
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
-    ValidationResult, assert_equals_approx,
+    ValidationResult, assert_equals_approx, pack_q_values,
 };
 use cubek_tile::{
     Axis, Cut, Leaf, Schedule, Space, Storage, StridedTileArg, StridedTileArgLaunch, Tiling,
@@ -116,6 +118,112 @@ fn copy_quantized_block_matches_reference() {
     run_quantized_block(8, 8, 4, 8); // blocks along M only (per-row-group)
     run_quantized_block(16, 8, 4, 4); // non-square tensor, 4×2 grid
     run_quantized_block(6, 8, 4, 4); // M's last block is half-filled: the overhang is masked
+}
+
+/// Packed-u32 block-quantized: the buffer holds `num_quants` values per `u32`, which the view
+/// unpacks on read. Unlike the native cases this needs no i8 support — the binding is a `u32` —
+/// so it runs on every backend.
+///
+/// Each case's inner block is a multiple of the served line, as the launch requires (a line may
+/// not split a `u32`, nor straddle two scales). A whole word is one served line, so a scheme's
+/// packing factor must fit the device's vector width — a case that doesn't is skipped loudly,
+/// the same gate a selector applies when it picks widths from the device (only WGSL-bound
+/// targets cap at 4; cpu/cuda serve any width).
+#[test]
+fn copy_quantized_packed_u32_matches_reference() {
+    // Q8S packs 4 values per u32.
+    run_quantized_packed(8, 8, QuantValue::Q8S, 4, 4); // square 2×2 grid of blocks
+    run_quantized_packed(8, 8, QuantValue::Q8S, 4, 8); // blocks along M only
+    run_quantized_packed(16, 8, QuantValue::Q8S, 4, 4); // non-square tensor
+    // Q4S packs 8 values per u32, so a block must cover at least a whole word.
+    run_quantized_packed(8, 8, QuantValue::Q4S, 4, 8);
+    run_quantized_packed(8, 16, QuantValue::Q4S, 8, 8);
+}
+
+/// Copy a `bm×bn` block-scaled packed input and check each value used its own block's scale:
+/// `out == q * scale[i/bm, j/bn]`.
+///
+/// The packed operand is described **in values** — shape `[m, n]`, strides `[n, 1]` — while its
+/// buffer holds `m·n/pack` `u32`s. That is the launch convention the served-width split rests on:
+/// the tile counts lines, and one `u32` line is one served line of `pack` values.
+fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: usize) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, bn as u8]))
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(value)
+        .with_param(QuantParam::F32);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    // Deterministic quant values spanning the scheme's signed range, so sign extension is
+    // exercised rather than assumed.
+    let (lo, hi) = value.range();
+    let (lo, hi) = (lo as i32, hi as i32);
+    let span = hi - lo + 1;
+    let q: Vec<i32> = (0..m * n).map(|k| lo + (k as i32 % span)).collect();
+
+    let words = pack_q_values(&q, &scheme);
+    // Shape and strides in values, though the handle only holds `m·n/pack` words.
+    let input = TensorBinding::<TestRuntime> {
+        handle: client.create(Bytes::from_elems(words)).binding(),
+        strides: vec![n, 1].into(),
+        shape: vec![m, n].into(),
+        runtime: core::marker::PhantomData,
+    };
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let storage = Storage::of(2, 2);
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    let (sm, sn) = (m / bm, n / bn);
+    let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
+    let input_dtype = u32::as_type_native_unchecked().storage_type();
+    let out_dtype = f32::as_type_native_unchecked().storage_type();
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        // The served line is one whole `u32`: `pack` values, so a physical width of 1.
+        StridedTileArgLaunch::strided(input.into_tensor_arg(), pack, space, storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        // The copy moves whole lines, so the destination is lined at the served width too
+        // (the arg stays scalar-unit; `strided` does the lining).
+        StridedTileArgLaunch::strided(output.tensor_arg(1), pack, output.space(), output.storage()),
+        input_dtype,
+        out_dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let shape = Shape::from(vec![m, n]);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            (0..m * n)
+                .map(|k| {
+                    let (i, j) = (k / n, k % n);
+                    q[k] as f32 * scale_vals[(i / bm) * sn + (j / bn)]
+                })
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
 }
 
 #[cube(launch)]

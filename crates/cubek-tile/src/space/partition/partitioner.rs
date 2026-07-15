@@ -68,6 +68,17 @@ impl Partitioner {
         }
     }
 
+    /// Whether any level stages ([`Staged`](Schedule::Staged) or
+    /// [`DoubleBuffered`](Schedule::DoubleBuffered)). A quantized operand dequantizes at a
+    /// stage's fill and nowhere else — an all-[`Direct`](Schedule::Direct) chain would reach
+    /// the leaf's matrix reads still storage-typed, which they refuse.
+    pub fn stages(&self) -> bool {
+        match self {
+            Partitioner::Final(_) => false,
+            Partitioner::Level(level) => level.schedule != Schedule::Direct || level.next.stages(),
+        }
+    }
+
     /// Set the chain-end [`Leaf`], after all levels are stacked (appending a level
     /// resets it to the tail's).
     pub(crate) fn with_leaf(self, leaf: Leaf) -> Partitioner {
