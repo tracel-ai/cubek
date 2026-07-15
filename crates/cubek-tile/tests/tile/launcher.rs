@@ -1,7 +1,13 @@
 //! Unit tests for [`Launcher`]: geometry read off the concrete space, kernel space dynamic.
 
-use cubecl::{TestRuntime, prelude::*};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
+use cubecl::{
+    TestRuntime,
+    prelude::*,
+    quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
+};
+use cubek_tile::{
+    Axis, CubeAxis, Cut, Leaf, Schedule, Storage, StridedTileArgLaunch, Tiling, WalkOrder,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -223,4 +229,50 @@ fn arg_more_batch_dims_than_axes_panics() {
         .subspace(&[M, K])
         .batches(&[B1])
         .build();
+}
+
+// ---- StridedTileArgLaunch::quantized ---------------------------------------
+
+/// A quantized operand whose scale blocks are cut by its own tiling: `K` is cut into 16-element
+/// tiles, so a 6-element block puts a tile origin mid-block, where the tile's window-relative
+/// scale lookup would silently read a neighbour's scale. The launch must refuse it — an in-kernel
+/// assert would fire on a device thread, which surfaces as zeroed output, not a rejection.
+#[test]
+#[should_panic(expected = "straddle its 6-element scale blocks")]
+fn quantized_block_straddling_a_cut_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
+    let scheme = quant_scheme(QuantLevel::block([64, 6]));
+    let _ = StridedTileArgLaunch::<i8, _>::strided(
+        binding(&client, &[64, 16]).into_tensor_arg(),
+        1,
+        space.clone(),
+        Storage::of(2, space.rank()),
+    )
+    .quantized(binding(&client, &[1, 3]).into_tensor_arg(), scheme);
+}
+
+/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine — but a line is one
+/// read, and a 4-wide line spans two of them.
+#[test]
+#[should_panic(expected = "straddles two scales")]
+fn quantized_line_straddling_two_blocks_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
+    let scheme = quant_scheme(QuantLevel::block([64, 2]));
+    let _ = StridedTileArgLaunch::<i8, _>::strided(
+        binding(&client, &[64, 16]).into_tensor_arg(),
+        4,
+        space.clone(),
+        Storage::of(2, space.rank()),
+    )
+    .quantized(binding(&client, &[1, 8]).into_tensor_arg(), scheme);
+}
+
+fn quant_scheme(level: QuantLevel) -> QuantScheme {
+    QuantScheme::default()
+        .with_level(level)
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32)
 }

@@ -2060,6 +2060,94 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .enforce()
 }
 
+/// Block-K-quantized `A` served in 2-wide lines: the blocks sit on the vectorized inner axis, so
+/// a line's coordinate counts lines while its scale block is cut in elements — the widening
+/// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a stage's scale still changes mid-fill.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_k_k_walk_vectorized() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bk, v) = (8usize, 8usize, 16usize, 8usize, 4usize, 2usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, k / bk])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), v, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[p/bk]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[p / bk]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// Vectorized operands (2-wide lines) through the Direct schedule: gmem-only line-unit
 /// addressing. Regression for the line-vs-scalar unit bug (worked on cubecl-cpu only).
 #[test]

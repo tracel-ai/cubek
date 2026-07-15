@@ -18,7 +18,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coords1d};
 #[derive(CubeType)]
 pub enum TileView<'a, O: Numeric, I: Numeric, W: Size> {
     Direct(FlatView<'a, Vector<O, W>>),
-    Quantized(QuantizedView<'a, O, I, W>),
+    Quantized(QuantizedView<'a, I, W>),
 }
 
 #[cube]
@@ -26,7 +26,7 @@ impl<'a, O: Numeric, I: Numeric, W: Size> TileView<'a, O, I, W> {
     pub fn read(&self, pos: Coords1d) -> Vector<O, W> {
         match self {
             TileView::Direct(direct) => direct.read(pos),
-            TileView::Quantized(quant) => quant.read(pos),
+            TileView::Quantized(quant) => quant.read::<O>(pos),
         }
     }
 

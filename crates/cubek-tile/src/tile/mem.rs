@@ -518,24 +518,34 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    /// The scales as a third [`flat`](MemData::flat) over this same window: [`ScaleLayout`]
+    /// resolves a window coordinate to its block's scale, then the values' own [`FlatLayout`]
+    /// rides on top, so both views answer the same flat position. Masked like the values, so an
+    /// overhang line reads scale `0` rather than off the end of the scales.
+    fn flat_scales<'a>(&self, info: &'a QuantInfo) -> FlatView<'a, f32> {
+        FlatView::new(
+            info.buffer
+                .view(ScaleLayout::new(
+                    info.strides.clone(),
+                    info.window_start,
+                    comptime!(info.block.clone()),
+                    comptime!(self.vector_size),
+                ))
+                .view(FlatLayout::new(self.extent.clone())),
+            comptime!(self.check),
+        )
+    }
+
     /// Quantization-transparent [`flat`](MemData::flat): a plain store serves the bare
-    /// `Direct` read, a quantized one re-types to the storage element `I` and dequantizes
-    /// each read into `T`. `#[comptime]`, so the plain path pays nothing.
+    /// `Direct` read, a quantized one re-types to the storage element `I` and pairs it with the
+    /// scales over the same window, dequantizing each read into `T`. `#[comptime]`, so the plain
+    /// path pays nothing.
     pub(crate) fn flat_transparent<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W> {
         #[comptime]
         match &self.quant {
-            // The scale is looked up per line from its flat position, so a window spanning many
-            // blocks (a K stage wider than the block) dequantizes correctly, not just a single
-            // block. Per-tensor collapses to the one broadcast scale inside the view.
             ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
                 self.flat_storage::<I, W>(),
-                T::cast_from(info.buffer[info.window_start.fcast::<usize>()]),
-                unsafe { info.buffer.as_boxed_unchecked() },
-                info.strides.clone(),
-                info.window_start,
-                self.extent.clone(),
-                comptime!(info.block.clone()),
-                comptime!(self.vector_size),
+                self.flat_scales(info),
                 comptime!(info.scheme),
             )),
             ComptimeOption::None => TileView::new_Direct(self.flat::<W>()),
