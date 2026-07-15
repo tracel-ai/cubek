@@ -1,10 +1,8 @@
-use cubecl::{
-    TestRuntime, bytes::Bytes, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape,
-};
+use cubecl::{TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape};
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
-    ValidationResult, assert_equals_approx, pack_q_values,
+    ValidationResult, assert_equals_approx, packed_q_input,
 };
 use cubek_tile::{
     Axis, Cut, Leaf, Schedule, Space, Storage, StridedTileArg, StridedTileArgLaunch, Tiling,
@@ -172,14 +170,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let span = hi - lo + 1;
     let q: Vec<i32> = (0..m * n).map(|k| lo + (k as i32 % span)).collect();
 
-    let words = pack_q_values(&q, &scheme);
-    // Shape and strides in values, though the handle only holds `m·n/pack` words.
-    let input = TensorBinding::<TestRuntime> {
-        handle: client.create(Bytes::from_elems(words)).binding(),
-        strides: vec![n, 1].into(),
-        shape: vec![m, n].into(),
-        runtime: core::marker::PhantomData,
-    };
+    let input = packed_q_input(&client, &[m, n], &q, &scheme);
 
     let space = Space::new(&[(M, m), (N, n)]);
     let storage = Storage::of(2, 2);

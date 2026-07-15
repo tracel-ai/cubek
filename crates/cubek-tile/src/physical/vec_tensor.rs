@@ -44,15 +44,32 @@ impl<E: Numeric> CubeType for VecTensor<E> {
 pub struct VecTensorArg<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
-    /// Scalar-unit values per stored element: `1` for a plain tensor, the scheme's packing
-    /// factor after [`narrowed`](VecTensorArg::narrowed). The shape stays in values either
-    /// way; this keeps the registered buffer length a true line count.
+    /// Scalar-unit values per stored element — the packing factor of a
+    /// [`packed`](VecTensorArg::packed) binding, `1` otherwise. The shape stays in values
+    /// either way; this keeps the registered buffer length a true line count.
     pack: usize,
 }
 
 impl<R: Runtime> VecTensorArg<R> {
     pub fn new(tensor: TensorArg<R>, vector_size: usize) -> Self {
-        if vector_size > 1 {
+        Self::build(tensor, vector_size, 1)
+    }
+
+    /// A binding over *packed* storage: the tensor is declared in values (its shape and
+    /// strides count them), but each stored element carries `pack` of them, so the buffer is
+    /// bound `pack`× narrower than the width the values are served at
+    /// ([`MemData::from_tensor_quant`](crate::MemData) asserts the relation kernel-side).
+    pub fn packed(tensor: TensorArg<R>, served_size: usize, pack: usize) -> Self {
+        assert!(
+            served_size.is_multiple_of(pack),
+            "VecTensorArg::packed: the served width ({served_size}) must be a multiple of the \
+             packing factor ({pack}), else a line splits a stored element"
+        );
+        Self::build(tensor, served_size / pack, pack)
+    }
+
+    fn build(tensor: TensorArg<R>, vector_size: usize, pack: usize) -> Self {
+        if vector_size * pack > 1 {
             assert_eq!(
                 tensor.strides().last(),
                 Some(&1),
@@ -62,33 +79,20 @@ impl<R: Runtime> VecTensorArg<R> {
                 tensor
                     .shape()
                     .last()
-                    .is_some_and(|e| e.is_multiple_of(vector_size)),
-                "VecTensorArg: vector_size must divide the innermost extent"
+                    .is_some_and(|e| e.is_multiple_of(vector_size * pack)),
+                "VecTensorArg: the width must divide the innermost extent"
             );
         }
         VecTensorArg {
             tensor,
             vector_size,
-            pack: 1,
+            pack,
         }
     }
 
-    /// This binding re-typed `pack`× narrower: a packed quantized store carries `pack` values
-    /// per stored element, so the buffer holds — and must be bound at — a line that much
-    /// narrower than the width the values are served at
-    /// ([`MemData::from_tensor_quant`](crate::MemData) asserts the relation kernel-side).
-    pub fn narrowed(self, pack: usize) -> Self {
-        assert!(
-            self.vector_size.is_multiple_of(pack),
-            "VecTensorArg::narrowed: the served width ({}) must be a multiple of the packing \
-             factor ({pack}), else a line splits a stored element",
-            self.vector_size
-        );
-        VecTensorArg {
-            tensor: self.tensor,
-            vector_size: self.vector_size / pack,
-            pack,
-        }
+    /// The wrapped tensor back, for re-binding at another width.
+    pub(crate) fn into_tensor(self) -> TensorArg<R> {
+        self.tensor
     }
 }
 

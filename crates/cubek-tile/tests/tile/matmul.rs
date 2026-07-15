@@ -3,7 +3,6 @@
 
 use cubecl::{
     TestRuntime,
-    bytes::Bytes,
     cmma::{MatrixIdent, MatrixLayout},
     features::TypeUsage,
     ir::ElemType,
@@ -13,7 +12,7 @@ use cubecl::{
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
-    assert_equals_approx, pack_q_values,
+    assert_equals_approx, packed_q_input,
 };
 
 use cubek_tile::*;
@@ -2338,14 +2337,7 @@ fn run_register_matmul_quant_packed(
     let span = hi - lo + 1;
     let q: Vec<i32> = (0..m * k).map(|idx| lo + (idx as i32 % span)).collect();
 
-    let words = pack_q_values(&q, &scheme);
-    // Values-unit shape/strides; the buffer holds `m·k/pack` words.
-    let a_input = TensorBinding::<TestRuntime> {
-        handle: client.create(Bytes::from_elems(words)).binding(),
-        strides: vec![k, 1].into(),
-        shape: vec![m, k].into(),
-        runtime: core::marker::PhantomData,
-    };
+    let a_input = packed_q_input(&client, &[m, k], &q, &scheme);
 
     let a_dtype = u32::as_type_native_unchecked().storage_type();
     let q: Vec<f32> = q.iter().map(|&v| v as f32).collect();
@@ -2532,13 +2524,7 @@ fn run_register_matmul_quant_rhs(
     let span = hi - lo + 1;
     let q: Vec<i32> = (0..k * n).map(|idx| lo + (idx as i32 % span)).collect();
 
-    let words = pack_q_values(&q, &scheme);
-    let b_input = TensorBinding::<TestRuntime> {
-        handle: client.create(Bytes::from_elems(words)).binding(),
-        strides: vec![n, 1].into(),
-        shape: vec![k, n].into(),
-        runtime: core::marker::PhantomData,
-    };
+    let b_input = packed_q_input(&client, &[k, n], &q, &scheme);
 
     // One scale per (k row, N-group), k-major like the weight.
     let sn = n / bn;

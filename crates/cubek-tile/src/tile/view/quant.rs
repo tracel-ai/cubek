@@ -52,23 +52,14 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
             QuantStore::Native => {
                 Vector::<O, W>::cast_from(self.values.read(pos)) * Vector::new(scale)
             }
-            // Each element carries `pack` values: served lane `i · pack + j` is value `j` of
-            // element `i` — the order the buffer already has.
+            // Each element carries several values, laid down in storage order.
             QuantStore::PackedU32(_) => {
                 let raw = self.values.read(pos);
-                let bits = comptime!(self.scheme.size_bits_value());
-                let pack = comptime!(self.scheme.num_quants());
                 let mut out = Vector::<O, W>::empty();
                 #[unroll]
-                for i in 0..raw.vector_size() {
-                    // The store is a `u32` by construction, whatever `I` the buffer was
-                    // erased to; shifting needs a concrete integer, so recover it here.
-                    let word = u32::cast_from(raw.extract(i));
-                    #[unroll]
-                    for j in 0..pack {
-                        let q = unpack_signed(word, comptime!(j * bits), bits);
-                        out.insert(comptime!(i * pack + j), O::cast_from(q) * scale);
-                    }
+                for lane in 0..out.vector_size() {
+                    let q = unpack_lane(&raw, lane, comptime!(self.scheme));
+                    out.insert(lane, O::cast_from(q) * scale);
                 }
                 out
             }
@@ -84,17 +75,25 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
     }
 }
 
-/// The `bits`-wide value at `offset` in a packed `u32`, sign-extended: anything
-/// `≥ 2^(bits-1)` folds to `value - 2^bits` branchlessly (two's complement).
+/// Served lane `lane` of a packed line: value `lane % pack` of word `lane / pack`,
+/// sign-extended (anything `≥ 2^(bits-1)` folds to `value - 2^bits`, two's complement).
 #[cube]
-fn unpack_signed(word: u32, #[comptime] offset: usize, #[comptime] bits: usize) -> i32 {
+fn unpack_lane<I: Numeric, WP: Size>(
+    line: &Vector<I, WP>,
+    #[comptime] lane: usize,
+    #[comptime] scheme: QuantScheme,
+) -> i32 {
+    let bits = comptime!(scheme.size_bits_value());
+    let pack = comptime!(scheme.num_quants());
     let mask = u32::from_int((1 << bits) - 1);
     let sign_bit = u32::from_int(1 << (bits - 1));
     let two_pow_bits = 1 << bits;
 
-    let raw = (word >> u32::cast_from(offset)) & mask;
-    let is_negative = i32::cast_from(raw >= sign_bit);
-    i32::cast_from(raw) - is_negative * two_pow_bits
+    // The store is a `u32` by construction, whatever `I` the buffer was erased to; shifting
+    // needs a concrete integer, so recover it here.
+    let word = u32::cast_from(line.extract(comptime!(lane / pack)));
+    let raw = (word >> u32::cast_from(comptime!(lane % pack * bits))) & mask;
+    i32::cast_from(raw) - i32::cast_from(raw >= sign_bit) * two_pow_bits
 }
 
 /// The scales' [`GmemLayout`]: a window coordinate to the flat index of its block's scale, the dot

@@ -230,10 +230,14 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
     pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
         validate_scheme(&self.space, self.vector_size, scheme);
         // `vector_size` names the *served* width throughout; the binding is typed at the
-        // *storage* width, which a packed store narrows by its packing factor (a no-op for
-        // native's factor of 1). This is the only seam that knows the scheme, so the narrowing
-        // lives here rather than on every caller.
-        self.tensor = self.tensor.narrowed(scheme.num_quants());
+        // *storage* width, so re-bind the tensor as what it physically is — packed storage
+        // (a plain binding again for native's factor of 1). This is the only seam that knows
+        // the scheme, so the re-binding lives here rather than on every caller.
+        self.tensor = VecTensorArg::packed(
+            self.tensor.into_tensor(),
+            self.vector_size,
+            scheme.num_quants(),
+        );
         self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
         self
     }
