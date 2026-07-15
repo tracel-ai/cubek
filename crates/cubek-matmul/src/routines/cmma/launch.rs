@@ -23,6 +23,16 @@ use crate::{
     },
 };
 
+/// The register accumulate type the routine mandates, independent of how the caller built
+/// `dtypes` (some paths build a single-dtype `MatmulElems` that never upgrades): tensor
+/// cores accumulate `f16`/`bf16` in `f32`, and the epilogue casts back on drain, so the
+/// accumulator is always at least the output's precision. Reuses the canonical upgrade in
+/// [`MatmulElems::from_globals`]. Keying both the `MmaConfig` lookup and the kernel's `EA`
+/// type on this keeps selection and codegen consistent.
+fn mandated_acc(dtypes: &MatmulElems) -> StorageType {
+    MatmulElems::from_globals(&dtypes.as_global_elems()).acc_register
+}
+
 /// A cmma operand must be row-major contiguous: the transport addresses each window
 /// by a row stride off a scalar offset.
 #[allow(clippy::result_large_err)]
@@ -101,7 +111,8 @@ fn setup<R: Runtime>(
         max_cube_count: client.properties().hardware.max_cube_count,
     };
 
-    let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings)?;
+    let blueprint =
+        CmmaRoutine::blueprint(strategy, &problem, &device_settings, mandated_acc(dtypes))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -368,5 +379,6 @@ fn launch_kernel<D: OperandLaunch, R: Runtime>(
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
+        mandated_acc(dtypes),
     );
 }

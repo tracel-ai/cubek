@@ -16,7 +16,7 @@
 use std::fmt::Display;
 
 use cubecl::features::Tma as TmaFeature;
-use cubecl::{Runtime, features::MmaConfig};
+use cubecl::{Runtime, features::MmaConfig, ir::StorageType};
 use cubek_tile::Delivery;
 
 use crate::{
@@ -144,17 +144,21 @@ fn divisor_at_most(g: usize, cap: usize) -> usize {
 }
 
 impl CmmaRoutine {
-    /// Resolve `strategy` into a validated plan for `problem` on this device.
+    /// Resolve `strategy` into a validated plan for `problem` on this device. `acc` is the
+    /// register accumulate type (e.g. `f32` under an `f16` output); the selected
+    /// instruction's [`MmaConfig`] is keyed on it, since that is the accumulator the
+    /// kernel emits.
     #[allow(clippy::result_large_err)]
     pub fn blueprint<R: Runtime>(
         strategy: &BlueprintStrategy<(), CmmaRoutine>,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
+        acc: StorageType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(args) => {
-                Self::select(problem, device_settings, args.delivery)?
+                Self::select(problem, device_settings, args.delivery, acc)?
             }
         };
         // Pure plan validation first (backend-independent), the availability gate after.
@@ -182,6 +186,7 @@ impl CmmaRoutine {
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         delivery: Delivery,
+        acc: StorageType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let client = &device_settings.client;
         let plane_dim = client.properties().hardware.plane_size_max as usize;
@@ -193,6 +198,9 @@ impl CmmaRoutine {
             ));
         }
 
+        // The config is keyed on `acc` (the register accumulator the kernel emits), not
+        // the stored output `d.out`: for an f16 output the hardware config is
+        // a=f16,b=f16,cd=f32, and the epilogue casts f32 down on drain.
         let d = &problem.global_dtypes;
         let supported = |m: usize, n: usize, k: usize| {
             client
@@ -203,7 +211,7 @@ impl CmmaRoutine {
                 .contains(&MmaConfig {
                     a_type: d.lhs,
                     b_type: d.rhs,
-                    cd_type: d.out,
+                    cd_type: acc,
                     m: m as u32,
                     n: n as u32,
                     k: k as u32,
@@ -229,7 +237,7 @@ impl CmmaRoutine {
                     .matmul
                     .cmma
                     .iter()
-                    .find(|c| c.a_type == d.lhs && c.b_type == d.rhs && c.cd_type == d.out)
+                    .find(|c| c.a_type == d.lhs && c.b_type == d.rhs && c.cd_type == acc)
                     .map(|c| (c.m as usize, c.n as usize, c.k as usize))
             })
             .ok_or(MatmulSetupError::Unavailable(
@@ -249,10 +257,17 @@ impl CmmaRoutine {
         let planes_m = divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS));
         let planes_n = 1;
 
-        // Stage depth: two instruction columns per plane lane, snapped down to the
-        // deepest `d·ik` dividing `k`. Deeper stages lose residency (measured 4.87 at
-        // 64 vs 4.61 at 32 and 4.50 at 128 on square_4096 f16).
-        let stage_k = (1..=(2 * plane_dim / ik).max(1))
+        // Stage depth, snapped down to the deepest `d·ik` dividing `k`. The knee is set by
+        // the double-buffered smem the cooperative fill must keep resident, so it scales by
+        // a *byte* budget: an `f32` operand's stage is twice an `f16`'s at equal depth. An
+        // `f32` accumulator (always, now — tensor cores accumulate in `f32`) also spends
+        // twice the registers, tightening the budget vs the old `f16` accumulate. Measured
+        // on square_4096 (f32 acc): f16 operands peak at sk32 (4.71 vs 4.53 at 64), f32 at
+        // sk16 (3.67 vs 3.26 at 32, 2.31 at 64) — both ~64 stage-K bytes per row. The old
+        // f16-accumulate wanted twice that (sk64 at 4.87).
+        let stage_k_bytes = if acc.size() >= 4 { 64 } else { 128 };
+        let cap = (stage_k_bytes / d.lhs.size().max(1)).max(ik);
+        let stage_k = (1..=(cap / ik).max(1))
             .rev()
             .map(|d| d * ik)
             .find(|&sk| problem.k.is_multiple_of(sk))
