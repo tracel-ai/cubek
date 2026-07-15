@@ -10,8 +10,13 @@ use cubecl::std::tensor::{
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
 use cubecl::{
-    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
-    quant::scheme::QuantScheme, zspace::Shape,
+    TestRuntime,
+    bytes::Bytes,
+    client::ComputeClient,
+    prelude::CubePrimitive,
+    prelude::TensorArg,
+    quant::scheme::{QuantLevel, QuantScheme},
+    zspace::Shape,
 };
 use cubek_tile::{Space, Storage};
 
@@ -201,12 +206,14 @@ impl TileInputBuilder {
         self.build(|b: TestInputBuilder| b.uniform(seed, lo, hi))
     }
 
-    /// Packed-u32 quantized values, declared **in values**: the handle's shape and strides
-    /// count them while the device buffer holds the packed words (`num_quants` per `u32`,
-    /// low bits first along the innermost axis) — the binding convention the tile launch
-    /// expects for a packed operand. Pair with a scales tensor on the scheme's block grid.
-    /// Untiled only: packed storage has no physically tiled layout.
-    pub fn packed(self, q: &[i32], scheme: &QuantScheme) -> TileInput {
+    /// Finalize as a packed-u32 quantized input, minted whole: the values sweep the
+    /// scheme's signed range (a wrapping ramp, so sign extension is exercised) and are
+    /// packed `num_quants` per word; the scales are a distinct-per-block ramp
+    /// (`0.05 · (block + 1)`) on the scheme's block grid. The tile is declared **in
+    /// values** — its shape and strides count them while the buffer holds the words —
+    /// the binding convention the tile launch expects for a packed operand. Untiled only:
+    /// packed storage has no physically tiled layout.
+    pub fn packed(self, scheme: &QuantScheme) -> QuantizedTileInput {
         let levels = self
             .levels
             .expect("TileInput: set .untiled() before a finalizer");
@@ -218,27 +225,43 @@ impl TileInputBuilder {
         let shape: Vec<usize> = (0..rank)
             .map(|i| self.space.extent(self.space.axis_at(i)))
             .collect();
-        assert_eq!(
-            q.len(),
-            shape.iter().product::<usize>(),
-            "TileInput::packed: {} values do not fill the space {shape:?}",
-            q.len()
-        );
-        let words = crate::stubs::quant::pack_q_values(q, scheme);
+
+        let (lo, hi) = scheme.value.range();
+        let (lo, hi) = (lo as i32, hi as i32);
+        let span = hi - lo + 1;
+        let q: Vec<i32> = (0..shape.iter().product())
+            .map(|i| lo + (i as i32 % span))
+            .collect();
+        let words = crate::stubs::quant::pack_q_values(&q, scheme);
         let mut strides = vec![1usize; rank];
         for i in (0..rank - 1).rev() {
             strides[i] = strides[i + 1] * shape[i + 1];
         }
         let handle = self.client.create(Bytes::from_elems(words));
-        TileInput {
-            handle: TensorHandle::new(
-                handle,
-                shape,
-                strides,
-                u32::as_type_native_unchecked().storage_type(),
-            ),
-            space: self.space,
-            levels: 0,
+
+        let block = block_dims(scheme, &shape);
+        let grid = crate::stubs::quant::scales_shape(&shape, &block);
+        let scale_values: Vec<f32> = (0..grid.iter().product())
+            .map(|g| 0.05 * (g + 1) as f32)
+            .collect();
+        let scales = TestInput::builder(self.client, Shape::from(grid))
+            .custom(scale_values.clone())
+            .generate_without_host_data();
+
+        QuantizedTileInput {
+            tile: TileInput {
+                handle: TensorHandle::new(
+                    handle,
+                    shape,
+                    strides,
+                    u32::as_type_native_unchecked().storage_type(),
+                ),
+                space: self.space,
+                levels: 0,
+            },
+            scales,
+            q,
+            scale_values,
         }
     }
 
@@ -297,5 +320,36 @@ impl TileInputBuilder {
             space: self.space,
             levels: levels.len(),
         }
+    }
+}
+
+/// A packed-quantized input born whole — a quantized tensor is one thing (data, scales,
+/// scheme), so [`packed`](TileInputBuilder::packed) mints the pair together, plus the exact
+/// numbers behind both for host references.
+pub struct QuantizedTileInput {
+    pub tile: TileInput,
+    scales: TensorHandle<TestRuntime>,
+    /// The quant values, row-major in the logical shape.
+    pub q: Vec<i32>,
+    /// One scale per block, row-major over the scheme's block grid.
+    pub scale_values: Vec<f32>,
+}
+
+impl QuantizedTileInput {
+    /// Launch arg for the scales tensor.
+    pub fn scales_arg(&self) -> TensorArg<TestRuntime> {
+        self.scales.clone().binding().into_tensor_arg()
+    }
+}
+
+/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
+fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+    match scheme.level {
+        QuantLevel::Tensor => shape.to_vec(),
+        QuantLevel::Block(bs) => bs
+            .to_dim_vec(shape.len())
+            .iter()
+            .map(|&b| b as usize)
+            .collect(),
     }
 }

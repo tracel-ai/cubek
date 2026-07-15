@@ -2279,6 +2279,11 @@ fn register_matmul_quant_native_block_m() {
         .map(|idx| a_host.get_f32(&[idx / k, idx % k]))
         .collect();
 
+    let scale_vals: Vec<f32> = (0..m / bm).map(|g| 0.05 * (g + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
     run_register_matmul_quant(
         client,
         (m, n, k),
@@ -2287,6 +2292,8 @@ fn register_matmul_quant_native_block_m() {
         1,
         a_dtype,
         scheme,
+        scales.binding().into_tensor_arg(),
+        scale_vals,
         bm,
         q,
     );
@@ -2331,26 +2338,22 @@ fn run_register_matmul_quant_packed(
         return;
     }
 
-    // Deterministic quant values spanning the signed range, so sign extension is exercised.
-    let (lo, hi) = value.range();
-    let (lo, hi) = (lo as i32, hi as i32);
-    let span = hi - lo + 1;
-    let q: Vec<i32> = (0..m * k).map(|idx| lo + (idx as i32 % span)).collect();
-
-    let a_input = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
+    let a = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
         .untiled()
-        .packed(&q, &scheme);
+        .packed(&scheme);
 
     let a_dtype = u32::as_type_native_unchecked().storage_type();
-    let q: Vec<f32> = q.iter().map(|&v| v as f32).collect();
+    let q: Vec<f32> = a.q.iter().map(|&v| v as f32).collect();
     run_register_matmul_quant(
         client,
         (m, n, k),
         tk,
-        a_input.tensor_arg(1),
+        a.tile.tensor_arg(1),
         pack,
         a_dtype,
         scheme,
+        a.scales_arg(),
+        a.scale_values.clone(),
         bm,
         q,
     );
@@ -2366,16 +2369,13 @@ fn run_register_matmul_quant(
     a_width: usize,
     a_dtype: StorageType,
     scheme: QuantScheme,
+    scales_arg: TensorArg<TestRuntime>,
+    scale_vals: Vec<f32>,
     bm: usize,
     q: Vec<f32>,
 ) {
     let space = Space::new(&[(M, m), (N, n), (K, k)])
         .with_partitioner(register_staged_partitioner(4, 4, tk));
-
-    let scale_vals: Vec<f32> = (0..m / bm).map(|g| 0.05 * (g + 1) as f32).collect();
-    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
@@ -2390,7 +2390,7 @@ fn run_register_matmul_quant(
         CubeCount::new_single(),
         CubeDim::new_single(),
         StridedTileArgLaunch::strided(a_arg, a_width, space.project(&[M, K]), Storage::of(2, 2))
-            .quantized(scales.binding().into_tensor_arg(), scheme),
+            .quantized(scales_arg, scheme),
         StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
         StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         a_dtype,
@@ -2520,27 +2520,15 @@ fn run_register_matmul_quant_rhs(
         return;
     }
 
-    // Deterministic quant values spanning the signed range.
-    let (lo, hi) = value.range();
-    let (lo, hi) = (lo as i32, hi as i32);
-    let span = hi - lo + 1;
-    let q: Vec<i32> = (0..k * n).map(|idx| lo + (idx as i32 % span)).collect();
-
-    // One scale per (k row, N-group), k-major like the weight.
-    let sn = n / bn;
-    let scale_vals: Vec<f32> = (0..k * sn).map(|g| 0.05 * (g + 1) as f32).collect();
-    let scales = TestInput::builder(client.clone(), shape![k, sn])
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
-
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(plan);
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
+    // The weight and its per-(k, N-group) scales, minted together.
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
-        .packed(&q, &scheme);
+        .packed(&scheme);
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
@@ -2556,10 +2544,10 @@ fn run_register_matmul_quant_rhs(
         launcher.cube_dim(),
         launcher.arg(a.handle().binding()).subspace(&[M, K]).build(),
         launcher
-            .arg(b.handle().binding())
+            .arg(b.tile.handle().binding())
             .subspace(&[K, N])
             .vectorize(pack)
-            .quantized(scales.binding().into_tensor_arg(), scheme)
+            .quantized(b.scales_arg(), scheme)
             .build(),
         // The register microkernel lines the accumulator at the RHS's served width.
         launcher
@@ -2573,11 +2561,14 @@ fn run_register_matmul_quant_rhs(
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     // A is arange over (m, k): a[i, p] = i·k + p.
+    let sn = n / bn;
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
             let (i, j) = (idx / n, idx % n);
             (0..k)
-                .map(|p| ((i * k + p) as f32) * (q[p * n + j] as f32) * scale_vals[p * sn + j / bn])
+                .map(|p| {
+                    ((i * k + p) as f32) * (b.q[p * n + j] as f32) * b.scale_values[p * sn + j / bn]
+                })
                 .sum()
         })
         .collect();

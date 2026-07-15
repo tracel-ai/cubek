@@ -163,24 +163,11 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         return;
     }
 
-    // Deterministic quant values spanning the scheme's signed range, so sign extension is
-    // exercised rather than assumed.
-    let (lo, hi) = value.range();
-    let (lo, hi) = (lo as i32, hi as i32);
-    let span = hi - lo + 1;
-    let q: Vec<i32> = (0..m * n).map(|k| lo + (k as i32 % span)).collect();
-
     let space = Space::new(&[(M, m), (N, n)]);
     let input = TileInput::builder(&client, space.clone())
         .untiled()
-        .packed(&q, &scheme);
+        .packed(&scheme);
     let output = TileInput::builder(&client, space).untiled().zeros();
-
-    let (sm, sn) = (m / bm, n / bn);
-    let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
-    let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
 
     let input_dtype = u32::as_type_native_unchecked().storage_type();
     let out_dtype = f32::as_type_native_unchecked().storage_type();
@@ -189,8 +176,13 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         CubeCount::new_single(),
         CubeDim::new_single(),
         // The served line is one whole `u32`: `pack` values, so a physical width of 1.
-        StridedTileArgLaunch::strided(input.tensor_arg(1), pack, input.space(), input.storage())
-            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(
+            input.tile.tensor_arg(1),
+            pack,
+            input.tile.space(),
+            input.tile.storage(),
+        )
+        .quantized(input.scales_arg(), scheme),
         // The copy moves whole lines, so the destination is lined at the served width too
         // (the arg stays scalar-unit; `strided` does the lining).
         StridedTileArgLaunch::strided(output.tensor_arg(1), pack, output.space(), output.storage()),
@@ -199,13 +191,14 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     );
 
     let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let sn = n / bn;
     let shape = Shape::from(vec![m, n]);
     let expected = HostData {
         data: HostDataVec::F32(
             (0..m * n)
                 .map(|k| {
                     let (i, j) = (k / n, k % n);
-                    q[k] as f32 * scale_vals[(i / bm) * sn + (j / bn)]
+                    input.q[k] as f32 * input.scale_values[(i / bm) * sn + (j / bn)]
                 })
                 .collect(),
         ),

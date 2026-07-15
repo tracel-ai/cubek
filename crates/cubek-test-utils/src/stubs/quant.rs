@@ -181,7 +181,7 @@ fn quant_mask(size_quant: usize) -> u32 {
 
 /// Shape of the per-block scale grid: each dimension divided by its block
 /// extent.
-fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
+pub(crate) fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
     assert_eq!(
         shape.len(),
         block_dims.len(),
