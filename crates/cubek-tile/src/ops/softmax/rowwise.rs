@@ -45,7 +45,7 @@ impl<EA: Float> Tile<EA> {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let size!(W) = self.vector_size();
-        let view = self.flat::<EA, W>();
+        let view = self.flat::<W>();
 
         for ri in 0..rpu {
             acc[ri] = base[ri];
@@ -85,7 +85,7 @@ impl<EA: Float> Tile<EA> {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let size!(W) = self.vector_size();
-        let view = self.flat::<EA, W>();
+        let view = self.flat::<W>();
 
         for ri in 0..rpu {
             acc[ri] = EA::from_int(0);
@@ -104,7 +104,7 @@ impl<EA: Float> Tile<EA> {
         let cols = comptime!(self.space.extent_at(1));
         let size!(W) = self.vector_size();
         let size!(WP) = dest.vector_size();
-        let src = self.flat::<EA, W>();
+        let src = self.flat::<W>();
         let mut dst = dest.flat_mut::<WP>();
 
         for ri in 0..rpu {

@@ -1541,9 +1541,9 @@ fn cmma_matmul<E: Numeric>(
     c.copy_from(&c_smem_tile);
 }
 
-/// Quantized `A`: gmem `I` (i8) dequantized into smem via the `dequantize` op (which threads
-/// the storage type `I`) instead of `copy_from` (which can't); `B`/`C` plain `E`. The cmma
-/// path then runs entirely in `E`. Mirrors [`cmma_matmul`] otherwise.
+/// Quantized `A`: gmem `I` (i8) dequantized into smem by the plain `copy_from`, which recovers
+/// the storage element from the scheme on its own; `B`/`C` plain `E`. The cmma path then runs
+/// entirely in `E`. Mirrors [`cmma_matmul`] otherwise.
 #[cube(launch)]
 fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     a: &StridedTileArg<'_, I>,
@@ -1561,7 +1561,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
         1usize,
         comptime!(StagePlan::for_space(&a.space)),
     );
-    a_smem.dequantize_from::<I>(&a);
+    a_smem.copy_from(&a);
 
     let mut b_smem = MemData::smem(
         comptime!(b.space.clone()),
@@ -1615,9 +1615,9 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     c.copy_from(&c_smem);
 }
 
-/// Block-quantized `A` (block along `M`): `A`'s space tiles `M` into `bm`-deep blocks so the
-/// smem dequant fill descends to one scale per block; the cmma fragment still reads the whole
-/// `8×8` smem. Validates block windowing survives into the matmul stage.
+/// Block-quantized `A` (block along `M`): one flat `8×8` smem fill spans both scale blocks, the
+/// per-line lookup picking each line's scale — `A`'s space needs no block sub-level. The cmma
+/// fragment then reads the whole `8×8` smem. Validates block windowing into the matmul stage.
 #[test]
 fn cmma_matmul_quant_block_m_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1653,13 +1653,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    // A's space tiles M into `bm`-blocks so the dequant fill descends to one scale per block.
-    let a_space = Tiling::new()
-        .extents(&[(M, 8), (K, 8)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(M, Cut::sequential(bm)).axis(K, Cut::sequential(8))
-        })
-        .leaf(Leaf::Register);
+    let a_space = Space::new(&[(M, 8), (K, 8)]);
     let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
@@ -1701,9 +1695,9 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .enforce()
 }
 
-/// Block-quantized `A` along `K` (the contraction axis): the scale changes partway through
-/// each dot product. `A`'s space tiles `K` into `bk`-deep blocks so the smem dequant picks the
-/// right scale per K-block. The case that matters for quantized-weight matmul.
+/// Block-quantized `A` along `K` (the contraction axis): the scale changes partway through each
+/// dot product, and the per-line lookup picks the right one mid-row. The case that matters for
+/// quantized-weight matmul.
 #[test]
 fn cmma_matmul_quant_block_k_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1739,13 +1733,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    // A's space tiles K into `bk`-blocks so the dequant fill picks a scale per K-block.
-    let a_space = Tiling::new()
-        .extents(&[(M, 8), (K, 8)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(M, Cut::sequential(8)).axis(K, Cut::sequential(bk))
-        })
-        .leaf(Leaf::Register);
+    let a_space = Space::new(&[(M, 8), (K, 8)]);
     let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
@@ -1788,8 +1776,8 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 
 /// Per-tensor-quantized `A` (i8) through the resident K walk, staged: `K = 16` runs in two
 /// `8`-deep K regions, and each region's smem fill dequantizes `A` on its own — the same
-/// `launch_resident_matmul_quant` body as the plain K walk, no `dequantize_from` spelled out.
-/// The self-describing fill in action. Tensor-core only.
+/// `launch_resident_matmul_quant` body as the plain K walk. The self-describing fill in action.
+/// Tensor-core only.
 #[test]
 fn cmma_matmul_quant_k_walk() {
     check_cmma_matmul_quant_k_walk(16, Schedule::Staged);

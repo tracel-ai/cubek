@@ -109,7 +109,7 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 /// output: the dequantized output tensor
 ///
 /// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
-/// storage element) is only threaded so the read leaf can downcast the buffer.
+/// storage element) only names the binding's element, the copy recovers it from the scheme.
 pub fn dequantize<I: Numeric, O: Numeric>(
     input: &StridedTileArg<'_, I>,
     output: &StridedTileArg<'_, O>,
@@ -118,5 +118,5 @@ pub fn dequantize<I: Numeric, O: Numeric>(
 ) {
     let input = input.tile_dequant::<O>();
     let mut output = output.tile();
-    output.dequantize_from::<I>(&input);
+    output.copy_from(&input);
 }
