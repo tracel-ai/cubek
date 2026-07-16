@@ -1,6 +1,7 @@
 use cubecl::comptime;
 use cubecl::cube;
 use cubecl::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::components::instructions::AccumulatorFormat;
 use crate::components::instructions::plane_topk_insert;
@@ -12,40 +13,129 @@ use crate::{
 };
 use cubecl::frontend::Numeric;
 
+/// Which of a reduction's two results the instruction writes out.
+///
+/// The reduction itself is identical in all three cases: the accumulator always
+/// holds candidate values and, when indices are wanted, their coordinates. Only
+/// [`ReduceInstruction::requirements`] and the `to_output_*` conversions differ,
+/// which is why one instruction serves both the `TopK` and `ArgTopK` configs.
+#[derive_cube_comptime]
+#[derive(Serialize, Deserialize)]
+pub enum ReduceOutputMode {
+    /// Write only the top values.
+    Values,
+    /// Write only the coordinates of the top values.
+    Indices,
+    /// Write both, in a single launch.
+    Both,
+}
+
+impl ReduceOutputMode {
+    /// Whether coordinates must be tracked through the reduction.
+    pub fn has_indices(&self) -> bool {
+        !matches!(self, ReduceOutputMode::Values)
+    }
+}
+
+#[derive_cube_comptime]
+#[derive(Serialize, Deserialize)]
+pub struct TopKConfig {
+    pub k: usize,
+    pub output: ReduceOutputMode,
+}
+
 #[derive(Debug, CubeType, Clone)]
 pub struct TopK {
     #[cube(comptime)]
     pub k: usize,
+    #[cube(comptime)]
+    pub output: ReduceOutputMode,
 }
 
 impl ReduceFamily for TopK {
     type Instruction<P: ReducePrecision> = Self;
-    type Config = usize;
+    type Config = TopKConfig;
 }
 
-#[derive(CubeType)]
-pub struct TopkAccumulator<E: Scalar, S: Size> {
-    pub elements: Array<Vector<E, S>>,
-    pub coordinates: Array<Vector<u32, S>>,
+/// Insert `(insert_val, insert_coord)` into the descending-sorted `elements`
+/// (and `coordinates`, when tracked), pushing the smallest slot out.
+///
+/// Ties break towards the lower coordinate, matching the CPU reference. When
+/// `has_coords` is false `coordinates` and `insert_coord` are untouched, so the
+/// values-only path emits no index arithmetic at all.
+#[cube]
+pub(crate) fn topk_insert<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Value<Vector<u32, S>>,
+    insert_val: Vector<N, S>,
+    insert_coord: Vector<u32, S>,
+    #[comptime] k: usize,
+    #[comptime] has_coords: bool,
+) {
+    let mut insert_val = insert_val;
+
+    if has_coords {
+        let mut insert_coord = insert_coord;
+        let coords = coordinates.multiple_mut();
+
+        for j in 0..k {
+            let to_keep = select_many(
+                elements[j].equal(&insert_val),
+                coords[j].less_than(&insert_coord),
+                elements[j].greater_than(&insert_val),
+            );
+
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
+
+            let next_coord = select_many(to_keep, insert_coord, coords[j]);
+            coords[j] = select_many(to_keep, coords[j], insert_coord);
+            insert_coord = next_coord;
+        }
+    } else {
+        for j in 0..k {
+            let to_keep = elements[j].greater_than(&insert_val);
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
+        }
+    }
 }
 
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
     elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
+    /// Empty unless the instruction tracks coordinates.
+    args: Sequence<Shared<[Vector<u32, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
+    #[cube(comptime)]
+    has_coords: bool,
 }
 
 #[cube]
 impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
+        let has_coords = comptime!(inst.output.has_indices());
+
         let mut elements = Sequence::new();
         for _ in 0..inst.k {
             elements.push(Shared::new_slice(length));
         }
+
+        let mut args = Sequence::new();
+        if has_coords {
+            for _ in 0..inst.k {
+                args.push(Shared::new_slice(length));
+            }
+        }
+
         TopKSharedAccumulator::<P> {
             elements,
+            args,
             k: inst.k,
+            has_coords,
         }
     }
 
@@ -55,9 +145,21 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
         for i in 0..accumulator.k {
             values[i] = accumulator.elements[i][index];
         }
+
+        let args = if comptime!(accumulator.has_coords) {
+            let mut args = Array::new(accumulator.k);
+            #[unroll]
+            for i in 0..accumulator.k {
+                args[i] = accumulator.args[i][index];
+            }
+            Value::new_Multiple(args)
+        } else {
+            Value::new_None()
+        };
+
         Accumulator::<P> {
             elements: Value::new_Multiple(values),
-            args: Value::new_None(),
+            args,
         }
     }
 
@@ -69,16 +171,28 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             let shared_acc = &mut accumulator.elements[i];
             shared_acc[index] = acc;
         }
+
+        if comptime!(accumulator.has_coords) {
+            let args = item.args.multiple();
+            #[unroll]
+            for i in 0..accumulator.k {
+                let arg = args[i];
+                let shared_arg_acc = &mut accumulator.args[i];
+                shared_arg_acc[index] = arg;
+            }
+        }
     }
 }
 
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     type SharedAccumulator = TopKSharedAccumulator<P>;
-    type Config = usize;
+    type Config = TopKConfig;
 
-    fn requirements(_this: &Self) -> super::ReduceRequirements {
-        ReduceRequirements { coordinates: false }
+    fn requirements(this: &Self) -> super::ReduceRequirements {
+        ReduceRequirements {
+            coordinates: comptime!(this.output.has_indices()),
+        }
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
@@ -86,7 +200,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn from_config(#[comptime] config: Self::Config) -> Self {
-        TopK { k: config }
+        TopK {
+            k: config.k,
+            output: config.output,
+        }
     }
 
     fn null_input(_this: &Self) -> Vector<P::EI, P::SI> {
@@ -100,9 +217,20 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             elements[i] = Vector::new(P::EA::min_value());
         }
 
+        let args = if comptime!(this.output.has_indices()) {
+            let mut args = Array::new(comptime!(this.k));
+            #[unroll]
+            for i in 0..this.k {
+                args[i] = Vector::new(u32::MAX);
+            }
+            Value::new_Multiple(args)
+        } else {
+            Value::new_None()
+        };
+
         Accumulator::<P> {
             elements: Value::new_Multiple(elements),
-            args: Value::new_None(),
+            args,
         }
     }
 
@@ -112,6 +240,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
+        let has_coords = comptime!(this.output.has_indices());
         let elements = accumulator.elements.multiple_mut();
 
         match reduce_step {
@@ -122,48 +251,57 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
                     Vector::cast_from(item.elements),
                     &item.args,
                     this.k,
-                    false,
+                    has_coords,
                 );
             }
             ReduceStep::Identity => {
-                let mut insert_item = Vector::cast_from(item.elements);
+                let insert_coord = if has_coords {
+                    item.args.item()
+                } else {
+                    Vector::new(u32::MAX)
+                };
 
-                for j in 0..this.k {
-                    let acc_item = elements[j];
-                    let keep = acc_item.greater_than(&insert_item);
-
-                    elements[j] = select_many(keep, acc_item, insert_item);
-                    insert_item = select_many(keep, insert_item, acc_item);
-                }
+                topk_insert::<P::EA, P::SI>(
+                    elements,
+                    &mut accumulator.args,
+                    Vector::cast_from(item.elements),
+                    insert_coord,
+                    this.k,
+                    has_coords,
+                );
             }
         }
     }
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        plane_topk_merge(
+        plane_topk_merge::<P::EA, P::SI>(
             accumulator.elements.multiple_mut(),
             &mut accumulator.args,
             this.k,
-            false,
+            comptime!(this.output.has_indices()),
         );
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let acc_elements = accumulator.elements.multiple_mut();
+        let has_coords = comptime!(this.output.has_indices());
+        let elements = accumulator.elements.multiple_mut();
         let other_elements = other.elements.multiple();
 
         for i in 0..this.k {
-            let mut item = other_elements[i];
-            for j in 0..this.k {
-                let current_item = acc_elements[j];
-                let keep = current_item.greater_than(&item);
+            let insert_coord = if has_coords {
+                other.args.multiple()[i]
+            } else {
+                Vector::new(u32::MAX)
+            };
 
-                let new_top_item = select_many(keep, current_item, item);
-                let new_rest_item = select_many(keep, item, current_item);
-
-                acc_elements[j] = new_top_item;
-                item = new_rest_item;
-            }
+            topk_insert::<P::EA, P::SI>(
+                elements,
+                &mut accumulator.args,
+                other_elements[i],
+                insert_coord,
+                this.k,
+                has_coords,
+            );
         }
     }
 
@@ -172,34 +310,31 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> Value<Out> {
-        let accumulators = accumulator.elements.multiple();
-        let vector_size = accumulators[0].size().comptime();
+        let mut out = Array::new(this.k);
 
-        let mut topk = Array::new(this.k);
-        #[unroll]
-        for slot in 0..this.k {
-            topk[slot] = Out::min_value();
-        }
-
-        #[unroll]
-        for i in 0..this.k {
-            #[unroll]
-            for j in 0..vector_size {
-                let mut element = Out::cast_from(accumulators[i].extract(j));
-
+        match comptime!(this.output) {
+            ReduceOutputMode::Values => {
+                let values = topk_finalize_values::<P, Out>(&accumulator, this.k);
                 #[unroll]
-                for slot in 0..this.k {
-                    let current = topk[slot];
-
-                    let keep = current > element;
-
-                    topk[slot] = select(keep, current, element);
-                    element = select(keep, element, current);
+                for i in 0..this.k {
+                    out[i] = values[i];
                 }
+            }
+            ReduceOutputMode::Indices => {
+                let (_values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
+                #[unroll]
+                for i in 0..this.k {
+                    out[i] = Out::cast_from(coords[i]);
+                }
+            }
+            ReduceOutputMode::Both => {
+                comptime!(unimplemented!(
+                    "ReduceOutputMode::Both needs the dual-output writer"
+                ));
             }
         }
 
-        Value::new_Multiple(topk)
+        Value::new_Multiple(out)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -207,14 +342,122 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> Value<Vector<Out, P::SI>> {
-        let acc_values = accumulator.elements.multiple();
         let mut output = Array::new(this.k);
 
-        #[unroll]
-        for i in 0..this.k {
-            output[i] = Vector::cast_from(acc_values[i]);
+        match comptime!(this.output) {
+            ReduceOutputMode::Values => {
+                let acc_values = accumulator.elements.multiple();
+                #[unroll]
+                for i in 0..this.k {
+                    output[i] = Vector::cast_from(acc_values[i]);
+                }
+            }
+            ReduceOutputMode::Indices => {
+                let acc_args = accumulator.args.multiple();
+                #[unroll]
+                for i in 0..this.k {
+                    output[i] = Vector::cast_from(acc_args[i]);
+                }
+            }
+            ReduceOutputMode::Both => {
+                comptime!(unimplemented!(
+                    "ReduceOutputMode::Both needs the dual-output writer"
+                ));
+            }
         }
 
         Value::new_Multiple(output)
     }
+}
+
+/// Collapse the `k * vector_size` accumulator candidates down to the final `k`
+/// values, for the parallel (reduce axis is the vectorized axis) layout.
+///
+/// Coordinates are not tracked, so ties are broken arbitrarily. Use
+/// [`topk_finalize_with_coords`] when indices are wanted.
+#[cube]
+fn topk_finalize_values<P: ReducePrecision, Out: Numeric>(
+    accumulator: &Accumulator<P>,
+    #[comptime] k: usize,
+) -> Array<Out> {
+    let vals = accumulator.elements.multiple();
+    let vector_size = vals[0].size().comptime();
+
+    let mut topk = Array::new(k);
+    #[unroll]
+    for slot in 0..k {
+        topk[slot] = Out::min_value();
+    }
+
+    #[unroll]
+    for i in 0..k {
+        #[unroll]
+        for j in 0..vector_size {
+            let mut element = Out::cast_from(vals[i].extract(j));
+
+            #[unroll]
+            for slot in 0..k {
+                let current = topk[slot];
+                let keep = current > element;
+
+                topk[slot] = select(keep, current, element);
+                element = select(keep, element, current);
+            }
+        }
+    }
+
+    topk
+}
+
+/// Collapse the `k * vector_size` accumulator candidates down to the final `k`
+/// values *and* their coordinates, for the parallel layout.
+///
+/// Ties break towards the lower coordinate, matching the CPU reference. The
+/// accumulator must have been built with coordinate tracking on.
+#[cube]
+fn topk_finalize_with_coords<P: ReducePrecision>(
+    accumulator: &Accumulator<P>,
+    #[comptime] k: usize,
+) -> (Array<P::EA>, Array<u32>) {
+    let vals = accumulator.elements.multiple();
+    let coords = accumulator.args.multiple();
+    let vector_size = coords[0].size().comptime();
+
+    let mut topk_vals = Array::new(k);
+    let mut topk_coords = Array::new(k);
+
+    #[unroll]
+    for slot in 0..k {
+        topk_vals[slot] = P::EA::min_value();
+        topk_coords[slot] = u32::MAX;
+    }
+
+    #[unroll]
+    for i in 0..k {
+        #[unroll]
+        for j in 0..vector_size {
+            let mut value = vals[i].extract(j);
+            let mut coordinate = coords[i].extract(j);
+
+            #[unroll]
+            for slot in 0..k {
+                let current_value = topk_vals[slot];
+                let current_coordinate = topk_coords[slot];
+
+                let to_keep = select(
+                    current_value == value,
+                    current_coordinate < coordinate,
+                    current_value > value,
+                );
+
+                topk_vals[slot] = select(to_keep, current_value, value);
+                topk_coords[slot] = select(to_keep, current_coordinate, coordinate);
+
+                value = select(to_keep, value, current_value);
+                coordinate = select(to_keep, coordinate, current_coordinate);
+            }
+        }
+    }
+
+    (topk_vals, topk_coords)
 }
