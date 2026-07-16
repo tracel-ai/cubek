@@ -45,15 +45,36 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
 /// Loop over every (strategy, problem) for `category`, run each at 10 samples,
 /// and print the resulting durations using the category's preferred
 /// [`cubecl::benchmark::TimingMethod`]. Used by `benches/*.rs` via [`run_bench!`].
+///
+/// Three env vars narrow or lengthen a run, which matters on a GPU whose clocks
+/// idle low (a desktop card at 210MHz of a 3150MHz max, say): a handful of short
+/// samples then gets measured while the clocks are still ramping, and identical
+/// kernels can differ by the ratio of those two clocks. Isolating one case and
+/// raising the sample count is the difference between a usable number and noise.
+///
+/// * `CUBEK_BENCH_PROBLEM`  — substring; keep only matching problem ids
+/// * `CUBEK_BENCH_STRATEGY` — substring; keep only matching strategy ids
+/// * `CUBEK_BENCH_SAMPLES`  — sample count (default 10)
 pub fn run_category(category: &dyn BenchmarkCategory) {
     use cubecl::benchmark::BenchmarkDurations;
 
-    const SAMPLES: usize = 10;
+    let problem_filter = std::env::var("CUBEK_BENCH_PROBLEM").unwrap_or_default();
+    let strategy_filter = std::env::var("CUBEK_BENCH_STRATEGY").unwrap_or_default();
+    let samples: usize = std::env::var("CUBEK_BENCH_SAMPLES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
 
     for problem in category.problems() {
+        if !problem.id.contains(&problem_filter) {
+            continue;
+        }
         for strategy in category.strategies() {
+            if !strategy.id.contains(&strategy_filter) {
+                continue;
+            }
             println!("---- {} / {} ----", strategy.label, problem.label);
-            match category.run(&strategy.id, &problem.id, SAMPLES) {
+            match category.run(&strategy.id, &problem.id, samples) {
                 Ok(samples) => {
                     if let Some(tflops) = samples.tflops {
                         println!("{tflops:.3} TFLOPS");
