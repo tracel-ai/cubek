@@ -207,8 +207,12 @@ impl<
                 // The mask may broadcast over batch/head (`[1, 1, S, S]`), so it
                 // needs the *query's* `num_heads` to select its slice, not its own
                 // (possibly size-1) head dimension.
-                let layout =
-                    AttentionGlobalLayout::new(&mask, batch_index, num_heads, config.mask_gmem_config);
+                let layout = AttentionGlobalLayout::new(
+                    &mask,
+                    batch_index,
+                    num_heads,
+                    config.mask_gmem_config,
+                );
 
                 MaskReader::new_materialized(
                     stage_q_offset,
@@ -232,8 +236,12 @@ impl<
         #[comptime] config: Self::Config,
     ) -> Self::Writer<'static> {
         let num_heads = out.shape(1) as u32;
-        let layout =
-            AttentionGlobalLayout::new(&out, batch_index, num_heads, config.writer_config.gmem_config);
+        let layout = AttentionGlobalLayout::new(
+            &out,
+            batch_index,
+            num_heads,
+            config.writer_config.gmem_config,
+        );
         let out = out.into_view_mut(layout);
         let shape = out.shape();
 
