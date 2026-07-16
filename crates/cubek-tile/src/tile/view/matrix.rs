@@ -19,6 +19,7 @@ pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 /// A [`Layout`] mapping a matrix coordinate `(row, col)` to the tile's source
 /// coordinate `[batches…, row, col]`: leading batch axes pinned, trailing two exposed.
 #[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct BatchMatrix {
     batches: CoordsDyn,
     tile_shape: Coords2d,
@@ -112,6 +113,27 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::matrix_mut: a cmma fragment has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
+        }
+    }
+
+    /// The `i`-th batch matrix as a quantization-transparent view: a plain tile serves a bare
+    /// `Direct` read, a quantized one dequantizes each `(row, col)` per its scheme (`I`/`WP` the
+    /// storage element and physical line, as [`copy_from`](Tile::copy_from) recovers them). The
+    /// dequant-at-read twin of [`matrix`](Tile::matrix) — a leaf reads a quantized operand with no
+    /// dequantize-into-`f32` fill.
+    pub fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
+        &self,
+        i: usize,
+    ) -> TileView<'_, T, I, WP, W, Coords2d> {
+        let layout = self.batch_matrix(i);
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.matrix_transparent::<I, WP, W>(layout),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("Tile::matrix_transparent: a cmma fragment has no memory view")
+            }
+            TileKind::TmaGmem(_) => {
+                panic!("Tile::matrix_transparent: a tma source has no element view")
+            }
         }
     }
 }

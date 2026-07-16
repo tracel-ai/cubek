@@ -18,9 +18,17 @@ impl Space {
     }
 
     /// `plane_size × plane_count`. Plane length is the hardware's (`1` on CPU, the warp
-    /// width on GPU).
+    /// width on GPU). `Unit` axes ride those `plane_size` lanes, so their instance product
+    /// must be exactly `plane_size` (or `1`, no Unit split) — a mis-sized split would idle
+    /// or race lanes. A deferred `PlaneLanes` count panics here: launch through
+    /// [`launcher`](Space::launcher), which stamps it.
     pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>) -> CubeDim {
         let plane_size = client.properties().hardware.plane_size_max;
+        let lanes = instances_count(self, ComputeScope::Unit);
+        assert!(
+            lanes == 1 || lanes == plane_size,
+            "cube_dim: Unit axes must partition exactly plane_size ({plane_size}) lanes, got {lanes}"
+        );
         CubeDim::new_2d(plane_size, instances_count(self, ComputeScope::Plane))
     }
 }

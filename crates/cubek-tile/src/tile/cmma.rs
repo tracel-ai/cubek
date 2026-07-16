@@ -249,6 +249,11 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
                 Extent::Static(e) => Some(e.div_ceil(edge).div_ceil(n)),
                 Extent::Dynamic => None,
             },
+            Coverage::PlaneLanes => {
+                panic!(
+                    "Coverage::PlaneLanes: unresolved Unit lane count; launch through space.launcher(client)"
+                )
+            }
         },
     }
 }

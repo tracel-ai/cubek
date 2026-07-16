@@ -1,38 +1,50 @@
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore},
+    // `Coordinates` is referenced only as a bound (fully qualified below): importing the trait
+    // would pull its `u32: Coordinates::from_int` into scope and clash with `Numeric::from_int`
+    // in `unpack_lane`.
     std::tensor::layout::{Coords1d, CoordsDyn, Layout, LayoutExpand},
 };
 
 use crate::*;
 
 /// The `Quantized` arm of a [`TileView`]: the storage element `I` the buffer truly holds, and the
-/// scales as a second view over that same window (see [`ScaleLayout`]). Both are flat and take the
-/// same [`Coords1d`], so a read pairs a line with its own scale by construction. Nothing here is
-/// typed in the served element — that is only what a [`read`](QuantizedView::read) is asked for.
+/// scales as a second view over that same window (see [`ScaleLayout`]). Both take the same
+/// coordinate `C`, so a read pairs a line with its own scale by construction. `C` is
+/// [`Coords1d`] for a flat scan ([`flat_transparent`](crate::MemData::flat_transparent)) or
+/// [`Coords2d`](cubecl::std::tensor::layout::Coords2d) for a matrix leaf
+/// ([`matrix_transparent`](crate::MemData::matrix_transparent)) — the dequant is the same either
+/// way. Nothing here is typed in the served element — that is only what a
+/// [`read`](QuantizedView::read) is asked for.
 ///
 /// `WP` is the *physical* line: `Vector<I, WP>`, what the buffer is grouped into. The *served*
 /// line is named per [`read`](QuantizedView::read) instead of on the struct, since it is only
 /// meaningful at a read: a packed store yields `WP · num_quants` values per line, a
 /// [`Native`](QuantStore::Native) one exactly `WP`. Either way one physical line is one served
-/// line, so a position means the same thing to the values, the scales and the [`FlatLayout`]
-/// above them — only the width of the result changes.
+/// line, so a position means the same thing to the values and the scales — only the width of the
+/// result changes.
 #[derive(CubeType)]
-pub struct QuantizedView<'a, I: Numeric, WP: Size> {
-    values: FlatView<'a, Vector<I, WP>>,
-    scales: FlatView<'a, f32>,
+pub struct QuantizedView<'a, I: Numeric, WP: Size, C: cubecl::std::tensor::layout::Coordinates + 'a>
+{
+    /// `pub(crate)` so [`TileView::check`](crate::TileView) can read the overhang flag off the
+    /// values without a separate accessor.
+    pub(crate) values: MaskedView<'a, Vector<I, WP>, C>,
+    scales: MaskedView<'a, f32, C>,
     #[cube(comptime)]
     scheme: QuantScheme,
 }
 
 #[cube]
-impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
+impl<'a, I: Numeric, WP: Size, C: cubecl::std::tensor::layout::Coordinates + 'a>
+    QuantizedView<'a, I, WP, C>
+{
     pub fn new(
-        values: FlatView<'a, Vector<I, WP>>,
-        scales: FlatView<'a, f32>,
+        values: MaskedView<'a, Vector<I, WP>, C>,
+        scales: MaskedView<'a, f32, C>,
         #[comptime] scheme: QuantScheme,
     ) -> Self {
-        QuantizedView::<'a, I, WP> {
+        QuantizedView::<'a, I, WP, C> {
             values,
             scales,
             scheme,
@@ -45,8 +57,8 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
     /// One scale per line, broadcast across it: a line never straddles a block
     /// ([`quantized`](crate::StridedTileArgLaunch::quantized) rejects that at launch), so the
     /// [`ScaleLayout`] resolves the whole line's block in one read.
-    pub fn read<O: Numeric, W: Size>(&self, pos: Coords1d) -> Vector<O, W> {
-        let scale = O::cast_from(self.scales.read(pos));
+    pub fn read<O: Numeric, W: Size>(&self, pos: C) -> Vector<O, W> {
+        let scale = O::cast_from(self.scales.read(pos.clone()));
         match comptime!(self.scheme.store) {
             // One element, one value: the served line is the physical line, scaled.
             QuantStore::Native => {
@@ -70,7 +82,7 @@ impl<'a, I: Numeric, WP: Size> QuantizedView<'a, I, WP> {
         }
     }
 
-    pub fn shape(&self) -> Coords1d {
+    pub fn shape(&self) -> C {
         self.values.shape()
     }
 }

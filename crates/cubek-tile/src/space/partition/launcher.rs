@@ -18,11 +18,14 @@ pub struct Launcher<'c, R: Runtime> {
 impl Space {
     /// Bind this concrete (real-extent) space to `client` for launching. The kernel-form space
     /// goes fully dynamic so one compiled kernel serves every shape; a static-shape constructor
-    /// can later skip that derivation without changing this one.
+    /// can later skip that derivation without changing this one. Any `Unit` axis's deferred lane
+    /// count is stamped here from the hardware `plane_size` ([`Space::resolve_lanes`]).
     pub fn launcher<R: Runtime>(self, client: &ComputeClient<R>) -> Launcher<'_, R> {
-        let kernel = self.clone().all_dynamic();
+        let plane_size = client.properties().hardware.plane_size_max as usize;
+        let concrete = self.resolve_lanes(plane_size);
+        let kernel = concrete.clone().all_dynamic();
         Launcher {
-            concrete: self,
+            concrete,
             kernel,
             client,
         }

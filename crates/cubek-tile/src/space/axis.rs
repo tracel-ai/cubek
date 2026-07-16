@@ -27,6 +27,13 @@ impl<T: Copy> ByAxis<T> {
             .1
     }
 
+    /// A new map with `f` applied to every value, axis order preserved.
+    pub fn map<U: Copy>(&self, mut f: impl FnMut(Axis, T) -> U) -> ByAxis<U> {
+        ByAxis {
+            entries: self.entries.iter().map(|&(a, v)| (a, f(a, v))).collect(),
+        }
+    }
+
     pub fn axis_at(&self, i: usize) -> Axis {
         self.entries[i].0
     }

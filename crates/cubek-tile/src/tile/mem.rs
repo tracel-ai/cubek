@@ -6,7 +6,7 @@ use cubecl::{
     quant::scheme::{QuantStore, QuantValue},
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
-        layout::{Coords1d, CoordsDyn, Layout, LayoutExpand},
+        layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
     },
 };
 
@@ -399,6 +399,22 @@ impl<T: Numeric> MemData<T> {
         comptime!(self.stage)
     }
 
+    /// Comptime quant dispatch for a leaf read, mirroring [`fill_from`](MemData::fill_from)'s
+    /// storage-element choice: `0` = plain (serve `T` directly); `1` = native (one storage element
+    /// per value, `i8`); `>1` = packed `u32`, the packing factor (values per word). The physical
+    /// line narrows the served line by exactly this factor.
+    // The `let`-then-return is load-bearing: a bare `#[comptime] match` as the method body does not
+    // generate the `#[cube]` expand (the value must bind first).
+    #[allow(clippy::let_and_return)]
+    pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
+        let pack = #[comptime]
+        match &self.quant {
+            ComptimeOption::Some(info) => comptime!(info.scheme.num_quants()),
+            ComptimeOption::None => 0usize,
+        };
+        pack
+    }
+
     /// This buffer's byte length (its length is in native lines, so widened by the vector
     /// size): the transaction count a TMA fill into it lands.
     pub(crate) fn size_bytes(&self) -> u32 {
@@ -503,6 +519,39 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    /// [`masked`](MemData::masked) over the storage element `I` a quantized buffer truly holds
+    /// (see [`QuantInfo`]); a [`QuantizedView`] pairs it with the scales to dequantize each 2-D
+    /// read. The 2-D twin of [`flat_storage`](MemData::flat_storage).
+    pub(crate) fn masked_storage<I: Numeric, W: Size>(
+        &self,
+        layout: BatchMatrix,
+    ) -> MatrixView<'_, Vector<I, W>> {
+        MaskedView::new(
+            self.lines_storage::<I, W>()
+                .view(self.base())
+                .view(self.window())
+                .view(layout),
+            comptime!(self.check),
+        )
+    }
+
+    /// The scales as a 2-D view over this same window: [`ScaleLayout`] resolves a window
+    /// coordinate to its block's scale, addressed by the same [`BatchMatrix`] as the values, so
+    /// both answer the same `(row, col)`. The 2-D twin of [`flat_scales`](MemData::flat_scales).
+    fn masked_scales<'a>(&self, info: &'a QuantInfo, layout: BatchMatrix) -> MatrixView<'a, f32> {
+        MaskedView::new(
+            info.buffer
+                .view(ScaleLayout::new(
+                    info.strides.clone(),
+                    info.window_start,
+                    comptime!(info.block.clone()),
+                    comptime!(self.vector_size),
+                ))
+                .view(layout),
+            comptime!(self.check),
+        )
+    }
+
     /// The mutable twin of [`masked`](MemData::masked).
     pub(crate) fn masked_mut<W: Size>(
         &mut self,
@@ -571,7 +620,7 @@ impl<T: Numeric> MemData<T> {
     /// path pays nothing.
     pub(crate) fn flat_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
-    ) -> TileView<'_, T, I, WP, W> {
+    ) -> TileView<'_, T, I, WP, W, Coords1d> {
         #[comptime]
         match &self.quant {
             ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
@@ -582,6 +631,27 @@ impl<T: Numeric> MemData<T> {
                 comptime!(info.scheme),
             )),
             ComptimeOption::None => TileView::new_Direct(self.flat::<W>()),
+        }
+    }
+
+    /// Quantization-transparent [`masked`](MemData::masked): the 2-D twin of
+    /// [`flat_transparent`](MemData::flat_transparent). A plain store serves the bare `Direct`
+    /// matrix read; a quantized one re-types to the storage element `I`, pairs it with the scales
+    /// over the same [`BatchMatrix`], and dequantizes each `(row, col)` read into `T`. This is
+    /// what lets a leaf read a quantized operand straight from gmem or a packed smem stage without
+    /// a dequantize-into-`f32` fill. `#[comptime]`, so the plain path pays nothing.
+    pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
+        &self,
+        layout: BatchMatrix,
+    ) -> TileView<'_, T, I, WP, W, Coords2d> {
+        #[comptime]
+        match &self.quant {
+            ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
+                self.masked_storage::<I, WP>(layout.clone()),
+                self.masked_scales(info, layout),
+                comptime!(info.scheme),
+            )),
+            ComptimeOption::None => TileView::new_Direct(self.masked::<W>(layout)),
         }
     }
 

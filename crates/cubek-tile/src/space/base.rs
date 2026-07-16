@@ -230,6 +230,15 @@ impl Space {
         self.with_dynamic(&axes)
     }
 
+    /// Resolve every `Unit` axis's deferred lane count to `Instances(plane_size)`. The
+    /// launch's stamping pass ([`Space::launcher`] applies it), so a partitioner declares a
+    /// `Unit` split without knowing the hardware warp width and geometry/walk only ever see
+    /// a concrete count.
+    pub fn resolve_lanes(mut self, plane_size: usize) -> Self {
+        self.partitioner = self.partitioner.resolve_lanes(plane_size);
+        self
+    }
+
     /// Chain coarse-to-fine for multi-level tiling; each call appends to the end of
     /// the chain (see [`Partitioner::append`]).
     pub fn with_partitioner(mut self, partitioner: Partitioner) -> Self {

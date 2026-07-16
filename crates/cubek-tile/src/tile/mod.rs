@@ -199,6 +199,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Comptime quant dispatch for a leaf read (`0` = plain, `1` = native i8, `>1` = packed u32);
+    /// see [`MemData::quant_pack`]. A resident fragment and a tma source are never quantized.
+    pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
+            TileKind::TmaGmem(_) | TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                comptime!(0usize)
+            }
+        }
+    }
+
     /// Window this tile down to `region` (no copy). The tile projects `region` onto
     /// its own axes, so `lhs ∈ {M,K}` and `out ∈ {M,N}` agree without the caller
     /// matching them.

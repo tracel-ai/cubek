@@ -100,6 +100,31 @@ impl Partitioner {
         self.level().schedule
     }
 
+    /// Resolve every level's deferred [`PlaneLanes`](super::Coverage::PlaneLanes) count to
+    /// `Instances(plane_size)`. The launch's single stamping pass, so geometry and the walk
+    /// only ever see concrete instance counts.
+    pub(crate) fn resolve_lanes(self, plane_size: usize) -> Partitioner {
+        match self {
+            Partitioner::Final(leaf) => Partitioner::Final(leaf),
+            Partitioner::Level(level) => {
+                let Level {
+                    edges,
+                    dists,
+                    order,
+                    schedule,
+                    next,
+                } = *level;
+                Partitioner::Level(Box::new(Level {
+                    edges,
+                    dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
+                    order,
+                    schedule,
+                    next: next.resolve_lanes(plane_size),
+                }))
+            }
+        }
+    }
+
     pub(crate) fn append(self, tail: Partitioner) -> Partitioner {
         match self {
             Partitioner::Final(_) => tail,

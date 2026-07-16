@@ -32,6 +32,13 @@ impl Cut {
         Cut::new(edge, Distribution::plane())
     }
 
+    /// `edge`-sized tiles spread across the plane's lanes. The lane count is the hardware
+    /// `plane_size`, stamped at launch by [`Space::launcher`] — the cut carries only the
+    /// intent (see [`Distribution::unit`]).
+    pub fn unit(edge: usize) -> Self {
+        Cut::new(edge, Distribution::unit())
+    }
+
     /// `edge`-sized tiles walked sequentially by one instance.
     pub fn sequential(edge: usize) -> Self {
         Cut::new(edge, Distribution::Sequential)
