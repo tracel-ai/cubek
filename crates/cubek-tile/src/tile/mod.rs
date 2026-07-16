@@ -62,6 +62,15 @@ impl<T: Numeric> TileKind<T> {
             }
         }
     }
+
+    /// Whether this store is register-resident (a fragment or a partition of them):
+    /// it zeroes in place rather than through the memory walk. Comptime.
+    pub(crate) fn is_fragment(&self) -> comptime_type!(bool) {
+        match self {
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(true),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
 }
 
 /// The quantization a tile's backing store carries so reads dequantize transparently. Holds the
@@ -304,6 +313,38 @@ impl<T: Numeric> Tile<T> {
             }
         }
         Space::with_sizes(space, sizes)
+    }
+
+    /// Zero this tile in place: `mma` accumulates over whatever is there, so a routine
+    /// whose contract is `out = A·B` zeroes first. Memory recurses the walk (each
+    /// instance zeroes exactly the windows its `mma` owns); fragments fill in place.
+    pub fn zero(&mut self) {
+        if self.tile_kind.is_fragment() {
+            match &mut self.tile_kind {
+                TileKind::Cmma(d) => d.zero(),
+                TileKind::CmmaPartition(p) => p.zero(),
+                TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
+                    panic!("Tile::zero: not a fragment")
+                }
+            }
+        } else {
+            let partitioner = comptime!(self.space.partitioner().clone());
+            match comptime!(partitioner) {
+                Partitioner::Final(_) => match &mut self.tile_kind {
+                    TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
+                    TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
+                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                        panic!("Tile::zero: not memory")
+                    }
+                },
+                Partitioner::Level(_) => {
+                    for region in Walk::over(self.runtime_space()) {
+                        let mut sub = self.at(&region);
+                        sub.zero();
+                    }
+                }
+            }
+        }
     }
 
     /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's

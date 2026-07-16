@@ -20,5 +20,8 @@ pub fn cpu_gemm_kernel<E: Numeric, EL: Numeric, ER: Numeric>(
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
+    // The matmul contract is `out = A·B` and `mma` accumulates, so zero first: the
+    // register leaf runs in place, round-tripping K-chunk partials through `c`.
+    c.zero();
     c.mma(&a, &b);
 }

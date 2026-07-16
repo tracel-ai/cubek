@@ -224,9 +224,10 @@ fn matmul_cpu_dynamic_k() {
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .tile(&[edge, edge])
         .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .tile(&[edge, edge])
-        .zeros();
+        .uniform(4242, 10., 100.);
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     launch_cpu_matmul::launch::<TestRuntime>(
@@ -579,9 +580,10 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
-        .zeros();
+        .uniform(4242, 10., 100.);
 
     launch_cpu_matmul::launch::<TestRuntime>(
         &client,
@@ -823,7 +825,8 @@ fn cmma_matmul_staged_n_walk_partition() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,
@@ -979,8 +982,9 @@ fn launch_staged_matmul<E: Numeric>(
     c.mma(&a, &b);
 }
 
-/// The tensor-core kernel: promote the accumulator to its register form (the classic
-/// `init_accumulator`), run the whole contraction on it, copy it back (the epilogue).
+/// The tensor-core kernel: promote the accumulator to its register form, zero it (the
+/// classic `init_accumulator`), run the whole contraction on it, copy it back (the
+/// epilogue).
 #[cube(launch)]
 fn launch_resident_matmul<E: Numeric>(
     a: &StridedTileArg<'_, E>,
@@ -992,13 +996,15 @@ fn launch_resident_matmul<E: Numeric>(
     let b = b.tile();
     let mut c = c.tile();
     let mut acc = c.promote();
+    acc.zero();
     acc.mma(&a, &b);
     c.copy_from(&acc);
 }
 
-/// The CPU kernel: the same `c.mma(a, b)`; the partitioner's `Direct` schedule
-/// selects the no-staging move. Operands are size-free — vectorization is a launch
-/// concern, not threaded through the DSL.
+/// The CPU kernel: `c.zero()` then `c.mma(a, b)` (the production cpu_gemm body — the
+/// register leaf accumulates in place, so the routine zeroes first); the partitioner's
+/// `Direct` schedule selects the no-staging move. Operands are size-free —
+/// vectorization is a launch concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
     a: &StridedTileArg<'_, E>,
@@ -1009,6 +1015,7 @@ fn launch_cpu_matmul<E: Numeric>(
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
+    c.zero();
     c.mma(&a, &b);
 }
 
@@ -1279,7 +1286,8 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,
@@ -1348,7 +1356,8 @@ fn cmma_matmul_plane_partitioned_stage() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,
@@ -1421,7 +1430,8 @@ fn cmma_matmul_multi_fragment_partition() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,

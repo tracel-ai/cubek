@@ -155,6 +155,18 @@ impl<T: Numeric> CmmaPartition<T> {
         }
     }
 
+    /// Zero every fragment.
+    pub(crate) fn zero(&self) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut frag = self.at(mi, ni);
+                frag.zero();
+            }
+        }
+    }
+
     /// Drain each fragment into its final window of `dst`; [`fill_from`](Self::fill_from)'s
     /// inverse.
     pub(crate) fn drain_into(&self, dst: &mut Tile<T>) {
@@ -317,6 +329,11 @@ impl<T: Numeric> CmmaData<T> {
             }),
             space: comptime!(space),
         }
+    }
+
+    /// Zero the fragment.
+    pub(crate) fn zero(&mut self) {
+        cmma::fill(&mut self.matrix, T::from_int(0));
     }
 
     /// Fill this fragment from `mem`'s *window*: `A`/`B` use `cmma::load`, an

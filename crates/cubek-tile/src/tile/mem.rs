@@ -349,6 +349,17 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// Zero this window: whole lines at the store's width; a checked window skips
+    /// cells past the logical bound.
+    pub(crate) fn zero(&mut self) {
+        let size!(W) = comptime!(self.vector_size);
+        let mut d = self.flat_mut::<W>();
+        let total = d.shape();
+        for i in 0..total {
+            d.write(i, Vector::<T, W>::cast_from(T::from_int(0)));
+        }
+    }
+
     /// How this store's stages are laid out and filled, carried from the operand's [`Storage`].
     pub(crate) fn stage(&self) -> comptime_type!(StagePlan) {
         comptime!(self.stage)
