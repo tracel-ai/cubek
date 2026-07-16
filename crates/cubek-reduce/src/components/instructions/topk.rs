@@ -10,7 +10,8 @@ use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
     components::instructions::{
-        ReduceRequirements, ReduceStep, ReduceWithIndices, SharedAccumulator,
+        ReduceRequirements, ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily,
+        SharedAccumulator,
     },
 };
 use cubecl::frontend::Numeric;
@@ -56,6 +57,11 @@ pub struct TopK {
 }
 
 impl ReduceFamily for TopK {
+    type Instruction<P: ReducePrecision> = Self;
+    type Config = TopKConfig;
+}
+
+impl ReduceWithIndicesFamily for TopK {
     type Instruction<P: ReducePrecision> = Self;
     type Config = TopKConfig;
 }

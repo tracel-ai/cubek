@@ -256,7 +256,7 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
     };
 
     unsafe {
-        reduce_with_indices_kernel::launch_unchecked::<TensorArgs, Run>(
+        reduce_with_indices_kernel::launch_unchecked::<TensorArgs, TopK, Run>(
             client,
             settings.cube_count,
             settings.cube_dim,
@@ -295,6 +295,7 @@ pub fn reduce_with_indices_kernel<
     IdxSize: Size,
     Acc: Numeric,
     RA: ReduceArgs,
+    R: ReduceWithIndicesFamily,
 >(
     input: &RA::Input<In, InSize>,
     output: &mut RA::Output<Out, OutSize>,
@@ -302,7 +303,7 @@ pub fn reduce_with_indices_kernel<
     reduce_axis: usize,
     out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
-    #[comptime] config: TopKConfig,
+    #[comptime] config: R::Config,
     #[define(In)] _input_dtype: StorageType,
     #[define(Out)] _output_dtype: StorageType,
     #[define(Idx)] _indices_dtype: StorageType,
@@ -314,7 +315,7 @@ pub fn reduce_with_indices_kernel<
     let (_input_indices, mut indices) =
         init_tensors::<RA, In, InSize, Idx, IdxSize>(input, indices);
 
-    reduce_with_indices_kernel_inner::<(In, InSize, Acc), (Out, OutSize), (Idx, IdxSize), TopK>(
+    reduce_with_indices_kernel_inner::<(In, InSize, Acc), (Out, OutSize), (Idx, IdxSize), R>(
         &input_values,
         &mut output,
         &mut indices,
@@ -330,7 +331,7 @@ fn reduce_with_indices_kernel_inner<
     P: ReducePrecision,
     Out: NumericVector,
     Idx: NumericVector,
-    R: ReduceFamily,
+    R: ReduceWithIndicesFamily,
 >(
     input: &VirtualTensor<P::EI, P::SI>,
     output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
@@ -339,9 +340,7 @@ fn reduce_with_indices_kernel_inner<
     out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
-) where
-    R::Instruction<P>: ReduceWithIndices<P>,
-{
+) {
     let inst = R::Instruction::<P>::from_config(config);
 
     match blueprint.global {

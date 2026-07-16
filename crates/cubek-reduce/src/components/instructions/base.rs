@@ -6,6 +6,17 @@ pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
     type Config: CubeComptime + Send + Sync;
 }
 
+/// A [`ReduceFamily`] whose instruction can emit values and indices together.
+///
+/// The bound lives on the trait rather than on a `where` clause at the kernel, because the
+/// `#[cube(launch_unchecked)]` macro does not carry a where clause into the kernel struct it
+/// generates. Implement this for any instruction that implements [`ReduceWithIndices`], and
+/// `reduce_with_indices_kernel` works for it with no new kernel.
+pub trait ReduceWithIndicesFamily: Send + Sync + 'static + std::fmt::Debug {
+    type Instruction<P: ReducePrecision>: ReduceWithIndices<P, Config = Self::Config>;
+    type Config: CubeComptime + Send + Sync;
+}
+
 #[derive(CubeType, Clone, Copy)]
 #[expand(derive(Clone, Copy))]
 /// Whether we keep track of coordinates of items
