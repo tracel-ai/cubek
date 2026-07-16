@@ -64,3 +64,26 @@ fn arg_topk2_axis2_32x512x4095_unit_parallel() {
 fn arg_topk3_axis2_32x512x4095_unit_parallel() {
     run("unit_parallel", "arg_topk3_axis2_32x512x4095");
 }
+
+// The fused entries get timed against the two-launch ones, so they have to be
+// correct at the benchmark's own shape and strategy, not only at the small
+// shapes the integration tests cover.
+#[test]
+fn topk2_fused_axis2_32x512x4095_cube_serial() {
+    run("cube_serial", "topk2_fused_axis2_32x512x4095");
+}
+
+#[test]
+fn topk3_fused_axis2_32x512x4095_cube_serial() {
+    run("cube_serial", "topk3_fused_axis2_32x512x4095");
+}
+
+#[test]
+fn topk3_fused_axis2_32x512x4095_unit_parallel() {
+    run("unit_parallel", "topk3_fused_axis2_32x512x4095");
+}
+
+#[test]
+fn topk3_two_launch_axis2_32x512x4095_cube_serial() {
+    run("cube_serial", "topk3_two_launch_axis2_32x512x4095");
+}
