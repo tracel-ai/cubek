@@ -15,7 +15,7 @@ use cubecl::{
     client::ComputeClient,
     prelude::CubePrimitive,
     prelude::TensorArg,
-    quant::scheme::{QuantLevel, QuantScheme},
+    quant::scheme::QuantScheme,
     zspace::Shape,
 };
 use cubek_tile::{Space, Storage};
@@ -314,13 +314,9 @@ impl QuantizedTileInputBuilder {
             .map(|i| lo + (i as i32 % span))
             .collect();
         let words = crate::stubs::quant::pack_q_values(&q, &self.scheme);
-        let mut strides = vec![1usize; rank];
-        for i in (0..rank - 1).rev() {
-            strides[i] = strides[i + 1] * shape[i + 1];
-        }
         let handle = self.client.create(Bytes::from_elems(words));
 
-        let block = block_dims(&self.scheme, &shape);
+        let block = crate::stubs::quant::block_dims(&self.scheme, &shape);
         let grid = crate::stubs::quant::scales_shape(&shape, &block);
         let scale_values: Vec<f32> = (0..grid.iter().product())
             .map(|g| 0.05 * (g + 1) as f32)
@@ -331,10 +327,9 @@ impl QuantizedTileInputBuilder {
 
         QuantizedTileInput {
             tile: TileInput {
-                handle: TensorHandle::new(
-                    handle,
+                handle: TensorHandle::new_contiguous(
                     shape,
-                    strides,
+                    handle,
                     u32::as_type_native_unchecked().storage_type(),
                 ),
                 space: self.space,
@@ -363,17 +358,5 @@ impl QuantizedTileInput {
     /// Launch arg for the scales tensor.
     pub fn scales_arg(&self) -> TensorArg<TestRuntime> {
         self.scales.clone().binding().into_tensor_arg()
-    }
-}
-
-/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
-fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => shape.to_vec(),
-        QuantLevel::Block(bs) => bs
-            .to_dim_vec(shape.len())
-            .iter()
-            .map(|&b| b as usize)
-            .collect(),
     }
 }

@@ -1,7 +1,7 @@
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
     e4m3, e5m2,
-    quant::scheme::{QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
 };
 
 pub fn quantize(
@@ -176,6 +176,18 @@ fn quant_mask(size_quant: usize) -> u32 {
         u32::MAX
     } else {
         (1u32 << size_quant) - 1
+    }
+}
+
+/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
+pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+    match scheme.level {
+        QuantLevel::Tensor => shape.to_vec(),
+        QuantLevel::Block(bs) => bs
+            .to_dim_vec(shape.len())
+            .iter()
+            .map(|&b| b as usize)
+            .collect(),
     }
 }
 
