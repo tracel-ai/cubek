@@ -137,11 +137,11 @@ impl<
 
     fn init_query_reader(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<'static, AP> {
-        let num_heads = query.shape(1) as u32;
         let layout =
             AttentionGlobalLayout::new(&query, batch_index, num_heads, config.query_gmem_config);
 
@@ -154,11 +154,11 @@ impl<
 
     fn init_key_reader(
         batch_index: u32,
+        num_heads: u32,
         key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
-        let num_heads = key.shape(1) as u32;
         let layout = AttentionGlobalLayout::new(
             &key,
             batch_index,
@@ -170,11 +170,11 @@ impl<
 
     fn init_value_reader(
         batch_index: u32,
+        num_heads: u32,
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
-        let num_heads = value.shape(1) as u32;
         let layout = AttentionGlobalLayout::new(
             &value,
             batch_index,
@@ -204,9 +204,6 @@ impl<
         #[comptime]
         match mask {
             ComptimeOption::Some(mask) => {
-                // The mask may broadcast over batch/head (`[1, 1, S, S]`), so it
-                // needs the *query's* `num_heads` to select its slice, not its own
-                // (possibly size-1) head dimension.
                 let layout = AttentionGlobalLayout::new(
                     &mask,
                     batch_index,
@@ -231,11 +228,11 @@ impl<
 
     fn init_writer(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::Writer<'static> {
-        let num_heads = out.shape(1) as u32;
         let layout = AttentionGlobalLayout::new(
             &out,
             batch_index,

@@ -22,14 +22,7 @@ pub struct AttentionGlobalLayout {
 impl AttentionGlobalLayout {
     /// Creates a new 2D layout for the `(batch, head)` slice selected by
     /// `batch_index`, the flattened `batch * num_heads + head` index over the
-    /// *query's* batch and head extents.
-    ///
-    /// `num_heads` is the query's head count, used to recover `(batch, head)`
-    /// from `batch_index`. Passing it (rather than assuming a contiguous
-    /// `batch * stride(1)`) is what lets a tensor with a broadcast batch or head
-    /// dimension — a `[1, 1, S, S]` / `[1, H, S, S]` / `[B, 1, S, S]` mask — reuse
-    /// its single slice across every query batch/head: a size-1 dimension
-    /// contributes no offset instead of striding past the buffer.
+    /// query's extents. `num_heads` is always the query's head count.
     pub fn new<T: Numeric, N: Size, IO: Clone>(
         tensor: &VirtualTensor<T, N, IO>,
         batch_index: u32,
@@ -38,8 +31,8 @@ impl AttentionGlobalLayout {
     ) -> Self {
         let batch = batch_index / num_heads;
         let head = batch_index % num_heads;
-        // A broadcast (size-1) batch/head dimension addresses element 0 for every
-        // query batch/head; a full dimension strides by its own stride.
+        // A broadcast (size-1) batch/head dimension contributes no offset,
+        // so a [1, 1, S, S] mask reuses its slice instead of striding past it.
         let batch_part = if tensor.shape(0) > 1 {
             batch as usize * tensor.stride(0)
         } else {
