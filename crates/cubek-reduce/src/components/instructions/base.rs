@@ -336,6 +336,34 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     ) -> Value<Vector<Out, P::SI>>;
 }
 
+/// An instruction that can emit its values *and* their coordinates from a single
+/// reduction.
+///
+/// Instructions that track coordinates already carry both results in their
+/// [`Accumulator`]; the two `to_output_both_*` conversions expose them together
+/// so a fused reduce writes both outputs from one launch, instead of running the
+/// reduction twice and throwing one half away each time.
+///
+/// This is a separate trait rather than extra [`ReduceInstruction`] methods so
+/// that instructions with no meaningful index (`Sum`, `Mean`, ...) are not
+/// forced to implement it.
+#[cube]
+pub trait ReduceWithIndices<P: ReducePrecision>: ReduceInstruction<P> {
+    /// Counterpart of [`ReduceInstruction::to_output_parallel`] emitting both results.
+    fn to_output_both_parallel<Out: Numeric, Idx: Numeric>(
+        this: &Self,
+        accumulator: Accumulator<P>,
+        shape_axis_reduce: usize,
+    ) -> (Value<Out>, Value<Idx>);
+
+    /// Counterpart of [`ReduceInstruction::to_output_perpendicular`] emitting both results.
+    fn to_output_both_perpendicular<Out: Numeric, Idx: Numeric>(
+        this: &Self,
+        accumulator: Accumulator<P>,
+        shape_axis_reduce: usize,
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>);
+}
+
 #[derive(CubeType)]
 pub struct Item<P: ReducePrecision> {
     pub elements: Vector<P::EI, P::SI>,

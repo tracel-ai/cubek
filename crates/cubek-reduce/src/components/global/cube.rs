@@ -4,10 +4,11 @@ use crate::{
         args::NumericVector,
         global::{idle_check, reduction_output_base},
         instructions::{
-            Accumulator, ReduceStep, SharedAccumulator, fuse_accumulator_inplace, reduce_inplace,
+            Accumulator, ReduceStep, ReduceWithIndices, SharedAccumulator,
+            fuse_accumulator_inplace, reduce_inplace,
         },
         readers::{Reader, cube::CubeReader},
-        writers::Writer,
+        writers::{IndicesWriter, Writer},
     },
     routines::CubeBlueprint,
 };
@@ -42,6 +43,120 @@ impl GlobalFullCubeReduce {
         let mut writer = Writer::<Out>::new::<P>(
             input,
             &mut out,
+            reduce_axis,
+            out_vec_axis,
+            write_index,
+            vectorization_mode,
+            acc_format,
+        );
+
+        let write_count = writer.write_count();
+
+        let reduce_index_start = write_index * write_count;
+
+        let idle = idle_check::<P, Out>(
+            input,
+            &*output,
+            reduce_index_start,
+            vectorization_mode,
+            blueprint.cube_idle,
+        );
+
+        for b in 0..write_count {
+            let reduce_index = reduce_index_start + b;
+
+            let mut accumulator_shared = Self::reduce_shared::<P, Out, I>(
+                input,
+                output,
+                reduce_axis,
+                reduce_index,
+                inst,
+                idle,
+                vectorization_mode,
+                blueprint,
+            );
+
+            let mut accumulator_final = I::null_accumulator(inst);
+
+            match blueprint.use_planes {
+                true => {
+                    if worker_pos == 0 {
+                        reduce_scan::<P, I>(
+                            inst,
+                            &mut accumulator_shared,
+                            &mut accumulator_final,
+                            accumulator_size,
+                        );
+                        writer.write::<P, I>(b, accumulator_final, inst);
+                    }
+
+                    // Wait for plane 0 to finish reading SM before next iter overwrites it.
+                    sync_cube();
+                }
+                false => {
+                    reduce_tree::<P, I>(
+                        inst,
+                        &mut accumulator_shared,
+                        &mut accumulator_final,
+                        worker_pos,
+                        accumulator_size,
+                    );
+                    if worker_pos == 0 {
+                        writer.write::<P, I>(b, accumulator_final, inst);
+                    }
+                }
+            };
+        }
+
+        let commit_required = writer.commit_required();
+
+        #[allow(clippy::collapsible_if)]
+        if commit_required {
+            if worker_pos == 0 {
+                writer.commit();
+            }
+        }
+    }
+
+    /// Same reduction as [`Self::execute`], but writing the values and their
+    /// indices to two outputs from a single pass.
+    ///
+    /// Only the writer differs; the reduction itself is [`Self::reduce_shared`]
+    /// plus the same scan/tree merge, shared with [`Self::execute`]. `indices`
+    /// must have the same shape and the same reduce/vec axes as `output`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_with_indices<
+        P: ReducePrecision,
+        Out: NumericVector,
+        Idx: NumericVector,
+        I: ReduceWithIndices<P>,
+    >(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
+        indices: &mut VirtualTensor<Idx::T, Idx::N, ReadWrite>,
+        reduce_axis: usize,
+        out_vec_axis: usize,
+        inst: &I,
+        #[comptime] vectorization_mode: VectorizationMode,
+        #[comptime] blueprint: CubeBlueprint,
+    ) {
+        let acc_format = I::accumulator_format(inst);
+        let write_index = reduction_output_base::<Out::T, Out::N>(
+            CUBE_POS,
+            &*output,
+            reduce_axis,
+            comptime!(acc_format.len()),
+        );
+
+        let accumulator_size = blueprint.num_shared_accumulators;
+        let worker_pos = Self::worker_pos(blueprint);
+
+        let mut out = output.clone();
+        let mut idx = indices.clone();
+        let mut writer = IndicesWriter::<Out, Idx>::new::<P>(
+            input,
+            &mut out,
+            &mut idx,
             reduce_axis,
             out_vec_axis,
             write_index,

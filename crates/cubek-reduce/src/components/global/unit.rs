@@ -3,9 +3,9 @@ use crate::{
     components::{
         args::NumericVector,
         global::{idle_check, reduction_output_base},
-        instructions::{Accumulator, ReduceStep, reduce_inplace},
+        instructions::{Accumulator, ReduceStep, ReduceWithIndices, reduce_inplace},
         readers::{Reader, unit::UnitReader},
-        writers::Writer,
+        writers::{IndicesWriter, Writer},
     },
     routines::UnitReduceBlueprint,
 };
@@ -37,6 +37,77 @@ impl GlobalFullUnitReduce {
         let mut writer = Writer::<Out>::new::<P>(
             input,
             &mut out,
+            reduce_axis,
+            out_vec_axis,
+            write_index,
+            vectorization_mode,
+            acc_format,
+        );
+
+        let write_count = writer.write_count();
+        let reduce_index_start = write_index * write_count;
+
+        let idle = idle_check::<P, Out>(
+            input,
+            &*output,
+            reduce_index_start,
+            vectorization_mode,
+            blueprint.unit_idle,
+        );
+
+        for b in 0..write_count {
+            let reduce_index = reduce_index_start + b;
+            let accumulator = Self::reduce_single::<P, Out, I>(
+                input,
+                output,
+                reduce_axis,
+                reduce_index,
+                inst,
+                idle,
+                vectorization_mode,
+            );
+            writer.write::<P, I>(b, accumulator, inst);
+        }
+
+        writer.commit();
+    }
+
+    /// Same reduction as [`Self::execute`], but writing the values and their
+    /// indices to two outputs from a single pass.
+    ///
+    /// Only the writer differs; the reduction itself is [`Self::reduce_single`],
+    /// shared with [`Self::execute`]. `indices` must have the same shape and the
+    /// same reduce/vec axes as `output`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_with_indices<
+        P: ReducePrecision,
+        Out: NumericVector,
+        Idx: NumericVector,
+        I: ReduceWithIndices<P>,
+    >(
+        input: &VirtualTensor<P::EI, P::SI>,
+        output: &mut VirtualTensor<Out::T, Out::N, ReadWrite>,
+        indices: &mut VirtualTensor<Idx::T, Idx::N, ReadWrite>,
+        reduce_axis: usize,
+        out_vec_axis: usize,
+        inst: &I,
+        #[comptime] vectorization_mode: VectorizationMode,
+        #[comptime] blueprint: UnitReduceBlueprint,
+    ) {
+        let acc_format = I::accumulator_format(inst);
+        let write_index = reduction_output_base::<Out::T, Out::N>(
+            ABSOLUTE_POS,
+            &*output,
+            reduce_axis,
+            comptime!(acc_format.len()),
+        );
+
+        let mut out = output.clone();
+        let mut idx = indices.clone();
+        let mut writer = IndicesWriter::<Out, Idx>::new::<P>(
+            input,
+            &mut out,
+            &mut idx,
             reduce_axis,
             out_vec_axis,
             write_index,
