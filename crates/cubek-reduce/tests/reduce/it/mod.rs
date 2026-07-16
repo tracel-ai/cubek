@@ -1,7 +1,8 @@
-pub mod test_case;
+mod test_case;
 
 mod argtopk_shared_memory;
 mod logical;
+mod topk_with_indices_cube;
 
 macro_rules! testgen_reduce {
     (
