@@ -127,13 +127,18 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
         let has_coords = comptime!(inst.output.has_indices());
 
+        // Both loops must be unrolled: a `Sequence` is built at expand time, so a
+        // runtime loop would run the body once and leave a single slice behind
+        // whatever `k` is, and `read`/`write` would then index past the end.
         let mut elements = Sequence::new();
+        #[unroll]
         for _ in 0..inst.k {
             elements.push(Shared::new_slice(length));
         }
 
         let mut args = Sequence::new();
         if has_coords {
+            #[unroll]
             for _ in 0..inst.k {
                 args.push(Shared::new_slice(length));
             }
