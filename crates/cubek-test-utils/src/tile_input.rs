@@ -10,13 +10,8 @@ use cubecl::std::tensor::{
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
 };
 use cubecl::{
-    TestRuntime,
-    bytes::Bytes,
-    client::ComputeClient,
-    prelude::CubePrimitive,
-    prelude::TensorArg,
-    quant::scheme::QuantScheme,
-    zspace::Shape,
+    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
+    quant::scheme::QuantScheme, zspace::Shape,
 };
 use cubek_tile::{Space, Storage};
 
