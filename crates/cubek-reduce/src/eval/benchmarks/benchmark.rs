@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use cubecl::{
     Runtime, TestRuntime,
-    benchmark::{Benchmark, TimingMethod},
+    benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::ComputeClient,
     future,
     prelude::*,
@@ -35,8 +35,12 @@ pub fn bench(
         _e: PhantomData,
     };
 
+    // Device timing (hardware timestamps) rather than system timing: the reduce
+    // problems are ~270 MB, and wall-clock timing of launch+sync picked up enough
+    // host-side noise that identical kernels varied by over 10x between runs,
+    // which made fused-vs-two-launch comparisons meaningless.
     let durations = bench
-        .run(TimingMethod::System)
+        .run(TimingMethod::Device)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -174,6 +178,15 @@ impl<E: Float> Benchmark for ReduceBench<E> {
         }
 
         Ok(())
+    }
+
+    /// Measure with device timestamps around the launch, so the reported duration
+    /// is the kernel's, not the host's view of launch+sync.
+    fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
+        self.client
+            .profile(|| self.execute(args), "reduce-bench")
+            .map(|it| it.1)
+            .map_err(|err| format!("{err:?}"))
     }
 
     fn num_samples(&self) -> usize {
