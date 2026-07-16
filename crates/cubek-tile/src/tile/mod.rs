@@ -228,17 +228,25 @@ impl<T: Numeric> Tile<T> {
             // nothing (a k-step walk); the static fragment walk below then selects.
             TileKind::CmmaPartition(p) => {
                 let rank = comptime!(self.space.rank());
-                let mi = region
-                    .coord(comptime!(self.space.axis_at(rank - 2)))
-                    .constant();
-                let ni = region
-                    .coord(comptime!(self.space.axis_at(rank - 1)))
-                    .constant();
+                let a0 = comptime!(self.space.axis_at(rank - 2));
+                let a1 = comptime!(self.space.axis_at(rank - 1));
+                // A single-tile static axis (a k-step walk that doesn't cut m/n) folds to a
+                // constant `0`, so selection is uniform: a cut axis takes its constant digit,
+                // an uncut one selects the whole partition (its one fragment when 1×1). A
+                // `Dynamic` axis (only the top level) stays runtime → `None` → walks.
+                let mi = if comptime!(self.space.single_static_tile(a0)) {
+                    comptime!(Some(0u64))
+                } else {
+                    region.coord(a0).constant()
+                };
+                let ni = if comptime!(self.space.single_static_tile(a1)) {
+                    comptime!(Some(0u64))
+                } else {
+                    region.coord(a1).constant()
+                };
                 match comptime!(mi.zip(ni)) {
                     Some((c0, c1)) => {
                         let (sub_m, sub_n) = comptime!({
-                            let a0 = self.space.axis_at(rank - 2);
-                            let a1 = self.space.axis_at(rank - 1);
                             let (cm, cn) = (self.space.count(a0), self.space.count(a1));
                             assert!(
                                 p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),
@@ -254,19 +262,16 @@ impl<T: Numeric> Tile<T> {
                             TileKind::new_CmmaPartition(p.window(mi, ni, sub_m, sub_n))
                         }
                     }
+                    // A runtime coordinate reaches here only from a `Dynamic` (top, instance)
+                    // level, which cuts nothing on m/n and passes the whole partition down to
+                    // the static levels below. A rolled *cut* would be a caller bug.
                     None => {
                         comptime!(assert!(
-                            matches!(partition_level(&self.space), None | Some((1, 1))),
+                            partition_level(&self.space).is_none(),
                             "Tile::at: a level that cuts a fragment partition must be \
                              walked with compile-time coordinates (an unrolled walk)"
                         ));
-                        // A 1×1 partition passes through as its one fragment, so a
-                        // final tile sees a fragment operand whatever the walk's constness.
-                        if comptime!(p.m_tiles == 1 && p.n_tiles == 1) {
-                            TileKind::new_Cmma(p.at(0usize, 0usize))
-                        } else {
-                            TileKind::new_CmmaPartition(p.clone())
-                        }
+                        TileKind::new_CmmaPartition(p.clone())
                     }
                 }
             }

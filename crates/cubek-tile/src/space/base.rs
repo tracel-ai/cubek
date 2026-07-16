@@ -302,6 +302,14 @@ impl Space {
             .single_tile()
     }
 
+    /// Whether this level cuts `axis` into a single, statically-known tile — so its walk
+    /// coordinate is a constant `0`, even on a rolled walk. A `Dynamic` axis (only the top
+    /// level) has no comptime count and is never statically single; the `&&` short-circuits
+    /// before [`count`](Space::count), which panics on `Dynamic`.
+    pub(crate) fn single_static_tile(&self, axis: Axis) -> bool {
+        !self.is_dynamic(axis) && self.count(axis) == 1
+    }
+
     pub fn position(&self, axis: Axis) -> usize {
         self.extents.position(axis)
     }
