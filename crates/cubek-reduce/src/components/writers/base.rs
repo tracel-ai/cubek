@@ -8,6 +8,43 @@ use crate::{
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
+/// Destination of a reduction's results.
+///
+/// The routines are generic over this, so the values-only and the fused
+/// values-plus-indices paths share one reduction body and differ only in the
+/// writer they construct.
+#[cube]
+pub trait ReduceWriter<P: ReducePrecision, I: ReduceInstruction<P>>: CubeType {
+    fn write(this: &mut Self, local_index: usize, accumulator: Accumulator<P>, inst: &I);
+
+    fn commit_required(this: &Self) -> comptime_type!(bool);
+
+    fn commit(this: &mut Self);
+
+    fn write_count(this: &Self) -> comptime_type!(VectorSize);
+}
+
+#[cube]
+impl<'a, Out: NumericVector, P: ReducePrecision, I: ReduceInstruction<P>> ReduceWriter<P, I>
+    for Writer<'a, Out>
+{
+    fn write(this: &mut Self, local_index: usize, accumulator: Accumulator<P>, inst: &I) {
+        this.write::<P, I>(local_index, accumulator, inst);
+    }
+
+    fn commit_required(this: &Self) -> comptime_type!(bool) {
+        this.commit_required()
+    }
+
+    fn commit(this: &mut Self) {
+        this.commit();
+    }
+
+    fn write_count(this: &Self) -> comptime_type!(VectorSize) {
+        this.write_count()
+    }
+}
+
 #[derive(CubeType)]
 /// Abstract how data is written to global memory.
 ///

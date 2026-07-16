@@ -15,7 +15,7 @@ use cubecl::{
 pub struct ParallelWriter<'a, Out: NumericVector> {
     output: ViewMut<'a, Vector<Out::T, Out::N>, Coords2d>,
     buffer: Value<Vector<Out::T, Out::N>>,
-    axis_size: usize,
+    pub(crate) axis_size: usize,
     write_index: usize,
     #[cube(comptime)]
     accumulator_length: usize,
@@ -57,7 +57,15 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
         inst: &I,
     ) {
         let out = I::to_output_parallel::<Out::T>(inst, accumulator, self.axis_size);
+        self.push(local_index, out);
+    }
 
+    /// Buffer an already-converted reduction result.
+    ///
+    /// Split out of [`Self::write`] so that a caller holding both a value and an
+    /// index result can buffer each into its own writer, without the writer
+    /// having to know how the results were produced.
+    pub fn push(&mut self, local_index: usize, out: Value<Out::T>) {
         match out {
             Value::Multiple(array) =>
             {

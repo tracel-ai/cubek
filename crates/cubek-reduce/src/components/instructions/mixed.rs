@@ -1,6 +1,6 @@
 use super::{
-    All, Any, ArgMax, ArgMin, Max, MaxAbs, Mean, Min, Prod, ReduceFamily,
-    ReduceInstruction, ReduceRequirements, SharedAccumulator, Sum,
+    All, Any, ArgMax, ArgMin, Max, MaxAbs, Mean, Min, Prod, ReduceFamily, ReduceInstruction,
+    ReduceRequirements, SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
     Accumulator, AccumulatorFormat, Item, ReduceOutputMode, SharedAccumulatorKind, TopK,

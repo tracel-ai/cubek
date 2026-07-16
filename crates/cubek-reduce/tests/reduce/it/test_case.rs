@@ -6,12 +6,12 @@ use cubecl::{
     zspace::{Shape, Strides},
 };
 use cubek_reduce::{
-    ReduceDtypes, ReducePrecision, ReduceStrategy, components::instructions::ReduceOperationConfig,
-    reduce,
+    ReduceDtypes, ReducePrecision, ReduceStrategy, ReduceWithIndicesDtypes,
+    components::instructions::ReduceOperationConfig, reduce, reduce_with_indices,
 };
 use cubek_test_utils::{
     Distribution, ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput,
-    TestOutcome, assert_equals_approx, launch_and_capture_outcome,
+    TestOutcome, ValidationResult, assert_equals_approx, launch_and_capture_outcome,
 };
 
 use cubek_reduce::eval::cpu_reference::{
@@ -193,6 +193,82 @@ impl TestCase {
             ReduceOperationConfig::TopK(k),
             1e-7,
         );
+    }
+
+    /// Run the fused top-k and check both outputs against the very references the
+    /// separate `TopK` and `ArgTopK` launches are checked against, so one launch
+    /// has to agree with what two launches produce.
+    pub fn test_topk_with_indices(&self, k: usize) {
+        let client = TestRuntime::client(&Default::default());
+        let axis = self.axis.unwrap();
+        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+
+        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+            .dtype(self.input_dtype)
+            .layout(StridedLayout::Explicit(
+                self.stride.iter().copied().collect(),
+            ))
+            .random(1234, Distribution::Uniform(-1., 1.))
+            .generate_with_f32_host_data();
+
+        // The config only selects `k`: `reduce_with_indices` always writes both halves.
+        let config = ReduceOperationConfig::TopK(k);
+
+        let expected_values =
+            cast_host_through_dtype(reference_topk(&input_host, axis, k, None), self.input_dtype);
+        let expected_indices =
+            cast_host_through_dtype(reference_argtopk(&input_host, axis, k, None), u32_dtype);
+
+        let values_handle =
+            self.build_output_tensor(&client, self.input_dtype, &expected_values.shape, &config);
+        let indices_handle =
+            self.build_output_tensor(&client, u32_dtype, &expected_indices.shape, &config);
+
+        let strategy = self.strategy.clone();
+        let dtypes = ReduceWithIndicesDtypes {
+            input: self.input_dtype,
+            values: self.input_dtype,
+            indices: u32_dtype,
+            accumulation: self.accumulation_dtype,
+        };
+        let input_binding = input_handle.binding();
+        let values_binding = values_handle.clone().binding();
+        let indices_binding = indices_handle.clone().binding();
+
+        let outcome = launch_and_capture_outcome(&client, |c| {
+            reduce_with_indices::<TestRuntime>(
+                c,
+                input_binding,
+                values_binding,
+                indices_binding,
+                axis,
+                strategy,
+                config,
+                dtypes,
+            )
+            .into()
+        });
+
+        let outcome = match outcome {
+            ExecutionOutcome::Executed => {
+                let actual_values =
+                    HostData::from_tensor_handle(&client, values_handle, HostDataType::F32);
+                let actual_indices =
+                    HostData::from_tensor_handle(&client, indices_handle, HostDataType::F32);
+
+                // Report the values mismatch first if there is one; otherwise the
+                // indices decide the outcome. Both have to agree with the reference.
+                match assert_equals_approx(&actual_values, &expected_values, 1e-7) {
+                    ValidationResult::Pass => {
+                        assert_equals_approx(&actual_indices, &expected_indices, 0.0)
+                            .as_test_outcome()
+                    }
+                    failed => failed.as_test_outcome(),
+                }
+            }
+            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+        };
+        outcome.enforce();
     }
 
     fn run_reduce_test(

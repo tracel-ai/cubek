@@ -9,7 +9,10 @@ use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
-    components::instructions::{ReduceRequirements, ReduceStep, SharedAccumulator},
+    components::instructions::{
+        ReduceRequirements, ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily,
+        SharedAccumulator,
+    },
 };
 use cubecl::frontend::Numeric;
 
@@ -53,6 +56,11 @@ pub struct TopK {
 }
 
 impl ReduceFamily for TopK {
+    type Instruction<P: ReducePrecision> = Self;
+    type Config = TopKConfig;
+}
+
+impl ReduceWithIndicesFamily for TopK {
     type Instruction<P: ReducePrecision> = Self;
     type Config = TopKConfig;
 }
@@ -367,6 +375,52 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         }
 
         Value::new_Multiple(output)
+    }
+}
+
+#[cube]
+impl<P: ReducePrecision> ReduceWithIndices<P> for TopK {
+    fn to_output_both_parallel<Out: Numeric, Idx: Numeric>(
+        this: &Self,
+        accumulator: Accumulator<P>,
+        _shape_axis_reduce: usize,
+    ) -> (Value<Out>, Value<Idx>) {
+        let (values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
+
+        let mut out_values = Array::new(this.k);
+        let mut out_indices = Array::new(this.k);
+        #[unroll]
+        for i in 0..this.k {
+            out_values[i] = Out::cast_from(values[i]);
+            out_indices[i] = Idx::cast_from(coords[i]);
+        }
+
+        (
+            Value::new_Multiple(out_values),
+            Value::new_Multiple(out_indices),
+        )
+    }
+
+    fn to_output_both_perpendicular<Out: Numeric, Idx: Numeric>(
+        this: &Self,
+        accumulator: Accumulator<P>,
+        _shape_axis_reduce: usize,
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
+        let acc_values = accumulator.elements.multiple();
+        let acc_args = accumulator.args.multiple();
+
+        let mut out_values = Array::new(this.k);
+        let mut out_indices = Array::new(this.k);
+        #[unroll]
+        for i in 0..this.k {
+            out_values[i] = Vector::cast_from(acc_values[i]);
+            out_indices[i] = Vector::cast_from(acc_args[i]);
+        }
+
+        (
+            Value::new_Multiple(out_values),
+            Value::new_Multiple(out_indices),
+        )
     }
 }
 
