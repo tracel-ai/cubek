@@ -3,6 +3,7 @@
 
 use cubecl::{
     prelude::*,
+    quant::scheme::{QuantStore, QuantValue},
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coords1d, CoordsDyn, Layout, LayoutExpand},
@@ -94,10 +95,18 @@ impl<T: Numeric> MemData<T> {
         #[comptime] storage: Storage,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
+        // `vector_size` counts *served values*; the binding is grouped at the storage width, which
+        // a packed store narrows by its packing factor. The two coincide on every plain operand.
         let bound_width = tensor.vector_size();
+        let pack = #[comptime]
+        match &quant {
+            ComptimeOption::Some(info) => comptime!(info.scheme.num_quants()),
+            ComptimeOption::None => 1usize,
+        };
         comptime!(assert!(
-            bound_width == vector_size,
-            "MemData::from_tensor: comptime vector_size differs from the binding's width"
+            bound_width * pack == vector_size,
+            "MemData::from_tensor: comptime vector_size ({vector_size}) is not the binding's \
+             width ({bound_width}) times the packing factor ({pack})"
         ));
         let start_axis = comptime!(storage.start_axis);
         let num_tiled = comptime!(space.rank() - storage.start_axis);
@@ -335,16 +344,34 @@ impl<T: Numeric> MemData<T> {
                 }
             }
         } else {
-            let s = src.flat_transparent::<T, W>();
-            let mut d = self.flat_mut::<W>();
-            let total = d.shape();
-            let workers = CUBE_DIM as usize;
-            let mut i = UNIT_POS as usize;
-            while i < total {
-                // `src` zeroes reads past its logical bound (the partial-tile overhang); the
-                // staged buffer is unchecked, so the full padded cell is still written.
-                d.write(i, s.read(i));
-                i += workers;
+            // The read decodes at the source's true storage element: `T` for a plain tile,
+            // else the quantized store's element recovered from its scheme (the tile serves
+            // `T`, so `I` was erased at construction and lives only on the scheme). This is
+            // what lets a plain `copy_from`/`fill` dequantize on its own — the kernel never
+            // threads `I`.
+            #[comptime]
+            match &src.quant {
+                ComptimeOption::None => self.scan_transparent::<T, W, W>(src),
+                ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
+                    // Unpacked: one element per value, so the physical line is the served line.
+                    QuantStore::Native => match comptime!(info.scheme.value) {
+                        QuantValue::Q8F | QuantValue::Q8S => self.scan_transparent::<i8, W, W>(src),
+                        other => panic!(
+                            "MemData::fill_from: native quant storage element {:?} is not wired (i8 only)",
+                            other
+                        ),
+                    },
+                    // Packed: the buffer holds `u32`s carrying `num_quants` values each, so the
+                    // physical line is that much narrower than the served one.
+                    QuantStore::PackedU32(_) => {
+                        let size!(WP) = comptime!(src.vector_size / info.scheme.num_quants());
+                        self.scan_transparent::<u32, WP, W>(src)
+                    }
+                    other => panic!(
+                        "MemData::fill_from: quant storage {:?} is not wired (native or packed-u32)",
+                        other
+                    ),
+                },
             }
         }
     }
@@ -360,6 +387,24 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// The cooperative flat scan behind [`fill_from`](MemData::fill_from)'s general path: cyclic
+    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …. Reads through
+    /// [`flat_transparent`](MemData::flat_transparent) at storage element `I`, so a quantized
+    /// source dequantizes into `T` transparently (`I == T` on a plain source).
+    fn scan_transparent<I: Numeric, WP: Size, W: Size>(&mut self, src: &MemData<T>) {
+        let s = src.flat_transparent::<I, WP, W>();
+        let mut d = self.flat_mut::<W>();
+        let total = d.shape();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            // `src` zeroes reads past its logical bound (the partial-tile overhang); the
+            // staged buffer is unchecked, so the full padded cell is still written.
+            d.write(i, s.read(i));
+            i += workers;
+        }
+    }
+
     /// How this store's stages are laid out and filled, carried from the operand's [`Storage`].
     pub(crate) fn stage(&self) -> comptime_type!(StagePlan) {
         comptime!(self.stage)
@@ -368,6 +413,14 @@ impl<T: Numeric> MemData<T> {
     /// This buffer's byte length (its length is in native lines, so widened by the vector
     /// size): the transaction count a TMA fill into it lands.
     pub(crate) fn size_bytes(&self) -> u32 {
+        // `T` and `vector_size` are served-typed; a quantized buffer truly holds its storage
+        // element, narrower on both counts, so this arithmetic would overcount it. Unreachable
+        // today (only TMA smem destinations ask, and smem is never quantized) — kept refused
+        // rather than silently wrong.
+        comptime!(assert!(
+            self.quant.is_none(),
+            "MemData::size_bytes: a quantized buffer's byte length needs the storage element"
+        ));
         self.buffer.len() as u32 * comptime!(T::type_size() as u32 * self.vector_size as u32)
     }
 
@@ -505,17 +558,38 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    /// The scales as a third [`flat`](MemData::flat) over this same window: [`ScaleLayout`]
+    /// resolves a window coordinate to its block's scale, then the values' own [`FlatLayout`]
+    /// rides on top, so both views answer the same flat position. Masked like the values, so an
+    /// overhang line reads scale `0` rather than off the end of the scales.
+    fn flat_scales<'a>(&self, info: &'a QuantInfo) -> FlatView<'a, f32> {
+        FlatView::new(
+            info.buffer
+                .view(ScaleLayout::new(
+                    info.strides.clone(),
+                    info.window_start,
+                    comptime!(info.block.clone()),
+                    comptime!(self.vector_size),
+                ))
+                .view(FlatLayout::new(self.extent.clone())),
+            comptime!(self.check),
+        )
+    }
+
     /// Quantization-transparent [`flat`](MemData::flat): a plain store serves the bare
-    /// `Direct` read, a quantized one re-types to the storage element `I` and dequantizes
-    /// each read into `T`. `#[comptime]`, so the plain path pays nothing.
-    pub(crate) fn flat_transparent<I: Numeric, W: Size>(&self) -> TileView<'_, T, I, W, Coords1d> {
+    /// `Direct` read, a quantized one re-types to the storage element `I` and pairs it with the
+    /// scales over the same window, dequantizing each read into `T`. `#[comptime]`, so the plain
+    /// path pays nothing.
+    pub(crate) fn flat_transparent<I: Numeric, WP: Size, W: Size>(
+        &self,
+    ) -> TileView<'_, T, I, WP, W> {
         #[comptime]
         match &self.quant {
             ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
-                self.flat_storage::<I, W>(),
-                // The tile is windowed down to one block, so its single scale sits at
-                // `window_start`; broadcast it across the block.
-                T::cast_from(info.buffer[info.window_start.fcast::<usize>()]),
+                // The storage view groups at the *physical* width: a packed buffer holds
+                // `W / num_quants` elements per served line.
+                self.flat_storage::<I, WP>(),
+                self.flat_scales(info),
                 comptime!(info.scheme),
             )),
             ComptimeOption::None => TileView::new_Direct(self.flat::<W>()),

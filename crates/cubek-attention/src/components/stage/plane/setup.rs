@@ -109,6 +109,7 @@ impl<SK: StageFamily, SV: StageFamily, SO: StageFamily> StageAttentionFamily
                 partition_size: blueprint.tiling_scheme.partition_size,
                 stage_size: blueprint.tiling_scheme.stage_size,
                 num_planes,
+                query_vector_size: blueprint.vector_sizes.query as u32,
                 key_smem_config,
                 value_smem_config,
                 out_smem_config,

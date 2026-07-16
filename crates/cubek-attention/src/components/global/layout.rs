@@ -20,19 +20,36 @@ pub struct AttentionGlobalLayout {
 
 #[cube]
 impl AttentionGlobalLayout {
-    /// Creates a new 2D layout starting at `batch_index`.
+    /// Creates a new 2D layout for the `(batch, head)` slice selected by
+    /// `batch_index`, the flattened `batch * num_heads + head` index over the
+    /// query's extents. `num_heads` is always the query's head count.
     pub fn new<T: Numeric, N: Size, IO: Clone>(
         tensor: &VirtualTensor<T, N, IO>,
         batch_index: u32,
+        num_heads: u32,
         #[comptime] config: GlobalMemoryConfig,
     ) -> Self {
-        let stride_batch = tensor.stride(1);
+        let batch = batch_index / num_heads;
+        let head = batch_index % num_heads;
+        // A broadcast (size-1) batch/head dimension contributes no offset,
+        // so a [1, 1, S, S] mask reuses its slice instead of striding past it.
+        let batch_part = if tensor.shape(0) > 1 {
+            batch as usize * tensor.stride(0)
+        } else {
+            0usize
+        };
+        let head_part = if tensor.shape(1) > 1 {
+            head as usize * tensor.stride(1)
+        } else {
+            0usize
+        };
+        let batch_offset = batch_part + head_part;
         AttentionGlobalLayout {
             rows: tensor.shape(2) as u32,
             stride_row: tensor.stride(2),
             columns: tensor.shape(3) as u32,
             stride_col: tensor.stride(3),
-            batch_offset: batch_index as usize * stride_batch,
+            batch_offset,
             config,
         }
     }

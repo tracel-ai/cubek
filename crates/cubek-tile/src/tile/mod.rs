@@ -6,10 +6,12 @@
 mod cmma;
 mod mem;
 mod tma;
+mod view;
 
 pub use cmma::*;
 pub use mem::*;
 pub use tma::*;
+pub use view::*;
 
 use cubecl::{
     prelude::*,
@@ -76,8 +78,9 @@ impl<T: Numeric> TileKind<T> {
 /// The quantization a tile's backing store carries so reads dequantize transparently. Holds the
 /// scales `buffer` plus enough to window it in lockstep with the values ([`MemData::at`]): the
 /// per-axis scale `strides`, a running flat `window_start`, and the comptime per-axis `block`
-/// edges (elements per block). The scalar a leaf broadcasts is `buffer[window_start]`. Per-tensor
-/// is the degenerate case: `strides` are all `0`, so `window_start` never leaves `0`.
+/// edges (elements per block). [`ScaleLayout`] turns that into an address, so the scales read as
+/// a view over the values' own window. Per-tensor is the degenerate case: `strides` are all `0`,
+/// so `window_start` never leaves `0`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
@@ -93,7 +96,7 @@ pub struct QuantInfo {
 /// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
 /// tensor, so its edges are an unused placeholder ([`QuantInfo::native`] pairs them with `0`
 /// strides); a block scheme's edges come straight from the scheme.
-fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
+pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     match scheme.level {
         QuantLevel::Tensor => vec![1; rank],
         QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
@@ -106,17 +109,8 @@ impl QuantInfo {
     /// whole scales buffer, plus per logical axis the block edge and the scale stride that indexes
     /// one scale per block. Per-tensor is the degenerate single scale — every stride `0`, so the
     /// window never leaves index `0`; a block scheme reads the scales tensor's own strides.
-    pub(crate) fn native(
-        q: &QuantArg,
-        #[comptime] rank: usize,
-        #[comptime] vector_size: usize,
-    ) -> QuantInfo {
+    pub(crate) fn native(q: &QuantArg, #[comptime] rank: usize) -> QuantInfo {
         let block = comptime!(block_edges(q.scheme, rank));
-        comptime!(assert!(
-            vector_size == 1 || block[rank - 1] % vector_size == 0,
-            "QuantInfo::native: block on the vectorized inner axis must be a multiple of the line \
-             width, else a line straddles two scales"
-        ));
         let mut strides = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
@@ -139,6 +133,10 @@ impl QuantInfo {
     /// on each axis is `origin / block`, dotted with the scale strides, summed into a flat start.
     /// Element units on every axis (blocks are logical); the inner axis's line origin scales back
     /// by `vector_size`. Per-tensor keeps `strides = 0`, so this stays `0`.
+    ///
+    /// The window's own block index folds out here so [`ScaleLayout`] only adds the offset within
+    /// the window; that split holds because a window never straddles a block
+    /// ([`validate_blocks`] rejects a tiling where one would).
     pub(crate) fn window(
         &self,
         origin: &Coords<u32>,
@@ -370,6 +368,20 @@ impl<T: Numeric> Tile<T> {
                     }
                     _ => panic!("Tile::copy_from: unsupported kind pairing"),
                 }
+            }
+        }
+    }
+
+    /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s
+    /// element type. The cross-type epilogue [`copy_from`](Self::copy_from) cannot express:
+    /// its memory transports move bytes and so stay same-type, but a register accumulator
+    /// (e.g. `f32`) is wider than the output it writes (e.g. `f16`). Only a fragment
+    /// partition drains this way.
+    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+        match &self.tile_kind {
+            TileKind::CmmaPartition(s) => s.drain_cast_into(dst),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+                panic!("Tile::drain_cast_into: only a fragment partition drains with a cast")
             }
         }
     }

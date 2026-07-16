@@ -6,6 +6,8 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
+use cubecl::quant::scheme::QuantScheme;
+
 use crate::{
     Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, StridedTileArgLaunch,
 };
@@ -38,6 +40,9 @@ struct TileSourceData<'a, E, R: Runtime> {
     stage: Option<StageStorage>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
+    /// Quantization side-channel: the scales plus the scheme saying how to fold them back in.
+    /// `build` binds the tensor at the scheme's storage width and attaches these.
+    quant: Option<(TensorArg<R>, QuantScheme)>,
     _ty: PhantomData<E>,
 }
 
@@ -63,6 +68,7 @@ impl<'a, E, R: Runtime> StridedTileSource<'a, Unset, Unset, E, R> {
                 check: None,
                 stage: None,
                 units: 0,
+                quant: None,
                 _ty: PhantomData,
             },
             _state: PhantomData,
@@ -127,6 +133,16 @@ impl<'a, Sp, Sub, E, R: Runtime> StridedTileSource<'a, Sp, Sub, E, R> {
         self
     }
 
+    /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
+    /// **in values** — a packed store's buffer is narrower than its shape by the packing
+    /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
+    /// [`vectorize`](Self::vectorize) still names the *served* width; `build` derives the
+    /// storage width the tensor is truly bound at. Default not quantized.
+    pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
+        self.data.quant = Some((scales, scheme));
+        self
+    }
+
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
     pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
@@ -157,6 +173,7 @@ impl<'a, E: Numeric, R: Runtime> StridedTileSource<'a, Set, Set, E, R> {
             check,
             stage,
             units,
+            quant,
             ..
         } = self.data;
         let space = space.unwrap();
@@ -231,6 +248,9 @@ impl<'a, E: Numeric, R: Runtime> StridedTileSource<'a, Set, Set, E, R> {
         );
         if let Some(stage) = stage {
             arg = arg.stage(stage);
+        }
+        if let Some((scales, scheme)) = quant {
+            arg = arg.quantized(scales, scheme);
         }
         arg
     }

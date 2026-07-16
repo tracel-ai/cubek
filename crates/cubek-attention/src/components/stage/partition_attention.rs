@@ -248,6 +248,15 @@ impl<
         let partition_seq_q = config.shared().partition_size.seq_q;
         let partition_head_dim = config.shared().partition_size.head_dim;
         let attention_tile_size = config.tile_size();
+        let shared_stage = config.tile_attention().requires_shared_query_stage();
+        let staging_len = comptime!(if shared_stage {
+            (attention_tile_size.seq_q * attention_tile_size.head_dim
+                / config.shared().query_vector_size
+                * config.num_planes()) as usize
+        } else {
+            1
+        });
+        let mut staged = Shared::<[Vector<QG<AP>, QGS<AP>>]>::new_slice(staging_len);
 
         #[unroll]
         for q in 0..partition_seq_q as usize {
@@ -255,6 +264,8 @@ impl<
             for hd in 0..partition_head_dim as usize {
                 let tile_to_write = registers.get_mut(q, hd, partition_head_dim as usize);
                 let tile_read = reader.get_tile::<P>(
+                    &mut staged,
+                    shared_stage,
                     (q as u32, hd as u32).runtime(),
                     attention_tile_size,
                     partition_seq_q,
@@ -267,7 +278,13 @@ impl<
                         &Tile::new_SharedTile(SharedTile::wrap::<QGS<AP>>(tile_read)),
                         cubek_std::StageIdent::Lhs,
                     );
+                #[comptime]
+                if shared_stage {
+                    sync_plane();
+                }
             }
         }
+
+        unsafe { staged.free() };
     }
 }
