@@ -254,27 +254,30 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
 }
 
 /// Classify the current level of a space that backs fragments: `None` for an *instance*
-/// level (one tile per axis), or the trailing-two-axes tile counts for the *partition*
-/// level. Anything else cannot back fragments and panics at comptime.
+/// level (a `Spatial` split across hardware, one tile per instance), or the trailing-two-axes
+/// tile counts for the *partition* level — a purely sequential level is one even at a 1×1
+/// grid (cuts equal to the level below still back per-instance fragments). Anything else
+/// cannot back fragments and panics at comptime.
 pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
     if space.is_final() {
         return None;
     }
-    if space
-        .axes()
-        .all(|a| per_instance_tiles(space, a) == Some(1))
-    {
+    if space.axes().any(|a| {
+        matches!(
+            space.partitioner().distribution(a),
+            Distribution::Spatial { .. }
+        )
+    }) {
+        for axis in space.axes() {
+            assert!(
+                per_instance_tiles(space, axis) == Some(1),
+                "cmma instance level: every axis must hand out one tile"
+            );
+        }
         return None;
     }
     let rank = space.rank();
     for (p, axis) in space.axes().enumerate() {
-        assert!(
-            matches!(
-                space.partitioner().distribution(axis),
-                Distribution::Sequential
-            ),
-            "cmma partition level: every axis below the instance split must be sequential"
-        );
         let tiles = per_instance_tiles(space, axis)
             .expect("cmma partition level: tile counts must be comptime");
         assert!(

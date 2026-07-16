@@ -260,7 +260,13 @@ impl<T: Numeric> Tile<T> {
                             "Tile::at: a level that cuts a fragment partition must be \
                              walked with compile-time coordinates (an unrolled walk)"
                         ));
-                        TileKind::new_CmmaPartition(p.clone())
+                        // A 1×1 partition passes through as its one fragment, so a
+                        // final tile sees a fragment operand whatever the walk's constness.
+                        if comptime!(p.m_tiles == 1 && p.n_tiles == 1) {
+                            TileKind::new_Cmma(p.at(0usize, 0usize))
+                        } else {
+                            TileKind::new_CmmaPartition(p.clone())
+                        }
                     }
                 }
             }
