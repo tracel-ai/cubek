@@ -9,7 +9,7 @@ use crate::{
     components::{
         batch::{
             BatchAttentionFamily,
-            entry_point::attention,
+            entry_point::{attention, attention_with_lse},
             simple::{SimpleBatchAttention, config::SimpleBatchConfig},
         },
         global::GlobalAttentionFamily,
@@ -51,6 +51,53 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
                 address_type,
                 input,
                 output,
+                cube_mapping,
+                blueprint,
+                dtypes.clone(),
+                dtypes.into(),
+                vector_sizes.into(),
+            )
+        };
+
+        Ok(())
+    }
+
+    unsafe fn launch_unchecked_with_lse<AA: AttentionArgs, R: cubecl::Runtime>(
+        client: &cubecl::prelude::ComputeClient<R>,
+        cube_dim: cubecl::CubeDim,
+        cube_count: cubecl::CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<AA, R>,
+        output: OutputRuntimeArg<AA, R>,
+        lse: cubecl::prelude::TensorArg<R>,
+        cube_mapping: CubeMappingLaunch<R>,
+        dtypes: &AttentionElems,
+        vector_sizes: &AttentionVectorSizes,
+        blueprint: Self::Blueprint,
+    ) -> Result<(), LaunchError> {
+        unsafe {
+            attention_with_lse::launch_unchecked::<
+                AA,
+                QG,
+                QGS,
+                KG,
+                KGS,
+                VG,
+                VGS,
+                MSK,
+                MSKS,
+                OG,
+                OGS,
+                Self,
+                R,
+            >(
+                client,
+                cube_count,
+                cube_dim,
+                address_type,
+                input,
+                output,
+                lse,
                 cube_mapping,
                 blueprint,
                 dtypes.clone(),

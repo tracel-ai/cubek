@@ -2,13 +2,16 @@ use cubecl;
 use cubecl::prelude::*;
 
 use crate::StageIdent;
+use crate::tile::FULLY_MASKED_ROW_THRESHOLD;
 use crate::tile::{
     Plane, RowWise, Tile, TileKind, TileKindExpand,
     mask::Mask,
     scope::{TileScope, assert_plane_scope},
     variants::{
         instruction::cmma::CmmaTile,
-        whitebox_fragment::{InnerLayout, WhiteboxFragment, WhiteboxFragmentLayout},
+        whitebox_fragment::{
+            InnerLayout, WhiteboxFragment, WhiteboxFragmentLayout, whitebox_fragment_absolute_pos,
+        },
     },
 };
 
@@ -215,5 +218,39 @@ impl<Acc: Float> BounceTile<Acc> {
         RowWise::copy_from(&mut state.1, &new_l);
 
         exp_m_diff
+    }
+
+    /// Writes the per-row softmax log-sum-exp `m + ln(l)` into
+    /// `lse[batch_offset + base_row + row]` for the absolute rows this
+    /// unit owns, bounded by `row_bound`. The cross-plane row reductions
+    /// leave every unit sharing a row with identical state, so only the
+    /// unit owning the row's first column writes. Rows whose running sum
+    /// is below the fully-masked threshold receive exactly `-inf`.
+    pub fn store_row_lse(
+        &self,
+        state: &(RowWise<Acc>, RowWise<Acc>),
+        lse: &mut Tensor<f32>,
+        batch_offset: usize,
+        base_row: u32,
+        row_bound: u32,
+    ) {
+        let layout = comptime!(self.fragment.layout);
+        let threshold = Acc::new(FULLY_MASKED_ROW_THRESHOLD);
+
+        for r in 0..layout.unit_size.0 {
+            let (abs_row, abs_col) = whitebox_fragment_absolute_pos(layout, (r, 0u32));
+            if abs_col == 0 {
+                let row = base_row + abs_row;
+                if row < row_bound {
+                    let m = state.0.vals[r as usize];
+                    let l = state.1.vals[r as usize];
+                    let mut value = f32::cast_from(f32::NEG_INFINITY);
+                    if l >= threshold {
+                        value = f32::cast_from(m) + f32::cast_from(l).ln();
+                    }
+                    lse[batch_offset + row as usize] = value;
+                }
+            }
+        }
     }
 }

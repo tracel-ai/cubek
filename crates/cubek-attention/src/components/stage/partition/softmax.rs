@@ -50,6 +50,10 @@ impl<Acc: Float, Lhs: Float> SoftmaxPartition<Acc, Lhs> {
         &mut self.score_tiles[q]
     }
 
+    pub fn get_score(&self, #[comptime] q: usize) -> &Tile<Acc, Plane> {
+        &self.score_tiles[q]
+    }
+
     pub fn get_softmaxed(&mut self, #[comptime] q: usize) -> &Tile<Lhs, Plane> {
         &self.softmaxed_tiles[q]
     }

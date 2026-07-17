@@ -169,6 +169,31 @@ impl<
         sequence
     }
 
+    fn write_lse(
+        softmax_partition: &Self::SoftmaxPartition,
+        state: &Sequence<Self::RunningState>,
+        lse: &mut Tensor<f32>,
+        batch_index: u32,
+        base_row: u32,
+        row_bound: u32,
+        #[comptime] config: Self::Config,
+    ) {
+        let p = config.shared().partition_size;
+        let tile_seq_q = config.tile_size().seq_q;
+        let batch_offset = batch_index as usize * lse.stride(0);
+
+        #[unroll]
+        for q in 0..p.seq_q as usize {
+            softmax_partition.get_score(q).store_row_lse(
+                &state[q],
+                lse,
+                batch_offset,
+                base_row + q as u32 * tile_seq_q,
+                row_bound,
+            );
+        }
+    }
+
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
         acc: &mut OutputPartition<ACC<AP>>,
         stage: &mut SO,
