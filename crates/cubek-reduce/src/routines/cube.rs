@@ -138,34 +138,30 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
-    let work_size = match settings.vectorization_mode {
-        VectorizationMode::Parallel => problem.reduce_len / settings.vector_size_input,
-        VectorizationMode::Perpendicular => problem.reduce_len,
-    };
-    let bound_checks = match work_size.is_multiple_of(cube_size as usize) {
-        true => BoundChecks::None,
-        false => BoundChecks::Mask,
-    };
+    // The blueprint is comptime: every field forks a compiled kernel variant,
+    // while kernel selection is cached per anchored autotune key. A variant
+    // choice derived from a raw runtime property (divisibility, exact launch
+    // fit) re-splits the anchored bucket and keeps compiling "new" kernels
+    // long after a warmup covered every key — always compile the guarded
+    // variants, correct for every length sharing the key.
+    let bound_checks = BoundChecks::Mask;
 
     let num_shared_accumulators = match use_planes {
         true => plane_count as usize,
         false => cube_size as usize,
     };
 
-    let (cube_count, launched_cubes) = cube_count_spread_with_total(client, working_cubes);
+    let (cube_count, _launched_cubes) = cube_count_spread_with_total(client, working_cubes);
 
-    let cube_idle = match working_cubes != launched_cubes {
-        true => match strategy.use_planes
-            && !client
-                .properties()
-                .features
-                .plane
-                .contains(Plane::NonUniformControlFlow)
-        {
-            true => IdleMode::Mask,
-            false => IdleMode::Terminate,
-        },
-        false => IdleMode::None,
+    let cube_idle = match strategy.use_planes
+        && !client
+            .properties()
+            .features
+            .plane
+            .contains(Plane::NonUniformControlFlow)
+    {
+        true => IdleMode::Mask,
+        false => IdleMode::Terminate,
     };
     let blueprint = ReduceBlueprint {
         vectorization_mode: settings.vectorization_mode,
