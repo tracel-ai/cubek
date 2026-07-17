@@ -4,6 +4,7 @@
 
 use cubecl::prelude::*;
 
+use super::instruction::mma_leaf_split;
 use crate::*;
 
 #[cube]
@@ -34,8 +35,20 @@ impl<Acc: Numeric> Tile<Acc> {
                 self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
         } else {
+            // Split-K: a contracting axis was `Cut::unit` (spread across the plane's lanes), so
+            // each lane holds a disjoint K-slice for the same `(m, n)` cell and the leaf must
+            // `plane_sum`-combine rather than have every lane write. A comptime property of this
+            // level's partitioner, and only real once the deferred lane count resolves to
+            // `plane_size > 1` — on CPU (`plane_size == 1`) the one lane owns the whole K and the
+            // classic per-region accumulate is already correct.
+            let split_k = comptime!(split_k_reduce(op_space.clone(), self.space.clone()));
             for region in Walk::over(op_space) {
-                self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+                if comptime!(split_k) {
+                    let mut leaf = self.at(&region);
+                    mma_leaf_split(&mut leaf, &lhs.at(&region), &rhs.at(&region));
+                } else {
+                    self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
+                }
             }
         }
     }
@@ -159,4 +172,39 @@ impl<Acc: Numeric> Tile<Acc> {
             s0.consume_final(|a, b| self.at(&last).mma(a, b));
         }
     }
+}
+
+/// Whether this level's register leaf needs an intra-plane K-reduction: a contracting axis
+/// (`op_space` but not `output`) is `Cut::unit` with a resolved lane count above one, i.e. the
+/// K-slices are spread across the plane's lanes and share an output cell. Requires the leaf be
+/// the next level (register), and that the split cuts K into exactly one tile per lane, so a
+/// single leaf invocation covers the lane's whole slice (the combine writes once). Host-side,
+/// comptime — the walk selects the per-lane slice, this only gates the reduction.
+fn split_k_reduce(op_space: Space, output: Space) -> bool {
+    let part = op_space.partitioner();
+    if !(part.next().is_final() && part.leaf() == Leaf::Register) {
+        return false;
+    }
+    let mut split = false;
+    for axis in op_space.contracting(&output) {
+        if let Distribution::Spatial {
+            scope: ComputeScope::Unit,
+            coverage,
+            ..
+        } = part.distribution(axis)
+        {
+            let lanes = coverage.instances_const().expect(
+                "split-K: a Unit axis's lane count must be resolved (launch through space.launcher)",
+            );
+            if lanes > 1 {
+                assert!(
+                    op_space.count(axis) == lanes,
+                    "split-K: Cut::unit on a contracting axis must cut it into exactly \
+                     plane_size tiles (one K-slice per lane), so the leaf sees the whole slice"
+                );
+                split = true;
+            }
+        }
+    }
+    split
 }
