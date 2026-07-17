@@ -89,6 +89,12 @@ pub struct QuantInfo {
     pub(crate) window_start: u32,
     #[cube(comptime)]
     pub(crate) block: Vec<usize>,
+    /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
+    /// ([`MemData::smem_quant`]): the values stage as packed words and their scales stage compactly
+    /// beside them, so the fill knows how many blocks to copy. Empty for a gmem operand, which reads
+    /// the tensor's own scales in place.
+    #[cube(comptime)]
+    pub(crate) scale_shape: Vec<usize>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
 }
@@ -125,6 +131,8 @@ impl QuantInfo {
             strides,
             window_start: 0u32,
             block: comptime!(block),
+            // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
+            scale_shape: comptime!(Vec::new()),
             scheme: comptime!(q.scheme),
         }
     }
@@ -157,6 +165,7 @@ impl QuantInfo {
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
+            scale_shape: comptime!(self.scale_shape.clone()),
             scheme: comptime!(self.scheme),
         }
     }

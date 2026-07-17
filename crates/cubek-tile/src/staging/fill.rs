@@ -46,8 +46,15 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
         } else {
             let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
+            // Only the register microkernel reads its stage through `matrix_transparent`, so only it
+            // can dequantize out of a packed smem stage; a cmma leaf loads f32/f16 fragments and
+            // still needs its quant operand dequantized into an f32 stage at the fill.
+            let pack_quant = comptime!(out.partitioner().leaf() == Leaf::Register);
             Staging::wrap(
-                (MemData::smem_like(lhs), MemData::smem_like(rhs)),
+                (
+                    MemData::smem_like(lhs, pack_quant),
+                    MemData::smem_like(rhs, pack_quant),
+                ),
                 Pipeline::new(sync),
                 pin_lhs,
                 pin_rhs,

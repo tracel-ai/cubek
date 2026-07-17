@@ -3,7 +3,7 @@
 
 use cubecl::{
     prelude::*,
-    quant::scheme::{QuantStore, QuantValue},
+    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
@@ -168,13 +168,57 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
-    /// `operand`, at the same physical width and the operand's [`StagePlan`].
-    pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
-        MemData::smem(
-            comptime!(operand.space.divide()),
-            operand.vector_size(),
-            operand.stage(),
-        )
+    /// `operand`, at the same physical width and the operand's [`StagePlan`]. A quantized operand
+    /// stages as its packed storage words (see [`smem_quant`](MemData::smem_quant)) when
+    /// `pack_quant` — so the leaf dequantizes straight out of smem rather than inflating an f32
+    /// stage at the fill — and as a plain f32 stage (dequantized at the fill) otherwise, which the
+    /// cmma leaf needs since it loads fragments directly.
+    pub fn smem_like(operand: &Tile<T>, #[comptime] pack_quant: bool) -> Tile<T> {
+        let space = comptime!(operand.space.divide());
+        let vector_size = operand.vector_size();
+        let stage = operand.stage();
+        match &operand.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                #[comptime]
+                match &g.quant {
+                    ComptimeOption::None => MemData::smem(space, vector_size, stage),
+                    ComptimeOption::Some(info) => {
+                        if comptime!(!pack_quant) {
+                            // The cmma leaf loads f32/f16 fragments: stage plain, dequantize at fill.
+                            MemData::smem(space, vector_size, stage)
+                        } else {
+                            match comptime!(info.scheme.store) {
+                                // One storage element per value: physical width is the served width.
+                                QuantStore::Native => match comptime!(info.scheme.value) {
+                                    QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
+                                        space,
+                                        vector_size,
+                                        stage,
+                                        comptime!(info.scheme),
+                                    ),
+                                    other => panic!(
+                                        "MemData::smem_like: native quant storage element {:?} is not wired (i8 only)",
+                                        other
+                                    ),
+                                },
+                                // Packed `u32`s carrying `num_quants` values each.
+                                QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
+                                    space,
+                                    vector_size,
+                                    stage,
+                                    comptime!(info.scheme),
+                                ),
+                                other => panic!(
+                                    "MemData::smem_like: quant storage {:?} is not wired (native or packed-u32)",
+                                    other
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+            _ => MemData::smem(space, vector_size, stage),
+        }
     }
 
     /// Allocate a shared-memory tile over `space`, at physical `vector_size` (the slice is
@@ -217,6 +261,59 @@ impl<T: Numeric> MemData<T> {
                 check: comptime!(false),
                 stage,
                 quant: ComptimeOption::new_None(),
+            }),
+            space: comptime!(space),
+        }
+    }
+
+    /// [`smem`](MemData::smem) for a quantized operand: the values stage at the *storage* element
+    /// `I` (`i8` native, `u32` packed) and physical (packed) width `vector_size / pack`, and a
+    /// compact `Shared` scales buffer stages beside them — one f32 per block of this sub-tile, its
+    /// contents refilled per region by [`fill_from`](MemData::fill_from). The scales are
+    /// self-relative (`window_start = 0`, block grid row-major over the sub-tile), so a leaf read
+    /// dequantizes straight out of smem with no f32 inflation. The buffer is scalar-erased to the
+    /// served `T` (as in [`from_tensor_quant`](MemData::from_tensor_quant)); the read/write views
+    /// recover `I` through [`lines_storage`](MemData::lines_storage).
+    pub fn smem_quant<I: Numeric>(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] stage: StagePlan,
+        #[comptime] scheme: QuantScheme,
+    ) -> Tile<T> {
+        let levels = comptime!((!space.is_final() && stage.layout == StageStorage::Tiled) as usize);
+        // The served line is `pack` values wide; the physical (storage) line is that much narrower.
+        let size!(WP) = comptime!(vector_size / scheme.num_quants());
+        let smem =
+            Shared::<[Vector<I, WP>]>::new_slice(comptime!(space.tile_size() / vector_size));
+        let buffer = unsafe {
+            smem.inner_ref()
+                .downcast_unchecked::<T>()
+                .as_boxed_unchecked()
+        };
+        // The line grid is the same whether counted in served or storage lines (one storage line is
+        // one served line), so the values' layout/window are exactly `smem`'s.
+        let (physical_shape, physical_strides) =
+            storage_layout(comptime!(space.clone()), vector_size, levels);
+        let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
+        let bound = extent.clone();
+        let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
+        Tile::<T> {
+            tile_kind: TileKind::new_Smem(MemData::<T> {
+                buffer,
+                vector_size,
+                physical_shape,
+                physical_strides,
+                origin,
+                extent,
+                window_start: 0u32,
+                whole: comptime!(true),
+                bound,
+                start_axis: comptime!(0usize),
+                num_tiled: comptime!(space.rank()),
+                levels,
+                check: comptime!(false),
+                stage,
+                quant,
             }),
             space: comptime!(space),
         }
@@ -276,86 +373,21 @@ impl<T: Numeric> MemData<T> {
     /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
     pub(crate) fn fill_from(&mut self, src: &MemData<T>) {
         let size!(W) = comptime!(self.vector_size);
-        // A whole-buffer destination (any staged smem) fills in destination-physical
-        // order: the write is linear and only the source decodes, once per line (by
-        // constants on a static store) — half the address math of a logical-order scan.
-        if comptime!(self.whole && !self.check && self.quant.is_none() && src.quant.is_none()) {
-            let s = MaskedView::new(
-                src.lines::<W>().view(src.base()).view(src.window()),
-                comptime!(src.check),
-            );
-            let shape = self.physical_shape.clone();
-            let plen = shape.len().comptime();
-            let total = shape
-                .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
-                .fcast::<usize>();
-            let start_axis = comptime!(self.start_axis);
-            let num_tiled = comptime!(self.num_tiled);
-            let levels = comptime!(self.levels);
-            // A comptime worker count emits the tasks straight-line: a rolled loop's
-            // runtime `CUBE_DIM` stride blocks unrolling, and on Metal's in-order pipe
-            // each line's smem store then stalls the next line's read. Only a spilling
-            // last task needs its guard; unknown or tiny cubes take the rolled loop.
-            // `constant()` bridges the folded total back to host data — a whole smem
-            // stage's shape is static, so it always folds.
-            let units = comptime!(self.stage.units);
-            let total_c = total.constant();
-            let straight = comptime!(
-                matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8)
-            );
-            let d = self.lines_mut::<W>();
-            if comptime!(straight) {
-                let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
-                #[unroll]
-                for t in 0..tasks {
-                    let i = UNIT_POS as usize + comptime!(t * units);
-                    if comptime!((t + 1) * units > total_c.unwrap() as usize) {
-                        if i < total {
-                            d[i] = s.read(physical_coord(
-                                i,
-                                shape.clone(),
-                                start_axis,
-                                num_tiled,
-                                levels,
-                            ));
-                        }
-                    } else {
-                        d[i] = s.read(physical_coord(
-                            i,
-                            shape.clone(),
-                            start_axis,
-                            num_tiled,
-                            levels,
-                        ));
-                    }
-                }
-            } else {
-                let workers = CUBE_DIM as usize;
-                let mut i = UNIT_POS as usize;
-                while i < total {
-                    d[i] = s.read(physical_coord(
-                        i,
-                        shape.clone(),
-                        start_axis,
-                        num_tiled,
-                        levels,
-                    ));
-                    i += workers;
-                }
-            }
-        } else {
-            // The read decodes at the source's true storage element: `T` for a plain tile,
-            // else the quantized store's element recovered from its scheme (the tile serves
-            // `T`, so `I` was erased at construction and lives only on the scheme). This is
-            // what lets a plain `copy_from`/`fill` dequantize on its own — the kernel never
-            // threads `I`.
+        if comptime!(self.quant.is_some()) {
+            // Quant → quant: stage the packed storage words verbatim through the straight-line fill,
+            // then the scales beside them, so a leaf read dequantizes straight out of smem with no
+            // f32 inflation. A quantized stage is always a fresh whole buffer, so the masked slow
+            // path never applies.
+            comptime!(assert!(
+                self.whole && !self.check,
+                "MemData::fill_from: a quantized stage is always a fresh whole buffer"
+            ));
             #[comptime]
             match &src.quant {
-                ComptimeOption::None => self.scan_transparent::<T, W, W>(src),
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                     // Unpacked: one element per value, so the physical line is the served line.
                     QuantStore::Native => match comptime!(info.scheme.value) {
-                        QuantValue::Q8F | QuantValue::Q8S => self.scan_transparent::<i8, W, W>(src),
+                        QuantValue::Q8F | QuantValue::Q8S => self.fill_straight::<i8, W>(src),
                         other => panic!(
                             "MemData::fill_from: native quant storage element {:?} is not wired (i8 only)",
                             other
@@ -363,6 +395,41 @@ impl<T: Numeric> MemData<T> {
                     },
                     // Packed: the buffer holds `u32`s carrying `num_quants` values each, so the
                     // physical line is that much narrower than the served one.
+                    QuantStore::PackedU32(_) => {
+                        let size!(WP) = comptime!(self.vector_size / info.scheme.num_quants());
+                        self.fill_straight::<u32, WP>(src);
+                    }
+                    other => panic!(
+                        "MemData::fill_from: quant storage {:?} is not wired (native or packed-u32)",
+                        other
+                    ),
+                },
+                ComptimeOption::None => panic!(
+                    "MemData::fill_from: a quantized stage must be filled from a quantized source"
+                ),
+            }
+            self.stage_scales(src);
+        } else if comptime!(self.whole && !self.check && src.quant.is_none()) {
+            // Plain → plain, whole destination: fill in destination-physical order (the write is
+            // linear and only the source decodes, once per line by constants on a static store).
+            self.fill_straight::<T, W>(src);
+        } else {
+            // The read decodes at the source's true storage element: `T` for a plain tile, else the
+            // quantized store's element recovered from its scheme (the tile serves `T`, so `I` was
+            // erased at construction and lives only on the scheme). This is what lets a plain
+            // `copy_from`/`fill` dequantize on its own into a plain destination — the kernel never
+            // threads `I`.
+            #[comptime]
+            match &src.quant {
+                ComptimeOption::None => self.scan_transparent::<T, W, W>(src),
+                ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
+                    QuantStore::Native => match comptime!(info.scheme.value) {
+                        QuantValue::Q8F | QuantValue::Q8S => self.scan_transparent::<i8, W, W>(src),
+                        other => panic!(
+                            "MemData::fill_from: native quant storage element {:?} is not wired (i8 only)",
+                            other
+                        ),
+                    },
                     QuantStore::PackedU32(_) => {
                         let size!(WP) = comptime!(src.vector_size / info.scheme.num_quants());
                         self.scan_transparent::<u32, WP, W>(src)
@@ -373,6 +440,93 @@ impl<T: Numeric> MemData<T> {
                     ),
                 },
             }
+        }
+    }
+
+    /// The straight-line half of [`fill_from`](MemData::fill_from): a whole destination filled in
+    /// destination-physical order, whole `Vector<I2, WP2>` lines, only the source decoding (once per
+    /// line, by constants on a static store — half the address math of a logical-order scan). `I2` /
+    /// `WP2` are the *storage* element and physical width: the served `(T, self.vector_size)` for a
+    /// plain copy, the packed storage `(u32, served/pack)` (or native `i8`) for a quant stage.
+    fn fill_straight<I2: Numeric, WP2: Size>(&mut self, src: &MemData<T>) {
+        let s = MaskedView::new(
+            src.lines_storage::<I2, WP2>()
+                .view(src.base())
+                .view(src.window()),
+            comptime!(src.check),
+        );
+        let shape = self.physical_shape.clone();
+        let plen = shape.len().comptime();
+        let total = shape
+            .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
+            .fcast::<usize>();
+        let start_axis = comptime!(self.start_axis);
+        let num_tiled = comptime!(self.num_tiled);
+        let levels = comptime!(self.levels);
+        // A comptime worker count emits the tasks straight-line: a rolled loop's runtime `CUBE_DIM`
+        // stride blocks unrolling, and on Metal's in-order pipe each line's store then stalls the
+        // next line's read. Only a spilling last task needs its guard; unknown or tiny cubes take
+        // the rolled loop. `constant()` bridges the folded total back to host data — a whole smem
+        // stage's shape is static, so it always folds.
+        let units = comptime!(self.stage.units);
+        let total_c = total.constant();
+        let straight = comptime!(
+            matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8)
+        );
+        let d = self.lines_storage_mut::<I2, WP2>();
+        if comptime!(straight) {
+            let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
+            #[unroll]
+            for t in 0..tasks {
+                let i = UNIT_POS as usize + comptime!(t * units);
+                if comptime!((t + 1) * units > total_c.unwrap() as usize) {
+                    if i < total {
+                        d[i] =
+                            s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                    }
+                } else {
+                    d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                }
+            }
+        } else {
+            let workers = CUBE_DIM as usize;
+            let mut i = UNIT_POS as usize;
+            while i < total {
+                d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                i += workers;
+            }
+        }
+    }
+
+    /// Refill this quantized stage's scales side-channel from `src` for the current region: one f32
+    /// per block of the sub-tile, from `src`'s windowed scales into the compact self-relative grid
+    /// [`smem_quant_info`] laid out. Cooperative across the cube (one block per task, cyclic). The
+    /// destination index is the flat block index itself (the grid is row-major, so the per-axis
+    /// decode inverts exactly); the source index dots the block coords with `src`'s scale strides,
+    /// whose `window_start` already carries the region's base block.
+    fn stage_scales(&mut self, src: &MemData<T>) {
+        let dst = self.quant.as_mut().unwrap();
+        let sinfo = src.quant.as_ref().unwrap();
+        let nb = comptime!(dst.scale_shape.clone());
+        let rank = comptime!(nb.len());
+        let count = comptime!(nb.iter().product::<usize>());
+        let dend = dst.buffer.len();
+        let dst_scales = dst.buffer.slice_mut(0, dend);
+        let send = sinfo.buffer.len();
+        let src_scales = sinfo.buffer.slice(0, send);
+        let workers = CUBE_DIM as usize;
+        let mut bl = UNIT_POS as usize;
+        while bl < count {
+            let x = bl.fcast::<u32>();
+            let mut src_idx = sinfo.window_start;
+            #[unroll]
+            for p in 0..rank {
+                let after = comptime!(nb[(p + 1)..].iter().product::<usize>());
+                let bi = x.fdiv(comptime!(after as u32)).frem(comptime!(nb[p] as u32));
+                src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
+            }
+            dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
+            bl += workers;
         }
     }
 
@@ -426,18 +580,41 @@ impl<T: Numeric> MemData<T> {
         pack
     }
 
-    /// This buffer's byte length (its length is in native lines, so widened by the vector
-    /// size): the transaction count a TMA fill into it lands.
+    /// This buffer's byte length (its length is in native lines, so widened by the physical width):
+    /// the transaction count a TMA fill into it lands. `T` / `vector_size` are served-typed, so a
+    /// quantized buffer widens by the *storage* element and packed width instead (its line count is
+    /// the same, one storage line per served line). Unreachable for quant today (only TMA smem
+    /// destinations ask, and a TMA source never stages into a quantized register), but computed
+    /// correctly rather than refused.
     pub(crate) fn size_bytes(&self) -> u32 {
-        // `T` and `vector_size` are served-typed; a quantized buffer truly holds its storage
-        // element, narrower on both counts, so this arithmetic would overcount it. Unreachable
-        // today (only TMA smem destinations ask, and smem is never quantized) — kept refused
-        // rather than silently wrong.
-        comptime!(assert!(
-            self.quant.is_none(),
-            "MemData::size_bytes: a quantized buffer's byte length needs the storage element"
-        ));
-        self.buffer.len() as u32 * comptime!(T::type_size() as u32 * self.vector_size as u32)
+        let lines = self.buffer.len() as u32;
+        #[comptime]
+        match &self.quant {
+            ComptimeOption::None => {
+                lines * comptime!(T::type_size() as u32 * self.vector_size as u32)
+            }
+            ComptimeOption::Some(info) => {
+                let wp = comptime!(self.vector_size / info.scheme.num_quants());
+                match comptime!(info.scheme.store) {
+                    QuantStore::Native => match comptime!(info.scheme.value) {
+                        QuantValue::Q8F | QuantValue::Q8S => {
+                            lines * comptime!(i8::type_size() as u32 * wp as u32)
+                        }
+                        other => panic!(
+                            "MemData::size_bytes: native quant storage element {:?} is not wired (i8 only)",
+                            other
+                        ),
+                    },
+                    QuantStore::PackedU32(_) => {
+                        lines * comptime!(u32::type_size() as u32 * wp as u32)
+                    }
+                    other => panic!(
+                        "MemData::size_bytes: quant storage {:?} is not wired (native or packed-u32)",
+                        other
+                    ),
+                }
+            }
+        }
     }
 
     /// The base layout: the `[grid…, tile…]` split (`levels > 0`) or a plain
@@ -478,6 +655,14 @@ impl<T: Numeric> MemData<T> {
     fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
         let storage = unsafe { self.buffer.downcast_unchecked::<I>() };
         storage.as_vectorized().with_vector_size::<W>()
+    }
+
+    /// The mutable twin of [`lines_storage`](MemData::lines_storage): where a quant stage's
+    /// [`fill_straight`](MemData::fill_straight) writes the packed storage words. `I == T` on a
+    /// plain copy, a same-type reinterpret.
+    fn lines_storage_mut<I: Numeric, W: Size>(&mut self) -> &mut [Vector<I, W>] {
+        let storage = unsafe { self.buffer.downcast_mut_unchecked::<I>() };
+        storage.as_vectorized_mut().with_vector_size_mut::<W>()
     }
 
     /// The buffer from this window's origin on: the base a cmma load/store addresses,
@@ -863,6 +1048,68 @@ fn top_window(
     }
 
     (origin, extent)
+}
+
+/// The staged scales side-channel for a quantized smem stage: a compact `Shared` buffer holding one
+/// f32 per block of the sub-tile (row-major over the block grid), paired with self-relative strides
+/// (`window_start = 0`). [`fill_from`](MemData::fill_from) refills its contents per region;
+/// [`masked_scales`](MemData::masked_scales) reads it exactly as it reads a gmem operand's scales.
+#[cube]
+fn smem_quant_info(
+    #[comptime] space: Space,
+    #[comptime] scheme: QuantScheme,
+) -> ComptimeOption<QuantInfo> {
+    let rank = comptime!(space.rank());
+    let block = comptime!(block_edges(scheme, rank));
+    let (nb, strides_c) = comptime!(smem_scale_grid(&space, &block, scheme));
+    let count = comptime!(nb.iter().product::<usize>());
+    let scales = Shared::<[f32]>::new_slice(comptime!(count));
+    let buffer = unsafe {
+        scales
+            .inner_ref()
+            .downcast_unchecked::<f32>()
+            .as_boxed_unchecked()
+    };
+    let mut strides = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..rank {
+        strides.push(comptime!(strides_c[p] as u32).runtime());
+    }
+    ComptimeOption::new_Some(QuantInfo {
+        buffer,
+        strides,
+        window_start: 0u32,
+        block: comptime!(block),
+        scale_shape: comptime!(nb),
+        scheme: comptime!(scheme),
+    })
+}
+
+/// [`smem_quant_info`]'s host data: the per-axis distinct-scale count (`nb`) and its row-major
+/// suffix-product strides. Per-tensor is the degenerate single scale — every count `1` and every
+/// stride `0`, so a read pins index `0`; a block scheme grids `ceil(extent / block)` per axis.
+fn smem_scale_grid(space: &Space, block: &[usize], scheme: QuantScheme) -> (Vec<usize>, Vec<usize>) {
+    let rank = space.rank();
+    let per_tensor = matches!(scheme.level, QuantLevel::Tensor);
+    let nb: Vec<usize> = (0..rank)
+        .map(|p| {
+            if per_tensor {
+                1
+            } else {
+                space.extent_at(p).div_ceil(block[p])
+            }
+        })
+        .collect();
+    let strides: Vec<usize> = (0..rank)
+        .map(|p| {
+            if per_tensor {
+                0
+            } else {
+                nb[p + 1..].iter().product::<usize>()
+            }
+        })
+        .collect();
+    (nb, strides)
 }
 
 /// The smem physical shape/strides over `space`, line-unit like [`Tile::from_tensor`].
