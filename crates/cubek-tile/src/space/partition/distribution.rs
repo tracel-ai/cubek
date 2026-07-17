@@ -3,6 +3,24 @@
 use crate::{Fold, FoldExpand};
 use cubecl::prelude::*;
 
+/// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LaneShare {
+    /// The lane's cells are whole, so they read and write as they are.
+    Whole,
+    /// The lane's cells are a partial: an axis the tile doesn't span is spread across the lanes,
+    /// so an accumulator only becomes true once combined across the plane.
+    Partial,
+}
+
+/// A descent's share, given the parent's and the level's: once partial, always partial.
+pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare {
+    match (parent, level) {
+        (LaneShare::Whole, LaneShare::Whole) => LaneShare::Whole,
+        _ => LaneShare::Partial,
+    }
+}
+
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
 /// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

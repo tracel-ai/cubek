@@ -39,16 +39,11 @@ pub struct MemData<T: Numeric> {
     /// [`at`](Tile::at) no): such a tile can be written in physical order.
     #[cube(comptime)]
     whole: bool,
-    /// Whether a level above spread an axis these cells don't span across the plane's lanes.
-    /// Accumulates across [`at`](Tile::at)s, the only thing that can see it: the level that
-    /// spread the axis is consumed on the way down. See [`Space::lane_partials`].
-    ///
-    /// Only an *accumulator* reads it, where it means the lanes each hold a partial of these
-    /// cells and owe a plane-wide combine before they are true ([`Accumulator`] does it). The
-    /// same fact on an operand means the opposite — the spread axis is orthogonal to it, so it
-    /// is replicated across the lanes, not split — which is why nothing reads it there.
+    /// What each lane holds of these cells, stamped across [`at`](Tile::at)s (the level that
+    /// spreads an axis is consumed on the way down). `Partial` means split to an accumulator but
+    /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
-    pub(crate) lane_partials: bool,
+    pub(crate) lane_share: LaneShare,
     /// Absolute logical extent per axis (the valid region); `origin + pos` beyond it is
     /// the partial-tile overhang. Preserved across [`at`](Tile::at), unlike `extent`.
     pub(crate) bound: Coords<u32>,
@@ -165,7 +160,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 window_start: 0u32,
                 whole: comptime!(true),
-                lane_partials: comptime!(false),
+                lane_share: comptime!(LaneShare::Whole),
                 bound,
                 start_axis,
                 num_tiled,
@@ -221,7 +216,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 window_start: 0u32,
                 whole: comptime!(true),
-                lane_partials: comptime!(false),
+                lane_share: comptime!(LaneShare::Whole),
                 bound,
                 start_axis: comptime!(0usize),
                 num_tiled: comptime!(space.rank()),
@@ -770,7 +765,7 @@ impl<T: Numeric> MemData<T> {
             extent,
             window_start: start,
             whole: comptime!(false),
-            lane_partials: comptime!(self.lane_partials || space.lane_partials()),
+            lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
             bound: self.bound.clone(),
             start_axis: comptime!(self.start_axis),
             num_tiled: comptime!(self.num_tiled),

@@ -4,24 +4,21 @@ use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::*;
 
-/// The microkernel's accumulator: the `seed`/`commit` bracket around its register block, and the
-/// one thing that knows whether sibling lanes hold partials of these cells (a contraction spread
-/// across the plane). Both ends of the bracket change when they do, so owning it here lets the
-/// contraction below run one way and never ask.
+/// The register block's `seed`/`commit` bracket: a write-side decorator over the accumulator's
+/// view, owning what each lane holds of it. Both ends of the bracket turn on that, so the
+/// contraction below runs one way and never asks. Not a [`TileKind`]: it is the leaf's reading of
+/// an accumulator, deliberately not on [`MatrixViewMut`], which every kind shares.
 #[derive(CubeType)]
 struct Accumulator<'a, E: Numeric, V: Size> {
     view: MatrixViewMut<'a, Vector<E, V>>,
     #[cube(comptime)]
-    lane_partials: bool,
+    lane_share: LaneShare,
 }
 
 #[cube]
 impl<'a, E: Numeric, V: Size> Accumulator<'a, E, V> {
-    fn new(view: MatrixViewMut<'a, Vector<E, V>>, #[comptime] lane_partials: bool) -> Self {
-        Accumulator::<'a, E, V> {
-            view,
-            lane_partials,
-        }
+    fn new(view: MatrixViewMut<'a, Vector<E, V>>, #[comptime] lane_share: LaneShare) -> Self {
+        Accumulator::<'a, E, V> { view, lane_share }
     }
 
     /// Whether the cells overhang, so each access is its own branch and the block can't unroll.
@@ -29,27 +26,26 @@ impl<'a, E: Numeric, V: Size> Accumulator<'a, E, V> {
         comptime!(self.view.check)
     }
 
-    /// The block's starting value. A lane holding a partial starts at zero: the shared cell is
-    /// folded in once, by the one lane that commits, so seeding from it would count it per lane.
+    /// The block's starting value. A partial starts at zero: the shared cell is folded in once,
+    /// by the lane that commits, so seeding from it would count it per lane.
     fn seed(&self, pos: Coords2d) -> Vector<E, V> {
-        if comptime!(self.lane_partials) {
-            Vector::<E, V>::cast_from(E::from_int(0))
-        } else {
-            self.view.read(pos)
+        match comptime!(self.lane_share) {
+            LaneShare::Partial => Vector::<E, V>::cast_from(E::from_int(0)),
+            LaneShare::Whole => self.view.read(pos),
         }
     }
 
-    /// Fold a finished block back. Partials combine across the plane first (`plane_sum` reduces
-    /// each `V`-wide cell element-wise, leaving every lane holding the total), then a single lane
-    /// writes, so siblings don't all write the same address.
+    /// Fold a finished block back. `plane_sum` reduces each `V`-wide cell element-wise, leaving
+    /// every lane holding the total, so one lane writes and siblings don't all hit the address.
     fn commit(&mut self, pos: Coords2d, value: Vector<E, V>) {
-        if comptime!(self.lane_partials) {
-            let combined = plane_sum(value);
-            if UNIT_POS_X == 0 {
-                self.view.write(pos, self.view.read(pos) + combined);
+        match comptime!(self.lane_share) {
+            LaneShare::Partial => {
+                let combined = plane_sum(value);
+                if UNIT_POS_X == 0 {
+                    self.view.write(pos, self.view.read(pos) + combined);
+                }
             }
-        } else {
-            self.view.write(pos, value);
+            LaneShare::Whole => self.view.write(pos, value),
         }
     }
 }
@@ -136,7 +132,7 @@ fn mma_register_typed<
     let size!(WPL) = comptime!(lw / pack_l);
     let size!(WPR) = comptime!(vw / pack_r);
 
-    let lane_partials = comptime!(acc.lane_partials);
+    let lane_share = comptime!(acc.lane_share);
 
     let matrices = comptime! {
         let mut count = 1;
@@ -151,7 +147,7 @@ fn mma_register_typed<
         let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
         let mut acc = Accumulator::<E, V>::new(
             acc.matrix_mut::<V>(mat, comptime!(space.clone())),
-            lane_partials,
+            lane_share,
         );
 
         // Unroll only when no mask, otherwise compilation too long.
