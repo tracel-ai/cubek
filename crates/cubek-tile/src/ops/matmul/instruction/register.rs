@@ -1,54 +1,8 @@
 //! The register-resident leaf: a software outer-product GEMM microkernel over memory tiles.
 
-use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+use cubecl::prelude::*;
 
 use crate::*;
-
-/// The register block's `seed`/`commit` bracket: a write-side decorator over the accumulator's
-/// view, owning what each lane holds of it. Both ends of the bracket turn on that, so the
-/// contraction below runs one way and never asks. Not a [`TileKind`]: it is the leaf's reading of
-/// an accumulator, deliberately not on [`MatrixViewMut`], which every kind shares.
-#[derive(CubeType)]
-struct Accumulator<'a, E: Numeric, V: Size> {
-    view: MatrixViewMut<'a, Vector<E, V>>,
-    #[cube(comptime)]
-    lane_share: LaneShare,
-}
-
-#[cube]
-impl<'a, E: Numeric, V: Size> Accumulator<'a, E, V> {
-    fn new(view: MatrixViewMut<'a, Vector<E, V>>, #[comptime] lane_share: LaneShare) -> Self {
-        Accumulator::<'a, E, V> { view, lane_share }
-    }
-
-    /// Whether the cells overhang, so each access is its own branch and the block can't unroll.
-    fn check(&self) -> comptime_type!(bool) {
-        comptime!(self.view.check)
-    }
-
-    /// The block's starting value. A partial starts at zero: the shared cell is folded in once,
-    /// by the lane that commits, so seeding from it would count it per lane.
-    fn seed(&self, pos: Coords2d) -> Vector<E, V> {
-        match comptime!(self.lane_share) {
-            LaneShare::Partial => Vector::<E, V>::cast_from(E::from_int(0)),
-            LaneShare::Whole => self.view.read(pos),
-        }
-    }
-
-    /// Fold a finished block back. `plane_sum` reduces each `V`-wide cell element-wise, leaving
-    /// every lane holding the total, so one lane writes and siblings don't all hit the address.
-    fn commit(&mut self, pos: Coords2d, value: Vector<E, V>) {
-        match comptime!(self.lane_share) {
-            LaneShare::Partial => {
-                let combined = plane_sum(value);
-                if UNIT_POS_X == 0 {
-                    self.view.write(pos, self.view.read(pos) + combined);
-                }
-            }
-            LaneShare::Whole => self.view.write(pos, value),
-        }
-    }
-}
 
 /// Fully unroll the `mr × nr` register block only up to this many cells; past it the
 /// load/store loops run at runtime, since hundreds of inlined cells overflow the
@@ -132,8 +86,6 @@ fn mma_register_typed<
     let size!(WPL) = comptime!(lw / pack_l);
     let size!(WPR) = comptime!(vw / pack_r);
 
-    let lane_share = comptime!(acc.lane_share);
-
     let matrices = comptime! {
         let mut count = 1;
         for p in 0..space.rank() - 2 {
@@ -145,10 +97,7 @@ fn mma_register_typed<
     for mat in 0..matrices {
         let lhs = lhs.matrix_transparent::<IL, WPL, L>(mat);
         let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
-        let mut acc = Accumulator::<E, V>::new(
-            acc.matrix_mut::<V>(mat, comptime!(space.clone())),
-            lane_share,
-        );
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
         let lhs_check = lhs.check();

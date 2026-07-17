@@ -713,6 +713,17 @@ impl<T: Numeric> MemData<T> {
         self.masked_mut::<W>(BatchMatrix::new(batches, rows, cols))
     }
 
+    /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
+    /// [`LaneShare`] these cells carry, so a leaf accumulates through it without being told.
+    pub(crate) fn matrix_accumulate<W: Size>(
+        &mut self,
+        i: usize,
+        #[comptime] space: Space,
+    ) -> AccumulateView<'_, T, W> {
+        let lane_share = comptime!(self.lane_share);
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share)
+    }
+
     /// Window down to `region`: shift the origin by the region's tile coordinate times
     /// the sub-tile edge, crop each axis to that edge, re-box the same buffer. `bound`
     /// is carried through unchanged, so the leaf masks correctly at any nesting depth.
