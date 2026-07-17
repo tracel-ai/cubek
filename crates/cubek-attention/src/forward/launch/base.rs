@@ -28,6 +28,43 @@ pub enum Strategy {
     Unit(BlueprintStrategy<UnitRoutine>),
 }
 
+/// [`launch_ref`] that also writes the per-row softmax log-sum-exp into
+/// `lse` (flat `[batch * heads, seq_q]`, FP32) for a training backward
+/// pass. Only the cmma (`BlackboxAccelerated`) routine emits LSE.
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+pub fn launch_ref_with_lse<R: Runtime>(
+    strategy: Strategy,
+    client: &ComputeClient<R>,
+    query: TensorBinding<R>,
+    key: TensorBinding<R>,
+    value: TensorBinding<R>,
+    mask: Option<TensorBinding<R>>,
+    out: TensorBinding<R>,
+    lse: TensorBinding<R>,
+    attention_global_types: &AttentionGlobalTypes,
+    attention_options: AttentionOptions,
+) -> Result<(), AttentionSetupError> {
+    match strategy {
+        Strategy::BlackboxAccelerated(strategy) => {
+            launch_attention_with_lse::<R, BlackboxAcceleratedRoutine>(
+                client,
+                query,
+                key,
+                value,
+                mask,
+                out,
+                lse,
+                attention_global_types,
+                strategy,
+                attention_options,
+            )
+        }
+        Strategy::Unit(_) => Err(AttentionSetupError::InvalidConfig(Box::new(
+            "LSE emission requires the cmma (BlackboxAccelerated) attention routine".to_string(),
+        ))),
+    }
+}
+
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_ref<R: Runtime>(
     strategy: Strategy,
@@ -131,6 +168,84 @@ pub fn launch_attention<R: Runtime, A: Routine>(
                 mask.map(|it| it.into_tensor_arg()).into(),
             ),
             out.into_tensor_arg(),
+            cubek_std::cube_count::cube_mapping_launch(&launch_info.cube_count_plan),
+            &launch_info.dtypes,
+            &device_settings.vector_sizes,
+            launch_info.blueprint,
+        )
+    };
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(err) => Err(AttentionSetupError::Execution(err)),
+    }
+}
+
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+pub fn launch_attention_with_lse<R: Runtime, A: Routine>(
+    client: &ComputeClient<R>,
+    query: TensorBinding<R>,
+    key: TensorBinding<R>,
+    value: TensorBinding<R>,
+    mask: Option<TensorBinding<R>>,
+    out: TensorBinding<R>,
+    lse: TensorBinding<R>,
+    global_dtypes: &AttentionGlobalTypes,
+    strategy: BlueprintStrategy<A>,
+    attention_options: AttentionOptions,
+) -> Result<(), AttentionSetupError> {
+    let definition = AttentionProblem {
+        dims: AttentionDims {
+            batch: query.shape[0],
+            num_heads: query.shape[1],
+            seq_q: query.shape[2],
+            head_dim: query.shape[3],
+            seq_kv: key.shape[2],
+            val_dim: value.shape[3],
+        },
+        masked: mask.is_some(),
+        global_dtypes: global_dtypes.clone(),
+        options: attention_options,
+        address_type: [
+            query.required_address_type(global_dtypes.query.size()),
+            key.required_address_type(global_dtypes.key.size()),
+            value.required_address_type(global_dtypes.value.size()),
+            mask.as_ref()
+                .map(|mask| mask.required_address_type(global_dtypes.mask.size()))
+                .unwrap_or_default(),
+            out.required_address_type(global_dtypes.out.size()),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or_default(),
+    };
+
+    let device_settings = DeviceSettings::new(client, &definition);
+
+    let launch_info = A::prepare(&definition, &device_settings, strategy)?;
+
+    // This allows an expand_config error to be caught by the client rather than the server.
+    // Then the server can re-run expand config assuming a valid blueprint
+    <A as Routine>::BatchAttention::expand_config(
+        client.properties(),
+        launch_info.blueprint.clone(),
+        &launch_info.dtypes,
+    )?;
+
+    let result = unsafe {
+        <A as Routine>::BatchAttention::launch_unchecked_with_lse::<TensorArgs, R>(
+            client,
+            launch_info.cube_dim,
+            launch_info.cube_count_plan.resolve(),
+            launch_info.address_type,
+            TensorInputsLaunch::new(
+                query.into_tensor_arg(),
+                key.into_tensor_arg(),
+                value.into_tensor_arg(),
+                mask.map(|it| it.into_tensor_arg()).into(),
+            ),
+            out.into_tensor_arg(),
+            lse.into_tensor_arg(),
             cubek_std::cube_count::cube_mapping_launch(&launch_info.cube_count_plan),
             &launch_info.dtypes,
             &device_settings.vector_sizes,

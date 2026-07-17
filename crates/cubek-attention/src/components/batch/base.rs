@@ -40,6 +40,28 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
         attention_blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError>;
 
+    /// [`Self::launch_unchecked`] with an additional flat
+    /// `[batch * heads, seq_q]` FP32 tensor receiving the per-row softmax
+    /// log-sum-exp.
+    ///
+    /// # Safety
+    ///
+    /// Out-of-bounds can happen
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn launch_unchecked_with_lse<AA: AttentionArgs, R: Runtime>(
+        client: &ComputeClient<R>,
+        cube_dim: CubeDim,
+        cube_count: CubeCount,
+        address_type: AddressType,
+        input: InputRuntimeArg<AA, R>,
+        output: OutputRuntimeArg<AA, R>,
+        lse: cubecl::prelude::TensorArg<R>,
+        cube_mapping: CubeMappingLaunch<R>,
+        dtypes: &AttentionElems,
+        vector_sizes: &AttentionVectorSizes,
+        attention_blueprint: Self::Blueprint,
+    ) -> Result<(), LaunchError>;
+
     /// Constructs the configuration based on the algorithm's blueprint.
     ///
     /// This function may return an error if the configuration cannot be supported.
@@ -61,6 +83,19 @@ pub trait BatchAttention<AP: AttentionPrecision>: 'static {
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
+        cube_mapping: CubeMapping,
+        #[comptime] config: Self::Config,
+    );
+
+    /// [`BatchAttention::execute`] that also writes the per-row softmax
+    /// log-sum-exp into `lse` (flat `[batch * heads, seq_q]`, FP32).
+    fn execute_with_lse(
+        query: VirtualTensor<QG<AP>, QGS<AP>>,
+        key: VirtualTensor<KG<AP>, KGS<AP>>,
+        value: VirtualTensor<VG<AP>, VGS<AP>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
+        out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
+        lse: &mut Tensor<f32>,
         cube_mapping: CubeMapping,
         #[comptime] config: Self::Config,
     );
