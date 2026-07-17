@@ -28,7 +28,8 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "unit_serial",
             "Unit (serial)",
-            ReduceStrategy { autotune_level: AutotuneLevel::Full,
+            ReduceStrategy {
+                autotune_level: AutotuneLevel::Full,
                 routine: unit(),
                 vectorization: serial,
             },
@@ -36,7 +37,8 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "unit_parallel",
             "Unit (parallel)",
-            ReduceStrategy { autotune_level: AutotuneLevel::Full,
+            ReduceStrategy {
+                autotune_level: AutotuneLevel::Full,
                 routine: unit(),
                 vectorization: parallel,
             },
@@ -44,7 +46,8 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "plane_serial",
             "Plane independent (serial)",
-            ReduceStrategy { autotune_level: AutotuneLevel::Full,
+            ReduceStrategy {
+                autotune_level: AutotuneLevel::Full,
                 routine: plane(),
                 vectorization: serial,
             },
@@ -52,7 +55,8 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "plane_parallel",
             "Plane independent (parallel)",
-            ReduceStrategy { autotune_level: AutotuneLevel::Full,
+            ReduceStrategy {
+                autotune_level: AutotuneLevel::Full,
                 routine: plane(),
                 vectorization: parallel,
             },
@@ -60,7 +64,8 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "cube_serial",
             "Cube use_planes (serial)",
-            ReduceStrategy { autotune_level: AutotuneLevel::Full,
+            ReduceStrategy {
+                autotune_level: AutotuneLevel::Full,
                 routine: cube(),
                 vectorization: serial,
             },
@@ -68,7 +73,8 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "cube_parallel",
             "Cube use_planes (parallel)",
-            ReduceStrategy { autotune_level: AutotuneLevel::Full,
+            ReduceStrategy {
+                autotune_level: AutotuneLevel::Full,
                 routine: cube(),
                 vectorization: parallel,
             },

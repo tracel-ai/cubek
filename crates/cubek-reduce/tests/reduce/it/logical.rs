@@ -62,7 +62,8 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
         .layout(StridedLayout::Explicit(vec![1, 1]))
         .zeros()
         .generate_without_host_data();
-    let strategy = ReduceStrategy { autotune_level: AutotuneLevel::Full,
+    let strategy = ReduceStrategy {
+        autotune_level: AutotuneLevel::Full,
         routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
         vectorization: VectorizationStrategy {
             parallel_output_vectorization: false,
