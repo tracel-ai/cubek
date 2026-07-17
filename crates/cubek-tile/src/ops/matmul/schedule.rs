@@ -176,10 +176,13 @@ impl<Acc: Numeric> Tile<Acc> {
 
 /// Whether this level's register leaf needs an intra-plane K-reduction: a contracting axis
 /// (`op_space` but not `output`) is `Cut::unit` with a resolved lane count above one, i.e. the
-/// K-slices are spread across the plane's lanes and share an output cell. Requires the leaf be
-/// the next level (register), and that the split cuts K into exactly one tile per lane, so a
-/// single leaf invocation covers the lane's whole slice (the combine writes once). Host-side,
-/// comptime — the walk selects the per-lane slice, this only gates the reduction.
+/// K-slices are spread across the plane's lanes and share an output cell. Host-side, comptime:
+/// the walk selects the per-lane slice, this only gates the reduction.
+///
+/// One K-tile per lane is required so the lane's whole slice contracts in registers under a
+/// single leaf, paying one `plane_sum` per output cell. More tiles per lane still sum correctly
+/// (lane 0's write accumulates across regions) but pay a plane-wide reduce per K block, which
+/// defeats the split.
 fn split_k_reduce(op_space: Space, output: Space) -> bool {
     let part = op_space.partitioner();
     if !(part.next().is_final() && part.leaf() == Leaf::Register) {
@@ -200,7 +203,8 @@ fn split_k_reduce(op_space: Space, output: Space) -> bool {
                 assert!(
                     op_space.count(axis) == lanes,
                     "split-K: Cut::unit on a contracting axis must cut it into exactly \
-                     plane_size tiles (one K-slice per lane), so the leaf sees the whole slice"
+                     plane_size tiles (one K-slice per lane); more would reduce per K block \
+                     instead of once at the end"
                 );
                 split = true;
             }
