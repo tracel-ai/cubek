@@ -11,12 +11,30 @@ use cubecl::unexpanded;
 
 use crate::*;
 
+/// What backs a staged operand. `Plane` means the leaf contracts plane tiles and the level below
+/// `out` is their grid, so operands stage straight into plane-private tiles; `Smem` is a shared
+/// buffer the leaf reads windows from. One decision, read by both the staging store and the
+/// schedule's unroll (a plane stage selects tiles by comptime coordinate, so it must be unrolled).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum OperandStage {
+    Plane,
+    Smem,
+}
+
+impl OperandStage {
+    pub(crate) fn of(out: &Space) -> Self {
+        match out.partitioner().leaf().is_plane() && partition_level(&out.divide()).is_some() {
+            true => OperandStage::Plane,
+            false => OperandStage::Smem,
+        }
+    }
+}
+
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build a slot staging one region of the operands `lhs`/`rhs`. When the level below
-    /// `out` is the fragment grid (cmma leaf), the operands stage into plane-private
-    /// register partitions ([`Solo`](Sync::Solo)); otherwise fresh shared memory, with
-    /// [`Sync`] deduced from the operands' delivery.
+    /// Build a slot staging one region of the operands `lhs`/`rhs`. An [`OperandStage::Plane`]
+    /// stages into plane-private tile partitions ([`Solo`](Sync::Solo)); [`Smem`](OperandStage::Smem)
+    /// takes fresh shared memory, with [`Sync`] deduced from the operands' delivery.
     pub fn new(
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
@@ -33,26 +51,27 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
         let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
-        let leaf = comptime!(out.partitioner().leaf());
-        let register = comptime!(leaf.is_plane() && partition_level(&out.divide()).is_some());
-        if register {
-            comptime!(assert!(
-                !lhs_delivery.is_tma() && !rhs_delivery.is_tma(),
-                "Staging: a TMA source cannot stage into registers"
-            ));
-            let a =
-                PlanePartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()), leaf);
-            let b =
-                PlanePartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()), leaf);
-            Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
-        } else {
-            let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
-            Staging::wrap(
-                (MemData::smem_like(lhs), MemData::smem_like(rhs)),
-                Pipeline::new(sync),
-                pin_lhs,
-                pin_rhs,
-            )
+        match comptime!(OperandStage::of(&out)) {
+            OperandStage::Plane => {
+                comptime!(assert!(
+                    !lhs_delivery.is_tma() && !rhs_delivery.is_tma(),
+                    "Staging: a TMA source cannot stage into plane tiles"
+                ));
+                let a =
+                    PlanePartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
+                let b =
+                    PlanePartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
+                Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
+            }
+            OperandStage::Smem => {
+                let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
+                Staging::wrap(
+                    (MemData::smem_like(lhs), MemData::smem_like(rhs)),
+                    Pipeline::new(sync),
+                    pin_lhs,
+                    pin_rhs,
+                )
+            }
         }
     }
 

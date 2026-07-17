@@ -36,7 +36,9 @@ impl<T: Numeric> PlaneTile<T> {
             Leaf::Mma { k, io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
-            Leaf::Register => panic!("PlaneTile::acc: the register leaf has no plane tile"),
+            Leaf::Register => {
+                panic!("Tile::promote: the register leaf runs in place — nothing to promote")
+            }
         }
     }
 
@@ -141,8 +143,9 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// The plane-resident form of an accumulator over `space`: a partition mirroring its grid,
-    /// each tile zeroed (`c = a·b` starts from the additive identity, `beta = 0`).
-    pub(crate) fn mirror(#[comptime] space: Space, #[comptime] leaf: Leaf) -> Tile<T> {
+    /// tiles uninitialized. `promote` is purely structural; the caller states the init.
+    pub(crate) fn mirror(#[comptime] space: Space) -> Tile<T> {
+        let leaf = comptime!(space.partitioner().leaf());
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
         let m = comptime!(fin.extent_at(fin.rank() - 2));
@@ -153,9 +156,7 @@ impl<T: Numeric> PlanePartition<T> {
         for _mi in 0..m_tiles {
             #[unroll]
             for _ni in 0..n_tiles {
-                let mut frag = PlaneTile::<T>::acc(leaf, m, n);
-                frag.zero();
-                frags.push(frag);
+                frags.push(PlaneTile::<T>::acc(leaf, m, n));
             }
         }
         Tile::<T> {
@@ -170,11 +171,8 @@ impl<T: Numeric> PlanePartition<T> {
 
     /// The staging store for one region of an operand under `out`'s contraction: a partition
     /// mirroring the region's grid, tiles uninitialized; [`copy_from`](Tile::copy_from) fills it.
-    pub(crate) fn store(
-        #[comptime] window: Space,
-        #[comptime] out: Space,
-        #[comptime] leaf: Leaf,
-    ) -> Tile<T> {
+    pub(crate) fn store(#[comptime] window: Space, #[comptime] out: Space) -> Tile<T> {
+        let leaf = comptime!(out.partitioner().leaf());
         let a0 = comptime!(window.axis_at(window.rank() - 2));
         let a1 = comptime!(window.axis_at(window.rank() - 1));
         let t0 = comptime!(window.count(a0));

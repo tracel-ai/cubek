@@ -36,10 +36,6 @@ impl Leaf {
         matches!(self, Leaf::Cmma { .. })
     }
 
-    pub fn is_mma(&self) -> bool {
-        matches!(self, Leaf::Mma { .. })
-    }
-
     /// Whether the leaf contracts a plane-level tile (either encoding), so operands and the
     /// accumulator are plane-resident rather than memory.
     pub fn is_plane(&self) -> bool {

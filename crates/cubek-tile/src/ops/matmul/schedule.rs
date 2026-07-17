@@ -60,12 +60,13 @@ impl<Acc: Numeric> Tile<Acc> {
         op_space: Space,
     ) {
         let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
-        let register = comptime!(
-            self.space.partitioner().leaf().is_cmma()
-                && partition_level(&self.space.divide()).is_some()
+        // A plane stage selects its tiles by comptime coordinate, so it only stands up under an
+        // unrolled walk; `Staging::new` makes the same call from `OperandStage`.
+        let plane_stage = comptime!(
+            OperandStage::of(&self.space) == OperandStage::Plane
                 && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
         );
-        let unroll = comptime!(cuts || register);
+        let unroll = comptime!(cuts || plane_stage);
 
         // `Staging` decides which operand (if any) is pinned: walk-invariant, so its window
         // never moves and it fills once, above the loop. The rest stream, refilled per region.

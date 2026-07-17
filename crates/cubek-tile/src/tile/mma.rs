@@ -209,12 +209,6 @@ fn fill_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, value
     }
 }
 
-/// Whether a comptime layout is row-major (a host predicate: cubecl's `cmma::MatrixLayout` is not a
-/// cube enum, so it cannot be matched inside a `#[cube]` body).
-fn is_row_major(layout: MatrixLayout) -> bool {
-    matches!(layout, MatrixLayout::RowMajor)
-}
-
 /// Load `fragment` (role `ident`) from `mem`'s row-major window. `ldmatrix` needs a vectorized
 /// row slice, which a `MemData` window cannot serve yet, so that path is refused rather than wrong.
 #[cube]
@@ -253,10 +247,10 @@ fn load_manual<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
 
     let window = mem.window_slice();
     let stride = mem.row_stride();
-    let (stride_row, stride_col) = if comptime!(is_row_major(layout)) {
-        (stride, 1u32)
-    } else {
-        (1u32, stride)
+    let (stride_row, stride_col) = match comptime!(layout) {
+        MatrixLayout::RowMajor => (stride, 1u32),
+        MatrixLayout::ColMajor => (1u32, stride),
+        MatrixLayout::Undefined => panic!("mma: a stage layout must be row- or col-major"),
     };
 
     #[unroll]
@@ -310,10 +304,10 @@ fn store_manual<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     let lane_id = UNIT_POS_PLANE;
 
     let stride = mem.row_stride();
-    let (stride_row, stride_col) = if comptime!(is_row_major(layout)) {
-        (stride, 1u32)
-    } else {
-        (1u32, stride)
+    let (stride_row, stride_col) = match comptime!(layout) {
+        MatrixLayout::RowMajor => (stride, 1u32),
+        MatrixLayout::ColMajor => (1u32, stride),
+        MatrixLayout::Undefined => panic!("mma: a stage layout must be row- or col-major"),
     };
     let window = mem.window_slice_mut();
 
