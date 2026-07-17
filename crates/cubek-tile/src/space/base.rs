@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, MAX_AXES, Partitioner, PlaneLevel};
+use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -271,17 +271,10 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How this output plan's operands stage. A register leaf reads them from shared memory; a
-    /// plane leaf (cmma/mma) stages into plane-private tiles when a partition grid feeds them,
-    /// and into shared memory when the level below spreads across instances or ends the chain.
+    /// How this output plan's operands stage. The partitioner owns the decision
+    /// ([`operand_stage`](Partitioner::operand_stage), read off the leaf and the sub-level's role).
     pub(crate) fn operand_stage(&self) -> OperandStage {
-        match self.partitioner().leaf() {
-            Leaf::Register => OperandStage::Smem,
-            Leaf::Cmma { .. } | Leaf::Mma { .. } => match crate::plane_level(&self.divide()) {
-                PlaneLevel::Partition { .. } => OperandStage::Plane,
-                PlaneLevel::Final | PlaneLevel::Instance => OperandStage::Smem,
-            },
-        }
+        self.partitioner().operand_stage()
     }
 
     /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and

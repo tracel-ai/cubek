@@ -42,15 +42,6 @@ pub enum TileKind<T: Numeric> {
     TmaGmem(TmaData<T>),
 }
 
-/// Where a tile's store lives, so [`zero`](Tile::zero) knows how to clear it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Residence {
-    /// Register-resident: a plane tile or a partition of them, cleared in place.
-    Fragment,
-    /// Memory-backed: gmem, smem, or a tma source, cleared through the walk.
-    Memory,
-}
-
 #[cube]
 impl<T: Numeric> TileKind<T> {
     /// Whether a level must be walked with comptime coordinates. Fragments can't be picked out by
@@ -58,9 +49,10 @@ impl<T: Numeric> TileKind<T> {
     /// walk. Comptime.
     pub(crate) fn static_level(&self, #[comptime] space: Space) -> comptime_type!(bool) {
         match self {
-            TileKind::PlanePartition(_) => {
-                comptime!(matches!(plane_level(&space), PlaneLevel::Partition { .. }))
-            }
+            TileKind::PlanePartition(_) => comptime!(matches!(
+                space.partitioner(),
+                Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition)
+            )),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -76,27 +68,15 @@ impl<T: Numeric> TileKind<T> {
     /// plain runtime loop. Comptime.
     pub(crate) fn cuts_partition(&self, #[comptime] space: Space) -> comptime_type!(bool) {
         match self {
-            TileKind::PlanePartition(_) => {
-                comptime!(
-                    matches!(plane_level(&space), PlaneLevel::Partition { m, n } if (m, n) != (1, 1))
-                )
-            }
+            TileKind::PlanePartition(_) => comptime!(
+                matches!(space.partitioner(), Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition))
+                    && partition_grid(&space) != (1, 1)
+            ),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_) => {
                 comptime!(false)
-            }
-        }
-    }
-
-    /// Where this store lives: register [`Fragment`](Residence::Fragment) or
-    /// [`Memory`](Residence::Memory). Comptime.
-    pub(crate) fn residence(&self) -> comptime_type!(Residence) {
-        match self {
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(Residence::Fragment),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
-                comptime!(Residence::Memory)
             }
         }
     }
@@ -269,12 +249,13 @@ impl<T: Numeric> Tile<T> {
             // onto the one tile.
             TileKind::PlaneTile(t) => {
                 comptime!(assert!(
-                    matches!(
-                        plane_level(&self.space),
-                        PlaneLevel::Final
-                            | PlaneLevel::Instance
-                            | PlaneLevel::Partition { m: 1, n: 1 }
-                    ),
+                    match self.space.partitioner() {
+                        Partitioner::Final(_) => true,
+                        Partitioner::Level(l) => match l.role() {
+                            LevelRole::Instance => true,
+                            LevelRole::Partition => partition_grid(&self.space) == (1, 1),
+                        },
+                    },
                     "Tile::at: a level that cuts tiles cannot select into a single plane \
                      tile (it needs a partition, or a memory output)"
                 ));
@@ -325,9 +306,9 @@ impl<T: Numeric> Tile<T> {
                     // the static levels below. A rolled *cut* would be a caller bug.
                     None => {
                         comptime!(assert!(
-                            matches!(
-                                plane_level(&self.space),
-                                PlaneLevel::Final | PlaneLevel::Instance
+                            !matches!(
+                                self.space.partitioner(),
+                                Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition)
                             ),
                             "Tile::at: a level that cuts a partition must be \
                              walked with compile-time coordinates (an unrolled walk)"
@@ -376,36 +357,31 @@ impl<T: Numeric> Tile<T> {
         Space::with_sizes(space, sizes)
     }
 
-    /// Zero this tile in place: `mma` accumulates over whatever is there, so a routine
-    /// whose contract is `out = A·B` zeroes first. Memory recurses the walk (each
-    /// instance zeroes exactly the windows its `mma` owns); fragments fill in place.
+    /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
+    /// `out = A·B` zeroes first. Same shape as [`mma`](Tile::mma): a final tile clears its store,
+    /// a level walks and recurses (each region clears exactly the windows it owns; a fragment
+    /// output takes the unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
-        let residence = self.tile_kind.residence();
-        match comptime!(residence) {
-            Residence::Fragment => match &mut self.tile_kind {
+        match comptime!(self.space.partitioner().clone()) {
+            Partitioner::Final(_) => match &mut self.tile_kind {
+                TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
                 TileKind::PlaneTile(t) => t.zero(),
                 TileKind::PlanePartition(p) => p.zero(),
-                TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
-                    panic!("Tile::zero: a fragment residence holds no memory store")
-                }
+                TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
             },
-            Residence::Memory => match comptime!(self.space.partitioner().clone()) {
-                // A final memory tile is one window: clear it directly.
-                Partitioner::Final(_) => match &mut self.tile_kind {
-                    TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
-                    TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
-                    TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                        panic!("Tile::zero: a memory residence holds no fragment")
+            Partitioner::Level(_) => {
+                if self.tile_kind.static_level(comptime!(self.space.clone())) {
+                    for region in Walk::over(self.runtime_space()).unrolled() {
+                        let mut sub = self.at(&region);
+                        sub.zero();
                     }
-                },
-                // A level recurses so each region clears exactly the windows its `mma` owns.
-                Partitioner::Level(_) => {
+                } else {
                     for region in Walk::over(self.runtime_space()) {
                         let mut sub = self.at(&region);
                         sub.zero();
                     }
                 }
-            },
+            }
         }
     }
 
