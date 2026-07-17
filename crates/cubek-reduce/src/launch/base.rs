@@ -46,8 +46,12 @@ impl ReduceWithIndicesDtypes {
 
 /// Analyse the problem and prepare the routine for launch: everything both entrypoints
 /// share between validation and the actual kernel launch. `output` is the tensor whose
-/// layout drives vectorization (the values tensor on the fused path); `force_scalar_output`
-/// drops output vectorization to 1 regardless of what the analysis picked.
+/// layout drives vectorization (the values tensor on the fused path).
+///
+/// `second_output` is the fused path's index tensor dtype: it shares the values tensor's
+/// layout but not its dtype, so the chosen output width must be legal for both. Passing it
+/// caps the width to one the second dtype also supports, rather than dropping to scalar on
+/// any width mismatch. `None` for the single-output path.
 ///
 /// Returns the blueprint, the launch settings, and the output vectorization axis.
 #[allow(clippy::too_many_arguments)]
@@ -60,7 +64,7 @@ fn prepare_reduce_launch<Run: Runtime>(
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
     address_type: AddressType,
-    force_scalar_output: bool,
+    second_output: Option<StorageType>,
 ) -> Result<(ReduceBlueprint, ReduceLaunchSettings, usize), ReduceError> {
     // Number of distinct reductions = product of non-reduce input dims.
     let reduce_len = input.shape[reduce_axis];
@@ -91,10 +95,18 @@ fn prepare_reduce_launch<Run: Runtime>(
         vectorization_mode,
         &strategy.vectorization,
     );
-    let vector_size_output = if force_scalar_output {
-        1
-    } else {
-        vector_size_output
+    // Both fused outputs share this width, so it must be legal for the index dtype too.
+    // Cap to the largest width the index dtype supports that does not exceed the values
+    // width (widths are powers of two, so the cap still divides the layout constraints the
+    // values width already satisfied). Only drops to scalar if the index dtype truly cannot
+    // vectorize; the common case (equal-width dtypes) is unchanged.
+    let vector_size_output = match second_output {
+        None => vector_size_output,
+        Some(index_dtype) => client
+            .io_optimized_vector_sizes(index_dtype.size())
+            .filter(|&width| width <= vector_size_output)
+            .max()
+            .unwrap_or(1),
     };
     let settings = ReduceVectorSettings {
         vectorization_mode,
@@ -146,7 +158,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         dtypes,
         inst,
         address_type,
-        false,
+        None,
     )?;
 
     unsafe {
@@ -216,23 +228,18 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
     k: usize,
 ) -> Result<(), ReduceError> {
     // Both halves are written, so the instruction always tracks coordinates
-    // regardless of which top-k config the caller reached this path with.
+    // regardless of which top-k config the caller reached this path with. The
+    // fused `to_output_both_*` conversions ignore this mode; it only sizes the
+    // accumulator, and `Indices` is what turns coordinate tracking on.
     let config = TopKConfig {
         k,
-        output: ReduceOutputMode::Both,
+        output: ReduceOutputMode::Indices,
     };
 
     let address_type = input
         .required_address_type(dtypes.input.size())
         .max(values.required_address_type(dtypes.values.size()))
         .max(indices.required_address_type(dtypes.indices.size()));
-
-    // The two outputs share a shape and a layout, so they must share a vectorization.
-    // When the index dtype is a different width from the value dtype the vector sizes
-    // the device supports for each can diverge, so fall back to scalar writes rather
-    // than assume the value tensor's choice is legal for the index tensor. The common
-    // case (f32 values, u32/i32 indices) has matching widths and is unaffected.
-    let force_scalar_output = dtypes.values.size() != dtypes.indices.size();
 
     let (blueprint, settings, out_vec_axis) = prepare_reduce_launch::<Run>(
         client,
@@ -247,7 +254,9 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
         // under-allocate shared memory by `k` u32 slices per accumulator.
         ReduceOperationConfig::ArgTopK(k),
         address_type,
-        force_scalar_output,
+        // The index output shares the values layout but not its dtype, so the
+        // shared output width must stay legal for the index dtype too.
+        Some(dtypes.indices),
     )?;
 
     unsafe {

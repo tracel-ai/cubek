@@ -16,12 +16,16 @@ use crate::{
 };
 use cubecl::frontend::Numeric;
 
-/// Which of a reduction's two results the instruction writes out.
+/// Which of a top-k's two results the single-output path writes.
 ///
-/// The reduction itself is identical in all three cases: the accumulator always
-/// holds candidate values and, when indices are wanted, their coordinates. Only
+/// The reduction is identical either way: the accumulator always holds candidate
+/// values, and when indices are wanted their coordinates too. Only
 /// [`ReduceInstruction::requirements`] and the `to_output_*` conversions differ,
 /// which is why one instruction serves both the `TopK` and `ArgTopK` configs.
+///
+/// The fused path (values *and* indices) is not a third variant here: it goes
+/// through [`ReduceWithIndices`] and its `to_output_both_*` conversions, sizing
+/// the accumulator with [`Self::Indices`] so coordinates are tracked.
 #[derive_cube_comptime]
 #[derive(Serialize, Deserialize)]
 pub enum ReduceOutputMode {
@@ -29,14 +33,12 @@ pub enum ReduceOutputMode {
     Values,
     /// Write only the coordinates of the top values.
     Indices,
-    /// Write both, in a single launch.
-    Both,
 }
 
 impl ReduceOutputMode {
     /// Whether coordinates must be tracked through the reduction.
     pub fn has_indices(&self) -> bool {
-        !matches!(self, ReduceOutputMode::Values)
+        matches!(self, ReduceOutputMode::Indices)
     }
 }
 
@@ -114,12 +116,11 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
     elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
-    /// Empty unless the instruction tracks coordinates.
+    /// Empty unless the instruction tracks coordinates; its length is the single
+    /// source of truth for whether coordinates are staged (see `read`/`write`).
     args: Sequence<Shared<[Vector<u32, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
-    #[cube(comptime)]
-    has_coords: bool,
 }
 
 #[cube]
@@ -148,7 +149,6 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             elements,
             args,
             k: inst.k,
-            has_coords,
         }
     }
 
@@ -159,7 +159,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             values[i] = accumulator.elements[i][index];
         }
 
-        let args = if comptime!(accumulator.has_coords) {
+        let args = if comptime!(accumulator.args.len() != 0) {
             let mut args = Array::new(accumulator.k);
             #[unroll]
             for i in 0..accumulator.k {
@@ -185,7 +185,7 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             shared_acc[index] = acc;
         }
 
-        if comptime!(accumulator.has_coords) {
+        if comptime!(accumulator.args.len() != 0) {
             let args = item.args.multiple();
             #[unroll]
             for i in 0..accumulator.k {
@@ -340,11 +340,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
                     out[i] = Out::cast_from(coords[i]);
                 }
             }
-            ReduceOutputMode::Both => {
-                comptime!(unimplemented!(
-                    "ReduceOutputMode::Both needs the dual-output writer"
-                ));
-            }
         }
 
         Value::new_Multiple(out)
@@ -371,11 +366,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
                 for i in 0..this.k {
                     output[i] = Vector::cast_from(acc_args[i]);
                 }
-            }
-            ReduceOutputMode::Both => {
-                comptime!(unimplemented!(
-                    "ReduceOutputMode::Both needs the dual-output writer"
-                ));
             }
         }
 
