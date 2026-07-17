@@ -11,7 +11,11 @@ pub fn strategies() -> Vec<CatalogEntry<StageDepth>> {
     [32usize, 64, 128, 256]
         .into_iter()
         .map(|tk| {
-            CatalogEntry::new(format!("tk{tk}"), format!("stage depth tk={tk}"), StageDepth(tk))
+            CatalogEntry::new(
+                format!("tk{tk}"),
+                format!("stage depth tk={tk}"),
+                StageDepth(tk),
+            )
         })
         .collect()
 }

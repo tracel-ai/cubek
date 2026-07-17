@@ -57,7 +57,10 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
                 dequant_site(rhs_pack, rhs_delivery, reads_stored, "rhs");
             }
             let stages = if reads_stored {
-                (MemData::smem_like_stored(lhs), MemData::smem_like_stored(rhs))
+                (
+                    MemData::smem_like_stored(lhs),
+                    MemData::smem_like_stored(rhs),
+                )
             } else {
                 (MemData::smem_like(lhs), MemData::smem_like(rhs))
             };

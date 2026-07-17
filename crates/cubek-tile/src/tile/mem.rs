@@ -53,21 +53,38 @@ pub struct Store<T: Numeric> {
     pub(crate) quant: ComptimeOption<QuantInfo>,
 }
 
-/// How a [`MemData`] may be touched: whether the fill can write straight through, whether reads
-/// must mask, and how a cooperative fill spreads. Plain data held comptime, like the [`StagePlan`]
-/// it carries.
+/// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
+/// handles overhang, and how a cooperative fill spreads. Plain data held comptime, like the
+/// [`StagePlan`] it carries.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Access {
     /// Whether the window still covers the whole buffer (constructors yes, [`at`](Tile::at) no):
     /// such a tile can be written in physical order.
     pub whole: bool,
-    /// Whether edge reads/writes must be bounds-checked. Always `false` for smem (it never
-    /// overhangs); gmem inherits its operand's launch-time flag.
-    pub check: bool,
+    pub overhang: Overhang,
     /// How this store's stages are laid out and cooperatively filled: the [`StageStorage`] layout
     /// plus the launch's cube size. Carried from the operand's [`Storage`] so a fill re-derives
     /// neither.
     pub stage: StagePlan,
+}
+
+/// How a store relates to the window overhanging its valid data (`origin + pos` past
+/// [`Window`]'s `bound`) — where gmem and smem genuinely differ.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Overhang {
+    /// Structurally impossible: the buffer is allocated to exactly the tile (smem).
+    Never,
+    /// Possible in principle, excluded at launch: every shape divides its tiling (unchecked gmem).
+    Fits,
+    /// Possible: reads past `bound` serve zero, writes skip (checked gmem).
+    Masked,
+}
+
+impl Overhang {
+    /// The flag a [`MaskedView`] is built with — the one place the states collapse to a bool.
+    pub fn masks(&self) -> bool {
+        matches!(self, Overhang::Masked)
+    }
 }
 
 #[cube]
@@ -169,7 +186,11 @@ impl<T: Numeric> MemData<T> {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    check: storage.check_bounds,
+                    overhang: if storage.check_bounds {
+                        Overhang::Masked
+                    } else {
+                        Overhang::Fits
+                    },
                     stage: storage.stage,
                 }),
             }),
@@ -209,17 +230,23 @@ impl<T: Numeric> MemData<T> {
                     ComptimeOption::None => MemData::smem(space, vector_size, stage),
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
-                            QuantValue::Q8F | QuantValue::Q8S => {
-                                MemData::smem_quant::<i8>(space, vector_size, stage, comptime!(info.scheme))
-                            }
+                            QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
+                                space,
+                                vector_size,
+                                stage,
+                                comptime!(info.scheme),
+                            ),
                             other => panic!(
                                 "MemData::smem_like_stored: native quant storage element {:?} is not wired (i8 only)",
                                 other
                             ),
                         },
-                        QuantStore::PackedU32(_) => {
-                            MemData::smem_quant::<u32>(space, vector_size, stage, comptime!(info.scheme))
-                        }
+                        QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
+                            space,
+                            vector_size,
+                            stage,
+                            comptime!(info.scheme),
+                        ),
                         other => panic!(
                             "MemData::smem_like_stored: quant storage {:?} is not wired (native or packed-u32)",
                             other
@@ -313,7 +340,7 @@ impl<T: Numeric> MemData<T> {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    check: false,
+                    overhang: Overhang::Never,
                     stage,
                 }),
             }),
@@ -329,7 +356,7 @@ impl<T: Numeric> Tile<T> {
     /// (`self.store.vector_size`); pass `Const<1>` when only the (width-invariant) leading shape is needed.
     pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
-            TileKind::Gmem(g) => {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
                 if comptime!(g.store.quant.is_some()) {
                     panic!(
                         "Tile::view: a quantized tile only serves dequantized reads (Tile::flat)"
@@ -337,7 +364,6 @@ impl<T: Numeric> Tile<T> {
                 }
                 g.lines::<W>().view(g.base()).view(g.window())
             }
-            TileKind::Smem(g) => g.lines::<W>().view(g.base()).view(g.window()),
             TileKind::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
                 panic!("Tile::view: a cmma fragment has no memory view")
@@ -347,15 +373,10 @@ impl<T: Numeric> Tile<T> {
 
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match &mut self.tile_kind {
-            TileKind::Gmem(g) => {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
                 if comptime!(g.store.quant.is_some()) {
                     panic!("Tile::view_mut: writing a quantized tile requires requantization")
                 }
-                let base = g.base();
-                let window = g.window();
-                g.lines_mut::<W>().view_mut(base).view_mut(window)
-            }
-            TileKind::Smem(g) => {
                 let base = g.base();
                 let window = g.window();
                 g.lines_mut::<W>().view_mut(base).view_mut(window)
@@ -381,7 +402,7 @@ impl<T: Numeric> MemData<T> {
             // f32 inflation. A quantized stage is always a fresh whole buffer, so the masked slow
             // path never applies.
             comptime!(assert!(
-                self.access.whole && !self.access.check,
+                self.access.whole && !self.access.overhang.masks(),
                 "MemData::fill_from: a quantized stage is always a fresh whole buffer"
             ));
             #[comptime]
@@ -398,7 +419,8 @@ impl<T: Numeric> MemData<T> {
                     // Packed: the buffer holds `u32`s carrying `num_quants` values each, so the
                     // physical line is that much narrower than the served one.
                     QuantStore::PackedU32(_) => {
-                        let size!(WP) = comptime!(self.store.vector_size / info.scheme.num_quants());
+                        let size!(WP) =
+                            comptime!(self.store.vector_size / info.scheme.num_quants());
                         self.fill_straight::<u32, WP>(src);
                     }
                     other => panic!(
@@ -411,7 +433,9 @@ impl<T: Numeric> MemData<T> {
                 ),
             }
             self.stage_scales(src);
-        } else if comptime!(self.access.whole && !self.access.check && src.store.quant.is_none()) {
+        } else if comptime!(
+            self.access.whole && !self.access.overhang.masks() && src.store.quant.is_none()
+        ) {
             // Plain → plain, whole destination: fill in destination-physical order (the write is
             // linear and only the source decodes, once per line by constants on a static store).
             self.fill_straight::<T, W>(src);
@@ -455,7 +479,7 @@ impl<T: Numeric> MemData<T> {
             src.lines_storage::<I2, WP2>()
                 .view(src.base())
                 .view(src.window()),
-            comptime!(src.access.check),
+            comptime!(src.access.overhang.masks()),
         );
         let shape = self.layout.physical_shape.clone();
         let plen = shape.len().comptime();
@@ -472,9 +496,8 @@ impl<T: Numeric> MemData<T> {
         // stage's shape is static, so it always folds.
         let units = comptime!(self.access.stage.units);
         let total_c = total.constant();
-        let straight = comptime!(
-            matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8)
-        );
+        let straight =
+            comptime!(matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8));
         let d = self.lines_storage_mut::<I2, WP2>();
         if comptime!(straight) {
             let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
@@ -483,18 +506,35 @@ impl<T: Numeric> MemData<T> {
                 let i = UNIT_POS as usize + comptime!(t * units);
                 if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                     if i < total {
-                        d[i] =
-                            s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                        d[i] = s.read(physical_coord(
+                            i,
+                            shape.clone(),
+                            start_axis,
+                            num_tiled,
+                            levels,
+                        ));
                     }
                 } else {
-                    d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                    d[i] = s.read(physical_coord(
+                        i,
+                        shape.clone(),
+                        start_axis,
+                        num_tiled,
+                        levels,
+                    ));
                 }
             }
         } else {
             let workers = CUBE_DIM as usize;
             let mut i = UNIT_POS as usize;
             while i < total {
-                d[i] = s.read(physical_coord(i, shape.clone(), start_axis, num_tiled, levels));
+                d[i] = s.read(physical_coord(
+                    i,
+                    shape.clone(),
+                    start_axis,
+                    num_tiled,
+                    levels,
+                ));
                 i += workers;
             }
         }
@@ -524,7 +564,9 @@ impl<T: Numeric> MemData<T> {
             #[unroll]
             for p in 0..rank {
                 let after = comptime!(nb[(p + 1)..].iter().product::<usize>());
-                let bi = x.fdiv(comptime!(after as u32)).frem(comptime!(nb[p] as u32));
+                let bi = x
+                    .fdiv(comptime!(after as u32))
+                    .frem(comptime!(nb[p] as u32));
                 src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
             }
             dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
@@ -643,7 +685,10 @@ impl<T: Numeric> MemData<T> {
 
     /// The mutable twin of [`lines`](MemData::lines).
     fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.store.buffer.as_vectorized_mut().with_vector_size_mut::<W>()
+        self.store
+            .buffer
+            .as_vectorized_mut()
+            .with_vector_size_mut::<W>()
     }
 
     /// [`lines`](MemData::lines) with the buffer re-typed to the quantized storage
@@ -681,7 +726,7 @@ impl<T: Numeric> MemData<T> {
     /// store the window must lie within one storage tile.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
-            !self.access.check,
+            !self.access.overhang.masks(),
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
         self.window_start.fcast::<usize>()
@@ -708,8 +753,11 @@ impl<T: Numeric> MemData<T> {
     /// Scalar stride between matrix rows: the line-unit physical stride of the leaf
     /// tile's row axis, widened back to scalars; a constant on a static store.
     pub(crate) fn row_stride(&self) -> u32 {
-        let rows = comptime!(self.layout.start_axis + (self.layout.levels + 1) * self.layout.num_tiled - 2);
-        self.layout.physical_strides
+        let rows = comptime!(
+            self.layout.start_axis + (self.layout.levels + 1) * self.layout.num_tiled - 2
+        );
+        self.layout
+            .physical_strides
             .at(rows)
             .fmul(comptime!(self.store.vector_size as u32).runtime())
     }
@@ -725,7 +773,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(layout),
-            comptime!(self.access.check),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -741,7 +789,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(layout),
-            comptime!(self.access.check),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -758,7 +806,7 @@ impl<T: Numeric> MemData<T> {
                     comptime!(self.store.vector_size),
                 ))
                 .view(layout),
-            comptime!(self.access.check),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -772,7 +820,7 @@ impl<T: Numeric> MemData<T> {
         }
         let base = self.base();
         let window = self.window();
-        let check = comptime!(self.access.check);
+        let check = comptime!(self.access.overhang.masks());
         MaskedViewMut::new(
             self.lines_mut::<W>()
                 .view_mut(base)
@@ -790,7 +838,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
-            comptime!(self.access.check),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -802,7 +850,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
-            comptime!(self.access.check),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -820,7 +868,7 @@ impl<T: Numeric> MemData<T> {
                     comptime!(self.store.vector_size),
                 ))
                 .view(FlatLayout::new(self.window.extent.clone())),
-            comptime!(self.access.check),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -873,7 +921,7 @@ impl<T: Numeric> MemData<T> {
         let base = self.base();
         let window = self.window();
         let extent = self.window.extent.clone();
-        let check = comptime!(self.access.check);
+        let check = comptime!(self.access.overhang.masks());
         FlatViewMut::new(
             self.lines_mut::<W>()
                 .view_mut(base)
@@ -926,7 +974,12 @@ impl<T: Numeric> MemData<T> {
             });
             let index = region.coord(axis);
 
-            origin.push(self.window.origin.at(p).fadd(index.fmul(edge).fcast::<u32>()));
+            origin.push(
+                self.window
+                    .origin
+                    .at(p)
+                    .fadd(index.fmul(edge).fcast::<u32>()),
+            );
             extent.push(comptime!(edge as u32).runtime());
             advances.push(
                 index
@@ -942,9 +995,11 @@ impl<T: Numeric> MemData<T> {
         // Re-window the scales alongside the values (a no-op for per-tensor's zero strides).
         let quant = #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => {
-                ComptimeOption::new_Some(info.window(&origin, rank, comptime!(self.store.vector_size)))
-            }
+            ComptimeOption::Some(info) => ComptimeOption::new_Some(info.window(
+                &origin,
+                rank,
+                comptime!(self.store.vector_size),
+            )),
             ComptimeOption::None => ComptimeOption::new_None(),
         };
 
@@ -1083,7 +1138,11 @@ fn smem_quant_info(
 /// [`smem_quant_info`]'s host data: the per-axis distinct-scale count (`nb`) and its row-major
 /// suffix-product strides. Per-tensor is the degenerate single scale — every count `1` and every
 /// stride `0`, so a read pins index `0`; a block scheme grids `ceil(extent / block)` per axis.
-fn smem_scale_grid(space: &Space, block: &[usize], scheme: QuantScheme) -> (Vec<usize>, Vec<usize>) {
+fn smem_scale_grid(
+    space: &Space,
+    block: &[usize],
+    scheme: QuantScheme,
+) -> (Vec<usize>, Vec<usize>) {
     let rank = space.rank();
     let per_tensor = matches!(scheme.level, QuantLevel::Tensor);
     let nb: Vec<usize> = (0..rank)

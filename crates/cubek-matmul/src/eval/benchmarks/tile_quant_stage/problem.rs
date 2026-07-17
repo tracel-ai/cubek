@@ -16,17 +16,32 @@ pub fn problems() -> Vec<CatalogEntry<TileQuantStageProblem>> {
         CatalogEntry::new(
             "gemv_4096_bn32",
             "gemv m=1 n=k=4096 bn=32",
-            TileQuantStageProblem { m: 1, n: 4096, k: 4096, bn: 32 },
+            TileQuantStageProblem {
+                m: 1,
+                n: 4096,
+                k: 4096,
+                bn: 32,
+            },
         ),
         CatalogEntry::new(
             "gemv_4096_bn128",
             "gemv m=1 n=k=4096 bn=128",
-            TileQuantStageProblem { m: 1, n: 4096, k: 4096, bn: 128 },
+            TileQuantStageProblem {
+                m: 1,
+                n: 4096,
+                k: 4096,
+                bn: 128,
+            },
         ),
         CatalogEntry::new(
             "gemm_m8_4096_bn128",
             "gemm m=8 n=k=4096 bn=128",
-            TileQuantStageProblem { m: 8, n: 4096, k: 4096, bn: 128 },
+            TileQuantStageProblem {
+                m: 8,
+                n: 4096,
+                k: 4096,
+                bn: 128,
+            },
         ),
     ]
 }
