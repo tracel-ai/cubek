@@ -112,6 +112,10 @@ fn prepare_reduce_launch<Run: Runtime>(
         vectorization_mode,
         vector_size_input,
         vector_size_output,
+        unchecked_fast_paths: matches!(
+            strategy.autotune_level,
+            cubecl::config::autotune::AutotuneLevel::Full
+        ),
     };
 
     let (blueprint, settings) = match strategy.routine {

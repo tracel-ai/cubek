@@ -1,12 +1,19 @@
 use crate::routines::{
     BlueprintStrategy, cube::CubeRoutine, plane::PlaneRoutine, unit::UnitRoutine,
 };
-use cubecl::{features::Plane, prelude::*};
+use cubecl::{config::autotune::AutotuneLevel, features::Plane, prelude::*};
 
 #[derive(Debug, Clone)]
 pub struct ReduceStrategy {
     pub routine: RoutineStrategy,
     pub vectorization: VectorizationStrategy,
+    /// The autotune level this launch's selection is cached under. Kernel
+    /// selection is cached per *anchored* key everywhere below
+    /// [`AutotuneLevel::Full`], so comptime fast paths derived from raw
+    /// divisibility (unchecked bounds, no idle guards) are only stable — and
+    /// only taken — at `Full`, where every raw shape is its own key. Callers
+    /// benchmarking a specific variant outside autotune set it directly.
+    pub autotune_level: AutotuneLevel,
 }
 
 #[derive(Debug, Clone)]

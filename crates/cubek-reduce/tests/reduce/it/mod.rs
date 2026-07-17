@@ -27,7 +27,7 @@ macro_rules! testgen_reduce {
             $axis
         }
 
-        fn test_strategy() -> ReduceStrategy {
+        fn test_strategy() -> ReduceStrategy { autotune_level: AutotuneLevel::Full,
             $strategy
         }
 
@@ -116,7 +116,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Inferred(CubeStrategy{ use_planes: false })
@@ -135,7 +135,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Inferred(CubeStrategy{ use_planes: true })
@@ -160,7 +160,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Forced(
@@ -192,7 +192,7 @@ macro_rules! testgen_reduce {
                     shape: $shape,
                     strides: $strides,
                     axis: $axis,
-                    strategy: ReduceStrategy {
+                    strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                         vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
@@ -217,7 +217,7 @@ macro_rules! testgen_reduce {
                     shape: $shape,
                     strides: $strides,
                     axis: $axis,
-                    strategy: ReduceStrategy {
+                    strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                         vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
@@ -244,7 +244,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Plane(
                         BlueprintStrategy::Inferred(PlaneStrategy{ independent: false })
@@ -262,7 +262,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Plane(
                         BlueprintStrategy::Inferred(PlaneStrategy{ independent: true })
@@ -280,7 +280,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Unit(
                         BlueprintStrategy::Inferred(UnitStrategy)

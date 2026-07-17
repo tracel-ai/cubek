@@ -2417,9 +2417,10 @@ fn cmma_matmul_staged_k_walk_vectorized() {
 //
 // Every other quant matmul above runs `acc.mma()` on tensor cores and skips where cmma is
 // absent — which is everywhere the memory-bound GEMV actually lives. These pin the other
-// leaf: the staged walk dequantizes `A` into smem at the fill (`Tile::copy_from`), and the
-// software microkernel only ever sees floats. No promotion, no cmma, no i8 needed for the
-// packed cases (the binding is a `u32`).
+// leaf: the staged walk stages `A`'s *packed storage words* into smem (`Tile::copy_from`), and
+// the software microkernel dequantizes each read out of smem through `matrix_transparent` — no
+// f32 inflation of the stage, no promotion, no cmma, no i8 needed for the packed cases (the
+// binding is a `u32`).
 
 /// The kernel: identical to [`launch_staged_matmul`] except `A` arrives storage-typed and is
 /// served via `tile_dequant`, so the same lowering runs quantized or not.
@@ -2452,7 +2453,7 @@ fn register_staged_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
 }
 
 /// The single-level direct-serve twin of [`register_staged_partitioner`]: no `.staged()`, so a
-/// quantized operand is read straight from gmem by the leaf rather than dequantized into smem.
+/// quantized operand is read straight from gmem by the leaf rather than staged into smem first.
 fn register_direct_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
     Partitioner::row_major(
         ByAxis::new(&[(M, tm), (N, tn), (K, tk)]),
@@ -2628,8 +2629,9 @@ fn run_register_matmul_quant_packed(
 }
 
 /// Drive [`launch_staged_matmul_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[p,j]`.
-/// `plan` is the operand partitioner: `.staged()` dequantizes `A` into smem at the fill,
-/// `.direct()` serves it straight from gmem through the leaf ([`matrix_transparent`]).
+/// `plan` is the operand partitioner: `.staged()` stages `A`'s packed storage words into smem and
+/// dequantizes per read out of it, `.direct()` serves it straight from gmem — either way through
+/// the leaf's [`matrix_transparent`], no dequantized f32 stage.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant(
     client: ComputeClient<TestRuntime>,
@@ -2767,8 +2769,8 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 /// Direct-serve the quantized RHS weight (Keystone K): a `Direct` schedule stages nothing, so the
 /// register leaf reads the packed weight straight from gmem and dequantizes *per read* through
 /// [`matrix_transparent`] — the sync-free `m = 1` decode path. The `_rhs_*` tests above are all
-/// `.staged()`: they dequantize the whole weight into an f32 smem tile at the fill first. Same
-/// answer, no smem round-trip.
+/// `.staged()`: they stage the weight's *packed words* into smem (plus its scales) and dequantize
+/// per read out of smem. Same answer; direct avoids even the smem round-trip.
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -2783,6 +2785,28 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
         .partitioner()
         .clone();
     run_register_matmul_quant_rhs(client, (1, 8, 8), plan, QuantValue::Q8S, 4);
+}
+
+/// The Goal path: a `.staged()` packed weight whose smem stage holds the *packed u32 words*, not a
+/// dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with block `[1, bn]` scales —
+/// distinct along K — so each region refills both the staged packed words and the staged scales,
+/// and the leaf dequantizes per read out of smem via [`matrix_transparent`]. This is the batched
+/// weight-streaming case the change targets: the contrast to the f32-inflated stage the cmma leaf
+/// still uses, and to the sync-free direct serve above.
+#[test]
+fn register_matmul_quant_rhs_staged_packed_smem() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        .leaf(Leaf::Register)
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(client, (4, 8, 16), plan, QuantValue::Q8S, 4);
 }
 
 /// Drive [`launch_staged_matmul_quant_rhs`] and check
