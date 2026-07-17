@@ -217,7 +217,15 @@ impl<T: Numeric> MemData<T> {
                     }
                 }
             }
-            _ => MemData::smem(space, vector_size, stage),
+            // A tma source is never quantized: `quantized` is a [`StridedTileArg`] builder only and
+            // a tma tile is scalar, so `TmaData` carries no scheme to stage by. Giving it one must
+            // not reuse this arm — a bulk copy cannot dequantize on the way in, so such an operand
+            // needs a packed stage and a leaf that unpacks on read (`pack_quant`), never the plain
+            // stage below, which the copy would fill with packed bytes read back as floats.
+            TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
+            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                panic!("MemData::smem_like: a fragment is not a stage source")
+            }
         }
     }
 

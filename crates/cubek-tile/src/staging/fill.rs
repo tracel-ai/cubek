@@ -52,6 +52,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             // (CUDA `i8×i8→i32`) could consume a native-i8 stage instead, which would widen this
             // predicate; that accumulates in `i32` and scales at the drain, and is not wired yet.
             let pack_quant = comptime!(out.partitioner().leaf() == Leaf::Register);
+            let lhs_pack = lhs.quant_pack();
+            let rhs_pack = rhs.quant_pack();
+            comptime! {
+                quant_stage_site(lhs_pack, lhs_delivery, pack_quant, "lhs");
+                quant_stage_site(rhs_pack, rhs_delivery, pack_quant, "rhs");
+            }
             Staging::wrap(
                 (
                     MemData::smem_like(lhs, pack_quant),
@@ -96,6 +102,37 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             }
         });
     }
+}
+
+/// Refuse a quantized operand whose dequantization has no site. Where it dequantizes is forced by
+/// two capabilities, never chosen:
+///
+/// - the **fill** can transform only if it is a cooperative copy; a TMA bulk copy moves bytes;
+/// - the **read** can unpack only under the register leaf; a cmma fragment load is opaque.
+///
+/// | delivery | leaf     | site                  |
+/// |----------|----------|-----------------------|
+/// | strided  | register | read (packed stage)   |
+/// | strided  | cmma     | fill (f32 stage)      |
+/// | tma      | register | read — needs a packed stage the bulk copy fills; not wired |
+/// | tma      | cmma     | none — impossible     |
+///
+/// Unreachable today (a tma tile carries no scheme, so `quant_pack` is `0`), and deliberately kept
+/// as the tripwire for wiring one: giving `TmaData` a scheme flips `quant_pack` and trips this,
+/// rather than silently bulk-copying packed bytes into a stage read back as floats.
+fn quant_stage_site(pack: usize, delivery: Delivery, pack_quant: bool, who: &str) {
+    if pack == 0 || !delivery.is_tma() {
+        return;
+    }
+    assert!(
+        pack_quant,
+        "Staging: a quantized tma {who} cannot reach a cmma leaf: the bulk copy cannot dequantize \
+         at the fill and the fragment load cannot unpack at the read, so no site exists"
+    );
+    unimplemented!(
+        "Staging: a quantized tma {who} must stage packed (the bulk copy cannot dequantize) and \
+         unpack at the read; the packed tma stage is not wired"
+    );
 }
 
 // `fill`/`consume` take closures so the body stays caller-defined (fill each buffer however, run the
