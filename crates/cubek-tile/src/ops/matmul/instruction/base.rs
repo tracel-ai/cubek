@@ -29,6 +29,16 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             ));
             p.at(0usize, 0usize).mma(lhs, rhs)
         }
+        // The manual-mma leaf, the raw-mma twin of the cmma path above.
+        TileKind::Mma(d) => d.mma(lhs, rhs),
+        TileKind::MmaPartition(p) => {
+            comptime!(assert!(
+                p.m_tiles == 1 && p.n_tiles == 1,
+                "mma_leaf: a multi-tile partition must be contracted at its partition level"
+            ));
+            let mut frag = p.at(0usize, 0usize);
+            frag.mma(lhs, rhs)
+        }
         TileKind::Gmem(g) | TileKind::Smem(g) => {
             comptime!(assert!(
                 space.partitioner().leaf() == Leaf::Register,

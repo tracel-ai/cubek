@@ -150,7 +150,11 @@ impl<T: Numeric> CmmaPartition<T> {
                 let window = src.fragment_window(mi, ni);
                 match &window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
-                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                    TileKind::Cmma(_)
+                    | TileKind::CmmaPartition(_)
+                    | TileKind::Mma(_)
+                    | TileKind::MmaPartition(_)
+                    | TileKind::TmaGmem(_) => {
                         panic!("CmmaPartition::fill_from: the source must be memory")
                     }
                 }
@@ -181,7 +185,11 @@ impl<T: Numeric> CmmaPartition<T> {
                 let mut window = dst.fragment_window(mi, ni);
                 match &mut window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
-                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                    TileKind::Cmma(_)
+                    | TileKind::CmmaPartition(_)
+                    | TileKind::Mma(_)
+                    | TileKind::MmaPartition(_)
+                    | TileKind::TmaGmem(_) => {
                         panic!("CmmaPartition::drain_into: the sink must be memory")
                     }
                 }
@@ -202,7 +210,11 @@ impl<T: Numeric> CmmaPartition<T> {
                 let mut window = dst.fragment_window(mi, ni);
                 match &mut window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g),
-                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) | TileKind::TmaGmem(_) => {
+                    TileKind::Cmma(_)
+                    | TileKind::CmmaPartition(_)
+                    | TileKind::Mma(_)
+                    | TileKind::MmaPartition(_)
+                    | TileKind::TmaGmem(_) => {
                         panic!("CmmaPartition::drain_cast_into: the sink must be memory")
                     }
                 }
@@ -217,7 +229,11 @@ impl<T: Numeric> Tile<T> {
     /// instance a single region; a partition level takes its own digit of the fragment
     /// coordinates — the grid may be split across stacked levels, so each consumes the
     /// high digits (the levels below it are the place value) and passes the rest down.
-    fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
+    pub(crate) fn fragment_window(
+        &self,
+        #[comptime] mi: usize,
+        #[comptime] ni: usize,
+    ) -> Tile<T> {
         let space = comptime!(self.space.clone());
         match comptime!(partition_level(&space)) {
             None => {
@@ -312,7 +328,7 @@ pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
 /// is an instance level, else the componentwise product of the partition levels' tile
 /// counts (the grid may be split across stacked levels, e.g. an N-walk staging level
 /// over an M-only static walk).
-fn partition_shape(space: &Space) -> (usize, usize) {
+pub(crate) fn partition_shape(space: &Space) -> (usize, usize) {
     let mut shape = (1usize, 1usize);
     let mut level = space.clone();
     while !level.is_final() {

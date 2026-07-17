@@ -240,8 +240,11 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::Smem(g) => g.lines::<W>().view(g.base()).view(g.window()),
             TileKind::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::view: a cmma fragment has no memory view")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::view: a resident fragment has no memory view")
             }
         }
     }
@@ -262,8 +265,11 @@ impl<T: Numeric> Tile<T> {
                 g.lines_mut::<W>().view_mut(base).view_mut(window)
             }
             TileKind::TmaGmem(_) => panic!("Tile::view_mut: a tma source has no element view"),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::view_mut: a cmma fragment has no memory view")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::view_mut: a resident fragment has no memory view")
             }
         }
     }

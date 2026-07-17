@@ -1,7 +1,7 @@
 //! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
 //! one decomposition level plus the partitioner for the subspaces it produces.
 
-use crate::{Axis, ByAxis};
+use crate::{Axis, ByAxis, MmaIOConfig};
 
 use super::{Distribution, WalkOrder};
 
@@ -23,11 +23,23 @@ pub enum Leaf {
     Cmma {
         k: usize,
     },
+    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments, distinct from
+    /// the cooperative `Cmma`. Carries the contraction depth `k` like `Cmma`, plus the host-chosen
+    /// [`MmaIOConfig`] (which fragment transport each role uses) — built from `client.properties()`
+    /// at the same site that supplies `k`, since a device query cannot run in-kernel.
+    Mma {
+        k: usize,
+        io: MmaIOConfig,
+    },
 }
 
 impl Leaf {
     pub fn is_cmma(&self) -> bool {
         matches!(self, Leaf::Cmma { .. })
+    }
+
+    pub fn is_mma(&self) -> bool {
+        matches!(self, Leaf::Mma { .. })
     }
 }
 

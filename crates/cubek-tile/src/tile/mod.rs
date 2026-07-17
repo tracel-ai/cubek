@@ -5,11 +5,13 @@
 
 mod cmma;
 mod mem;
+mod mma;
 mod tma;
 mod view;
 
 pub use cmma::*;
 pub use mem::*;
+pub use mma::*;
 pub use tma::*;
 pub use view::*;
 
@@ -32,6 +34,12 @@ pub enum TileKind<T: Numeric> {
     /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed; only a
     /// static walk's regions (constant coordinates) can select through it.
     CmmaPartition(CmmaPartition<T>),
+    /// A single manual-mma register fragment, not addressable; contraction is
+    /// [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition). The raw-mma twin of [`Cmma`].
+    Mma(MmaData<T>),
+    /// A partition of manual-mma fragments, `m_tiles × n_tiles`, comptime-indexed. The raw-mma
+    /// twin of [`CmmaPartition`].
+    MmaPartition(MmaPartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
     /// copy into shared memory. Launched via [`TmaTileArg`], the twin of [`StridedTileArg`].
     TmaGmem(TmaData<T>),
@@ -43,10 +51,14 @@ impl<T: Numeric> TileKind<T> {
     /// indexed by a runtime region (a partition at its partition level). Comptime.
     pub(crate) fn static_level(&self, #[comptime] space: Space) -> comptime_type!(bool) {
         match self {
-            TileKind::CmmaPartition(_) => comptime!(partition_level(&space).is_some()),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                comptime!(false)
+            TileKind::CmmaPartition(_) | TileKind::MmaPartition(_) => {
+                comptime!(partition_level(&space).is_some())
             }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::Cmma(_)
+            | TileKind::Mma(_)
+            | TileKind::TmaGmem(_) => comptime!(false),
         }
     }
 
@@ -56,12 +68,14 @@ impl<T: Numeric> TileKind<T> {
     /// pass the partition through, so they keep the compact runtime loop. Comptime.
     pub(crate) fn cuts_partition(&self, #[comptime] space: Space) -> comptime_type!(bool) {
         match self {
-            TileKind::CmmaPartition(_) => {
+            TileKind::CmmaPartition(_) | TileKind::MmaPartition(_) => {
                 comptime!(matches!(partition_level(&space), Some(c) if c != (1, 1)))
             }
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                comptime!(false)
-            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::Cmma(_)
+            | TileKind::Mma(_)
+            | TileKind::TmaGmem(_) => comptime!(false),
         }
     }
 
@@ -69,7 +83,10 @@ impl<T: Numeric> TileKind<T> {
     /// it zeroes in place rather than through the memory walk. Comptime.
     pub(crate) fn is_fragment(&self) -> comptime_type!(bool) {
         match self {
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(true),
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => comptime!(true),
             TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => comptime!(false),
         }
     }
@@ -181,7 +198,10 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(Delivery::Strided),
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => comptime!(Delivery::Strided),
         }
     }
 
@@ -191,9 +211,11 @@ impl<T: Numeric> Tile<T> {
     pub fn stage(&self) -> comptime_type!(StagePlan) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.stage(),
-            TileKind::TmaGmem(_) | TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                comptime!(StagePlan::strided())
-            }
+            TileKind::TmaGmem(_)
+            | TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => comptime!(StagePlan::strided()),
         }
     }
 
@@ -203,7 +225,10 @@ impl<T: Numeric> Tile<T> {
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.vector_size,
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(1usize),
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => comptime!(1usize),
             TileKind::TmaGmem(_) => comptime!(1usize),
         }
     }
@@ -213,9 +238,11 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
-            TileKind::TmaGmem(_) | TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                comptime!(0usize)
-            }
+            TileKind::TmaGmem(_)
+            | TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => comptime!(0usize),
         }
     }
 
@@ -295,6 +322,59 @@ impl<T: Numeric> Tile<T> {
                     }
                 }
             }
+            // The manual-mma fragment/partition mirror the cmma ones: a single fragment passes
+            // through (1×1 only), a partition selects its `sub_m × sub_n` block by the region's
+            // comptime coordinates.
+            TileKind::Mma(d) => {
+                comptime!(assert!(
+                    matches!(partition_level(&self.space), None | Some((1, 1))),
+                    "Tile::at: a level that cuts tiles cannot select into a single mma \
+                     fragment (it needs a fragment partition, or a memory output)"
+                ));
+                TileKind::new_Mma(d.clone())
+            }
+            TileKind::MmaPartition(p) => {
+                let rank = comptime!(self.space.rank());
+                let a0 = comptime!(self.space.axis_at(rank - 2));
+                let a1 = comptime!(self.space.axis_at(rank - 1));
+                let mi = if comptime!(self.space.single_static_tile(a0)) {
+                    comptime!(Some(0u64))
+                } else {
+                    region.coord(a0).constant()
+                };
+                let ni = if comptime!(self.space.single_static_tile(a1)) {
+                    comptime!(Some(0u64))
+                } else {
+                    region.coord(a1).constant()
+                };
+                match comptime!(mi.zip(ni)) {
+                    Some((c0, c1)) => {
+                        let (sub_m, sub_n) = comptime!({
+                            let (cm, cn) = (self.space.count(a0), self.space.count(a1));
+                            assert!(
+                                p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),
+                                "Tile::at: the level's grid must divide the fragment partition"
+                            );
+                            (p.m_tiles / cm, p.n_tiles / cn)
+                        });
+                        let mi = comptime!(c0 as usize * sub_m);
+                        let ni = comptime!(c1 as usize * sub_n);
+                        if comptime!(sub_m == 1 && sub_n == 1) {
+                            TileKind::new_Mma(p.at(mi, ni))
+                        } else {
+                            TileKind::new_MmaPartition(p.window(mi, ni, sub_m, sub_n))
+                        }
+                    }
+                    None => {
+                        comptime!(assert!(
+                            partition_level(&self.space).is_none(),
+                            "Tile::at: a level that cuts a fragment partition must be \
+                             walked with compile-time coordinates (an unrolled walk)"
+                        ));
+                        TileKind::new_MmaPartition(p.clone())
+                    }
+                }
+            }
         };
         Tile::<T> {
             tile_kind,
@@ -310,8 +390,11 @@ impl<T: Numeric> Tile<T> {
         let raw = match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.bound.at(p).fcast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::runtime_extent: a cmma fragment has no extent")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::runtime_extent: a resident fragment has no extent")
             }
         };
         // `bound` is a line count on the vectorized innermost axis; the walk divides by
@@ -343,6 +426,8 @@ impl<T: Numeric> Tile<T> {
             match &mut self.tile_kind {
                 TileKind::Cmma(d) => d.zero(),
                 TileKind::CmmaPartition(p) => p.zero(),
+                TileKind::Mma(d) => d.zero(),
+                TileKind::MmaPartition(p) => p.zero(),
                 TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
                     panic!("Tile::zero: not a fragment")
                 }
@@ -353,7 +438,10 @@ impl<T: Numeric> Tile<T> {
                 Partitioner::Final(_) => match &mut self.tile_kind {
                     TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
                     TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
-                    TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+                    TileKind::Cmma(_)
+                    | TileKind::CmmaPartition(_)
+                    | TileKind::Mma(_)
+                    | TileKind::MmaPartition(_) => {
                         panic!("Tile::zero: not memory")
                     }
                 },
@@ -373,13 +461,23 @@ impl<T: Numeric> Tile<T> {
     pub fn copy_from(&mut self, src: &Tile<T>) {
         match &src.tile_kind {
             TileKind::CmmaPartition(s) => s.drain_into(self),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+            TileKind::MmaPartition(s) => s.drain_into(self),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::Cmma(_)
+            | TileKind::Mma(_)
+            | TileKind::TmaGmem(_) => {
                 match (&mut self.tile_kind, &src.tile_kind) {
                     (TileKind::CmmaPartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
                         d.fill_from(src)
                     }
+                    (TileKind::MmaPartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
+                        d.fill_from(src)
+                    }
                     (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                    (TileKind::Mma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
                     (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
+                    (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Mma(s)) => s.store_window(d),
                     (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                     (
                         TileKind::Gmem(d) | TileKind::Smem(d),
@@ -402,7 +500,12 @@ impl<T: Numeric> Tile<T> {
     pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::CmmaPartition(s) => s.drain_cast_into(dst),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+            TileKind::MmaPartition(s) => s.drain_cast_into(dst),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::Cmma(_)
+            | TileKind::Mma(_)
+            | TileKind::TmaGmem(_) => {
                 panic!("Tile::drain_cast_into: only a fragment partition drains with a cast")
             }
         }

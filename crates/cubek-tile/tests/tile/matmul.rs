@@ -1397,6 +1397,74 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
         .enforce()
 }
 
+/// The manual/raw-mma leaf (`Leaf::Mma`): the raw-mma twin of `cmma_matmul_staged_k_walk` — the
+/// same resident promote → zero → mma → drain kernel, but the contraction runs through
+/// `MmaDefinition::execute` over register fragments rather than the cooperative `cmma::execute`.
+/// Gated on the backend exposing the manual-mma feature (`features.matmul.mma`); uses the universal
+/// manual transport (`MmaIOConfig::manual()`), so no `ldmatrix`/`stmatrix` path is taken. Run with
+/// `cargo test-metal` / `test-cuda` on a backend that advertises manual mma.
+#[test]
+fn mma_matmul_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.mma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no manual mma (features.matmul.mma) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Mma {
+            k: edge,
+            io: MmaIOConfig::manual(),
+        });
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// The multi-plane cmma stage: a double-buffered K walk fills a shared `16×8`/`8×16`
 /// stage cooperatively (cyclic across the cube's 128 units), and a plane-partitioned
 /// inner level hands each of the 4 planes its own `8×8` fragment, resident across all

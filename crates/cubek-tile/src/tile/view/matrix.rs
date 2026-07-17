@@ -72,8 +72,11 @@ impl<T: Numeric> Tile<T> {
         let rank = comptime!(self.space.rank());
         let shape = match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.extent(),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::matrix: a cmma fragment has no memory view")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::matrix: a resident fragment has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
         };
@@ -98,8 +101,11 @@ impl<T: Numeric> Tile<T> {
         let layout = self.batch_matrix(i);
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.masked::<W>(layout),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::matrix: a cmma fragment has no memory view")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::matrix: a resident fragment has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
         }
@@ -109,8 +115,11 @@ impl<T: Numeric> Tile<T> {
         let layout = self.batch_matrix(i);
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.masked_mut::<W>(layout),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::matrix_mut: a cmma fragment has no memory view")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::matrix_mut: a resident fragment has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
         }
@@ -128,8 +137,11 @@ impl<T: Numeric> Tile<T> {
         let layout = self.batch_matrix(i);
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.matrix_transparent::<I, WP, W>(layout),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::matrix_transparent: a cmma fragment has no memory view")
+            TileKind::Cmma(_)
+            | TileKind::CmmaPartition(_)
+            | TileKind::Mma(_)
+            | TileKind::MmaPartition(_) => {
+                panic!("Tile::matrix_transparent: a resident fragment has no memory view")
             }
             TileKind::TmaGmem(_) => {
                 panic!("Tile::matrix_transparent: a tma source has no element view")

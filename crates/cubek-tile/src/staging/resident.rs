@@ -24,6 +24,12 @@ impl<Acc: Numeric> Tile<Acc> {
         let leaf = comptime!(self.space.partitioner().leaf());
         match comptime!(leaf) {
             Leaf::Cmma { k } => CmmaPartition::<EA>::mirror(comptime!(self.space.clone()), k),
+            Leaf::Mma { k, io } => MmaPartition::<EA>::mirror(
+                comptime!(self.space.clone()),
+                k,
+                io,
+                comptime!(cubecl::cmma::MatrixLayout::RowMajor),
+            ),
             Leaf::Register => {
                 panic!("Tile::promote: the register leaf runs in place — nothing to promote")
             }
