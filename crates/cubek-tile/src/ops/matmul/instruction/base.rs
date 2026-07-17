@@ -9,8 +9,7 @@ use super::register::mma_register_memory;
 use crate::*;
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
-/// storage config. An accumulator whose lanes hold partials ([`lane_partials`](Tile)) owes a
-/// plane-wide combine, which only the register leaf can do.
+/// storage config
 #[cube]
 pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
@@ -18,12 +17,7 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
 ) {
     let space = comptime!(acc.space.clone());
-    let lane_partials = comptime!(acc.lane_partials);
     let tile_kind = &mut acc.tile_kind;
-    comptime!(assert!(
-        !lane_partials || space.partitioner().leaf() == Leaf::Register,
-        "mma_leaf: an accumulator whose lanes hold partials needs the register leaf to combine them"
-    ));
     match tile_kind {
         TileKind::Cmma(d) => d.mma(lhs, rhs),
         // A partition that reaches a final tile carries exactly one fragment; a wider
@@ -41,7 +35,7 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 "mma: a cmma-leaf accumulator runs register-resident — \
                  promote it first (Tile::promote), copy it back after"
             ));
-            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, lane_partials)
+            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
     }

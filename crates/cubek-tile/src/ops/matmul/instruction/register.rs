@@ -65,15 +65,13 @@ const UNROLL_BLOCK: usize = 64;
 /// matrix read, a quantized one dequantizes per read (no dequantize-into-`f32` fill). Either
 /// operand may be the quantized one — the gemv weight is the RHS, an activation-times-weight the
 /// LHS — so this dispatches each operand's storage element/packing (`0` plain, `1` native i8, `>1`
-/// packed u32). Both quantized at once is not a real workload and is refused. `lane_partials`
-/// rides through to the [`Accumulator`], which is the only thing that reads it.
+/// packed u32). Both quantized at once is not a real workload and is refused.
 #[cube]
 pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] lane_partials: bool,
 ) {
     let size!(L) = lhs.vector_size();
     let size!(V) = rhs.vector_size();
@@ -89,55 +87,15 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
         "register leaf: both operands quantized is not a supported direct-serve case"
     ));
     if comptime!(pack_l == 1) {
-        mma_register_typed::<E, EL, i8, L, ER, ER, V>(
-            acc,
-            lhs,
-            rhs,
-            space,
-            1usize,
-            1usize,
-            lane_partials,
-        );
+        mma_register_typed::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
     } else if comptime!(pack_l > 1) {
-        mma_register_typed::<E, EL, u32, L, ER, ER, V>(
-            acc,
-            lhs,
-            rhs,
-            space,
-            pack_l,
-            1usize,
-            lane_partials,
-        );
+        mma_register_typed::<E, EL, u32, L, ER, ER, V>(acc, lhs, rhs, space, pack_l, 1usize);
     } else if comptime!(pack_r == 1) {
-        mma_register_typed::<E, EL, EL, L, ER, i8, V>(
-            acc,
-            lhs,
-            rhs,
-            space,
-            1usize,
-            1usize,
-            lane_partials,
-        );
+        mma_register_typed::<E, EL, EL, L, ER, i8, V>(acc, lhs, rhs, space, 1usize, 1usize);
     } else if comptime!(pack_r > 1) {
-        mma_register_typed::<E, EL, EL, L, ER, u32, V>(
-            acc,
-            lhs,
-            rhs,
-            space,
-            1usize,
-            pack_r,
-            lane_partials,
-        );
+        mma_register_typed::<E, EL, EL, L, ER, u32, V>(acc, lhs, rhs, space, 1usize, pack_r);
     } else {
-        mma_register_typed::<E, EL, EL, L, ER, ER, V>(
-            acc,
-            lhs,
-            rhs,
-            space,
-            1usize,
-            1usize,
-            lane_partials,
-        );
+        mma_register_typed::<E, EL, EL, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
     }
 }
 
@@ -163,7 +121,6 @@ fn mma_register_typed<
     #[comptime] space: Space,
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
-    #[comptime] lane_partials: bool,
 ) {
     // `nr` is a line count (spans `N` in `V`-wide lines); `mr` (rows) and `kc` (scalar `K`, off
     // `rhs`) are unvectorized. A packed operand's physical line is `served / pack` narrower.
@@ -178,6 +135,8 @@ fn mma_register_typed<
     };
     let size!(WPL) = comptime!(lw / pack_l);
     let size!(WPR) = comptime!(vw / pack_r);
+
+    let lane_partials = comptime!(acc.lane_partials);
 
     let matrices = comptime! {
         let mut count = 1;

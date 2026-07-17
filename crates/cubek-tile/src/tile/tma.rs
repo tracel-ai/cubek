@@ -36,7 +36,6 @@ impl<T: Numeric> TmaData<T> {
             pos.push(0u32);
         }
         Tile::<T> {
-            lane_partials: comptime!(false),
             tile_kind: TileKind::new_TmaGmem(TmaData::<T> { view, pos, bound }),
             space: comptime!(space),
         }

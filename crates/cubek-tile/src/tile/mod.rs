@@ -170,11 +170,6 @@ pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
-    /// Whether sibling lanes hold partials of this tile's cells, so a contraction of it owes a
-    /// plane-wide combine before the cells are true. See [`Space::lane_partials`]; stamped by
-    /// [`at`](Tile::at), since the level that spread the axis is consumed on the way down.
-    #[cube(comptime)]
-    pub lane_partials: bool,
 }
 
 #[cube]
@@ -303,10 +298,6 @@ impl<T: Numeric> Tile<T> {
         };
         Tile::<T> {
             tile_kind,
-            // An operand owning the spread axis walks its own slice and stays whole; only a tile
-            // that *lacks* it (the output) ends up holding partials, so this reads false on the
-            // operands and needs no say from the caller.
-            lane_partials: comptime!(self.lane_partials || self.space.lane_partials()),
             space: comptime!(self.space.divide()),
         }
     }
