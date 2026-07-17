@@ -8,6 +8,5 @@ mod pipeline;
 mod resident;
 
 pub use base::*;
-pub use fill::*;
 pub use pipeline::*;
-// resident adds `Tile::promote` only, nothing to re-export.
+// fill adds `Staging` fill/consume impls only, resident adds `Tile::promote` — nothing to re-export.

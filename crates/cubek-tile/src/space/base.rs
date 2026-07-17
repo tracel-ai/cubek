@@ -85,6 +85,16 @@ impl Extents {
     }
 }
 
+/// What backs a staged matmul operand, the [`Space::operand_stage`] classification. `Plane` stages
+/// straight into plane-private tile partitions; `Smem` into a shared buffer the leaf reads windows
+/// from. Read by the staging store ([`Staging::new`]) and the schedule's unroll (a plane stage
+/// selects tiles by comptime coordinate, so its walk must be unrolled).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum OperandStage {
+    Plane,
+    Smem,
+}
+
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
@@ -259,6 +269,19 @@ impl Space {
 
     pub fn is_final(&self) -> bool {
         self.partitioner.is_final()
+    }
+
+    /// How this output plan's operands stage: [`Plane`](OperandStage::Plane) when the leaf
+    /// contracts plane tiles and the level below is their grid (operands stage straight into
+    /// plane-private tiles), else [`Smem`](OperandStage::Smem). The plan's own fact, so no consumer
+    /// reassembles it from the leaf and the partition level.
+    pub(crate) fn operand_stage(&self) -> OperandStage {
+        match self.partitioner().leaf().is_plane()
+            && crate::partition_level(&self.divide()).is_some()
+        {
+            true => OperandStage::Plane,
+            false => OperandStage::Smem,
+        }
     }
 
     /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and

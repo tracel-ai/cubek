@@ -20,6 +20,10 @@ pub struct Staging<T: CubeType> {
     pub(crate) pin_lhs: bool,
     #[cube(comptime)]
     pub(crate) pin_rhs: bool,
+    /// How the slot's operands are backed, computed once by [`new`](Staging::new) from the output
+    /// plan. The schedule reads it to decide the walk's unroll rather than re-deriving it.
+    #[cube(comptime)]
+    pub(crate) stage: OperandStage,
 }
 
 #[cube]
@@ -32,13 +36,20 @@ impl<T: CubeType> Staging<T> {
         pipeline: Pipeline,
         #[comptime] pin_lhs: bool,
         #[comptime] pin_rhs: bool,
+        #[comptime] stage: OperandStage,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
             pin_lhs,
             pin_rhs,
+            stage,
         }
+    }
+
+    /// How this slot's operands are backed, decided when the slot was built.
+    pub(crate) fn stage(&self) -> comptime_type!(OperandStage) {
+        comptime!(self.stage)
     }
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`
