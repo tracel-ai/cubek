@@ -9,15 +9,21 @@ use super::register::mma_register_memory;
 use crate::*;
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
-/// storage config
+/// storage config. `split_k`: the lanes hold disjoint K-slices of this cell, so the leaf must
+/// combine them rather than each write; only the register leaf can.
 #[cube]
 pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
+    #[comptime] split_k: bool,
 ) {
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
+    comptime!(assert!(
+        !split_k || space.partitioner().leaf() == Leaf::Register,
+        "mma_leaf: split-K (Cut::unit on a contracting axis) needs the register leaf"
+    ));
     match tile_kind {
         TileKind::Cmma(d) => d.mma(lhs, rhs),
         // A partition that reaches a final tile carries exactly one fragment; a wider
@@ -35,33 +41,8 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 "mma: a cmma-leaf accumulator runs register-resident — \
                  promote it first (Tile::promote), copy it back after"
             ));
-            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, false)
+            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, split_k)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
-    }
-}
-
-/// The leaf contraction with an intra-plane K-reduction: the K axis was `Cut::unit`, so each
-/// lane holds a disjoint K-slice contributing to the same `(m, n)` cell. The register microkernel
-/// seeds from zero, `plane_sum`-reduces across lanes, and lets lane 0 write. Register-resident
-/// only (a cmma fragment has no such split); [`mma_direct`](crate::Tile::mma_direct) reaches this
-/// only when the split is comptime-real (resolved `plane_size > 1`).
-#[cube]
-pub(crate) fn mma_leaf_split<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut Tile<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-) {
-    let space = comptime!(acc.space.clone());
-    let tile_kind = &mut acc.tile_kind;
-    match tile_kind {
-        TileKind::Gmem(g) | TileKind::Smem(g) => {
-            comptime!(assert!(
-                space.partitioner().leaf() == Leaf::Register,
-                "mma: split-K is register-resident only"
-            ));
-            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, true)
-        }
-        _ => panic!("mma: split-K (Cut::unit on K) is supported only by the register leaf"),
     }
 }
