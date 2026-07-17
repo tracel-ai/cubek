@@ -19,7 +19,7 @@ impl Space {
 
     /// `plane_size × plane_count`. Plane length is the hardware's (`1` on CPU, the warp
     /// width on GPU). `Unit` axes ride those `plane_size` lanes, so their instance product
-    /// must be exactly `plane_size` (or `1`, no Unit split) — a mis-sized split would idle
+    /// must be exactly `plane_size` (or `1`, no Unit split) — a wrong-sized split would idle
     /// or race lanes. A deferred `PlaneLanes` count panics here: launch through
     /// [`launcher`](Space::launcher), which stamps it.
     pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>) -> CubeDim {

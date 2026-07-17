@@ -59,14 +59,6 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         op_space: Space,
     ) {
-        let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
-        let register = comptime!(
-            self.space.partitioner().leaf().is_cmma()
-                && partition_level(&self.space.divide()).is_some()
-                && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
-        );
-        let unroll = comptime!(cuts || register);
-
         // `Staging` decides which operand (if any) is pinned: walk-invariant, so its window
         // never moves and it fills once, above the loop. The rest stream, refilled per region.
         let mut staging = Staging::new(
@@ -75,6 +67,16 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
+        let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
+        // A plane stage selects its tiles by comptime coordinate, so it only stands up under an
+        // unrolled walk. The staging owns that classification; read it rather than re-derive.
+        let stage = staging.stage();
+        let plane_stage = comptime!(
+            stage == OperandStage::Plane
+                && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
+        );
+        let unroll = comptime!(cuts || plane_stage);
+
         let walk = Walk::over(op_space);
         staging.fill_pinned(lhs, rhs, &walk.region(0));
         let walk = if comptime!(unroll) {

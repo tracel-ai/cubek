@@ -19,15 +19,16 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        TileKind::Cmma(d) => d.mma(lhs, rhs),
-        // A partition that reaches a final tile carries exactly one fragment; a wider
-        // one is consumed earlier, at its partition level.
-        TileKind::CmmaPartition(p) => {
+        TileKind::PlaneTile(t) => t.mma(lhs, rhs),
+        // A partition that reaches a final tile carries exactly one tile; a wider one is
+        // consumed earlier, at its partition level.
+        TileKind::PlanePartition(p) => {
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,
                 "mma_leaf: a multi-tile partition must be contracted at its partition level"
             ));
-            p.at(0usize, 0usize).mma(lhs, rhs)
+            let mut t = p.at(0usize, 0usize);
+            t.mma(lhs, rhs)
         }
         TileKind::Gmem(g) | TileKind::Smem(g) => {
             comptime!(assert!(
@@ -38,5 +39,16 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
+    }
+}
+
+#[cube]
+impl<E: Numeric> PlaneTile<E> {
+    /// Contract this plane tile: the only place the two encodings' executes diverge.
+    pub(crate) fn mma<EL: Numeric, ER: Numeric>(&mut self, lhs: &Tile<EL>, rhs: &Tile<ER>) {
+        match self {
+            PlaneTile::Cmma(d) => d.mma(lhs, rhs),
+            PlaneTile::Mma(d) => d.mma(lhs, rhs),
+        }
     }
 }

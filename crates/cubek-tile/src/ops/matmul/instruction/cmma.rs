@@ -18,9 +18,12 @@ impl<A: Numeric> CmmaData<A> {
     /// window's layout is unchecked here, so it must be staged first.
     pub(crate) fn mma<L: Numeric, R: Numeric>(&self, lhs: &Tile<L>, rhs: &Tile<R>) {
         match (&lhs.tile_kind, &rhs.tile_kind) {
-            (TileKind::Cmma(a), TileKind::Cmma(b)) => {
-                cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
-            }
+            (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
+                (PlaneTile::Cmma(a), PlaneTile::Cmma(b)) => {
+                    cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
+                }
+                _ => panic!("cmma operands must be cmma fragments"),
+            },
             (TileKind::Smem(a), TileKind::Smem(b)) => {
                 // The tile is `m × k` on lhs and `k × n` on rhs (trailing two axes; any
                 // leading batch axes are extent-1 at a final tile).

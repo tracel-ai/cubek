@@ -1,7 +1,7 @@
 //! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
 //! one decomposition level plus the partitioner for the subspaces it produces.
 
-use crate::{Axis, ByAxis};
+use crate::{Axis, ByAxis, MmaIOConfig};
 
 use super::{Distribution, WalkOrder};
 
@@ -23,11 +23,23 @@ pub enum Leaf {
     Cmma {
         k: usize,
     },
+    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
+    /// leaf because it comes from a device query, which cannot run in-kernel.
+    Mma {
+        k: usize,
+        io: MmaIOConfig,
+    },
 }
 
 impl Leaf {
     pub fn is_cmma(&self) -> bool {
         matches!(self, Leaf::Cmma { .. })
+    }
+
+    /// Whether the leaf contracts a plane-level tile (either encoding), so operands and the
+    /// accumulator are plane-resident rather than memory.
+    pub fn is_plane(&self) -> bool {
+        matches!(self, Leaf::Cmma { .. } | Leaf::Mma { .. })
     }
 }
 
@@ -90,6 +102,14 @@ impl Partitioner {
 
     pub fn distribution(&self, axis: Axis) -> Distribution {
         self.level().dists.get(axis)
+    }
+
+    /// The axes this level distributes, which outlive the space they came from: a level keeps
+    /// every axis of the operation, so an output space (`{M, N}`) still names its contraction.
+    /// Panics on [`Final`](Partitioner::Final), which carries no level.
+    pub(crate) fn axes(&self) -> Vec<Axis> {
+        let dists = &self.level().dists;
+        (0..dists.len()).map(|i| dists.axis_at(i)).collect()
     }
 
     pub fn order(&self) -> WalkOrder {

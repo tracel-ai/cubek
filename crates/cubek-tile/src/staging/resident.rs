@@ -21,12 +21,6 @@ impl<Acc: Numeric> Tile<Acc> {
     /// type, distinct from the served/stored `Acc` (e.g. `f32` accumulate under an `f16`
     /// output). The register form itself belongs to the declared [`Leaf`](crate::Leaf).
     pub fn promote<EA: Numeric>(&self) -> Tile<EA> {
-        let leaf = comptime!(self.space.partitioner().leaf());
-        match comptime!(leaf) {
-            Leaf::Cmma { k } => CmmaPartition::<EA>::mirror(comptime!(self.space.clone()), k),
-            Leaf::Register => {
-                panic!("Tile::promote: the register leaf runs in place — nothing to promote")
-            }
-        }
+        PlanePartition::<EA>::mirror(comptime!(self.space.clone()))
     }
 }

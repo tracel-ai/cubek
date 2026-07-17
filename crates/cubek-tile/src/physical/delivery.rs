@@ -59,8 +59,9 @@ pub enum StageStorage {
 }
 
 impl StageStorage {
-    /// The safe default: a cmma leaf reads whole fragments, so tile its stages; anything
-    /// else keeps plain strided rows.
+    /// The safe default: a cmma leaf reads a whole fragment per transaction, so tile its stages.
+    /// Anything else keeps plain strided rows, the manual-mma leaf included: it addresses each
+    /// element by computed offset, so contiguity buys it nothing.
     pub fn for_space(space: &Space) -> Self {
         if space.partitioner().leaf().is_cmma() {
             StageStorage::Tiled

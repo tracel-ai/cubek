@@ -97,19 +97,20 @@ fn mma_register_typed<
     for mat in 0..matrices {
         let lhs = lhs.matrix_transparent::<IL, WPL, L>(mat);
         let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
-        let mut acc = acc.matrix_mut::<V>(mat, comptime!(space.clone()));
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
         let lhs_check = lhs.check();
         let rhs_check = rhs.check();
-        let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc.check);
+        let acc_check = acc.check();
+        let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = Array::<Vector<E, V>>::new(mr * nr);
 
         #[unroll(unroll)]
         for i in 0..mr {
             #[unroll(unroll)]
             for n in 0..nr {
-                c[i * nr + n] = acc.read((i as u32, n as u32));
+                c[i * nr + n] = acc.seed((i as u32, n as u32));
             }
         }
 
@@ -142,7 +143,7 @@ fn mma_register_typed<
         for i in 0..mr {
             #[unroll(unroll)]
             for n in 0..nr {
-                acc.write((i as u32, n as u32), c[i * nr + n]);
+                acc.commit((i as u32, n as u32), c[i * nr + n]);
             }
         }
     }

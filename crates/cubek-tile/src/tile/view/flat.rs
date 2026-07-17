@@ -85,8 +85,8 @@ impl<T: Numeric> Tile<T> {
                 }
                 g.flat::<W>()
             }
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::flat: a cmma fragment has no memory view")
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::flat: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
         }
@@ -95,8 +95,8 @@ impl<T: Numeric> Tile<T> {
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::flat_mut: a cmma fragment has no memory view")
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::flat_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
         }

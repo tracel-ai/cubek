@@ -32,6 +32,11 @@ pub struct MemData<T: Numeric> {
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
+    /// What each lane holds of these cells, stamped across [`at`](Tile::at)s (the level that
+    /// spreads an axis is consumed on the way down). `Partial` means split to an accumulator but
+    /// merely replicated to an operand, so only an accumulator reads it.
+    #[cube(comptime)]
+    pub(crate) lane_share: LaneShare,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -193,6 +198,7 @@ impl<T: Numeric> MemData<T> {
                     },
                     stage: storage.stage,
                 }),
+                lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(space),
         }
@@ -258,7 +264,7 @@ impl<T: Numeric> MemData<T> {
             // [`StridedTileArg`] builder, and a tma tile is scalar), so served == stored. Giving it
             // one must not reuse this arm — see `Staging::new`, which refuses that combination.
             TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("MemData::smem_like_stored: a fragment is not a stage source")
             }
         }
@@ -343,6 +349,7 @@ impl<T: Numeric> MemData<T> {
                     overhang: Overhang::Never,
                     stage,
                 }),
+                lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(space),
         }
@@ -365,8 +372,8 @@ impl<T: Numeric> Tile<T> {
                 g.lines::<W>().view(g.base()).view(g.window())
             }
             TileKind::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::view: a cmma fragment has no memory view")
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::view: a plane tile has no memory view")
             }
         }
     }
@@ -382,8 +389,8 @@ impl<T: Numeric> Tile<T> {
                 g.lines_mut::<W>().view_mut(base).view_mut(window)
             }
             TileKind::TmaGmem(_) => panic!("Tile::view_mut: a tma source has no element view"),
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::view_mut: a cmma fragment has no memory view")
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::view_mut: a plane tile has no memory view")
             }
         }
     }
@@ -953,6 +960,17 @@ impl<T: Numeric> MemData<T> {
         self.masked_mut::<W>(BatchMatrix::new(batches, rows, cols))
     }
 
+    /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
+    /// [`LaneShare`] these cells carry, so a leaf accumulates through it without being told.
+    pub(crate) fn matrix_accumulate<W: Size>(
+        &mut self,
+        i: usize,
+        #[comptime] space: Space,
+    ) -> AccumulateView<'_, T, W> {
+        let lane_share = comptime!(self.lane_share);
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share)
+    }
+
     /// Window down to `region`: shift the origin by the region's tile coordinate times
     /// the sub-tile edge, crop each axis to that edge, re-box the same buffer. `bound`
     /// is carried through unchanged, so the leaf masks correctly at any nesting depth.
@@ -1018,6 +1036,7 @@ impl<T: Numeric> MemData<T> {
                 whole: false,
                 ..self.access
             }),
+            lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
         }
     }
 }

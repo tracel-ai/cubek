@@ -106,6 +106,10 @@ name = "tile_quant_stage"
 
 [[bench]]
 harness = false
+name = "split_k"
+
+[[bench]]
+harness = false
 name = "conv2d"
 
 [[bench]]
