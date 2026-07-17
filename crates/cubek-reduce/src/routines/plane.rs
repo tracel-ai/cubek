@@ -100,26 +100,41 @@ fn generate_blueprint<R: Runtime>(
     let working_cubes = working_planes.div_ceil(plane_count as usize);
 
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
-    let (cube_count, _cube_launched) = cube_count_spread_with_total(client, working_cubes);
+    let (cube_count, cube_launched) = cube_count_spread_with_total(client, working_cubes);
 
     // The blueprint is comptime: every field forks a compiled kernel variant.
     // The problem sizes here are *raw* runtime lengths, while kernel selection
-    // is cached per anchored autotune key — so a variant choice derived from a
+    // is cached per anchored autotune key — a variant choice derived from a
     // raw property (divisibility, exact launch fit) re-splits the anchored
     // bucket and keeps compiling "new" kernels long after a warmup covered
-    // every key. Always compile the guarded variants instead: they are correct
-    // for every length sharing the key, and the tuner benchmarks candidates
-    // with them, so the ranking stays honest.
-    let bound_checks = BoundChecks::Mask;
+    // every key. The unchecked fast paths are therefore only taken when the
+    // selection says raw shapes are their own keys
+    // ([`ReduceStrategy::autotune_level`](crate::ReduceStrategy)); otherwise
+    // the guarded variants — valid for every length sharing the key — run,
+    // and the tuner benchmarks candidates with them, keeping the ranking
+    // honest.
+    let unchecked = settings.unchecked_fast_paths;
+    let plane_idle = cube_launched * cube_dim.num_elems() as usize != working_units;
+    let work_size = match settings.vectorization_mode {
+        VectorizationMode::Parallel => problem.reduce_len / settings.vector_size_input,
+        VectorizationMode::Perpendicular => problem.reduce_len,
+    };
+    let bound_checks = match unchecked && work_size.is_multiple_of(plane_size as usize) {
+        true => BoundChecks::None,
+        false => BoundChecks::Mask,
+    };
 
-    let plane_idle = match client
-        .properties()
-        .features
-        .plane
-        .contains(Plane::NonUniformControlFlow)
-    {
-        true => IdleMode::Terminate,
-        false => IdleMode::Mask,
+    let plane_idle = match !unchecked || plane_idle {
+        true => match client
+            .properties()
+            .features
+            .plane
+            .contains(Plane::NonUniformControlFlow)
+        {
+            true => IdleMode::Terminate,
+            false => IdleMode::Mask,
+        },
+        false => IdleMode::None,
     };
 
     let strategy_enum = if strategy.independent {

@@ -82,14 +82,18 @@ fn generate_blueprint<R: Runtime>(
     let num_units_in_cube = cube_dim.num_elems();
 
     let working_cubes = working_units.div_ceil(num_units_in_cube as usize);
-    let (cube_count, _cube_launched) = cube_count_spread_with_total(client, working_cubes);
+    let (cube_count, cube_launched) = cube_count_spread_with_total(client, working_cubes);
 
-    // Comptime variant choices must hold for every problem sharing the
-    // anchored autotune key, not just this raw shape — a raw-derived fast
-    // path (exact launch fit) re-splits the anchored bucket and keeps
-    // compiling "new" kernels after a warmup covered every key. Always
-    // compile the guarded variant.
-    let unit_idle = IdleMode::Terminate;
+    // Unchecked comptime fast path only when raw shapes are their own
+    // autotune keys — see the twin comment in `plane.rs`.
+    let unit_idle = !settings.unchecked_fast_paths
+        || !working_units.is_multiple_of(num_units_in_cube as usize)
+        || cube_launched != working_cubes;
+
+    let unit_idle = match unit_idle {
+        true => IdleMode::Terminate,
+        false => IdleMode::None,
+    };
     let blueprint = ReduceBlueprint {
         vectorization_mode: settings.vectorization_mode,
         global: GlobalReduceBlueprint::Unit(UnitReduceBlueprint { unit_idle }),

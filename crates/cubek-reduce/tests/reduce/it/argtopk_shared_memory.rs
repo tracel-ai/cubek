@@ -8,6 +8,7 @@
 
 #![cfg(feature = "heavy")]
 
+use cubecl::config::autotune::AutotuneLevel;
 use cubecl::zspace::{Shape, Strides};
 use cubek_reduce::{
     ReduceStrategy,
@@ -17,8 +18,8 @@ use cubek_reduce::{
 
 use crate::reduce::it::test_case::TestCase;
 
-fn inferred_cube_strategy(use_planes: bool) -> ReduceStrategy {
-    ReduceStrategy {
+fn inferred_cube_strategy(use_planes: bool) -> ReduceStrategy { autotune_level: AutotuneLevel::Full,
+    ReduceStrategy { autotune_level: AutotuneLevel::Full,
         vectorization: VectorizationStrategy {
             parallel_output_vectorization: false,
         },

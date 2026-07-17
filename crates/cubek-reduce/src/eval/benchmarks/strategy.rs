@@ -1,3 +1,4 @@
+use cubecl::config::autotune::AutotuneLevel;
 use cubek_test_utils::CatalogEntry;
 
 use crate::launch::{ReduceStrategy, RoutineStrategy, VectorizationStrategy};
@@ -27,7 +28,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "unit_serial",
             "Unit (serial)",
-            ReduceStrategy {
+            ReduceStrategy { autotune_level: AutotuneLevel::Full,
                 routine: unit(),
                 vectorization: serial,
             },
@@ -35,7 +36,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "unit_parallel",
             "Unit (parallel)",
-            ReduceStrategy {
+            ReduceStrategy { autotune_level: AutotuneLevel::Full,
                 routine: unit(),
                 vectorization: parallel,
             },
@@ -43,7 +44,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "plane_serial",
             "Plane independent (serial)",
-            ReduceStrategy {
+            ReduceStrategy { autotune_level: AutotuneLevel::Full,
                 routine: plane(),
                 vectorization: serial,
             },
@@ -51,7 +52,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "plane_parallel",
             "Plane independent (parallel)",
-            ReduceStrategy {
+            ReduceStrategy { autotune_level: AutotuneLevel::Full,
                 routine: plane(),
                 vectorization: parallel,
             },
@@ -59,7 +60,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "cube_serial",
             "Cube use_planes (serial)",
-            ReduceStrategy {
+            ReduceStrategy { autotune_level: AutotuneLevel::Full,
                 routine: cube(),
                 vectorization: serial,
             },
@@ -67,7 +68,7 @@ pub fn strategies() -> Vec<CatalogEntry<ReduceStrategy>> {
         CatalogEntry::new(
             "cube_parallel",
             "Cube use_planes (parallel)",
-            ReduceStrategy {
+            ReduceStrategy { autotune_level: AutotuneLevel::Full,
                 routine: cube(),
                 vectorization: parallel,
             },
