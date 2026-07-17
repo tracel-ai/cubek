@@ -18,10 +18,10 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
 ) {
     let space = comptime!(acc.space.clone());
-    let split_k = comptime!(acc.lane_partials);
+    let lane_partials = comptime!(acc.lane_partials);
     let tile_kind = &mut acc.tile_kind;
     comptime!(assert!(
-        !split_k || space.partitioner().leaf() == Leaf::Register,
+        !lane_partials || space.partitioner().leaf() == Leaf::Register,
         "mma_leaf: an accumulator whose lanes hold partials needs the register leaf to combine them"
     ));
     match tile_kind {
@@ -41,7 +41,7 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 "mma: a cmma-leaf accumulator runs register-resident — \
                  promote it first (Tile::promote), copy it back after"
             ));
-            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, split_k)
+            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, lane_partials)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
     }

@@ -1,8 +1,58 @@
 //! The register-resident leaf: a software outer-product GEMM microkernel over memory tiles.
 
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::*;
+
+/// The microkernel's accumulator: the `seed`/`commit` bracket around its register block, and the
+/// one thing that knows whether sibling lanes hold partials of these cells (a contraction spread
+/// across the plane). Both ends of the bracket change when they do, so owning it here lets the
+/// contraction below run one way and never ask.
+#[derive(CubeType)]
+struct Accumulator<'a, E: Numeric, V: Size> {
+    view: MatrixViewMut<'a, Vector<E, V>>,
+    #[cube(comptime)]
+    lane_partials: bool,
+}
+
+#[cube]
+impl<'a, E: Numeric, V: Size> Accumulator<'a, E, V> {
+    fn new(view: MatrixViewMut<'a, Vector<E, V>>, #[comptime] lane_partials: bool) -> Self {
+        Accumulator::<'a, E, V> {
+            view,
+            lane_partials,
+        }
+    }
+
+    /// Whether the cells overhang, so each access is its own branch and the block can't unroll.
+    fn check(&self) -> comptime_type!(bool) {
+        comptime!(self.view.check)
+    }
+
+    /// The block's starting value. A lane holding a partial starts at zero: the shared cell is
+    /// folded in once, by the one lane that commits, so seeding from it would count it per lane.
+    fn seed(&self, pos: Coords2d) -> Vector<E, V> {
+        if comptime!(self.lane_partials) {
+            Vector::<E, V>::cast_from(E::from_int(0))
+        } else {
+            self.view.read(pos)
+        }
+    }
+
+    /// Fold a finished block back. Partials combine across the plane first (`plane_sum` reduces
+    /// each `V`-wide cell element-wise, leaving every lane holding the total), then a single lane
+    /// writes, so siblings don't all write the same address.
+    fn commit(&mut self, pos: Coords2d, value: Vector<E, V>) {
+        if comptime!(self.lane_partials) {
+            let combined = plane_sum(value);
+            if UNIT_POS_X == 0 {
+                self.view.write(pos, self.view.read(pos) + combined);
+            }
+        } else {
+            self.view.write(pos, value);
+        }
+    }
+}
 
 /// Fully unroll the `mr × nr` register block only up to this many cells; past it the
 /// load/store loops run at runtime, since hundreds of inlined cells overflow the
@@ -15,21 +65,15 @@ const UNROLL_BLOCK: usize = 64;
 /// matrix read, a quantized one dequantizes per read (no dequantize-into-`f32` fill). Either
 /// operand may be the quantized one — the gemv weight is the RHS, an activation-times-weight the
 /// LHS — so this dispatches each operand's storage element/packing (`0` plain, `1` native i8, `>1`
-/// packed u32). Both quantized at once is not a real workload and is refused.
-///
-/// `split_k` gates the intra-plane K-reduction: when the leaf's K axis was `Cut::unit`
-/// (spread across the plane's lanes), each lane holds a disjoint K-slice contributing to the
-/// same `(m, n)` cell. Set, the microkernel seeds its register block from zero (not the acc),
-/// `plane_sum`-reduces across the lanes, and only lane `0` writes the accumulator. Clear, the
-/// classic self-contained load/contract/store bracket (also the resolved CPU path, where one
-/// lane owns the whole K).
+/// packed u32). Both quantized at once is not a real workload and is refused. `lane_partials`
+/// rides through to the [`Accumulator`], which is the only thing that reads it.
 #[cube]
 pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] split_k: bool,
+    #[comptime] lane_partials: bool,
 ) {
     let size!(L) = lhs.vector_size();
     let size!(V) = rhs.vector_size();
@@ -45,19 +89,55 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
         "register leaf: both operands quantized is not a supported direct-serve case"
     ));
     if comptime!(pack_l == 1) {
-        mma_register_typed::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize, split_k);
+        mma_register_typed::<E, EL, i8, L, ER, ER, V>(
+            acc,
+            lhs,
+            rhs,
+            space,
+            1usize,
+            1usize,
+            lane_partials,
+        );
     } else if comptime!(pack_l > 1) {
         mma_register_typed::<E, EL, u32, L, ER, ER, V>(
-            acc, lhs, rhs, space, pack_l, 1usize, split_k,
+            acc,
+            lhs,
+            rhs,
+            space,
+            pack_l,
+            1usize,
+            lane_partials,
         );
     } else if comptime!(pack_r == 1) {
-        mma_register_typed::<E, EL, EL, L, ER, i8, V>(acc, lhs, rhs, space, 1usize, 1usize, split_k);
+        mma_register_typed::<E, EL, EL, L, ER, i8, V>(
+            acc,
+            lhs,
+            rhs,
+            space,
+            1usize,
+            1usize,
+            lane_partials,
+        );
     } else if comptime!(pack_r > 1) {
         mma_register_typed::<E, EL, EL, L, ER, u32, V>(
-            acc, lhs, rhs, space, 1usize, pack_r, split_k,
+            acc,
+            lhs,
+            rhs,
+            space,
+            1usize,
+            pack_r,
+            lane_partials,
         );
     } else {
-        mma_register_typed::<E, EL, EL, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize, split_k);
+        mma_register_typed::<E, EL, EL, L, ER, ER, V>(
+            acc,
+            lhs,
+            rhs,
+            space,
+            1usize,
+            1usize,
+            lane_partials,
+        );
     }
 }
 
@@ -83,7 +163,7 @@ fn mma_register_typed<
     #[comptime] space: Space,
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
-    #[comptime] split_k: bool,
+    #[comptime] lane_partials: bool,
 ) {
     // `nr` is a line count (spans `N` in `V`-wide lines); `mr` (rows) and `kc` (scalar `K`, off
     // `rhs`) are unvectorized. A packed operand's physical line is `served / pack` narrower.
@@ -110,26 +190,23 @@ fn mma_register_typed<
     for mat in 0..matrices {
         let lhs = lhs.matrix_transparent::<IL, WPL, L>(mat);
         let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
-        let mut acc = acc.matrix_mut::<V>(mat, comptime!(space.clone()));
+        let mut acc = Accumulator::<E, V>::new(
+            acc.matrix_mut::<V>(mat, comptime!(space.clone())),
+            lane_partials,
+        );
 
         // Unroll only when no mask, otherwise compilation too long.
         let lhs_check = lhs.check();
         let rhs_check = rhs.check();
-        let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc.check);
+        let acc_check = acc.check();
+        let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = Array::<Vector<E, V>>::new(mr * nr);
 
-        // Split-K seeds from zero: each lane owns a disjoint K-slice, so its partial must not
-        // fold in the shared acc cell (only lane 0 adds it back, once, in the combine below).
-        // The classic path seeds from the acc and every lane writes its own cell.
         #[unroll(unroll)]
         for i in 0..mr {
             #[unroll(unroll)]
             for n in 0..nr {
-                c[i * nr + n] = if comptime!(split_k) {
-                    Vector::<E, V>::cast_from(E::from_int(0))
-                } else {
-                    acc.read((i as u32, n as u32))
-                };
+                c[i * nr + n] = acc.seed((i as u32, n as u32));
             }
         }
 
@@ -158,28 +235,11 @@ fn mma_register_typed<
             }
         }
 
-        if comptime!(split_k) {
-            // Combine the lanes' partials: `plane_sum` reduces each `V`-wide cell across the
-            // plane's lanes (a `Vector<E, V>` is a `CubePrimitive`, so the warp reduce runs
-            // element-wise). Every lane holds the same reduced value; only lane 0 folds it into
-            // the shared acc cell, so the sibling lanes don't each write the same address.
+        #[unroll(unroll)]
+        for i in 0..mr {
             #[unroll(unroll)]
-            for i in 0..mr {
-                #[unroll(unroll)]
-                for n in 0..nr {
-                    let combined = plane_sum(c[i * nr + n]);
-                    if UNIT_POS_X == 0 {
-                        acc.write((i as u32, n as u32), acc.read((i as u32, n as u32)) + combined);
-                    }
-                }
-            }
-        } else {
-            #[unroll(unroll)]
-            for i in 0..mr {
-                #[unroll(unroll)]
-                for n in 0..nr {
-                    acc.write((i as u32, n as u32), c[i * nr + n]);
-                }
+            for n in 0..nr {
+                acc.commit((i as u32, n as u32), c[i * nr + n]);
             }
         }
     }
