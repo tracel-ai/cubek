@@ -34,12 +34,8 @@ impl<Acc: Numeric> Tile<Acc> {
                 self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
         } else {
-            // The leaf can't see whether its K was split across lanes (its partitioner is
-            // `Final`), so this level tells it.
-            let split_k = comptime!(split_k_reduce(op_space.clone(), self.space.clone()));
             for region in Walk::over(op_space) {
-                self.at(&region)
-                    .mma_reduced(&lhs.at(&region), &rhs.at(&region), split_k);
+                self.at(&region).mma(&lhs.at(&region), &rhs.at(&region));
             }
         }
     }
@@ -163,27 +159,4 @@ impl<Acc: Numeric> Tile<Acc> {
             s0.consume_final(|a, b| self.at(&last).mma(a, b));
         }
     }
-}
-
-/// Whether a contracting axis is spread across the plane's lanes, so the leaf's partials need a
-/// `plane_sum` combine. One lane (CPU) is no split. One tile per lane is asserted: more still
-/// sums right, but reduces per K block instead of once at the end.
-fn split_k_reduce(op_space: Space, output: Space) -> bool {
-    op_space.contracting(&output).iter().any(|&axis| {
-        let Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            coverage,
-            ..
-        } = op_space.partitioner().distribution(axis)
-        else {
-            return false;
-        };
-        let tiles = op_space.count(axis);
-        let lanes = coverage.instances(tiles);
-        assert!(
-            lanes == 1 || tiles == lanes,
-            "split-K: Cut::unit on a contracting axis must cut one slice per lane"
-        );
-        lanes > 1
-    })
 }

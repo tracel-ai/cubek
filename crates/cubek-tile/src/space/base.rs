@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Distribution, Leaf, MAX_AXES, Partitioner};
+use crate::{Axis, ComputeScope, Distribution, Leaf, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -417,6 +417,29 @@ impl Space {
     pub fn walk_invariant(&self, operand: &Space) -> bool {
         self.axes()
             .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
+    }
+
+    /// Whether sibling lanes hold partials of this space's cells: this level spreads an axis the
+    /// space doesn't own — a contraction of its cells — across the plane's lanes, so each lane
+    /// contracts a disjoint slice of it. One lane (CPU) is no split.
+    ///
+    /// Reducing them is the leaf's job, but a leaf's partitioner is `Final` and no longer says,
+    /// so [`Tile::at`](crate::Tile::at) stamps this on the way down.
+    pub(crate) fn lane_partials(&self) -> bool {
+        if self.partitioner.is_final() {
+            return false;
+        }
+        self.partitioner.axes().into_iter().any(|axis| {
+            !self.contains(axis)
+                && match self.partitioner.distribution(axis) {
+                    Distribution::Spatial {
+                        scope: ComputeScope::Unit,
+                        coverage,
+                        ..
+                    } => coverage.instances_const().is_some_and(|lanes| lanes > 1),
+                    _ => false,
+                }
+        })
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.

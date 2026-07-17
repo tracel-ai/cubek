@@ -9,20 +9,20 @@ use super::register::mma_register_memory;
 use crate::*;
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
-/// storage config. `split_k`: the lanes hold disjoint K-slices of this cell, so the leaf must
-/// combine them rather than each write; only the register leaf can.
+/// storage config. An accumulator whose lanes hold partials ([`lane_partials`](Tile)) owes a
+/// plane-wide combine, which only the register leaf can do.
 #[cube]
 pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    #[comptime] split_k: bool,
 ) {
     let space = comptime!(acc.space.clone());
+    let split_k = comptime!(acc.lane_partials);
     let tile_kind = &mut acc.tile_kind;
     comptime!(assert!(
         !split_k || space.partitioner().leaf() == Leaf::Register,
-        "mma_leaf: split-K (Cut::unit on a contracting axis) needs the register leaf"
+        "mma_leaf: an accumulator whose lanes hold partials needs the register leaf to combine them"
     ));
     match tile_kind {
         TileKind::Cmma(d) => d.mma(lhs, rhs),

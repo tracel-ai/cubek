@@ -146,6 +146,7 @@ impl<T: Numeric> MemData<T> {
         // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
         let (origin, extent) = top_window(comptime!(space.clone()), &bound, vector_size);
         Tile::<T> {
+            lane_partials: comptime!(false),
             tile_kind: TileKind::new_Gmem(MemData::<T> {
                 buffer,
                 vector_size: comptime!(vector_size),
@@ -201,6 +202,7 @@ impl<T: Numeric> MemData<T> {
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
         Tile::<T> {
+            lane_partials: comptime!(false),
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 buffer,
                 vector_size,

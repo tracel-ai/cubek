@@ -87,6 +87,7 @@ impl<T: Numeric> CmmaPartition<T> {
             }
         }
         Tile::<T> {
+            lane_partials: comptime!(false),
             tile_kind: TileKind::new_CmmaPartition(CmmaPartition::<T> {
                 frags,
                 m_tiles,
@@ -130,6 +131,7 @@ impl<T: Numeric> CmmaPartition<T> {
             }
         }
         Tile::<T> {
+            lane_partials: comptime!(false),
             tile_kind: TileKind::new_CmmaPartition(CmmaPartition::<T> {
                 frags,
                 m_tiles: t0,
@@ -354,6 +356,7 @@ impl<T: Numeric> CmmaData<T> {
     ) -> Tile<T> {
         let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, layout) };
         Tile::<T> {
+            lane_partials: comptime!(false),
             tile_kind: TileKind::new_Cmma(CmmaData::<T> {
                 matrix,
                 ident,
