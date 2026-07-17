@@ -271,4 +271,33 @@ mod tests {
         assert_ne!(key(64, 128, 64), key(64, 200, 64));
         assert_ne!(key(64, 128, 64), key(1, 128, 64));
     }
+
+    /// The transposed (`MildlyPermuted`) arm: a column-major LHS takes its alignment
+    /// factors from `m` (the row count) rather than `k`, so raw `m` lengths inside one
+    /// anchored bucket must share a key just as the contiguous `kv` case does. The
+    /// [`key`] helper above is all-contiguous, so it never reaches this branch.
+    #[test]
+    fn transposed_lhs_shares_bucket_key() {
+        // Column-major lhs `[b, m, k]`: `m` has stride 1, `k` has stride `m`, so
+        // `row_stride < col_stride` and the layout is `MildlyPermuted { transposed }`.
+        let key_t = |m: usize| {
+            let (k, n) = (64usize, 64usize);
+            MatmulAutotuneKey::from_parts(
+                &Shape::new([2, m, k]),
+                &Shape::new([2, k, n]),
+                &Strides::new(&[k * m, 1, m]), // transposed lhs
+                &Strides::new(&[k * n, n, 1]), // contiguous rhs
+                F32,
+                F32,
+                F32,
+                None,
+                None,
+            )
+        };
+        // 65..=128 all anchor to the 128 bucket, at every alignment class.
+        let reference = key_t(69);
+        for m in [70, 76, 88, 96, 112, 128] {
+            assert_eq!(reference, key_t(m), "m {m} split the transposed bucket");
+        }
+    }
 }
