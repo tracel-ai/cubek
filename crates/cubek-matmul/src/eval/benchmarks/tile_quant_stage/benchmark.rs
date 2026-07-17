@@ -68,7 +68,6 @@ pub fn bench(
         scheme,
         pack,
         client: client.clone(),
-        device,
         samples: num_samples,
     };
 
@@ -88,7 +87,6 @@ struct TileQuantStageBench {
     tk: usize,
     scheme: QuantScheme,
     pack: usize,
-    device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     samples: usize,
 }
