@@ -1,7 +1,7 @@
 //! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
 //! one decomposition level plus the partitioner for the subspaces it produces.
 
-use crate::{Axis, ByAxis, MmaIOConfig, OperandStage};
+use crate::{Axis, ByAxis, MmaIOConfig};
 
 use super::{Distribution, WalkOrder};
 
@@ -105,21 +105,6 @@ impl Partitioner {
                 level.next = level.next.with_leaf(leaf);
                 Partitioner::Level(level)
             }
-        }
-    }
-
-    /// How this plan's staged operands are backed: [`Plane`](OperandStage::Plane) when a plane
-    /// leaf is fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
-    pub(crate) fn operand_stage(&self) -> OperandStage {
-        match self {
-            Partitioner::Final(_) => OperandStage::Smem,
-            Partitioner::Level(level) => match (self.leaf(), &level.next) {
-                (Leaf::Cmma { .. } | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role {
-                    LevelRole::Partition => OperandStage::Plane,
-                    LevelRole::Instance => OperandStage::Smem,
-                },
-                _ => OperandStage::Smem,
-            },
         }
     }
 

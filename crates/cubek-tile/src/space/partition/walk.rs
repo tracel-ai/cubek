@@ -132,13 +132,19 @@ impl Walk {
     /// This walk, unrolled when iterated: each region's coordinates fold to comptime
     /// constants (static spaces only; the trip count must be constant).
     pub fn unrolled(self) -> Walk {
+        self.with_unroll(comptime!(true))
+    }
+
+    /// This walk, unrolled when `unroll`. Lets a caller pick the mode from a comptime flag
+    /// without branching on the [`Walk`] value (which `#[cube]` would read as a runtime select).
+    pub fn with_unroll(self, #[comptime] unroll: bool) -> Walk {
         Walk {
             counts: self.counts,
             positions: self.positions,
             scales: self.scales,
             steps: self.steps,
             space: comptime!(self.space.clone()),
-            unroll: comptime!(true),
+            unroll: comptime!(unroll),
         }
     }
 

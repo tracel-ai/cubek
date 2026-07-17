@@ -79,15 +79,10 @@ impl<T: Numeric> TileKind<T> {
     }
 }
 
-/// Quantization a tile's store carries, so reads dequantize on their own.
-///
-/// It holds the scale `buffer` plus what walks the scales in step with the values: a per-axis
-/// `strides`, a running `window_start`, and the comptime `block` sizes (elements per block).
-/// [`ScaleLayout`] turns those into an address, so a scale reads as a view over the value's own
-/// window ([`MemData::at`]).
-///
-/// Per-tensor quant is the trivial case: one scale for everything, so every stride is `0` and
-/// `window_start` never moves.
+/// Quantization a tile's store carries, so reads dequantize on their own. Holds the scale `buffer`
+/// plus what walks the scales in step with the values: a per-axis `strides`, a running
+/// `window_start`, and comptime `block` sizes. [`ScaleLayout`] turns those into an address ([`MemData::at`]).
+/// Per-tensor is the trivial case: one scale, every stride `0`, `window_start` never moves.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
@@ -112,11 +107,10 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
 
 #[cube]
 impl QuantInfo {
-    /// Build the native (unpacked) quant side-channel from a launched [`QuantArg`].
-    ///
-    /// Captures the whole scales buffer, and per axis the block size plus the stride that steps one
-    /// scale per block. A block scheme reads those strides off the scales tensor; per-tensor has a
-    /// single scale, so every stride is `0` and the window stays put.
+    /// Build the native (unpacked) quant side-channel from a launched [`QuantArg`]: the whole scales
+    /// buffer, plus per axis the block size and the stride that steps one scale per block. A block
+    /// scheme reads those strides off the scales tensor; per-tensor has a single scale (every stride
+    /// `0`, window stays put).
     pub(crate) fn native(q: &QuantArg, #[comptime] rank: usize) -> QuantInfo {
         let block = comptime!(block_edges(q.scheme, rank));
         let mut strides = Coords::<u32>::new();
@@ -137,15 +131,11 @@ impl QuantInfo {
         }
     }
 
-    /// Re-window the scales onto a tile whose absolute logical origin is `origin`.
-    ///
-    /// Per axis the block index is `origin / block`; dot that with the scale strides and sum for a
-    /// flat start. Units are elements everywhere (blocks are logical), and the inner axis's line
-    /// origin scales back by `vector_size`. Per-tensor keeps every stride at `0`, so the start stays `0`.
-    ///
-    /// Folding the window's own block index in here lets [`ScaleLayout`] add only the offset within
-    /// the window. That split is sound because a window never straddles a block, which
-    /// `validate_scheme` enforces.
+    /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
+    /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
+    /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
+    /// the window's own block index in here lets [`ScaleLayout`] add only the within-window offset,
+    /// sound because a window never straddles a block (`validate_scheme` enforces it).
     pub(crate) fn window(
         &self,
         origin: &Coords<u32>,
@@ -172,9 +162,8 @@ impl QuantInfo {
 }
 
 /// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it projects.
-///
-/// `T` is the element the tile serves and computes in. Its physical vector width is a storage
-/// detail, kept inside the [`TileKind`] and read back with [`vector_size`](Tile::vector_size).
+/// `T` is the element the tile serves and computes in; its physical vector width is a storage detail
+/// inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
 #[derive(CubeType)]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
@@ -230,10 +219,8 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Window this tile down to `region`, no copy.
-    ///
-    /// Each tile projects `region` onto its own axes, so `lhs ∈ {M,K}` and `out ∈ {M,N}` line up
-    /// on their own; the caller never matches axes by hand.
+    /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
+    /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.
     pub fn at(&self, region: &Region) -> Tile<T> {
         let tile_kind = match &self.tile_kind {
             TileKind::Gmem(g) => TileKind::new_Gmem(g.at(region, comptime!(self.space.clone()))),
@@ -358,16 +345,10 @@ impl<T: Numeric> Tile<T> {
                 TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
             },
             Partitioner::Level(_) => {
-                if self.tile_kind.static_level(comptime!(self.space.clone())) {
-                    for region in Walk::over(self.runtime_space()).unrolled() {
-                        let mut sub = self.at(&region);
-                        sub.zero();
-                    }
-                } else {
-                    for region in Walk::over(self.runtime_space()) {
-                        let mut sub = self.at(&region);
-                        sub.zero();
-                    }
+                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
+                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
+                    let mut sub = self.at(&region);
+                    sub.zero();
                 }
             }
         }

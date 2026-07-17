@@ -271,10 +271,20 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How this output plan's operands stage. The partitioner owns the decision
-    /// ([`operand_stage`](Partitioner::operand_stage), read off the leaf and the sub-level's role).
+    /// How this output plan's operands stage: [`Plane`](OperandStage::Plane) when a plane leaf is
+    /// fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
     pub(crate) fn operand_stage(&self) -> OperandStage {
-        self.partitioner().operand_stage()
+        match self.partitioner() {
+            Partitioner::Level(_) => match (self.partitioner().leaf(), self.partitioner().next()) {
+                (Leaf::Cmma { .. } | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role()
+                {
+                    LevelRole::Partition => OperandStage::Plane,
+                    LevelRole::Instance => OperandStage::Smem,
+                },
+                _ => OperandStage::Smem,
+            },
+            Partitioner::Final(_) => OperandStage::Smem,
+        }
     }
 
     /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
