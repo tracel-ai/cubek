@@ -40,7 +40,7 @@ impl<A: Numeric> MmaData<A> {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
                             mma_execute::<L, R, A>(af, bf, acc, m, n, k)
                         }
-                        _ => panic!("MmaData::mma: transient operand fragments mis-roled"),
+                        _ => panic!("MmaData::mma: transient operand fragments in the wrong role"),
                     }
                 }
                 _ => panic!("MmaData::mma: operands must be fragments or staged smem windows"),

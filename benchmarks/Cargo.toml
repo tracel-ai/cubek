@@ -102,6 +102,10 @@ name = "reduce"
 
 [[bench]]
 harness = false
+name = "tile_quant_stage"
+
+[[bench]]
+harness = false
 name = "split_k"
 
 [[bench]]

@@ -537,18 +537,44 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
+            // These two routines carry hard legality constraints (dimensions
+            // must be multiples of the plane size) while autotune caches their
+            // selection per *anchored* key: a winner picked on an aligned
+            // representative must still run on the bucket's other raw shapes.
+            // The entry stays reliable by degrading to the universal unit
+            // kernel on an invalid config, like [`auto`] does — availability
+            // and validation errors surface unchanged.
             Strategy::GemvUnitPerpendicular(blueprint_strategy) => {
-                launch_gemv_unit_perpendicular::launch_ref(
+                match launch_gemv_unit_perpendicular::launch_ref(
                     client,
-                    lhs,
-                    rhs,
-                    out,
+                    lhs.clone(),
+                    rhs.clone(),
+                    out.clone(),
                     blueprint_strategy,
                     dtypes,
-                )
+                ) {
+                    Err(MatmulSetupError::InvalidConfig(_)) => {
+                        Strategy::SimpleUnit(Default::default())
+                            .launch_ref(client, lhs, rhs, out, dtypes)
+                    }
+                    other => other,
+                }
             }
             Strategy::Gemm(blueprint_strategy) => {
-                launch_gemm::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
+                match launch_gemm::launch_ref(
+                    client,
+                    lhs.clone(),
+                    rhs.clone(),
+                    out.clone(),
+                    blueprint_strategy,
+                    dtypes,
+                ) {
+                    Err(MatmulSetupError::InvalidConfig(_)) => {
+                        Strategy::SimpleUnit(Default::default())
+                            .launch_ref(client, lhs, rhs, out, dtypes)
+                    }
+                    other => other,
+                }
             }
             Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
                 client,

@@ -11,6 +11,7 @@ pub use cubek_matmul::eval::benchmarks::gemm_cpu_tiled;
 pub use cubek_matmul::eval::benchmarks::gemv;
 pub use cubek_matmul::eval::benchmarks::quantized_matmul;
 pub use cubek_matmul::eval::benchmarks::split_k;
+pub use cubek_matmul::eval::benchmarks::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
 pub use cubek_reduce::eval::benchmarks as reduce;
 pub use cubek_std::eval::benchmarks::contiguous;
@@ -40,6 +41,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::quantized_matmul::Category,
         &crate::reduce::Category,
         &crate::split_k::Category,
+        &crate::tile_quant_stage::Category,
         &crate::unary::Category,
     ]
 }
