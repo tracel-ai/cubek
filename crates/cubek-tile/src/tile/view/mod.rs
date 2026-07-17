@@ -21,7 +21,7 @@ use cubecl::{prelude::*, std::tensor::layout::Coordinates};
 /// ([`matrix_transparent`](crate::MemData::matrix_transparent), direct dequant serving).
 ///
 /// `WP` is the physical line width, `W` the served one; they coincide except on a packed store
-/// (see [`QuantizedView`]), and `Direct` — never quantized — always serves what it holds.
+/// (see [`QuantizedView`]), and `Direct` (never quantized) always serves what it holds.
 #[derive(CubeType)]
 pub enum TileView<'a, O: Numeric, I: Numeric, WP: Size, W: Size, C: Coordinates + 'a> {
     Direct(MaskedView<'a, Vector<O, W>, C>),

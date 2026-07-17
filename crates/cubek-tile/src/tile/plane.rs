@@ -37,7 +37,7 @@ impl<T: Numeric> PlaneTile<T> {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             Leaf::Register => {
-                panic!("Tile::promote: the register leaf runs in place — nothing to promote")
+                panic!("Tile::promote: the register leaf runs in place, nothing to promote")
             }
         }
     }
@@ -283,7 +283,7 @@ impl<T: Numeric> PlanePartition<T> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Descend to the `(mi, ni)` tile's final window: an instance level hands this instance a
-    /// single region; a partition level takes its own digit of the grid coordinates — the grid may
+    /// single region; a partition level takes its own digit of the grid coordinates: the grid may
     /// be split across stacked levels, so each consumes the high digits (the levels below it are
     /// the place value) and passes the rest down.
     pub(crate) fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
@@ -341,7 +341,7 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
 
 /// Classify the current level of a space that backs plane tiles: `None` for an *instance* level
 /// (a `Spatial` split across hardware, one tile per instance), or the trailing-two-axes tile
-/// counts for the *partition* level — a purely sequential level is one even at a 1×1 grid (cuts
+/// counts for the *partition* level: a purely sequential level is one even at a 1×1 grid (cuts
 /// equal to the level below still back per-instance tiles). Anything else panics at comptime.
 pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
     if space.is_final() {

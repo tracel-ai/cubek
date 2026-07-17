@@ -18,7 +18,7 @@ pub enum Extent {
 }
 
 impl Extent {
-    /// The comptime size; panics on `Dynamic` (a runtime extent has no comptime value —
+    /// The comptime size; panics on `Dynamic` (a runtime extent has no comptime value;
     /// resolve it from the tensor shape).
     pub fn get(self) -> usize {
         match self {
@@ -47,7 +47,7 @@ pub struct Extents {
 }
 
 impl Extents {
-    /// A fully-`Static` (or yet-unresolved) extents — no runtime sizes.
+    /// A fully-`Static` (or yet-unresolved) extents, with no runtime sizes.
     fn fixed(kinds: ByAxis<Extent>) -> Self {
         Extents {
             kinds,
@@ -105,7 +105,7 @@ pub struct Space {
     partitioner: Partitioner,
 }
 
-// Identity is the comptime tiling spec only — the `Extents` sizes are runtime, never a key.
+// Identity is the comptime tiling spec only; the `Extents` sizes are runtime, never a key.
 impl PartialEq for Space {
     fn eq(&self, other: &Self) -> bool {
         self.extents.kinds == other.extents.kinds && self.partitioner == other.partitioner
@@ -120,8 +120,8 @@ impl std::hash::Hash for Space {
 }
 
 /// Comptime tiling spec read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
-/// `Space`, so only [`Walk::over`](crate::Walk) — which takes the runtime operation space built by
-/// `merged_space` — needs these; everything else calls the host methods directly.
+/// `Space`, so only [`Walk::over`](crate::Walk), which takes the runtime operation space built by
+/// [`merge_with`](Space::merge_with), needs these; everything else calls the host methods directly.
 impl SpaceExpand {
     fn comptime(&self) -> Space {
         Space {
@@ -185,7 +185,7 @@ impl Space {
 
     /// This space's runtime size along `axis`: a `Static` axis folds to its comptime extent
     /// (so a fully-static operand needs no `sizes` at all), a `Dynamic` one reads the
-    /// per-axis `sizes` — only valid once filled.
+    /// per-axis `sizes`, valid only once filled.
     fn size(&self, #[comptime] axis: Axis) -> usize {
         match comptime!(self.clone().extent_raw(axis)) {
             Extent::Static(n) => comptime!(n).runtime(),
@@ -234,7 +234,7 @@ impl Space {
     }
 
     /// Every axis [`Dynamic`]: the kernel form for an operation whose problem dims are all
-    /// runtime (the common case — see [`with_dynamic`](Space::with_dynamic)).
+    /// runtime (the common case; see [`with_dynamic`](Space::with_dynamic)).
     pub fn all_dynamic(self) -> Self {
         let axes: Vec<_> = self.axes().collect();
         self.with_dynamic(&axes)
@@ -276,11 +276,12 @@ impl Space {
     /// plane-private tiles), else [`Smem`](OperandStage::Smem). The plan's own fact, so no consumer
     /// reassembles it from the leaf and the partition level.
     pub(crate) fn operand_stage(&self) -> OperandStage {
-        match self.partitioner().leaf().is_plane()
-            && crate::partition_level(&self.divide()).is_some()
-        {
-            true => OperandStage::Plane,
-            false => OperandStage::Smem,
+        let stages_into_plane_tiles = self.partitioner().leaf().is_plane()
+            && crate::partition_level(&self.divide()).is_some();
+        if stages_into_plane_tiles {
+            OperandStage::Plane
+        } else {
+            OperandStage::Smem
         }
     }
 
@@ -334,7 +335,7 @@ impl Space {
             .single_tile()
     }
 
-    /// Whether this level cuts `axis` into a single, statically-known tile — so its walk
+    /// Whether this level cuts `axis` into a single, statically-known tile, so its walk
     /// coordinate is a constant `0`, even on a rolled walk. A `Dynamic` axis (only the top
     /// level) has no comptime count and is never statically single; the `&&` short-circuits
     /// before [`count`](Space::count), which panics on `Dynamic`.
@@ -386,7 +387,7 @@ impl Space {
     }
 
     /// Reorder so `fastest` walks innermost (last axis fastest): each coarser-axis
-    /// window then feeds a consecutive burst of steps — the unrolled fragment walk's
+    /// window then feeds a consecutive burst of steps: the unrolled fragment walk's
     /// emission order.
     pub fn with_fastest(&self, fastest: Axis) -> Space {
         let mut axes: Vec<Axis> = self.axes().filter(|&a| a != fastest).collect();
@@ -413,7 +414,7 @@ impl Space {
 
     /// Whether `axis` overhangs its tiling: some level's sub-tile edge fails to divide the
     /// extent handed to it (the top extent at the first level, the parent edge below), leaving
-    /// a partial tile that needs masking. Host-side, on the concrete (real-extent) space —
+    /// a partial tile that needs masking. Host-side, on the concrete (real-extent) space;
     /// a [`Dynamic`](Extent::Dynamic) axis panics.
     pub fn overhangs(&self, axis: Axis) -> bool {
         assert!(
@@ -434,7 +435,7 @@ impl Space {
     }
 
     /// Whether a walk over this level leaves `operand`'s window unchanged: every axis the
-    /// walk actually steps (more than one tile) is absent from the operand — the same
+    /// walk actually steps (more than one tile) is absent from the operand: the same
     /// structural fact as broadcast omission. A [`Staged`](crate::Schedule::Staged) walk
     /// fills such an operand once, above the loop. Host-side, static extents.
     pub fn walk_invariant(&self, operand: &Space) -> bool {
@@ -517,7 +518,7 @@ impl Space {
 
 /// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal sizes agree, a
 /// static `1` yields to the other, anything else conflicts. A `Dynamic` axis subsumes any
-/// non-broadcast operand — its runtime size is the merged one — so the merge stays dynamic.
+/// non-broadcast operand (its runtime size is the merged one), so the merge stays dynamic.
 fn merge_level(a: Extent, b: Extent) -> Extent {
     match (a, b) {
         (Extent::Static(1), b) => b,

@@ -64,10 +64,10 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
-    /// The widest `Vector<E, v>` line every operand can be served in along `axis` — one width
+    /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width
     /// for all of them, since a kernel reading one operand's lines writes the other's. Each
     /// `(binding, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
-    /// subspace — a masked access reports its length in lines and would wrongly clip) and
+    /// subspace; a masked access reports its length in lines and would wrongly clip) and
     /// innermost-contiguous; the width must divide each inner buffer extent, every coarser
     /// stride, and the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
     pub fn vector_size(

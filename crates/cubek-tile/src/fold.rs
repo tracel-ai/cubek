@@ -1,6 +1,6 @@
 //! Constness-preserving kernel arithmetic. A cubecl expand element already knows
 //! whether it holds a constant (`Variable::Constant`), but the stock operators always
-//! emit an instruction, so a computed constant degrades to a runtime value — the crack
+//! emit an instruction, so a computed constant degrades to a runtime value, the crack
 //! every comptime twin field grew out of. These fold instead: constant operands compute
 //! at expand time, identities pass through, so comptime-ness rides plain `u32`/`usize`
 //! values through walks and layouts, and one code path serves both.
@@ -190,9 +190,8 @@ impl<C: Int> FoldSeqExpand<C> for SequenceExpand<C> {
 
 /// An immutable coordinate/extent list: [`CoordsDyn`]'s stored-data sibling, whose
 /// expand's `IntoMut` is the identity. Elements are never reassigned after
-/// construction, so a `let mut` holder (a staging slot, a windowed tile) must not
-/// copy them into mutable slots — `Sequence` does, and that copy erases constness:
-/// the crack the comptime twin fields grew out of, closed at the type.
+/// construction, so a `let mut` holder (staging slot, windowed tile) must not copy
+/// them into mutable slots; `Sequence` does, and that copy erases constness.
 pub struct Coords<C: Int> {
     _c: core::marker::PhantomData<C>,
 }

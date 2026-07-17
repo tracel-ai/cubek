@@ -1,5 +1,5 @@
 //! The [`Staging`] slot: a matmul-agnostic payload `T` plus the [`Pipeline`] sequencing its fill
-//! against its read. Generic slot mechanics only — the producer/consumer acquire/release and the
+//! against its read. Generic slot mechanics only: the producer/consumer acquire/release and the
 //! final publish; the operand-specific construction and fill live in [`fill`](crate::fill).
 
 use cubecl::prelude::*;
@@ -7,7 +7,7 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// One slot of the staged `mma` pipeline: its payload `T` and the [`Pipeline`] sequencing fill vs
-/// read. Generic over `T`, so the slot is matmul-agnostic — it just hands out a synchronized `&mut T`
+/// read. Generic over `T`, so the slot is matmul-agnostic; it just hands out a synchronized `&mut T`
 /// to fill (`write`) and a synchronized `&T` to consume (`read`).
 #[derive(CubeType)]
 pub struct Staging<T: CubeType> {

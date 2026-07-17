@@ -1,5 +1,5 @@
 //! The 2-D matrix view over a [`Tile`]. [`BatchMatrix`] is a [`Layout`] that re-views the tile's
-//! N-D [`Space`] as a plain [`Coords2d`] `(row, col)` matrix — leading batch axes pinned, trailing
+//! N-D [`Space`] as a plain [`Coords2d`] `(row, col)` matrix: leading batch axes pinned, trailing
 //! two exposed; [`Tile::matrix`]/[`Tile::matrix_mut`] then wrap it as a [`MatrixView`]/
 //! [`MatrixViewMut`] (a [`MaskedView`] carrying the comptime overhang-`check` flag). Used by the
 //! matmul leaves and [`copy_2d()`].
@@ -119,7 +119,7 @@ impl<T: Numeric> Tile<T> {
     /// The `i`-th batch matrix as a quantization-transparent view: a plain tile serves a bare
     /// `Direct` read, a quantized one dequantizes each `(row, col)` per its scheme (`I`/`WP` the
     /// storage element and physical line, as [`copy_from`](Tile::copy_from) recovers them). The
-    /// dequant-at-read twin of [`matrix`](Tile::matrix) — a leaf reads a quantized operand with no
+    /// dequant-at-read twin of [`matrix`](Tile::matrix); a leaf reads a quantized operand with no
     /// dequantize-into-`f32` fill.
     pub fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
         &self,

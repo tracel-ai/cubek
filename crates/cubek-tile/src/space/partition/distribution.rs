@@ -43,7 +43,7 @@ pub enum Coverage {
     TilesEach(usize),
     /// A `Unit` axis's deferred count: resolved to `Instances(plane_size)` at launch
     /// ([`resolve_lanes`](Distribution::resolve_lanes), driven by `Space::launcher`). Every
-    /// accessor panics on it — it must never reach geometry or the walk unresolved.
+    /// accessor panics on it; it must never reach geometry or the walk unresolved.
     PlaneLanes,
 }
 
@@ -91,7 +91,7 @@ impl Distribution {
     }
 
     /// Spread across the plane's lanes, contiguous. The lane count is the hardware
-    /// `plane_size`, unknown until launch — [`PlaneLanes`](Coverage::PlaneLanes) is a
+    /// `plane_size`, unknown until launch; [`PlaneLanes`](Coverage::PlaneLanes) is a
     /// deferred count [`resolve_lanes`](Self::resolve_lanes) fills in.
     pub fn unit() -> Self {
         Distribution::Spatial {

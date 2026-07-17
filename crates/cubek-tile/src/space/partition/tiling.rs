@@ -1,7 +1,7 @@
 //! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
 //! then one [`level`](LeveledTiling::level) per decomposition: its walk order, schedule,
 //! and the per-axis [`Cut`]. Each [`level`](LeveledTiling::level) maps 1:1 to the
-//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes — no transpose. The
+//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose. The
 //! [`leaf`](LeveledTiling::leaf) is the terminal level: it names the contraction
 //! instruction and builds, so nothing stacks after it.
 
@@ -33,7 +33,7 @@ impl Cut {
     }
 
     /// `edge`-sized tiles spread across the plane's lanes. The lane count is the hardware
-    /// `plane_size`, stamped at launch by [`Space::launcher`] — the cut carries only the
+    /// `plane_size`, stamped at launch by [`Space::launcher`]; the cut carries only the
     /// intent (see [`Distribution::unit`]).
     pub fn unit(edge: usize) -> Self {
         Cut::new(edge, Distribution::unit())

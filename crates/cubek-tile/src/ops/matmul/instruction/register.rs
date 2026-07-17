@@ -13,8 +13,8 @@ const UNROLL_BLOCK: usize = 64;
 /// Run the register microkernel over each batch matrix, reading operands through the
 /// quant-transparent [`matrix_transparent`](Tile::matrix_transparent): a plain operand is a bare
 /// matrix read, a quantized one dequantizes per read (no dequantize-into-`f32` fill). Either
-/// operand may be the quantized one — the gemv weight is the RHS, an activation-times-weight the
-/// LHS — so this dispatches each operand's storage element/packing (`0` plain, `1` native i8, `>1`
+/// operand may be the quantized one (the gemv weight is the RHS, an activation-times-weight the
+/// LHS), so this dispatches each operand's storage element/packing (`0` plain, `1` native i8, `>1`
 /// packed u32). Both quantized at once is not a real workload and is refused.
 #[cube]
 pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(

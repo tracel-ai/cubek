@@ -18,7 +18,7 @@ impl Region {
         Region { coords, space }
     }
 
-    /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere — comptime, so
+    /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere; comptime, so
     /// it folds to constants and can select fragments.
     pub fn trailing(
         #[comptime] space: Space,

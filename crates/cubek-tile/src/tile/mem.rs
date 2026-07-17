@@ -285,7 +285,7 @@ impl<T: Numeric> MemData<T> {
         let size!(W) = comptime!(self.vector_size);
         // A whole-buffer destination (any staged smem) fills in destination-physical
         // order: the write is linear and only the source decodes, once per line (by
-        // constants on a static store) — half the address math of a logical-order scan.
+        // constants on a static store); half the address math of a logical-order scan.
         if comptime!(self.whole && !self.check && self.quant.is_none() && src.quant.is_none()) {
             let s = MaskedView::new(
                 src.lines::<W>().view(src.base()).view(src.window()),
@@ -303,7 +303,7 @@ impl<T: Numeric> MemData<T> {
             // runtime `CUBE_DIM` stride blocks unrolling, and on Metal's in-order pipe
             // each line's smem store then stalls the next line's read. Only a spilling
             // last task needs its guard; unknown or tiny cubes take the rolled loop.
-            // `constant()` bridges the folded total back to host data — a whole smem
+            // `constant()` bridges the folded total back to host data; a whole smem
             // stage's shape is static, so it always folds.
             let units = comptime!(self.stage.units);
             let total_c = total.constant();
@@ -354,7 +354,7 @@ impl<T: Numeric> MemData<T> {
             // The read decodes at the source's true storage element: `T` for a plain tile,
             // else the quantized store's element recovered from its scheme (the tile serves
             // `T`, so `I` was erased at construction and lives only on the scheme). This is
-            // what lets a plain `copy_from`/`fill` dequantize on its own — the kernel never
+            // what lets a plain `copy_from`/`fill` dequantize on its own: the kernel never
             // threads `I`.
             #[comptime]
             match &src.quant {
@@ -438,7 +438,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn size_bytes(&self) -> u32 {
         // `T` and `vector_size` are served-typed; a quantized buffer truly holds its storage
         // element, narrower on both counts, so this arithmetic would overcount it. Unreachable
-        // today (only TMA smem destinations ask, and smem is never quantized) — kept refused
+        // today (only TMA smem destinations ask, and smem is never quantized), kept refused
         // rather than silently wrong.
         comptime!(assert!(
             self.quant.is_none(),
@@ -788,7 +788,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The line offset one `edge` step along logical axis `p` moves: the edge decomposed
-    /// in the axis's level radix, dotted with the level strides — constants on a static
+    /// in the axis's level radix, dotted with the level strides; constants on a static
     /// store. Exact for the tile-aligned windows [`window_slice`](MemData::window_slice)
     /// admits.
     fn step(&self, #[comptime] p: usize, #[comptime] edge: u32) -> u32 {
@@ -944,7 +944,7 @@ fn storage_extents(space: &Space, vector_size: usize, levels: usize) -> (Vec<u32
 }
 
 /// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: suffix-
-/// stride digit decode, each logical axis folding its level digits back — by constants
+/// stride digit decode, each logical axis folding its level digits back, by constants
 /// on a static store.
 #[cube]
 fn physical_coord(
@@ -1014,7 +1014,7 @@ impl Layout for GmemLayout {
             #[unroll]
             for i in 0..comptime!(self.num_tiled) {
                 // Strip the finer blocks, then take this block's digit. The grid
-                // (k == 0) keeps the full quotient — it has no enclosing tile.
+                // (k == 0) keeps the full quotient; it has no enclosing tile.
                 let j = comptime!(self.start_axis + k * self.num_tiled + i);
                 let divisor = self.physical_shape.fproduct(comptime!(
                     ((k + 1)..=self.levels)

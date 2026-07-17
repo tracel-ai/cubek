@@ -86,7 +86,7 @@ impl<'a, Sp, Sub, E, R: Runtime> StridedTileSource<'a, Sp, Sub, E, R> {
         }
     }
 
-    /// The inner block of axes the operand iterates — its `[row, col]` for a matmul (required,
+    /// The inner block of axes the operand iterates, its `[row, col]` for a matmul (required,
     /// non-empty). Complementary to [`batches`](Self::batches), the outer dims.
     pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, E, R> {
         self.data.subspace = axes;
@@ -134,7 +134,7 @@ impl<'a, Sp, Sub, E, R: Runtime> StridedTileSource<'a, Sp, Sub, E, R> {
     }
 
     /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
-    /// **in values** — a packed store's buffer is narrower than its shape by the packing
+    /// **in values**; a packed store's buffer is narrower than its shape by the packing
     /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
     /// [`vectorize`](Self::vectorize) still names the *served* width; `build` derives the
     /// storage width the tensor is truly bound at. Default not quantized.

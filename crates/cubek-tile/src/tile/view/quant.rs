@@ -14,15 +14,15 @@ use crate::*;
 /// coordinate `C`, so a read pairs a line with its own scale by construction. `C` is
 /// [`Coords1d`] for a flat scan ([`flat_transparent`](crate::MemData::flat_transparent)) or
 /// [`Coords2d`](cubecl::std::tensor::layout::Coords2d) for a matrix leaf
-/// ([`matrix_transparent`](crate::MemData::matrix_transparent)) — the dequant is the same either
-/// way. Nothing here is typed in the served element — that is only what a
+/// ([`matrix_transparent`](crate::MemData::matrix_transparent)); the dequant is the same either
+/// way. Nothing here is typed in the served element, only what a
 /// [`read`](QuantizedView::read) is asked for.
 ///
 /// `WP` is the *physical* line: `Vector<I, WP>`, what the buffer is grouped into. The *served*
 /// line is named per [`read`](QuantizedView::read) instead of on the struct, since it is only
 /// meaningful at a read: a packed store yields `WP · num_quants` values per line, a
 /// [`Native`](QuantStore::Native) one exactly `WP`. Either way one physical line is one served
-/// line, so a position means the same thing to the values and the scales — only the width of the
+/// line, so a position means the same thing to the values and the scales; only the width of the
 /// result changes.
 #[derive(CubeType)]
 pub struct QuantizedView<'a, I: Numeric, WP: Size, C: cubecl::std::tensor::layout::Coordinates + 'a>
@@ -110,7 +110,7 @@ fn unpack_lane<I: Numeric, WP: Size>(
 
 /// The scales' [`GmemLayout`]: a window coordinate to the flat index of its block's scale, the dot
 /// of each axis's block index with its scale stride. `window_start` carries the window origin's own
-/// block (folded in at descent by [`QuantInfo`]), so this only adds the offset within the window —
+/// block (folded in at descent by [`QuantInfo`]), so this only adds the offset within the window,
 /// sound because no window straddles a block, which
 /// [`quantized`](crate::StridedTileArgLaunch::quantized) rejects at launch.
 ///
@@ -124,7 +124,7 @@ pub struct ScaleLayout {
     #[cube(comptime)]
     block: Vec<usize>,
     /// Served values per line, so the inner axis's line coordinate scales back to elements.
-    /// Blocks are cut in values, so this is the *served* width — for a packed store it exceeds
+    /// Blocks are cut in values, so this is the *served* width; for a packed store it exceeds
     /// the physical line by the packing factor.
     #[cube(comptime)]
     vector_size: usize,

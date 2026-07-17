@@ -1,9 +1,9 @@
 //! [`VecTensor`]: a launch tensor whose *binding element type* is `Vector<E, v>`, with `v` a
-//! plain launch-time value ([`VecTensorArg::new`]) — no `Size` type parameter, no kernel
+//! plain launch-time value ([`VecTensorArg::new`]); no `Size` type parameter, no kernel
 //! generic.
 //!
 //! Why the binding type matters: re-grouping a *scalar* binding into lines in-kernel
-//! (`with_vector_size`) needs the `memory_reinterpret` capability, which only CUDA/HIP have —
+//! (`with_vector_size`) needs the `memory_reinterpret` capability, which only CUDA/HIP have;
 //! on wgpu the kernel fails naga validation and the output silently stays zero. With the width
 //! in the binding type, the regroup asks for the width the buffer already has and cubecl
 //! short-circuits it to a no-op.
@@ -44,7 +44,7 @@ impl<E: Numeric> CubeType for VecTensor<E> {
 pub struct VecTensorArg<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
-    /// Scalar-unit values per stored element — the packing factor of a
+    /// Scalar-unit values per stored element: the packing factor of a
     /// [`packed`](VecTensorArg::packed) binding, `1` otherwise. The shape stays in values
     /// either way; this keeps the registered buffer length a true line count.
     pack: usize,
