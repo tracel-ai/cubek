@@ -2324,7 +2324,7 @@ fn register_staged_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
 }
 
 /// The single-level direct-serve twin of [`register_staged_partitioner`]: no `.staged()`, so a
-/// quantized operand is read straight from gmem by the leaf rather than dequantized into smem.
+/// quantized operand is read straight from gmem by the leaf rather than staged into smem first.
 fn register_direct_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
     Partitioner::row_major(
         ByAxis::new(&[(M, tm), (N, tn), (K, tk)]),

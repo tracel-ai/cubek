@@ -170,9 +170,9 @@ impl<T: Numeric> MemData<T> {
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
     /// `operand`, at the same physical width and the operand's [`StagePlan`]. A quantized operand
     /// stages as its packed storage words (see [`smem_quant`](MemData::smem_quant)) when
-    /// `pack_quant` — so the leaf dequantizes straight out of smem rather than inflating an f32
-    /// stage at the fill — and as a plain f32 stage (dequantized at the fill) otherwise, which the
-    /// cmma leaf needs since it loads fragments directly.
+    /// `pack_quant`, so its leaf dequantizes straight out of smem instead of inflating an f32 stage
+    /// at the fill. Otherwise it stages plain, dequantized at the fill: `Staging::new` sets the flag
+    /// from the leaf, since only a leaf that unpacks on read can be served packed.
     pub fn smem_like(operand: &Tile<T>, #[comptime] pack_quant: bool) -> Tile<T> {
         let space = comptime!(operand.space.divide());
         let vector_size = operand.vector_size();
@@ -184,7 +184,7 @@ impl<T: Numeric> MemData<T> {
                     ComptimeOption::None => MemData::smem(space, vector_size, stage),
                     ComptimeOption::Some(info) => {
                         if comptime!(!pack_quant) {
-                            // The cmma leaf loads f32/f16 fragments: stage plain, dequantize at fill.
+                            // Leaf can't unpack on read: stage plain, dequantize at the fill.
                             MemData::smem(space, vector_size, stage)
                         } else {
                             match comptime!(info.scheme.store) {

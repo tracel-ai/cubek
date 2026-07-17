@@ -46,9 +46,11 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
         } else {
             let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
-            // Only the register microkernel reads its stage through `matrix_transparent`, so only it
-            // can dequantize out of a packed smem stage; a cmma leaf loads f32/f16 fragments and
-            // still needs its quant operand dequantized into an f32 stage at the fill.
+            // Who may hold a packed stage: only the register leaf unpacks on read
+            // (`matrix_transparent`). The cmma leaf loads fragments raw at one element type, so its
+            // quant operand still dequantizes into an f32 stage at the fill. Integer tensor cores
+            // (CUDA `i8×i8→i32`) could consume a native-i8 stage instead, which would widen this
+            // predicate; that accumulates in `i32` and scales at the drain, and is not wired yet.
             let pack_quant = comptime!(out.partitioner().leaf() == Leaf::Register);
             Staging::wrap(
                 (
