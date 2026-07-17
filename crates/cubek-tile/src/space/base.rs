@@ -271,14 +271,12 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How this output plan's operands stage: [`Plane`](OperandStage::Plane) when the leaf
-    /// contracts plane tiles and the level below is their grid (operands stage straight into
-    /// plane-private tiles), else [`Smem`](OperandStage::Smem). The plan's own fact, so no consumer
-    /// reassembles it from the leaf and the partition level.
+    /// How this output plan's operands stage. The partitioner owns the decision
+    /// ([`stages_plane_operands`](Partitioner::stages_plane_operands)); this only names the two
+    /// backings: [`Plane`](OperandStage::Plane) for plane-private tiles, [`Smem`](OperandStage::Smem)
+    /// for a shared buffer.
     pub(crate) fn operand_stage(&self) -> OperandStage {
-        let stages_into_plane_tiles = self.partitioner().leaf().is_plane()
-            && crate::partition_level(&self.divide()).is_some();
-        if stages_into_plane_tiles {
+        if self.partitioner().stages_plane_operands() {
             OperandStage::Plane
         } else {
             OperandStage::Smem

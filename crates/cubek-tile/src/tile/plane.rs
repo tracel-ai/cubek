@@ -347,12 +347,7 @@ pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
     if space.is_final() {
         return None;
     }
-    if space.axes().any(|a| {
-        matches!(
-            space.partitioner().distribution(a),
-            Distribution::Spatial { .. }
-        )
-    }) {
+    if space.partitioner().is_instance_level() {
         for axis in space.axes() {
             assert!(
                 per_instance_tiles(space, axis) == Some(1),
