@@ -288,8 +288,8 @@ impl<T: Numeric> Tile<T> {
     /// the place value) and passes the rest down.
     pub(crate) fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
         let space = comptime!(self.space.clone());
-        match comptime!(partition_level(&space)) {
-            None => {
+        match comptime!(plane_level(&space)) {
+            PlaneLevel::Final | PlaneLevel::Instance => {
                 let walk = Walk::over(self.runtime_space());
                 let sub = self.at(&walk.region(0));
                 match comptime!(sub.space.partitioner()) {
@@ -297,7 +297,7 @@ impl<T: Numeric> Tile<T> {
                     Partitioner::Level(_) => sub.fragment_window(mi, ni),
                 }
             }
-            Some(_) => {
+            PlaneLevel::Partition { .. } => {
                 let (bm, bn) = comptime!(partition_shape(&space.divide()));
                 let region = Region::trailing(
                     comptime!(space.clone()),
@@ -339,22 +339,38 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
     }
 }
 
-/// Classify the current level of a space that backs plane tiles: `None` for an *instance* level
-/// (a `Spatial` split across hardware, one tile per instance), or the trailing-two-axes tile
-/// counts for the *partition* level: a purely sequential level is one even at a 1×1 grid (cuts
-/// equal to the level below still back per-instance tiles). Anything else panics at comptime.
-pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
+/// What a level of a plane-backed space does with the tiles below it. Consumers match this;
+/// none of them re-derives the split from distributions or tile counts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PlaneLevel {
+    /// Chain end: the space is final, no level here.
+    Final,
+    /// Spreads its tiles across hardware instances (`Spatial`), one tile per instance.
+    Instance,
+    /// Partitions plane tiles across an `m × n` grid (`Sequential`). A 1×1 grid is still a
+    /// partition level: its cuts match the level below, which keeps backing per-instance tiles.
+    Partition { m: usize, n: usize },
+}
+
+/// Classify a level of a space that backs plane tiles. Anything malformed panics at comptime.
+pub(crate) fn plane_level(space: &Space) -> PlaneLevel {
     if space.is_final() {
-        return None;
+        return PlaneLevel::Final;
     }
-    if space.partitioner().is_instance_level() {
+    let spatial = space.axes().any(|axis| {
+        matches!(
+            space.partitioner().distribution(axis),
+            Distribution::Spatial { .. }
+        )
+    });
+    if spatial {
         for axis in space.axes() {
             assert!(
                 per_instance_tiles(space, axis) == Some(1),
                 "plane instance level: every axis must hand out one tile"
             );
         }
-        return None;
+        return PlaneLevel::Instance;
     }
     let rank = space.rank();
     for (p, axis) in space.axes().enumerate() {
@@ -365,10 +381,10 @@ pub(crate) fn partition_level(space: &Space) -> Option<(usize, usize)> {
             "plane partition level: leading (batch) axes must hand out one tile"
         );
     }
-    Some((
-        per_instance_tiles(space, space.axis_at(rank - 2)).unwrap(),
-        per_instance_tiles(space, space.axis_at(rank - 1)).unwrap(),
-    ))
+    PlaneLevel::Partition {
+        m: per_instance_tiles(space, space.axis_at(rank - 2)).unwrap(),
+        n: per_instance_tiles(space, space.axis_at(rank - 1)).unwrap(),
+    }
 }
 
 /// The whole remaining walk's tile grid for one instance: `(1, 1)` when every level is an instance
@@ -378,7 +394,7 @@ pub(crate) fn partition_shape(space: &Space) -> (usize, usize) {
     let mut shape = (1usize, 1usize);
     let mut level = space.clone();
     while !level.is_final() {
-        if let Some((m, n)) = partition_level(&level) {
+        if let PlaneLevel::Partition { m, n } = plane_level(&level) {
             shape = (shape.0 * m, shape.1 * n);
         }
         level = level.divide();

@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, MAX_AXES, Partitioner};
+use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, MAX_AXES, Partitioner, PlaneLevel};
 
 use super::ByAxis;
 
@@ -271,15 +271,16 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How this output plan's operands stage. The partitioner owns the decision
-    /// ([`stages_plane_operands`](Partitioner::stages_plane_operands)); this only names the two
-    /// backings: [`Plane`](OperandStage::Plane) for plane-private tiles, [`Smem`](OperandStage::Smem)
-    /// for a shared buffer.
+    /// How this output plan's operands stage. A register leaf reads them from shared memory; a
+    /// plane leaf (cmma/mma) stages into plane-private tiles when a partition grid feeds them,
+    /// and into shared memory when the level below spreads across instances or ends the chain.
     pub(crate) fn operand_stage(&self) -> OperandStage {
-        if self.partitioner().stages_plane_operands() {
-            OperandStage::Plane
-        } else {
-            OperandStage::Smem
+        match self.partitioner().leaf() {
+            Leaf::Register => OperandStage::Smem,
+            Leaf::Cmma { .. } | Leaf::Mma { .. } => match crate::plane_level(&self.divide()) {
+                PlaneLevel::Partition { .. } => OperandStage::Plane,
+                PlaneLevel::Final | PlaneLevel::Instance => OperandStage::Smem,
+            },
         }
     }
 

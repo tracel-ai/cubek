@@ -80,33 +80,6 @@ impl Partitioner {
         }
     }
 
-    /// Whether this level spreads its tiles across hardware instances (`Spatial` on some axis)
-    /// instead of partitioning them sequentially. `Final` carries no level, so it is neither.
-    /// The one authority on the instance-vs-partition split; [`partition_level`](crate::partition_level)
-    /// reads it too.
-    pub(crate) fn is_instance_level(&self) -> bool {
-        match self {
-            Partitioner::Final(_) => false,
-            Partitioner::Level(_) => self
-                .axes()
-                .iter()
-                .any(|&axis| matches!(self.distribution(axis), Distribution::Spatial { .. })),
-        }
-    }
-
-    /// Whether operands stage into plane-private tiles rather than shared memory: the leaf
-    /// contracts plane tiles, and the level just below partitions them across a grid (sequential)
-    /// instead of spreading them across hardware instances or ending the chain. Pure plan
-    /// structure, so no extents are needed to decide it.
-    pub(crate) fn stages_plane_operands(&self) -> bool {
-        match self {
-            Partitioner::Final(_) => false,
-            Partitioner::Level(level) => {
-                self.leaf().is_plane() && !level.next.is_final() && !level.next.is_instance_level()
-            }
-        }
-    }
-
     /// Set the chain-end [`Leaf`], after all levels are stacked (appending a level
     /// resets it to the tail's).
     pub(crate) fn with_leaf(self, leaf: Leaf) -> Partitioner {
