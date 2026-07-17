@@ -1140,6 +1140,7 @@ fn smem_quant_info(
             .as_boxed_unchecked()
     };
     let mut strides = Coords::<u32>::new();
+    #[allow(clippy::needless_range_loop)]
     #[unroll]
     for p in 0..rank {
         strides.push(comptime!(strides_c[p] as u32).runtime());

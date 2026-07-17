@@ -39,6 +39,21 @@ pub fn test_topk_5() {
 }
 
 #[test]
+pub fn test_topk_with_indices_1() {
+    test_case().test_topk_with_indices(1);
+}
+
+#[test]
+pub fn test_topk_with_indices_3() {
+    test_case().test_topk_with_indices(3);
+}
+
+#[test]
+pub fn test_topk_with_indices_5() {
+    test_case().test_topk_with_indices(5);
+}
+
+#[test]
 pub fn test_plane_reduction_simple() {
     let strategy = ReduceStrategy { autotune_level: AutotuneLevel::Full,
         vectorization: VectorizationStrategy {

@@ -1,9 +1,9 @@
 use super::{
-    All, Any, ArgMax, ArgMin, ArgTopK, Max, MaxAbs, Mean, Min, Prod, ReduceFamily,
-    ReduceInstruction, ReduceRequirements, SharedAccumulator, Sum,
+    All, Any, ArgMax, ArgMin, Max, MaxAbs, Mean, Min, Prod, ReduceFamily, ReduceInstruction,
+    ReduceRequirements, SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, SharedAccumulatorKind, TopK,
+    Accumulator, AccumulatorFormat, Item, ReduceOutputMode, SharedAccumulatorKind, TopK,
 };
 use crate::{
     ReduceDtypes,
@@ -28,7 +28,6 @@ pub enum ReduceOperation {
     ArgMin(ArgMin),
     Max(Max),
     Min(Min),
-    ArgTopK(ArgTopK),
     TopK(TopK),
     Any(Any),
     All(All),
@@ -63,7 +62,7 @@ impl ReduceOperationConfig {
         vector_size: usize,
     ) -> usize {
         // Index slices are `Vector<u32, SI>` for every instruction that has them
-        // (`ArgAccumulator` and `ArgTopKSharedAccumulator`), so the index element is
+        // (`ArgAccumulator` and `TopKSharedAccumulator`), so the index element is
         // always u32. Revisit this if indices ever widen (e.g. u64 coordinates).
         let index_elem_size = core::mem::size_of::<u32>();
         let (value_slices, index_slices) = match self {
@@ -258,9 +257,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::ArgMin(arg_min) => {
                 <ArgMin as ReduceInstruction<P>>::requirements(arg_min)
             }
-            ReduceOperation::ArgTopK(arg_topk) => {
-                <ArgTopK as ReduceInstruction<P>>::requirements(arg_topk)
-            }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::requirements(topk),
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::requirements(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::requirements(min),
@@ -283,9 +279,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::ArgMin(argmin) => {
                 <ArgMin as ReduceInstruction<P>>::accumulator_format(argmin)
             }
-            ReduceOperation::ArgTopK(args) => {
-                <ArgTopK as ReduceInstruction<P>>::accumulator_format(args)
-            }
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::accumulator_format(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::accumulator_format(min),
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::accumulator_format(topk),
@@ -302,10 +295,16 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperationConfig::MaxAbs => ReduceOperation::new_MaxAbs(MaxAbs {}),
             ReduceOperationConfig::ArgMax => ReduceOperation::new_ArgMax(ArgMax {}),
             ReduceOperationConfig::ArgMin => ReduceOperation::new_ArgMin(ArgMin {}),
-            ReduceOperationConfig::ArgTopK(k) => ReduceOperation::new_ArgTopK(ArgTopK { k }),
+            ReduceOperationConfig::ArgTopK(k) => ReduceOperation::new_TopK(TopK {
+                k,
+                output: ReduceOutputMode::Indices,
+            }),
             ReduceOperationConfig::Max => ReduceOperation::new_Max(Max {}),
             ReduceOperationConfig::Min => ReduceOperation::new_Min(Min {}),
-            ReduceOperationConfig::TopK(k) => ReduceOperation::new_TopK(TopK { k }),
+            ReduceOperationConfig::TopK(k) => ReduceOperation::new_TopK(TopK {
+                k,
+                output: ReduceOutputMode::Values,
+            }),
             ReduceOperationConfig::Any => ReduceOperation::new_Any(Any {}),
             ReduceOperationConfig::All => ReduceOperation::new_All(All {}),
         }
@@ -319,7 +318,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(maxabs) => <MaxAbs as ReduceInstruction<P>>::null_input(maxabs),
             ReduceOperation::ArgMax(argmax) => <ArgMax as ReduceInstruction<P>>::null_input(argmax),
             ReduceOperation::ArgMin(argmin) => <ArgMin as ReduceInstruction<P>>::null_input(argmin),
-            ReduceOperation::ArgTopK(args) => <ArgTopK as ReduceInstruction<P>>::null_input(args),
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::null_input(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::null_input(min),
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_input(topk),
@@ -341,9 +339,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::ArgMin(argmin) => {
                 <ArgMin as ReduceInstruction<P>>::null_accumulator(argmin)
-            }
-            ReduceOperation::ArgTopK(args) => {
-                <ArgTopK as ReduceInstruction<P>>::null_accumulator(args)
             }
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::null_accumulator(max),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::null_accumulator(min),
@@ -377,9 +372,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::ArgMin(argmin) => {
                 <ArgMin as ReduceInstruction<P>>::reduce(argmin, accumulator, item, reduce_step)
-            }
-            ReduceOperation::ArgTopK(argtopk) => {
-                <ArgTopK as ReduceInstruction<P>>::reduce(argtopk, accumulator, item, reduce_step)
             }
             ReduceOperation::Max(max) => {
                 <Max as ReduceInstruction<P>>::reduce(max, accumulator, item, reduce_step)
@@ -425,9 +417,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Min(min) => {
                 <Min as ReduceInstruction<P>>::plane_reduce_inplace(min, accumulator)
             }
-            ReduceOperation::ArgTopK(argtopk) => {
-                <ArgTopK as ReduceInstruction<P>>::plane_reduce_inplace(argtopk, accumulator)
-            }
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::plane_reduce_inplace(topk, accumulator)
             }
@@ -459,9 +448,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::ArgMin(argmin) => {
                 <ArgMin as ReduceInstruction<P>>::fuse_accumulators(argmin, accumulator, other)
-            }
-            ReduceOperation::ArgTopK(argtopk) => {
-                <ArgTopK as ReduceInstruction<P>>::fuse_accumulators(argtopk, accumulator, other)
             }
             ReduceOperation::Max(max) => {
                 <Max as ReduceInstruction<P>>::fuse_accumulators(max, accumulator, other)
@@ -523,13 +509,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::ArgMin(argmin) => {
                 <ArgMin as ReduceInstruction<P>>::to_output_parallel::<Out>(
                     argmin,
-                    accumulator,
-                    shape_axis_reduce,
-                )
-            }
-            ReduceOperation::ArgTopK(argtopk) => {
-                <ArgTopK as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                    argtopk,
                     accumulator,
                     shape_axis_reduce,
                 )
@@ -597,13 +576,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::ArgMax(args) => {
                 <ArgMax as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
                     args,
-                    accumulator,
-                    shape_axis_reduce,
-                )
-            }
-            ReduceOperation::ArgTopK(argtopk) => {
-                <ArgTopK as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
-                    argtopk,
                     accumulator,
                     shape_axis_reduce,
                 )

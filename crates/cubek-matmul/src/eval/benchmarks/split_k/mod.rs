@@ -330,7 +330,7 @@ impl Benchmark for SplitKBench {
 
 /// A mapping that computes the wrong answer would still time fast, so every strategy proves itself
 /// on a small shape before it is measured. Guards the whole family of silent-zero traps: a
-/// wrong-sized `Cut::unit`, an unresolved lane count, a combine that never fires.
+/// wrongly sized `Cut::unit`, an unresolved lane count, a combine that never fires.
 fn verify(
     client: &ComputeClient<TestRuntime>,
     mapping: Mapping,
