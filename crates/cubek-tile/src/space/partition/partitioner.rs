@@ -23,10 +23,8 @@ pub enum Leaf {
     Cmma {
         k: usize,
     },
-    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments, distinct from
-    /// the cooperative `Cmma`. Carries the contraction depth `k` like `Cmma`, plus the host-chosen
-    /// [`MmaIOConfig`] (which fragment transport each role uses) — built from `client.properties()`
-    /// at the same site that supplies `k`, since a device query cannot run in-kernel.
+    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
+    /// leaf because it comes from a device query, which cannot run in-kernel.
     Mma {
         k: usize,
         io: MmaIOConfig,
@@ -40,6 +38,12 @@ impl Leaf {
 
     pub fn is_mma(&self) -> bool {
         matches!(self, Leaf::Mma { .. })
+    }
+
+    /// Whether the leaf contracts a plane-level tile (either encoding), so operands and the
+    /// accumulator are plane-resident rather than memory.
+    pub fn is_plane(&self) -> bool {
+        matches!(self, Leaf::Cmma { .. } | Leaf::Mma { .. })
     }
 }
 

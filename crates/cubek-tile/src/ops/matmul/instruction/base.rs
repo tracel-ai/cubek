@@ -19,25 +19,16 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        TileKind::Cmma(d) => d.mma(lhs, rhs),
-        // A partition that reaches a final tile carries exactly one fragment; a wider
-        // one is consumed earlier, at its partition level.
-        TileKind::CmmaPartition(p) => {
+        TileKind::PlaneTile(t) => plane_mma(t, lhs, rhs),
+        // A partition that reaches a final tile carries exactly one tile; a wider one is
+        // consumed earlier, at its partition level.
+        TileKind::PlanePartition(p) => {
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,
                 "mma_leaf: a multi-tile partition must be contracted at its partition level"
             ));
-            p.at(0usize, 0usize).mma(lhs, rhs)
-        }
-        // The manual-mma leaf, the raw-mma twin of the cmma path above.
-        TileKind::Mma(d) => d.mma(lhs, rhs),
-        TileKind::MmaPartition(p) => {
-            comptime!(assert!(
-                p.m_tiles == 1 && p.n_tiles == 1,
-                "mma_leaf: a multi-tile partition must be contracted at its partition level"
-            ));
-            let mut frag = p.at(0usize, 0usize);
-            frag.mma(lhs, rhs)
+            let mut t = p.at(0usize, 0usize);
+            plane_mma(&mut t, lhs, rhs)
         }
         TileKind::Gmem(g) | TileKind::Smem(g) => {
             comptime!(assert!(
@@ -48,5 +39,18 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
+    }
+}
+
+/// Contract one plane tile: the only place the two encodings' executes diverge.
+#[cube]
+fn plane_mma<E: Numeric, EL: Numeric, ER: Numeric>(
+    acc: &mut PlaneTile<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+) {
+    match acc {
+        PlaneTile::Cmma(d) => d.mma(lhs, rhs),
+        PlaneTile::Mma(d) => d.mma(lhs, rhs),
     }
 }

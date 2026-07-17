@@ -33,16 +33,17 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
         let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
-        let register = comptime!(
-            out.partitioner().leaf().is_cmma() && partition_level(&out.divide()).is_some()
-        );
+        let leaf = comptime!(out.partitioner().leaf());
+        let register = comptime!(leaf.is_plane() && partition_level(&out.divide()).is_some());
         if register {
             comptime!(assert!(
                 !lhs_delivery.is_tma() && !rhs_delivery.is_tma(),
                 "Staging: a TMA source cannot stage into registers"
             ));
-            let a = CmmaPartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()));
-            let b = CmmaPartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()));
+            let a =
+                PlanePartition::store(comptime!(lhs.space.divide()), comptime!(out.clone()), leaf);
+            let b =
+                PlanePartition::store(comptime!(rhs.space.divide()), comptime!(out.clone()), leaf);
             Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
         } else {
             let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));

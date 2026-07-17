@@ -1,15 +1,6 @@
-//! The manual-mma backing stores: a single register fragment ([`MmaData`]) and a partition of
-//! them ([`MmaPartition`]), plus the fragment↔memory transports. The raw-mma twin of
-//! [`cmma`](super::cmma): the contraction is issued through [`MmaDefinition`] over
-//! register-resident `Array<Vector<T, N>>` fragments (backend/WMMA-scalar path), not the
-//! cooperative `cmma::execute`. Which transport each role uses is the host-chosen [`MmaIOConfig`].
-//!
-//! Each role's fragment carries a different inner register width (`NL`/`NR`/`NA`), bound at
-//! allocation from the hardware's `def.vector_size(role)`. These widths depend only on the role's
-//! own element type and `m`/`n`/`k`, so a `<A,A,A>` definition gives correct `Accumulator` metadata
-//! and a `<T,T,T>` one gives correct `A`/`B` metadata for an operand of type `T` — which is what
-//! lets `promote` (which knows only the accumulator type) allocate the accumulator, and the leaf
-//! load each operand, without threading the full `(L, R, A)` triple everywhere.
+//! The manual-mma encoding of a plane tile ([`MmaData`]) and its fragment↔memory transports.
+//! The raw-mma twin of [`cmma`](super::cmma), issuing [`MmaDefinition::execute`] over per-lane
+//! registers instead of `cmma::execute`.
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout, MmaDefinition},
@@ -52,222 +43,10 @@ pub enum MmaFragment<T: Numeric> {
     Acc(Array<Vector<T, NA>>),
 }
 
-/// A partition of manual-mma fragments: `m_tiles × n_tiles` over the tile's trailing two axes,
-/// row-major comptime-indexed (`mi · n_tiles + ni`). The raw-mma twin of [`CmmaPartition`].
-/// `Clone` duplicates the handles, not the fragments.
-#[derive(CubeType, Clone)]
-#[expand(derive(Clone))]
-pub struct MmaPartition<T: Numeric> {
-    pub frags: Sequence<MmaData<T>>,
-    #[cube(comptime)]
-    pub m_tiles: usize,
-    #[cube(comptime)]
-    pub n_tiles: usize,
-}
-
-#[cube]
-impl<T: Numeric> MmaPartition<T> {
-    /// The `(mi, ni)` fragment (a handle clone). Comptime indices only.
-    pub(crate) fn at(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> MmaData<T> {
-        self.frags.index(comptime!(mi * self.n_tiles + ni)).clone()
-    }
-
-    /// The `m_tiles × n_tiles` sub-partition at `(mi, ni)` (handle clones): a stacked partition
-    /// level selects a block of fragments where the fragment grid itself selects one.
-    pub(crate) fn window(
-        &self,
-        #[comptime] mi: usize,
-        #[comptime] ni: usize,
-        #[comptime] m_tiles: usize,
-        #[comptime] n_tiles: usize,
-    ) -> MmaPartition<T> {
-        let mut frags = Sequence::<MmaData<T>>::new();
-        #[unroll]
-        for i in 0..m_tiles {
-            #[unroll]
-            for j in 0..n_tiles {
-                frags.push(self.at(comptime!(mi + i), comptime!(ni + j)));
-            }
-        }
-        MmaPartition::<T> {
-            frags,
-            m_tiles,
-            n_tiles,
-        }
-    }
-
-    /// The register form of an accumulator over `space`: a partition mirroring its fragment grid,
-    /// each fragment zeroed (`c = a·b` starts from `beta = 0`). `k` is the instruction's
-    /// contraction depth (the space's own axes only give `m`/`n`); `io`/`layout` carry the
-    /// transport and stage layout.
-    pub(crate) fn mirror(
-        #[comptime] space: Space,
-        #[comptime] k: usize,
-        #[comptime] io: MmaIOConfig,
-        #[comptime] layout: MatrixLayout,
-    ) -> Tile<T> {
-        let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
-        let fin = comptime!(space.final_space());
-        let m = comptime!(fin.extent_at(fin.rank() - 2));
-        let n = comptime!(fin.extent_at(fin.rank() - 1));
-
-        let mut frags = Sequence::<MmaData<T>>::new();
-        #[unroll]
-        for _mi in 0..m_tiles {
-            #[unroll]
-            for _ni in 0..n_tiles {
-                let mut frag = MmaData::<T>::acc(m, n, k, layout, io);
-                frag.zero();
-                frags.push(frag);
-            }
-        }
-        Tile::<T> {
-            tile_kind: TileKind::new_MmaPartition(MmaPartition::<T> {
-                frags,
-                m_tiles,
-                n_tiles,
-            }),
-            space: comptime!(space),
-        }
-    }
-
-    /// The staging store for one region of an operand under `out`'s contraction: a partition
-    /// mirroring the region's fragment grid, fragments uninitialized; [`copy_from`](Tile::copy_from)
-    /// fills it. The operand's role is where its contracted axis sits.
-    pub(crate) fn store(
-        #[comptime] window: Space,
-        #[comptime] out: Space,
-        #[comptime] k_depth: usize,
-        #[comptime] io: MmaIOConfig,
-        #[comptime] layout: MatrixLayout,
-    ) -> Tile<T> {
-        let a0 = comptime!(window.axis_at(window.rank() - 2));
-        let a1 = comptime!(window.axis_at(window.rank() - 1));
-        let t0 = comptime!(window.count(a0));
-        let t1 = comptime!(window.count(a1));
-
-        let contracted = comptime!(window.contraction(&out));
-        let is_lhs = comptime!(if contracted == a1 {
-            true
-        } else {
-            assert!(
-                contracted == a0,
-                "MmaPartition::store: the contracted axis must be one of the trailing two"
-            );
-            false
-        });
-        let out_fin = comptime!(out.final_space());
-        let m = comptime!(out_fin.extent_at(out_fin.rank() - 2));
-        let n = comptime!(out_fin.extent_at(out_fin.rank() - 1));
-        let _ = k_depth;
-
-        let mut frags = Sequence::<MmaData<T>>::new();
-        #[unroll]
-        for _i in 0..t0 {
-            #[unroll]
-            for _j in 0..t1 {
-                let frag = if comptime!(is_lhs) {
-                    MmaData::<T>::lhs(m, n, comptime!(window.final_space().extent(contracted)), layout, io)
-                } else {
-                    MmaData::<T>::rhs(m, n, comptime!(window.final_space().extent(contracted)), layout, io)
-                };
-                frags.push(frag);
-            }
-        }
-        Tile::<T> {
-            tile_kind: TileKind::new_MmaPartition(MmaPartition::<T> {
-                frags,
-                m_tiles: t0,
-                n_tiles: t1,
-            }),
-            space: comptime!(window),
-        }
-    }
-
-    /// Fill each fragment from its final window of `src`, in row-major fragment order.
-    pub(crate) fn fill_from(&self, src: &Tile<T>) {
-        #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let mut frag = self.at(mi, ni);
-                let window = src.fragment_window(mi, ni);
-                match &window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
-                    TileKind::Cmma(_)
-                    | TileKind::CmmaPartition(_)
-                    | TileKind::Mma(_)
-                    | TileKind::MmaPartition(_)
-                    | TileKind::TmaGmem(_) => {
-                        panic!("MmaPartition::fill_from: the source must be memory")
-                    }
-                }
-            }
-        }
-    }
-
-    /// Zero every fragment.
-    pub(crate) fn zero(&self) {
-        #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let mut frag = self.at(mi, ni);
-                frag.zero();
-            }
-        }
-    }
-
-    /// Drain each fragment into its final window of `dst`; [`fill_from`](Self::fill_from)'s inverse.
-    pub(crate) fn drain_into(&self, dst: &mut Tile<T>) {
-        #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let frag = self.at(mi, ni);
-                let mut window = dst.fragment_window(mi, ni);
-                match &mut window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
-                    TileKind::Cmma(_)
-                    | TileKind::CmmaPartition(_)
-                    | TileKind::Mma(_)
-                    | TileKind::MmaPartition(_)
-                    | TileKind::TmaGmem(_) => {
-                        panic!("MmaPartition::drain_into: the sink must be memory")
-                    }
-                }
-            }
-        }
-    }
-
-    /// Drain each fragment into its final window of `dst`, casting `T` to `dst`'s element type
-    /// first. The cross-type epilogue (e.g. an `f32` accumulator written to an `f16` output).
-    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
-        #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let frag = self.at(mi, ni);
-                let mut window = dst.fragment_window(mi, ni);
-                match &mut window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g),
-                    TileKind::Cmma(_)
-                    | TileKind::CmmaPartition(_)
-                    | TileKind::Mma(_)
-                    | TileKind::MmaPartition(_)
-                    | TileKind::TmaGmem(_) => {
-                        panic!("MmaPartition::drain_cast_into: the sink must be memory")
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cube]
 impl<T: Numeric> MmaData<T> {
-    /// Allocate a zeroed-later accumulator fragment. `m`/`n`/`k` are the whole MMA tile; the
-    /// register width `NA` is bound from `def.vector_size(Accumulator)` (depends only on `T`/`m`/`n`).
+    /// Allocate an accumulator fragment. A role's register width depends only on its own element
+    /// type, so `<T,T,T>` gives correct `Accumulator` metadata without the real `(L,R,A)` triple.
     pub(crate) fn acc(
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -288,8 +67,7 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
-    /// Allocate an uninitialized `A`-role (lhs) operand fragment. `<T,T,T>` gives correct `A`
-    /// metadata for an operand of type `T` (positions depend only on the role's own type).
+    /// Allocate an `A`-role (lhs) operand fragment.
     pub(crate) fn lhs(
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -310,7 +88,7 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
-    /// Allocate an uninitialized `B`-role (rhs) operand fragment.
+    /// Allocate a `B`-role (rhs) operand fragment.
     pub(crate) fn rhs(
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -331,7 +109,7 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
-    /// Zero the fragment (whatever the role — every role fills to the additive identity here).
+    /// Zero the fragment, whatever the role.
     pub(crate) fn zero(&mut self) {
         match &mut self.fragment {
             MmaFragment::Lhs(f) => fill_registers(f, T::from_int(0)),
@@ -350,12 +128,8 @@ impl<T: Numeric> MmaData<T> {
         let io = comptime!(self.io);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         match &mut self.fragment {
-            MmaFragment::Lhs(f) => {
-                load_fragment(mem, f, &def, MatrixIdent::A, layout, io)
-            }
-            MmaFragment::Rhs(f) => {
-                load_fragment(mem, f, &def, MatrixIdent::B, layout, io)
-            }
+            MmaFragment::Lhs(f) => load_fragment(mem, f, &def, MatrixIdent::A, layout, io),
+            MmaFragment::Rhs(f) => load_fragment(mem, f, &def, MatrixIdent::B, layout, io),
             MmaFragment::Acc(f) => {
                 load_fragment(mem, f, &def, MatrixIdent::Accumulator, layout, io)
             }
@@ -376,9 +150,14 @@ impl<T: Numeric> MmaData<T> {
         let io = comptime!(self.io);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         match &self.fragment {
-            MmaFragment::Acc(f) => {
-                store_fragment::<T, Out, T, T, T>(mem, f, &def, MatrixIdent::Accumulator, layout, io)
-            }
+            MmaFragment::Acc(f) => store_fragment::<T, Out, T, T, T>(
+                mem,
+                f,
+                &def,
+                MatrixIdent::Accumulator,
+                layout,
+                io,
+            ),
             MmaFragment::Lhs(_) | MmaFragment::Rhs(_) => {
                 panic!("MmaData::store: only an accumulator fragment drains to memory")
             }
@@ -436,10 +215,8 @@ fn is_row_major(layout: MatrixLayout) -> bool {
     matches!(layout, MatrixLayout::RowMajor)
 }
 
-/// Load `fragment` (role `ident`) from `mem`'s row-major window. The manual index math is the
-/// universal path; the `ldmatrix` intrinsic (CUDA) is elected by the config where the device
-/// advertises it — its emission over a cubek-tile `MemData` window is a follow-up, so it is refused
-/// loudly rather than served wrong.
+/// Load `fragment` (role `ident`) from `mem`'s row-major window. `ldmatrix` needs a vectorized
+/// row slice, which a `MemData` window cannot serve yet, so that path is refused rather than wrong.
 #[cube]
 fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     mem: &MemData<T>,
@@ -496,9 +273,8 @@ fn load_manual<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// Store `fragment` (accumulator) into `mem`'s window, casting to the sink element `Out`. Manual
-/// index math is the universal path; the `stmatrix` intrinsic (CUDA) is a follow-up (see
-/// [`load_fragment`]).
+/// Store `fragment` (accumulator) into `mem`'s window, casting to `Out`. `stmatrix` is refused
+/// like `ldmatrix` (see [`load_fragment`]).
 #[cube]
 fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     mem: &mut MemData<Out>,

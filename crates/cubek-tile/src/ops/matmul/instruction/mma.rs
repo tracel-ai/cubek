@@ -22,11 +22,14 @@ impl<A: Numeric> MmaData<A> {
 
         match &mut self.fragment {
             MmaFragment::Acc(acc) => match (&lhs.tile_kind, &rhs.tile_kind) {
-                (TileKind::Mma(a), TileKind::Mma(b)) => match (&a.fragment, &b.fragment) {
-                    (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
-                        mma_execute::<L, R, A>(af, bf, acc, m, n, k)
-                    }
-                    _ => panic!("MmaData::mma: operand fragments must carry the Lhs/Rhs roles"),
+                (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
+                    (PlaneTile::Mma(a), PlaneTile::Mma(b)) => match (&a.fragment, &b.fragment) {
+                        (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
+                            mma_execute::<L, R, A>(af, bf, acc, m, n, k)
+                        }
+                        _ => panic!("MmaData::mma: operands must carry the Lhs/Rhs roles"),
+                    },
+                    _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
                 (TileKind::Smem(a), TileKind::Smem(b)) => {
                     let mut la = MmaData::<L>::lhs(m, n, k, layout, io);
