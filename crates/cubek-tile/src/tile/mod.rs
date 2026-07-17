@@ -68,10 +68,7 @@ impl<T: Numeric> TileKind<T> {
     /// plain runtime loop. Comptime.
     pub(crate) fn cuts_partition(&self, #[comptime] space: Space) -> comptime_type!(bool) {
         match self {
-            TileKind::PlanePartition(_) => comptime!(
-                matches!(space.partitioner(), Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition))
-                    && partition_grid(&space) != (1, 1)
-            ),
+            TileKind::PlanePartition(_) => comptime!(space.cuts_tiles()),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -249,13 +246,7 @@ impl<T: Numeric> Tile<T> {
             // onto the one tile.
             TileKind::PlaneTile(t) => {
                 comptime!(assert!(
-                    match self.space.partitioner() {
-                        Partitioner::Final(_) => true,
-                        Partitioner::Level(l) => match l.role() {
-                            LevelRole::Instance => true,
-                            LevelRole::Partition => partition_grid(&self.space) == (1, 1),
-                        },
-                    },
+                    !self.space.cuts_tiles(),
                     "Tile::at: a level that cuts tiles cannot select into a single plane \
                      tile (it needs a partition, or a memory output)"
                 ));
@@ -306,10 +297,7 @@ impl<T: Numeric> Tile<T> {
                     // the static levels below. A rolled *cut* would be a caller bug.
                     None => {
                         comptime!(assert!(
-                            !matches!(
-                                self.space.partitioner(),
-                                Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition)
-                            ),
+                            !self.space.cuts_tiles(),
                             "Tile::at: a level that cuts a partition must be \
                              walked with compile-time coordinates (an unrolled walk)"
                         ));

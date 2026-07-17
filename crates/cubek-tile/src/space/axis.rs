@@ -38,6 +38,11 @@ impl<T: Copy> ByAxis<T> {
         self.entries[i].0
     }
 
+    /// The values in axis order.
+    pub fn values(&self) -> impl Iterator<Item = T> + '_ {
+        self.entries.iter().map(|&(_, v)| v)
+    }
+
     pub fn position(&self, axis: Axis) -> usize {
         self.entries
             .iter()

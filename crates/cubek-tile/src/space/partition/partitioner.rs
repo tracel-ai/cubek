@@ -63,19 +63,6 @@ pub enum LevelRole {
     Partition,
 }
 
-impl LevelRole {
-    /// `Instance` when any axis is spread across hardware, else a sequential `Partition`.
-    fn of(dists: &ByAxis<Distribution>) -> LevelRole {
-        let spread = (0..dists.len())
-            .any(|i| matches!(dists.get(dists.axis_at(i)), Distribution::Spatial { .. }));
-        if spread {
-            LevelRole::Instance
-        } else {
-            LevelRole::Partition
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
     edges: ByAxis<usize>,
@@ -258,7 +245,14 @@ impl PartitionerBuilder {
     /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
     fn finish(self, schedule: Schedule) -> Partitioner {
-        let role = LevelRole::of(&self.dists);
+        // Instance when any axis spreads across hardware, else a sequential partition.
+        let role = self
+            .dists
+            .values()
+            .fold(LevelRole::Partition, |role, dist| match dist {
+                Distribution::Spatial { .. } => LevelRole::Instance,
+                Distribution::Sequential => role,
+            });
         Partitioner::Level(Box::new(Level {
             edges: self.sub_tile,
             dists: self.dists,

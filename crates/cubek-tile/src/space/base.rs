@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, MAX_AXES, Partitioner};
+use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, LevelRole, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -333,6 +333,19 @@ impl Space {
     /// before [`count`](Space::count), which panics on `Dynamic`.
     pub(crate) fn single_static_tile(&self, axis: Axis) -> bool {
         !self.is_dynamic(axis) && self.count(axis) == 1
+    }
+
+    /// Whether this level cuts its tiles into an m×n grid larger than 1×1, so each region must be
+    /// selected by a comptime coordinate. A final tile, an instance level, and a degenerate 1×1
+    /// partition (a k-step walk) all cut nothing.
+    pub(crate) fn cuts_tiles(&self) -> bool {
+        match self.partitioner() {
+            Partitioner::Final(_) => false,
+            Partitioner::Level(level) => match level.role() {
+                LevelRole::Instance => false,
+                LevelRole::Partition => crate::partition_grid(self) != (1, 1),
+            },
+        }
     }
 
     pub fn position(&self, axis: Axis) -> usize {
