@@ -167,13 +167,27 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of
-    /// `operand`, at the same physical width and the operand's [`StagePlan`]. A quantized operand
-    /// stages as its packed storage words (see [`smem_quant`](MemData::smem_quant)) when
-    /// `pack_quant`, so its leaf dequantizes straight out of smem instead of inflating an f32 stage
-    /// at the fill. Otherwise it stages plain, dequantized at the fill: `Staging::new` sets the flag
-    /// from the leaf, since only a leaf that unpacks on read can be served packed.
-    pub fn smem_like(operand: &Tile<T>, #[comptime] pack_quant: bool) -> Tile<T> {
+    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
+    /// the element the operand *serves*: a quantized operand dequantizes at the fill, so the stage
+    /// holds `T`. The twin is [`smem_like_stored`](MemData::smem_like_stored), which keeps the
+    /// operand's stored element instead and dequantizes at the read; a leaf that cannot dequantize
+    /// on read (cmma) must take this one. Identical to its twin for a plain operand, whose served
+    /// and stored elements are the same.
+    pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
+        MemData::smem(
+            comptime!(operand.space.divide()),
+            operand.vector_size(),
+            operand.stage(),
+        )
+    }
+
+    /// [`smem_like`](MemData::smem_like) in the element the operand is *stored* in rather than the
+    /// one it serves: a quantized operand keeps its stored form (native `i8`, or `u32` words when
+    /// the scheme packs several values each) and its scales, so the leaf dequantizes at the read
+    /// (see [`smem_quant`](MemData::smem_quant)) instead of the fill inflating the stage to `T`.
+    /// Only a leaf that reads through [`matrix_transparent`](MemData::matrix_transparent) can be
+    /// served this; `Staging::new` owns that call.
+    pub fn smem_like_stored(operand: &Tile<T>) -> Tile<T> {
         let space = comptime!(operand.space.divide());
         let vector_size = operand.vector_size();
         let stage = operand.stage();
@@ -181,50 +195,34 @@ impl<T: Numeric> MemData<T> {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]
                 match &g.quant {
+                    // Served == stored, so this is `smem_like`.
                     ComptimeOption::None => MemData::smem(space, vector_size, stage),
-                    ComptimeOption::Some(info) => {
-                        if comptime!(!pack_quant) {
-                            // Leaf can't unpack on read: stage plain, dequantize at the fill.
-                            MemData::smem(space, vector_size, stage)
-                        } else {
-                            match comptime!(info.scheme.store) {
-                                // One storage element per value: physical width is the served width.
-                                QuantStore::Native => match comptime!(info.scheme.value) {
-                                    QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
-                                        space,
-                                        vector_size,
-                                        stage,
-                                        comptime!(info.scheme),
-                                    ),
-                                    other => panic!(
-                                        "MemData::smem_like: native quant storage element {:?} is not wired (i8 only)",
-                                        other
-                                    ),
-                                },
-                                // Packed `u32`s carrying `num_quants` values each.
-                                QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
-                                    space,
-                                    vector_size,
-                                    stage,
-                                    comptime!(info.scheme),
-                                ),
-                                other => panic!(
-                                    "MemData::smem_like: quant storage {:?} is not wired (native or packed-u32)",
-                                    other
-                                ),
+                    ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
+                        QuantStore::Native => match comptime!(info.scheme.value) {
+                            QuantValue::Q8F | QuantValue::Q8S => {
+                                MemData::smem_quant::<i8>(space, vector_size, stage, comptime!(info.scheme))
                             }
+                            other => panic!(
+                                "MemData::smem_like_stored: native quant storage element {:?} is not wired (i8 only)",
+                                other
+                            ),
+                        },
+                        QuantStore::PackedU32(_) => {
+                            MemData::smem_quant::<u32>(space, vector_size, stage, comptime!(info.scheme))
                         }
-                    }
+                        other => panic!(
+                            "MemData::smem_like_stored: quant storage {:?} is not wired (native or packed-u32)",
+                            other
+                        ),
+                    },
                 }
             }
-            // A tma source is never quantized: `quantized` is a [`StridedTileArg`] builder only and
-            // a tma tile is scalar, so `TmaData` carries no scheme to stage by. Giving it one must
-            // not reuse this arm — a bulk copy cannot dequantize on the way in, so such an operand
-            // needs a packed stage and a leaf that unpacks on read (`pack_quant`), never the plain
-            // stage below, which the copy would fill with packed bytes read back as floats.
+            // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
+            // [`StridedTileArg`] builder, and a tma tile is scalar), so served == stored. Giving it
+            // one must not reuse this arm — see `Staging::new`, which refuses that combination.
             TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("MemData::smem_like: a fragment is not a stage source")
+                panic!("MemData::smem_like_stored: a fragment is not a stage source")
             }
         }
     }
@@ -842,8 +840,8 @@ impl<T: Numeric> MemData<T> {
     /// [`flat_transparent`](MemData::flat_transparent). A plain store serves the bare `Direct`
     /// matrix read; a quantized one re-types to the storage element `I`, pairs it with the scales
     /// over the same [`BatchMatrix`], and dequantizes each `(row, col)` read into `T`. This is
-    /// what lets a leaf read a quantized operand straight from gmem or a packed smem stage without
-    /// a dequantize-into-`f32` fill. `#[comptime]`, so the plain path pays nothing.
+    /// what lets a leaf read a quantized operand straight from gmem, or from a stage still in the
+    /// stored element, without a dequantize-into-`f32` fill. `#[comptime]`, so plain pays nothing.
     pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         layout: BatchMatrix,

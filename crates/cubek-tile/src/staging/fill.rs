@@ -46,27 +46,22 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs)
         } else {
             let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
-            // Who may hold a packed stage: only the register leaf unpacks on read
-            // (`matrix_transparent`). The cmma leaf loads fragments raw at one element type, so its
-            // quant operand still dequantizes into an f32 stage at the fill. Integer tensor cores
-            // (CUDA `i8×i8→i32`) could consume a native-i8 stage instead, which would widen this
-            // predicate; that accumulates in `i32` and scales at the drain, and is not wired yet.
-            let pack_quant = comptime!(out.partitioner().leaf() == Leaf::Register);
+            // Only the register leaf dequantizes as it reads (`matrix_transparent`), so only it can
+            // be handed a stage still in the operand's stored element; a cmma leaf loads fragments
+            // raw at one element type, so its stage must already be dequantized.
+            let reads_stored = comptime!(out.partitioner().leaf() == Leaf::Register);
             let lhs_pack = lhs.quant_pack();
             let rhs_pack = rhs.quant_pack();
             comptime! {
-                quant_stage_site(lhs_pack, lhs_delivery, pack_quant, "lhs");
-                quant_stage_site(rhs_pack, rhs_delivery, pack_quant, "rhs");
+                dequant_site(lhs_pack, lhs_delivery, reads_stored, "lhs");
+                dequant_site(rhs_pack, rhs_delivery, reads_stored, "rhs");
             }
-            Staging::wrap(
-                (
-                    MemData::smem_like(lhs, pack_quant),
-                    MemData::smem_like(rhs, pack_quant),
-                ),
-                Pipeline::new(sync),
-                pin_lhs,
-                pin_rhs,
-            )
+            let stages = if reads_stored {
+                (MemData::smem_like_stored(lhs), MemData::smem_like_stored(rhs))
+            } else {
+                (MemData::smem_like(lhs), MemData::smem_like(rhs))
+            };
+            Staging::wrap(stages, Pipeline::new(sync), pin_lhs, pin_rhs)
         }
     }
 
@@ -104,34 +99,37 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     }
 }
 
-/// Refuse a quantized operand whose dequantization has no site. Where it dequantizes is forced by
-/// two capabilities, never chosen:
+/// Refuse a quantized operand whose dequantization has nowhere to happen. *Where* it dequantizes is
+/// forced by two capabilities, never chosen:
 ///
-/// - the **fill** can transform only if it is a cooperative copy; a TMA bulk copy moves bytes;
-/// - the **read** can unpack only under the register leaf; a cmma fragment load is opaque.
+/// - the **fill** can dequantize only if it is a cooperative copy; a tma bulk copy just moves bytes;
+/// - the **read** can dequantize only under the register leaf; a cmma fragment load is opaque.
 ///
-/// | delivery | leaf     | site                  |
-/// |----------|----------|-----------------------|
-/// | strided  | register | read (packed stage)   |
-/// | strided  | cmma     | fill (f32 stage)      |
-/// | tma      | register | read — needs a packed stage the bulk copy fills; not wired |
-/// | tma      | cmma     | none — impossible     |
+/// | delivery | leaf     | dequantizes at                                            |
+/// |----------|----------|-----------------------------------------------------------|
+/// | strided  | register | the read — stage stays stored (`smem_like_stored`)         |
+/// | strided  | cmma     | the fill — stage is served (`smem_like`)                   |
+/// | tma      | register | the read, its only option; the tma stored stage is unwired |
+/// | tma      | cmma     | nowhere — impossible                                       |
 ///
-/// Unreachable today (a tma tile carries no scheme, so `quant_pack` is `0`), and deliberately kept
-/// as the tripwire for wiring one: giving `TmaData` a scheme flips `quant_pack` and trips this,
-/// rather than silently bulk-copying packed bytes into a stage read back as floats.
-fn quant_stage_site(pack: usize, delivery: Delivery, pack_quant: bool, who: &str) {
+/// (Orthogonal to *packing*, which is only how a scheme stores values — several per `u32`
+/// ([`QuantStore::PackedU32`]) or one each ([`QuantStore::Native`]). Both are "stored".)
+///
+/// Unreachable today: a tma tile carries no scheme, so `pack` is `0` and this returns. Kept as the
+/// tripwire for wiring one — giving `TmaData` a scheme makes `quant_pack` report it and trips this,
+/// rather than bulk-copying stored bytes into a stage that reads them back as floats.
+fn dequant_site(pack: usize, delivery: Delivery, reads_stored: bool, who: &str) {
     if pack == 0 || !delivery.is_tma() {
         return;
     }
     assert!(
-        pack_quant,
+        reads_stored,
         "Staging: a quantized tma {who} cannot reach a cmma leaf: the bulk copy cannot dequantize \
-         at the fill and the fragment load cannot unpack at the read, so no site exists"
+         at the fill and the fragment load cannot dequantize at the read, so no site exists"
     );
     unimplemented!(
-        "Staging: a quantized tma {who} must stage packed (the bulk copy cannot dequantize) and \
-         unpack at the read; the packed tma stage is not wired"
+        "Staging: a quantized tma {who} can only dequantize at the read, so its stage must stay in \
+         the stored element; a tma-filled stored stage is not wired"
     );
 }
 
