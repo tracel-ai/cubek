@@ -80,7 +80,7 @@ impl<T: Numeric> Tile<T> {
     pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
-                if comptime!(g.quant.is_some()) {
+                if comptime!(g.store.quant.is_some()) {
                     panic!("Tile::flat: a quantized tile only dequantizes under Tile::copy_from")
                 }
                 g.flat::<W>()

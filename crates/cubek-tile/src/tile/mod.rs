@@ -211,7 +211,7 @@ impl<T: Numeric> Tile<T> {
     /// size; a cmma fragment and a tma source are scalar (`1`).
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.vector_size,
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.store.vector_size,
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(1usize),
             TileKind::TmaGmem(_) => comptime!(1usize),
         }
@@ -317,7 +317,7 @@ impl<T: Numeric> Tile<T> {
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let p = comptime!(self.space.position(axis));
         let raw = match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.bound.at(p).fcast::<usize>(),
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).fcast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
             TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
                 panic!("Tile::runtime_extent: a cmma fragment has no extent")
