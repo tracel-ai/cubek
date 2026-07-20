@@ -1,7 +1,5 @@
 mod all;
 mod any;
-mod argmax;
-mod argmin;
 mod base;
 mod max;
 mod maxabs;
@@ -15,8 +13,6 @@ mod utils;
 
 pub use all::*;
 pub use any::*;
-pub use argmax::*;
-pub use argmin::*;
 pub use base::*;
 pub use max::*;
 pub use maxabs::*;

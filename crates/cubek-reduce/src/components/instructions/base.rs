@@ -1,5 +1,33 @@
 use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
 use cubecl::prelude::*;
+use serde::{Deserialize, Serialize};
+
+/// Which of a reduction's two results the single-output path writes.
+///
+/// For instructions whose accumulator carries both candidate values and their
+/// coordinates ([`TopK`](super::TopK), [`Min`](super::Min), [`Max`](super::Max)),
+/// the reduction is identical either way: only
+/// [`ReduceInstruction::requirements`] and the `to_output_*` conversions differ,
+/// which is why one instruction serves both the value and `Arg*` configs.
+///
+/// The fused path (values *and* indices) is not a third variant here: it goes
+/// through [`ReduceWithIndices`] and its `to_output_both_*` conversions, sizing
+/// the accumulator with [`Self::Indices`] so coordinates are tracked.
+#[derive_cube_comptime]
+#[derive(Serialize, Deserialize)]
+pub enum ReduceOutputMode {
+    /// Write only the reduced values.
+    Values,
+    /// Write only the coordinates of the reduced values.
+    Indices,
+}
+
+impl ReduceOutputMode {
+    /// Whether coordinates must be tracked through the reduction.
+    pub fn has_indices(&self) -> bool {
+        matches!(self, ReduceOutputMode::Indices)
+    }
+}
 
 pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
     type Instruction<P: ReducePrecision>: ReduceInstruction<P, Config = Self::Config>;
@@ -288,7 +316,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
 
 /// An instruction for a reduce algorithm that works with [`Vector`].
 ///
-/// See a provided implementation, such as [`Sum`](super::Sum) or [`ArgMax`](super::ArgMax) for an example how to implement
+/// See a provided implementation, such as [`Sum`](super::Sum) or [`Max`](super::Max) for an example how to implement
 /// this trait for a custom instruction.
 ///
 /// A reduction works at three levels. First, it takes input data of type `In` and reduce them
@@ -420,11 +448,13 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 }
 
-/// A pair of shared memory used for [`ArgMax`](super::ArgMax) and [`ArgMin`](super::ArgMin).
+/// A pair of shared memory used for [`Max`](super::Max) and [`Min`](super::Min).
 #[derive(CubeType)]
 pub struct ArgAccumulator<P: ReducePrecision> {
     pub elements: Shared<[Vector<P::EA, P::SI>]>,
-    pub args: Shared<[Vector<u32, P::SI>]>,
+    /// Empty unless the instruction tracks coordinates; its length is the single
+    /// source of truth for whether coordinates are staged (see `read`/`write`).
+    pub args: Sequence<Shared<[Vector<u32, P::SI>]>>,
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -438,23 +468,40 @@ pub enum ReduceStep {
 
 #[cube]
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
-    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, _inst: &I) -> Self {
+    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, _inst: &I) -> Self {
+        let mut args = Sequence::new();
+        if coordinate {
+            args.push(Shared::new_slice(length));
+        }
+
         ArgAccumulator::<P> {
             elements: Shared::new_slice(length),
-            args: Shared::new_slice(length),
+            args,
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
+        let num_args = comptime!(accumulator.args.len());
+        let args = if comptime!(num_args != 0) {
+            Value::new_single(accumulator.args[0][index])
+        } else {
+            Value::new_None()
+        };
+
         Accumulator::<P> {
             elements: Value::new_single(accumulator.elements[index]),
-            args: Value::new_single(accumulator.args[index]),
+            args,
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         accumulator.elements[index] = item.elements.item();
-        accumulator.args[index] = item.args.item();
+
+        let num_args = comptime!(accumulator.args.len());
+        if comptime!(num_args != 0) {
+            let shared_args = &mut accumulator.args[0];
+            shared_args[index] = item.args.item();
+        }
     }
 }
 

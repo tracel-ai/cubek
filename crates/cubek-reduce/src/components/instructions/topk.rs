@@ -10,37 +10,11 @@ use crate::components::instructions::{Accumulator, Item, Value};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
     components::instructions::{
-        ReduceRequirements, ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily,
-        SharedAccumulator,
+        ReduceOutputMode, ReduceRequirements, ReduceStep, ReduceWithIndices,
+        ReduceWithIndicesFamily, SharedAccumulator,
     },
 };
 use cubecl::frontend::Numeric;
-
-/// Which of a top-k's two results the single-output path writes.
-///
-/// The reduction is identical either way: the accumulator always holds candidate
-/// values, and when indices are wanted their coordinates too. Only
-/// [`ReduceInstruction::requirements`] and the `to_output_*` conversions differ,
-/// which is why one instruction serves both the `TopK` and `ArgTopK` configs.
-///
-/// The fused path (values *and* indices) is not a third variant here: it goes
-/// through [`ReduceWithIndices`] and its `to_output_both_*` conversions, sizing
-/// the accumulator with [`Self::Indices`] so coordinates are tracked.
-#[derive_cube_comptime]
-#[derive(Serialize, Deserialize)]
-pub enum ReduceOutputMode {
-    /// Write only the top values.
-    Values,
-    /// Write only the coordinates of the top values.
-    Indices,
-}
-
-impl ReduceOutputMode {
-    /// Whether coordinates must be tracked through the reduction.
-    pub fn has_indices(&self) -> bool {
-        matches!(self, ReduceOutputMode::Indices)
-    }
-}
 
 #[derive_cube_comptime]
 #[derive(Serialize, Deserialize)]
