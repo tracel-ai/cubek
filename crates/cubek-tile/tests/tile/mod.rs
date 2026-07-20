@@ -1,8 +1,8 @@
 mod addressing;
 mod launcher;
 mod matmul;
+mod quant;
 mod recursive;
 mod references;
-mod scalar;
 mod softmax;
 mod space;

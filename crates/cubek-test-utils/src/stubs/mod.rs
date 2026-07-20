@@ -10,5 +10,5 @@
 //! and unit-testable; the device-side glue that consumes them lives elsewhere
 //! (e.g. [`crate::test_tensor`]).
 
-pub(crate) mod quant;
+pub mod quant;
 pub(crate) mod random;

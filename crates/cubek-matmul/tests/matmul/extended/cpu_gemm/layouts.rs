@@ -82,6 +82,25 @@ impl Operand {
         Self::wrap(handle, layout, axes, batch, rows, cols)
     }
 
+    /// [`zeros`](Self::zeros) with poisoned contents: an output must come out
+    /// `A·B` whatever its buffer held (burn launches with recycled pool memory).
+    fn poisoned(
+        client: &ComputeClient<TestRuntime>,
+        layout: InnerLayout,
+        axes: [Axis; 3],
+        batch: usize,
+        rows: usize,
+        cols: usize,
+    ) -> Self {
+        let handle = TestInput::builder(
+            client.clone(),
+            Shape::from(layout.physical_dims(&[batch], rows, cols)),
+        )
+        .uniform(4242, 10., 100.)
+        .generate_without_host_data();
+        Self::wrap(handle, layout, axes, batch, rows, cols)
+    }
+
     /// Wrap an existing `handle` as an operand of the given layout/axes.
     fn wrap(
         handle: TensorHandle<TestRuntime>,
@@ -195,7 +214,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     // through the views.
     let lhs = Operand::zeros(&client, lhs_layout, [B, M, K], lhs_batch, m, k);
     let rhs = Operand::zeros(&client, rhs_layout, [B, K, N], rhs_batch, k, n);
-    let out = Operand::zeros(&client, out_layout, [B, M, N], out_batch, m, n);
+    let out = Operand::poisoned(&client, out_layout, [B, M, N], out_batch, m, n);
 
     copy(
         &client,

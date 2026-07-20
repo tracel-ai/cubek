@@ -43,7 +43,8 @@ use cubek_test_utils::{
 };
 
 use crate::{
-    ReduceDtypes, ReduceStrategy, components::instructions::ReduceOperationConfig, reduce,
+    ReduceDtypes, ReduceStrategy, ReduceWithIndicesDtypes,
+    components::instructions::ReduceOperationConfig, reduce, reduce_with_indices,
 };
 
 /// Run `strategy` on a seeded f32 reduce problem and return its output as a
@@ -95,6 +96,71 @@ pub fn strategy_result(
         ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
             &client,
             output_handle,
+            HostDataType::F32,
+        )),
+    }
+}
+
+/// Like [`strategy_result`], but runs the fused `reduce_with_indices` path and
+/// returns its **values** output.
+///
+/// The benchmark catalogue times the fused path, so it has to be able to
+/// validate the fused path too: running the plain `reduce` here instead would
+/// silently check a kernel that is not the one being measured.
+pub fn strategy_result_with_indices(
+    client: ComputeClient<TestRuntime>,
+    shape: Vec<usize>,
+    axis: usize,
+    strategy: ReduceStrategy,
+    k: usize,
+    seed: u64,
+) -> Result<HostData, String> {
+    let input_dtype = f32::as_type_native_unchecked().storage_type();
+    let index_dtype = u32::as_type_native_unchecked().storage_type();
+    let accumulation_dtype = f32::as_type_native_unchecked().storage_type();
+    let config = ReduceOperationConfig::TopK(k);
+
+    let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
+        .dtype(input_dtype)
+        .uniform(seed, -1., 1.)
+        .generate_with_f32_host_data();
+
+    let out_shape = output_shape_for(&shape, axis, &config);
+    let values_handle = TestInput::builder(client.clone(), out_shape.clone())
+        .dtype(input_dtype)
+        .zeros()
+        .generate_without_host_data();
+    let indices_handle = TestInput::builder(client.clone(), out_shape)
+        .dtype(index_dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let dtypes = ReduceWithIndicesDtypes {
+        input: input_dtype,
+        values: input_dtype,
+        indices: index_dtype,
+        accumulation: accumulation_dtype,
+    };
+
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        reduce_with_indices::<TestRuntime>(
+            c,
+            input_handle.clone().binding(),
+            values_handle.clone().binding(),
+            indices_handle.clone().binding(),
+            axis,
+            strategy.clone(),
+            config,
+            dtypes,
+        )
+        .into()
+    });
+
+    match outcome {
+        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
+        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
+            &client,
+            values_handle,
             HostDataType::F32,
         )),
     }

@@ -29,7 +29,7 @@ impl Sync {
         match (lhs, rhs) {
             (Delivery::Tma, Delivery::Tma) => Sync::Barrier,
             (Delivery::Strided, Delivery::Strided) => Sync::Cube,
-            _ => panic!("Staging: mixed delivery — both operands must be TMA sources or neither"),
+            _ => panic!("Staging: mixed delivery; both operands must be TMA sources or neither"),
         }
     }
 }

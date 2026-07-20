@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use cubecl::{
     Runtime, TestRuntime,
-    benchmark::{Benchmark, TimingMethod},
+    benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::ComputeClient,
     future,
     prelude::*,
@@ -13,7 +13,7 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::ReduceStrategy;
 use crate::components::instructions::ReduceOperationConfig;
-use crate::eval::benchmarks::problem::ReduceProblem;
+use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 
 pub fn bench(
     strategy: &ReduceStrategy,
@@ -27,6 +27,7 @@ pub fn bench(
         shape: problem.shape.clone(),
         axis: problem.axis,
         config: problem.config,
+        kind: problem.kind,
         strategy: strategy.clone(),
         device,
         client,
@@ -34,8 +35,12 @@ pub fn bench(
         _e: PhantomData,
     };
 
+    // Device timing (hardware timestamps) rather than system timing: the reduce
+    // problems are ~270 MB, and wall-clock timing of launch+sync picked up enough
+    // host-side noise that identical kernels varied by over 10x between runs,
+    // which made fused-vs-two-launch comparisons meaningless.
     let durations = bench
-        .run(TimingMethod::System)
+        .run(TimingMethod::Device)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -46,6 +51,7 @@ struct ReduceBench<E> {
     shape: Vec<usize>,
     axis: usize,
     config: ReduceOperationConfig,
+    kind: ReduceBenchKind,
     strategy: ReduceStrategy,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
@@ -54,7 +60,14 @@ struct ReduceBench<E> {
 }
 
 impl<E: Float> Benchmark for ReduceBench<E> {
-    type Input = (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>);
+    /// `(input, values, indices)`. The index tensor is allocated for every kind so
+    /// that allocation never lands inside the timed section, but only the
+    /// two-launch and fused kinds write to it.
+    type Input = (
+        TensorHandle<TestRuntime>,
+        TensorHandle<TestRuntime>,
+        TensorHandle<TestRuntime>,
+    );
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -73,28 +86,107 @@ impl<E: Float> Benchmark for ReduceBench<E> {
             _ => 1,
         };
         shape_out[self.axis] = reduce_len;
-        let out = TensorHandle::empty(&client, shape_out, elem);
+        let out = TensorHandle::empty(&client, shape_out.clone(), elem);
+        let indices = TensorHandle::empty(&client, shape_out, u32::as_type_native_unchecked());
 
-        (input, out)
+        (input, out, indices)
     }
 
-    fn execute(&self, (input, out): Self::Input) -> Result<(), String> {
-        crate::reduce::<TestRuntime>(
-            &self.client,
-            input.binding(),
-            out.binding(),
-            self.axis,
-            self.strategy.clone(),
-            self.config,
-            crate::ReduceDtypes {
-                input: E::as_type_native_unchecked().storage_type(),
-                output: E::as_type_native_unchecked().storage_type(),
-                accumulation: f32::as_type_native_unchecked().storage_type(),
-            },
-        )
-        .map_err(|err| format!("{err}"))?;
+    fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
+        let value_dtype = E::as_type_native_unchecked().storage_type();
+        let index_dtype = u32::as_type_native_unchecked().storage_type();
+        let acc_dtype = f32::as_type_native_unchecked().storage_type();
+
+        let k = match self.config {
+            ReduceOperationConfig::ArgTopK(k) | ReduceOperationConfig::TopK(k) => k,
+            _ => 1,
+        };
+
+        match self.kind {
+            ReduceBenchKind::Single => {
+                let output_dtype = match self.config {
+                    ReduceOperationConfig::ArgMax
+                    | ReduceOperationConfig::ArgMin
+                    | ReduceOperationConfig::ArgTopK(_) => index_dtype,
+                    _ => value_dtype,
+                };
+                crate::reduce::<TestRuntime>(
+                    &self.client,
+                    input.binding(),
+                    out.binding(),
+                    self.axis,
+                    self.strategy.clone(),
+                    self.config,
+                    crate::ReduceDtypes {
+                        input: value_dtype,
+                        output: output_dtype,
+                        accumulation: acc_dtype,
+                    },
+                )
+                .map_err(|err| format!("{err}"))?;
+            }
+            // What a caller needing both halves does today: run the whole
+            // reduction twice, discarding half of each result.
+            ReduceBenchKind::TwoLaunch => {
+                crate::reduce::<TestRuntime>(
+                    &self.client,
+                    input.clone().binding(),
+                    out.binding(),
+                    self.axis,
+                    self.strategy.clone(),
+                    ReduceOperationConfig::TopK(k),
+                    crate::ReduceDtypes {
+                        input: value_dtype,
+                        output: value_dtype,
+                        accumulation: acc_dtype,
+                    },
+                )
+                .map_err(|err| format!("{err}"))?;
+                crate::reduce::<TestRuntime>(
+                    &self.client,
+                    input.binding(),
+                    indices.binding(),
+                    self.axis,
+                    self.strategy.clone(),
+                    ReduceOperationConfig::ArgTopK(k),
+                    crate::ReduceDtypes {
+                        input: value_dtype,
+                        output: index_dtype,
+                        accumulation: acc_dtype,
+                    },
+                )
+                .map_err(|err| format!("{err}"))?;
+            }
+            ReduceBenchKind::Fused => {
+                crate::reduce_with_indices::<TestRuntime>(
+                    &self.client,
+                    input.binding(),
+                    out.binding(),
+                    indices.binding(),
+                    self.axis,
+                    self.strategy.clone(),
+                    ReduceOperationConfig::TopK(k),
+                    crate::ReduceWithIndicesDtypes {
+                        input: value_dtype,
+                        values: value_dtype,
+                        indices: index_dtype,
+                        accumulation: acc_dtype,
+                    },
+                )
+                .map_err(|err| format!("{err}"))?;
+            }
+        }
 
         Ok(())
+    }
+
+    /// Measure with device timestamps around the launch, so the reported duration
+    /// is the kernel's, not the host's view of launch+sync.
+    fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
+        self.client
+            .profile(|| self.execute(args), "reduce-bench")
+            .map(|it| it.1)
+            .map_err(|err| format!("{err:?}"))
     }
 
     fn num_samples(&self) -> usize {
@@ -103,12 +195,13 @@ impl<E: Float> Benchmark for ReduceBench<E> {
 
     fn name(&self) -> String {
         format!(
-            "reduce-axis({})-{}-{:?}-{:?}-{:?}",
+            "reduce-axis({})-{}-{:?}-{:?}-{:?}-{:?}",
             self.axis,
             E::as_type_native_unchecked(),
             self.shape,
             self.strategy,
             self.config,
+            self.kind,
         )
         .to_lowercase()
     }

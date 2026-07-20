@@ -1,6 +1,6 @@
-//! The launchable arguments an operand rides — [`StridedTileArg`] (strided) and [`TmaTileArg`]
-//! (tensor map) — plus their constructors and the [`Storage`]/quantization plan config
-//! they carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
+//! The launchable arguments an operand rides: [`StridedTileArg`] (strided) and [`TmaTileArg`]
+//! (tensor map), plus their constructors and the [`Storage`]/quantization plan config they
+//! carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
 
 use cubecl::prelude::*;
 use cubecl::quant::scheme::{QuantParam, QuantScheme, QuantStore};
@@ -229,6 +229,15 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
     /// cannot serve.
     pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
         validate_scheme(&self.space, self.vector_size, scheme);
+        // `vector_size` names the *served* width throughout; the binding is typed at the
+        // *storage* width, so re-bind the tensor as what it physically is: packed storage
+        // (a plain binding again for native's factor of 1). This is the only seam that knows
+        // the scheme, so the re-binding lives here, not on every caller.
+        self.tensor = VecTensorArg::packed(
+            self.tensor.into_tensor(),
+            self.vector_size,
+            scheme.num_quants(),
+        );
         self.quant = ComptimeOptionArgs::Some(QuantArgLaunch::new(scales, scheme));
         self
     }
@@ -236,7 +245,7 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
 
 /// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread. Every
 /// rule here is also an in-kernel assumption, but a kernel-side assert fires on a device thread,
-/// where it reads as zeroed output rather than as a rejection — so this is the one gate.
+/// where it reads as zeroed output rather than as a rejection, so this is the one gate.
 ///
 /// A tile reads a scale as its window's own start plus the block index *within* the window
 /// ([`ScaleLayout`]), which is the true block only if no window straddles a block edge. Every
@@ -244,14 +253,33 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
 /// edge must tile whole blocks or fit inside one. A line is one read, so it may not straddle
 /// either. Per-tensor's block edges are `1` and divide everything.
 fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
+    // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
+    // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
+    // vectorized) axis, the one whose lanes the view lays down contiguously. Sub-byte
+    // native stores aren't wired.
+    match scheme.store {
+        QuantStore::Native => {}
+        QuantStore::PackedU32(dim) => {
+            assert!(
+                dim == 0,
+                "StridedTileArgLaunch::quantized: a packed-u32 operand must pack along the \
+                 innermost axis (dim 0), got {dim}"
+            );
+            assert!(
+                vector_size.is_multiple_of(scheme.num_quants()),
+                "StridedTileArgLaunch::quantized: the innermost axis is served in \
+                 {vector_size}-wide lines, which must be a multiple of the {}-value packing \
+                 factor, else a line splits a u32",
+                scheme.num_quants()
+            );
+        }
+        other => panic!(
+            "StridedTileArgLaunch::quantized: quantization storage {other:?} is not supported \
+             (native or packed-u32)"
+        ),
+    }
     // The scales ride a `f32` buffer ([`QuantArg`]) read straight through, so a narrower param
-    // would reinterpret its bytes; unpacking a sub-byte store isn't wired at all.
-    assert!(
-        scheme.store == QuantStore::Native,
-        "StridedTileArgLaunch::quantized: only native (unpacked) quantization storage is \
-         supported, got {:?}",
-        scheme.store
-    );
+    // would reinterpret its bytes.
     assert!(
         scheme.param == QuantParam::F32,
         "StridedTileArgLaunch::quantized: scales are read as f32, got {:?}",

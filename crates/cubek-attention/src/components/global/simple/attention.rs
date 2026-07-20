@@ -137,11 +137,13 @@ impl<
 
     fn init_query_reader(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> QueryReader<'static, AP> {
-        let layout = AttentionGlobalLayout::new(&query, batch_index, config.query_gmem_config);
+        let layout =
+            AttentionGlobalLayout::new(&query, batch_index, num_heads, config.query_gmem_config);
 
         QueryReader::<AP>::new(
             stage_q_offset,
@@ -152,23 +154,33 @@ impl<
 
     fn init_key_reader(
         batch_index: u32,
+        num_heads: u32,
         key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
-        let layout =
-            AttentionGlobalLayout::new(&key, batch_index, config.key_reader_config.gmem_config);
+        let layout = AttentionGlobalLayout::new(
+            &key,
+            batch_index,
+            num_heads,
+            config.key_reader_config.gmem_config,
+        );
         FullStageGlobalReader::new(key.into_view(layout), (), step, config.key_reader_config)
     }
 
     fn init_value_reader(
         batch_index: u32,
+        num_heads: u32,
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader {
         let step = config.stage_config.elements_in_partition_seq_kv().runtime();
-        let layout =
-            AttentionGlobalLayout::new(&value, batch_index, config.value_reader_config.gmem_config);
+        let layout = AttentionGlobalLayout::new(
+            &value,
+            batch_index,
+            num_heads,
+            config.value_reader_config.gmem_config,
+        );
         FullStageGlobalReader::new(
             value.into_view(layout),
             (),
@@ -179,6 +191,7 @@ impl<
 
     fn init_mask_reader(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         seq_kv_shape: u32,
@@ -191,8 +204,12 @@ impl<
         #[comptime]
         match mask {
             ComptimeOption::Some(mask) => {
-                let layout =
-                    AttentionGlobalLayout::new(&mask, batch_index, config.mask_gmem_config);
+                let layout = AttentionGlobalLayout::new(
+                    &mask,
+                    batch_index,
+                    num_heads,
+                    config.mask_gmem_config,
+                );
 
                 MaskReader::new_materialized(
                     stage_q_offset,
@@ -211,12 +228,17 @@ impl<
 
     fn init_writer(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,
     ) -> Self::Writer<'static> {
-        let layout =
-            AttentionGlobalLayout::new(&out, batch_index, config.writer_config.gmem_config);
+        let layout = AttentionGlobalLayout::new(
+            &out,
+            batch_index,
+            num_heads,
+            config.writer_config.gmem_config,
+        );
         let out = out.into_view_mut(layout);
         let shape = out.shape();
 

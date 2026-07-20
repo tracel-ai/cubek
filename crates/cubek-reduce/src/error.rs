@@ -36,6 +36,28 @@ pub enum ReduceError {
         expected_shape: Vec<usize>,
         output_shape: Vec<usize>,
     },
+    /// Indicate that the indices output shape does not match the values output shape.
+    #[error(
+        "The indices shape (currently {indices_shape:?}) should match the values shape ({values_shape:?})."
+    )]
+    MismatchIndicesShape {
+        values_shape: Vec<usize>,
+        indices_shape: Vec<usize>,
+    },
+    /// Indicate that the indices output strides do not match the values output strides.
+    #[error(
+        "The indices strides (currently {indices_strides:?}) should match the values strides ({values_strides:?})."
+    )]
+    MismatchIndicesStrides {
+        values_strides: Vec<usize>,
+        indices_strides: Vec<usize>,
+    },
+    /// Indicate the operation cannot report indices alongside its values.
+    #[error(
+        "The operation {operation} has no index to report; reduce_with_indices only supports TopK and ArgTopK."
+    )]
+    IndicesUnsupported { operation: &'static str },
+
     /// Indicate that we can't launch a shared sum because the atomic addition is not supported.
     #[error("Atomic add not supported by the client for {0}")]
     MissingAtomicAdd(StorageType),

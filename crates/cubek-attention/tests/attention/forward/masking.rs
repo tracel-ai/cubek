@@ -352,6 +352,136 @@ fn fully_masked_rows(strategy: Strategy) {
     }
 }
 
+/// A [1, 1, seq_q, seq_kv] mask broadcast over batch=2, heads=2: the kernel
+/// gets the broadcast handle, the reference gets the tiled full mask.
+fn broadcast_mask(strategy: Strategy) {
+    let (batch, num_heads) = (2usize, 2usize);
+    let (seq_q, seq_kv, head_dim, val_dim) = (32usize, 32usize, 16usize, 16usize);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let problem = AttentionProblem {
+        dims: AttentionDims {
+            batch,
+            num_heads,
+            seq_q,
+            seq_kv,
+            head_dim,
+            val_dim,
+        },
+        masked: true,
+        global_dtypes: f16_dtypes(&client),
+        options: AttentionOptions {
+            causal: false,
+            accumulator_precision: AccumulatorPrecision::default(),
+        },
+        address_type: AddressType::default(),
+    };
+
+    let mut pattern = vec![0.0f32; seq_q * seq_kv];
+    for i in 0..seq_q {
+        for j in 0..seq_kv {
+            pattern[i * seq_kv + j] = (((i + j) % 3 == 0) as u32) as f32;
+        }
+    }
+
+    let (query_handle, query_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Query)),
+    )
+    .dtype(problem.global_dtypes.query)
+    .uniform(12, -1., 1.)
+    .generate_with_f32_host_data();
+
+    let (key_handle, key_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Key)),
+    )
+    .dtype(problem.global_dtypes.key)
+    .uniform(34, -1., 1.)
+    .generate_with_f32_host_data();
+
+    let (value_handle, value_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Value)),
+    )
+    .dtype(problem.global_dtypes.value)
+    .uniform(56, -1., 1.)
+    .generate_with_f32_host_data();
+
+    // Kernel sees the broadcast [1, 1, seq_q, seq_kv] mask.
+    let (mask_handle, _) = TestInput::builder(client.clone(), Shape::new([1, 1, seq_q, seq_kv]))
+        .dtype(problem.global_dtypes.mask)
+        .custom(pattern.clone())
+        .generate_with_bool_host_data();
+
+    // Reference sees the same pattern tiled to the full [B, H, seq_q, seq_kv].
+    let mut tiled = Vec::with_capacity(batch * num_heads * seq_q * seq_kv);
+    for _ in 0..batch * num_heads {
+        tiled.extend_from_slice(&pattern);
+    }
+    let (_, mask_data) = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Mask)),
+    )
+    .dtype(problem.global_dtypes.mask)
+    .custom(tiled)
+    .generate_with_bool_host_data();
+
+    let out_handle = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Out)),
+    )
+    .dtype(problem.global_dtypes.out)
+    .zeros()
+    .generate_without_host_data();
+
+    let problem_for_launch = problem.clone();
+    let out_binding = out_handle.clone().binding();
+    let outcome = launch_and_capture_outcome(&client, |c| {
+        launch_ref(
+            strategy.clone(),
+            c,
+            query_handle.clone().binding(),
+            key_handle.clone().binding(),
+            value_handle.clone().binding(),
+            Some(mask_handle.clone().binding()),
+            out_binding.clone(),
+            &problem_for_launch.global_dtypes,
+            problem_for_launch.options,
+        )
+        .into()
+    });
+
+    match outcome {
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e).enforce(),
+        ExecutionOutcome::Executed => assert_result(
+            &query_data,
+            &key_data,
+            &value_data,
+            Some(&mask_data),
+            &problem,
+            &client,
+            out_handle,
+            AttentionElems::from_global_types(
+                &problem.global_dtypes,
+                half::f16::as_type_native_unchecked().storage_type(),
+                &problem.options.accumulator_precision,
+            ),
+        )
+        .as_test_outcome()
+        .enforce(),
+    }
+}
+
+#[test]
+fn broadcast_mask_unit() {
+    broadcast_mask(unit_inferred())
+}
+
+#[test]
+fn broadcast_mask_blackbox() {
+    broadcast_mask(blackbox_accelerated_inferred())
+}
+
 #[test]
 fn fully_masked_rows_unit() {
     fully_masked_rows(unit_inferred())

@@ -1,7 +1,9 @@
-pub mod test_case;
+mod test_case;
 
 mod argtopk_shared_memory;
 mod logical;
+mod topk_with_indices_cube;
+mod with_indices_validation;
 
 macro_rules! testgen_reduce {
     (
@@ -101,6 +103,7 @@ macro_rules! testgen_reduce {
     ) => {
         use cubek_reduce::{ReduceStrategy, routines::BlueprintStrategy, launch::RoutineStrategy};
         use cubek_reduce::routines::PlaneMergeStrategy;
+        use cubecl::config::autotune::AutotuneLevel;
 
         /// Cube-routine tests are expensive on CPU and can stall CI, so they
         /// are excluded from light test suite
@@ -114,7 +117,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Inferred(CubeStrategy{ use_planes: false })
@@ -133,7 +136,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Inferred(CubeStrategy{ use_planes: true })
@@ -158,7 +161,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Cube(
                         BlueprintStrategy::Forced(
@@ -190,7 +193,7 @@ macro_rules! testgen_reduce {
                     shape: $shape,
                     strides: $strides,
                     axis: $axis,
-                    strategy: ReduceStrategy {
+                    strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                         vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
@@ -215,7 +218,7 @@ macro_rules! testgen_reduce {
                     shape: $shape,
                     strides: $strides,
                     axis: $axis,
-                    strategy: ReduceStrategy {
+                    strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                         vectorization: $vectorization_strategy,
                         routine: RoutineStrategy::Plane(
                             BlueprintStrategy::Forced(
@@ -242,7 +245,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Plane(
                         BlueprintStrategy::Inferred(PlaneStrategy{ independent: false })
@@ -260,7 +263,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Plane(
                         BlueprintStrategy::Inferred(PlaneStrategy{ independent: true })
@@ -278,7 +281,7 @@ macro_rules! testgen_reduce {
                 shape: $shape,
                 strides: $strides,
                 axis: $axis,
-                strategy: ReduceStrategy {
+                strategy: ReduceStrategy { autotune_level: AutotuneLevel::Full,
                     vectorization: $vectorization_strategy,
                     routine: RoutineStrategy::Unit(
                         BlueprintStrategy::Inferred(UnitStrategy)

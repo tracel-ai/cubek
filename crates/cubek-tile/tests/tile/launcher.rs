@@ -284,12 +284,24 @@ fn quantized_non_f32_param_panics() {
     );
 }
 
-/// Unpacking a packed store isn't wired: the values are read as the native storage element.
+/// A packed store's values are laid down along the innermost axis, so that is the only axis it may
+/// pack on: the view unpacks a line's lanes into consecutive served values.
 #[test]
-#[should_panic(expected = "only native")]
-fn quantized_packed_store_panics() {
+#[should_panic(expected = "must pack along the innermost axis")]
+fn quantized_packed_store_outer_axis_panics() {
     quantize(
         1,
         quant_scheme(QuantLevel::Tensor).with_store(QuantStore::PackedU32(2)),
+    );
+}
+
+/// A served line must cover whole `u32`s: `Q8S` packs 4 values each, so a 1-wide line would ask
+/// for a quarter of one.
+#[test]
+#[should_panic(expected = "packing factor")]
+fn quantized_packed_store_narrow_line_panics() {
+    quantize(
+        1,
+        quant_scheme(QuantLevel::Tensor).with_store(QuantStore::PackedU32(0)),
     );
 }

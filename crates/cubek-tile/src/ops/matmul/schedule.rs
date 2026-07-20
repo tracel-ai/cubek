@@ -40,33 +40,22 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it
-    /// into the recursion. An operand the walk leaves unchanged (its space lacks every
-    /// walked axis — the same structural fact as broadcast omission) fills its slot once,
-    /// above the loop: re-filling it per region would move the same window again. E.g. an
-    /// N-walk refills one B fragment per step while the whole A partition stays put — the
-    /// legacy single-buffered register budget. `consume_final` every region, since no
+    /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it into
+    /// the recursion. An operand the walk leaves unchanged (its space lacks every walked axis,
+    /// the same structural fact as broadcast omission) fills once, above the loop; re-filling
+    /// per region would just move the same window again. `consume_final` every region, since no
     /// later fill publishes within an iteration.
     ///
-    /// The walk unrolls when the level *cuts* a fragment-partition output (each region
-    /// selects its block, which takes comptime coordinates) and on a static
-    /// register-staged level (comptime regions land window offsets as immediates — the
-    /// fill-side win at the thin selector point). An smem-staged level stays rolled:
-    /// unrolling would re-stage the recursion's shared memory per copy.
+    /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects
+    /// its block by comptime coordinate) or on a static register-staged level (comptime regions
+    /// land window offsets as immediates). An smem-staged level stays rolled: unrolling would
+    /// re-stage its shared memory per copy.
     pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         op_space: Space,
     ) {
-        let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
-        let register = comptime!(
-            self.space.partitioner().leaf().is_cmma()
-                && partition_level(&self.space.divide()).is_some()
-                && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
-        );
-        let unroll = comptime!(cuts || register);
-
         // `Staging` decides which operand (if any) is pinned: walk-invariant, so its window
         // never moves and it fills once, above the loop. The rest stream, refilled per region.
         let mut staging = Staging::new(
@@ -75,6 +64,16 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
+        let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
+        // A plane stage selects its tiles by comptime coordinate, so it stands up only under an
+        // unrolled walk, and only when the operand merge is itself static-walkable.
+        let stage = staging.stage();
+        let plane_stage = comptime!(
+            stage == OperandStage::Plane
+                && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
+        );
+        let unroll = comptime!(cuts || plane_stage);
+
         let walk = Walk::over(op_space);
         staging.fill_pinned(lhs, rhs, &walk.region(0));
         let walk = if comptime!(unroll) {

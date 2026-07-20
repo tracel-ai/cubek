@@ -113,33 +113,16 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
     let (q_min, q_max) = scheme.value.range();
     let max_abs_q = q_max.abs().max(q_min.abs());
 
-    match &scheme.level {
-        QuantLevel::Tensor => {
-            let shape: Shape = core::iter::repeat_n(1, host.shape.len()).collect();
-            let block_dims: Vec<usize> = host.shape.iter().copied().collect();
-            (shape, vec![1.0 / max_abs_q], block_dims)
-        }
-        QuantLevel::Block(block_size) => {
-            let rank = host.shape.len();
-            let block_dims: Vec<usize> = block_size
-                .to_dim_vec(rank)
-                .into_iter()
-                .map(|b| b as usize)
-                .collect();
+    let shape: Vec<usize> = host.shape.iter().copied().collect();
+    let block_dims = crate::stubs::quant::block_dims(scheme, &shape);
+    let scales_shape: Shape = crate::stubs::quant::scales_shape(&shape, &block_dims)
+        .into_iter()
+        .collect();
 
-            let scales_shape: Shape = host
-                .shape
-                .iter()
-                .zip(block_dims.iter())
-                .map(|(d, b)| {
-                    assert!(
-                        d.is_multiple_of(*b),
-                        "Block size {b} must divide dimension {d}",
-                    );
-                    d / b
-                })
-                .collect();
-
+    let scales = match &scheme.level {
+        QuantLevel::Tensor => vec![1.0 / max_abs_q],
+        QuantLevel::Block(_) => {
+            let rank = shape.len();
             let num_blocks: usize = scales_shape.iter().product();
             let block_elem_count: usize = block_dims.iter().product();
 
@@ -174,8 +157,9 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
                 };
                 scales.push(scale);
             }
-
-            (scales_shape, scales, block_dims)
+            scales
         }
-    }
+    };
+
+    (scales_shape, scales, block_dims)
 }

@@ -1,5 +1,5 @@
 //! The [`Staging`] slot: a matmul-agnostic payload `T` plus the [`Pipeline`] sequencing its fill
-//! against its read. Generic slot mechanics only — the producer/consumer acquire/release and the
+//! against its read. Generic slot mechanics only: the producer/consumer acquire/release and the
 //! final publish; the operand-specific construction and fill live in [`fill`](crate::fill).
 
 use cubecl::prelude::*;
@@ -7,7 +7,7 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// One slot of the staged `mma` pipeline: its payload `T` and the [`Pipeline`] sequencing fill vs
-/// read. Generic over `T`, so the slot is matmul-agnostic — it just hands out a synchronized `&mut T`
+/// read. Generic over `T`, so the slot is matmul-agnostic; it just hands out a synchronized `&mut T`
 /// to fill (`write`) and a synchronized `&T` to consume (`read`).
 #[derive(CubeType)]
 pub struct Staging<T: CubeType> {
@@ -20,6 +20,10 @@ pub struct Staging<T: CubeType> {
     pub(crate) pin_lhs: bool,
     #[cube(comptime)]
     pub(crate) pin_rhs: bool,
+    /// How the slot's operands are backed, computed once by [`new`](Staging::new) from the output
+    /// plan. The schedule reads it to decide the walk's unroll rather than re-deriving it.
+    #[cube(comptime)]
+    pub(crate) stage: OperandStage,
 }
 
 #[cube]
@@ -32,13 +36,20 @@ impl<T: CubeType> Staging<T> {
         pipeline: Pipeline,
         #[comptime] pin_lhs: bool,
         #[comptime] pin_rhs: bool,
+        #[comptime] stage: OperandStage,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
             pin_lhs,
             pin_rhs,
+            stage,
         }
+    }
+
+    /// How this slot's operands are backed, decided when the slot was built.
+    pub(crate) fn stage(&self) -> comptime_type!(OperandStage) {
+        comptime!(self.stage)
     }
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`
