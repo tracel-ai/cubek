@@ -165,7 +165,12 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
             }),
-            space: comptime!(space),
+            // The fragments above were sized from the partitioner alone (`partition_shape`
+            // and `final_space` read edges, never extents), so the tile carries the space it
+            // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
+            // register-resident tile has no buffer bound to resolve a `Dynamic` axis from —
+            // inheriting it verbatim would make `runtime_space` unanswerable.
+            space: comptime!(space.sub_tile_space()),
         }
     }
 

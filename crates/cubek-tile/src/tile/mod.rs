@@ -335,7 +335,16 @@ impl<T: Numeric> Tile<T> {
         if comptime!(!space.is_static()) {
             #[unroll]
             for p in 0..comptime!(space.rank()) {
-                sizes.push(self.runtime_extent(space.axis_at(p)));
+                let axis = comptime!(space.axis_at(p));
+                // `sizes` is positional, so every axis pushes — but only a `Dynamic` one is
+                // ever read back ([`Extents::count`] folds a `Static` axis to its comptime
+                // extent). Fold it here too rather than asking the tile: a plane tile has no
+                // buffer bound to answer with, and one `Dynamic` axis elsewhere in the space
+                // must not make its `Static` axes unreadable.
+                sizes.push(match comptime!(space.extent_raw(axis)) {
+                    Extent::Static(n) => comptime!(n).runtime(),
+                    Extent::Dynamic => self.runtime_extent(axis),
+                });
             }
         }
         Space::with_sizes(space, sizes)
