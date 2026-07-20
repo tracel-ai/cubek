@@ -162,7 +162,35 @@ impl CmmaRoutine {
             }
         };
         // Pure plan validation first (backend-independent), the availability gate after.
+        // The gate covers forced plans too: they skip `select`'s hardware ladder, and an
+        // unsupported instruction must be `Unavailable`, not garbage.
         blueprint.validate(problem)?;
+        let plane_dim = device_settings.client.properties().hardware.plane_size_max;
+        if plane_dim <= 1 {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::PlaneDimUnsupported { plane_dim },
+            ));
+        }
+        let (i, d) = (blueprint.instruction, &problem.global_dtypes);
+        if !device_settings
+            .client
+            .properties()
+            .features
+            .matmul
+            .cmma
+            .contains(&MmaConfig {
+                a_type: d.lhs,
+                b_type: d.rhs,
+                cd_type: acc,
+                m: i.m as u32,
+                n: i.n as u32,
+                k: i.k as u32,
+            })
+        {
+            return Err(MatmulSetupError::Unavailable(
+                MatmulAvailabilityError::TileSizeNotFound,
+            ));
+        }
         if blueprint.delivery.is_tma()
             && !device_settings
                 .client

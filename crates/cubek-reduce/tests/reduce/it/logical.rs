@@ -6,6 +6,7 @@
 //! cases pin the exact 0/1 outputs for a known mask, so both ops are guaranteed
 //! to produce *both* a `0` and a `1` output.
 
+use cubecl::config::autotune::AutotuneLevel;
 use cubecl::{
     TestRuntime,
     ir::{ElemType, FloatKind, UIntKind},
@@ -62,6 +63,7 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
         .zeros()
         .generate_without_host_data();
     let strategy = ReduceStrategy {
+        autotune_level: AutotuneLevel::Full,
         routine: RoutineStrategy::Unit(BlueprintStrategy::Inferred(UnitStrategy)),
         vectorization: VectorizationStrategy {
             parallel_output_vectorization: false,

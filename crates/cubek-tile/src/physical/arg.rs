@@ -1,6 +1,6 @@
-//! The launchable arguments an operand rides — [`StridedTileArg`] (strided) and [`TmaTileArg`]
-//! (tensor map) — plus their constructors and the [`Storage`]/quantization plan config
-//! they carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
+//! The launchable arguments an operand rides: [`StridedTileArg`] (strided) and [`TmaTileArg`]
+//! (tensor map), plus their constructors and the [`Storage`]/quantization plan config they
+//! carry. `tile()` turns each into an in-kernel [`Tile`](crate::Tile).
 
 use cubecl::prelude::*;
 use cubecl::quant::scheme::{QuantParam, QuantScheme, QuantStore};
@@ -230,9 +230,9 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
     pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
         validate_scheme(&self.space, self.vector_size, scheme);
         // `vector_size` names the *served* width throughout; the binding is typed at the
-        // *storage* width, so re-bind the tensor as what it physically is — packed storage
+        // *storage* width, so re-bind the tensor as what it physically is: packed storage
         // (a plain binding again for native's factor of 1). This is the only seam that knows
-        // the scheme, so the re-binding lives here rather than on every caller.
+        // the scheme, so the re-binding lives here, not on every caller.
         self.tensor = VecTensorArg::packed(
             self.tensor.into_tensor(),
             self.vector_size,
@@ -245,7 +245,7 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
 
 /// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread. Every
 /// rule here is also an in-kernel assumption, but a kernel-side assert fires on a device thread,
-/// where it reads as zeroed output rather than as a rejection — so this is the one gate.
+/// where it reads as zeroed output rather than as a rejection, so this is the one gate.
 ///
 /// A tile reads a scale as its window's own start plus the block index *within* the window
 /// ([`ScaleLayout`]), which is the true block only if no window straddles a block edge. Every
@@ -255,7 +255,7 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
 fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
-    // vectorized) axis — that is the one whose lanes the view lays down contiguously. Sub-byte
+    // vectorized) axis, the one whose lanes the view lays down contiguously. Sub-byte
     // native stores aren't wired.
     match scheme.store {
         QuantStore::Native => {}

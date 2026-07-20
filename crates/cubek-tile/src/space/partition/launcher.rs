@@ -18,11 +18,14 @@ pub struct Launcher<'c, R: Runtime> {
 impl Space {
     /// Bind this concrete (real-extent) space to `client` for launching. The kernel-form space
     /// goes fully dynamic so one compiled kernel serves every shape; a static-shape constructor
-    /// can later skip that derivation without changing this one.
+    /// can later skip that derivation without changing this one. Any `Unit` axis's deferred lane
+    /// count is stamped here from the hardware `plane_size` ([`Space::resolve_lanes`]).
     pub fn launcher<R: Runtime>(self, client: &ComputeClient<R>) -> Launcher<'_, R> {
-        let kernel = self.clone().all_dynamic();
+        let plane_size = client.properties().hardware.plane_size_max as usize;
+        let concrete = self.resolve_lanes(plane_size);
+        let kernel = concrete.clone().all_dynamic();
         Launcher {
-            concrete: self,
+            concrete,
             kernel,
             client,
         }
@@ -61,10 +64,10 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
-    /// The widest `Vector<E, v>` line every operand can be served in along `axis` — one width
+    /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width
     /// for all of them, since a kernel reading one operand's lines writes the other's. Each
     /// `(binding, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
-    /// subspace — a masked access reports its length in lines and would wrongly clip) and
+    /// subspace; a masked access reports its length in lines and would wrongly clip) and
     /// innermost-contiguous; the width must divide each inner buffer extent, every coarser
     /// stride, and the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
     pub fn vector_size(

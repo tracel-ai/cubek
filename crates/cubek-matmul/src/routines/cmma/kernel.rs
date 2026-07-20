@@ -22,6 +22,8 @@ pub fn cmma_kernel<E: Numeric, EA: Numeric, EL: Numeric, ER: Numeric, D: Deliver
     let b = D::tile::<ER>(b);
     let mut c = c.tile();
     let mut acc = c.promote::<EA>();
+    // The matmul contract is `out = A·B` and `mma` accumulates, so start at zero.
+    acc.zero();
     acc.mma(&a, &b);
     acc.drain_cast_into(&mut c);
 }

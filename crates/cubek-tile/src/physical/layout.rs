@@ -7,7 +7,7 @@ use cubecl::zspace::SmallVec;
 use crate::{Axis, MAX_AXES};
 
 /// One physical axis (dimension) of a stored buffer: the logical [`Axis`] it belongs to and
-/// its extent. Storage tiling is *not* an annotation here — a tiled logical axis contributes
+/// its extent. Storage tiling is *not* an annotation here; a tiled logical axis contributes
 /// several `PhysicalAxis` entries (one per nesting level, outer grid to inner leaf), so tiling
 /// is just higher physical rank with the label repeated, mirroring the `[grid…, tile…]` buffer
 /// the tile engine ([`Storage`](crate::Storage)) actually launches.
@@ -54,7 +54,7 @@ impl ConcreteLayout {
         &self.axes
     }
 
-    /// The distinct logical axes in first-occurrence order — the axes the operand spans, with each
+    /// The distinct logical axes in first-occurrence order, the axes the operand spans, with each
     /// storage-tiled axis (which contributes several physical fragments) collapsed to one entry.
     pub fn distinct_axes(&self) -> SmallVec<[Axis; MAX_AXES]> {
         let mut out = SmallVec::new();
@@ -78,7 +78,7 @@ impl ConcreteLayout {
         deepest - 1
     }
 
-    /// The leading passthrough (untiled) axes before the first storage-tiled one — the batch
+    /// The leading passthrough (untiled) axes before the first storage-tiled one; the batch
     /// prefix. `0` when untiled, so the whole buffer is one tiled block.
     pub fn passthrough(&self) -> usize {
         if self.levels() == 0 {

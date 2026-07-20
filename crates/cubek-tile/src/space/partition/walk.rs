@@ -100,7 +100,7 @@ impl Walk {
                 );
                 let inner_weight = instances.fproduct(picks);
                 positions.push(
-                    hardware_pos(comptime!(dist.unit()))
+                    hardware_pos(comptime!(dist.scope_unchecked()))
                         .fdiv(inner_weight)
                         .frem(instances.at(p)),
                 );
@@ -132,13 +132,19 @@ impl Walk {
     /// This walk, unrolled when iterated: each region's coordinates fold to comptime
     /// constants (static spaces only; the trip count must be constant).
     pub fn unrolled(self) -> Walk {
+        self.with_unroll(comptime!(true))
+    }
+
+    /// This walk, unrolled when `unroll`. Lets a caller pick the mode from a comptime flag
+    /// without branching on the [`Walk`] value (which `#[cube]` would read as a runtime select).
+    pub fn with_unroll(self, #[comptime] unroll: bool) -> Walk {
         Walk {
             counts: self.counts,
             positions: self.positions,
             scales: self.scales,
             steps: self.steps,
             space: comptime!(self.space.clone()),
-            unroll: comptime!(true),
+            unroll: comptime!(unroll),
         }
     }
 
@@ -265,11 +271,12 @@ fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
             };
             cube_pos as usize
         }
-        // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, the flat
-        // position the unit index. Lanes agree on UNIT_POS_Y, so they cooperate.
+        // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, X the
+        // plane-relative lane. Lanes agree on UNIT_POS_Y, so they cooperate.
         ComputeScope::Plane => UNIT_POS_Y as usize,
-        // Flat UNIT_POS would double-count the plane digit next to a Plane axis, and
-        // launch geometry allocates no units for a Unit axis — fail loud until both do.
-        ComputeScope::Unit => panic!("Unit spreading is an inner-level seam, not yet implemented"),
+        // The plane-relative lane, not flat UNIT_POS: flat would fold in UNIT_POS_Y and
+        // double-count a sibling Plane axis's digit. The plane's `plane_size` lanes ride
+        // the X dim already, so a Unit axis divides them (instances == plane_size).
+        ComputeScope::Unit => UNIT_POS_X as usize,
     }
 }

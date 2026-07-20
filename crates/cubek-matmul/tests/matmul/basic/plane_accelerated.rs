@@ -297,6 +297,44 @@ fn cmma_batched_f32() {
     test_matmul_strategy(client(), problem, Strategy::Cmma(Default::default()));
 }
 
+/// A plane owning exactly one fragment along both axes: the Staged level's cuts equal the
+/// leaf's, so the fragment grid is 1×1. Regression test for the degenerate partition being
+/// misread as an instance level, which staged the per-plane operand fragments into
+/// cube-shared smem (every plane contracted plane 0's windows).
+#[test]
+fn cmma_partition_1x1_f32() {
+    use cubek_matmul::routines::{
+        cmma::{CmmaBlueprint, Partition},
+        cpu_gemm::{Instruction, PlaneGrid},
+    };
+    use cubek_tile::Delivery;
+
+    let blueprint = CmmaBlueprint {
+        instruction: Instruction { m: 8, n: 8, k: 8 },
+        partition: Partition { m: 1, n: 1 },
+        planes: PlaneGrid { m: 2, n: 1 },
+        stage_k: 48,
+        delivery: Delivery::Strided,
+    };
+    test_matmul_strategy(
+        client(),
+        super::common::rect(128, 64, 96, super::common::f32_elems()),
+        Strategy::Cmma(BlueprintStrategy::Forced(blueprint)),
+    );
+}
+
+/// A shape whose inferred plan collapses to a 1×1 partition (8×8×8 on n = 40 gives a
+/// prime instruction grid along `n`), reaching the same degenerate case through the
+/// selector alone.
+#[test]
+fn cmma_inferred_partition_1x1() {
+    test_matmul_strategy(
+        client(),
+        super::common::rect(32, 40, 48, super::common::f32_elems()),
+        Strategy::Cmma(Default::default()),
+    );
+}
+
 /// The TMA delivery. On a backend without TMA (Metal, wgpu, CPU) the blueprint returns
 /// `Unavailable`, which the strict test policy surfaces; on CUDA it runs or fails to
 /// compile, never silently degrades.

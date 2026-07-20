@@ -9,6 +9,9 @@ pub struct ReduceVectorSettings {
     pub vectorization_mode: VectorizationMode,
     pub vector_size_input: VectorSize,
     pub vector_size_output: VectorSize,
+    /// See [`ReduceStrategy::autotune_level`](crate::ReduceStrategy): gates
+    /// the unchecked comptime fast paths in the blueprint derivations.
+    pub unchecked_fast_paths: bool,
 }
 
 #[derive(Debug)]

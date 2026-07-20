@@ -52,7 +52,7 @@ impl<T: Numeric> TmaData<T> {
         // more issuers would over-count and corrupt the stage.
         if UNIT_POS == 0 {
             self.view
-                .tensor_map_load(barrier, dst.buffer.downcast_mut(), self.pos.clone());
+                .tensor_map_load(barrier, dst.store.buffer.downcast_mut(), self.pos.clone());
         }
     }
 

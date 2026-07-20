@@ -1,7 +1,7 @@
 //! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
 //! one decomposition level plus the partitioner for the subspaces it produces.
 
-use crate::{Axis, ByAxis};
+use crate::{Axis, ByAxis, MmaIOConfig};
 
 use super::{Distribution, WalkOrder};
 
@@ -23,11 +23,23 @@ pub enum Leaf {
     Cmma {
         k: usize,
     },
+    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
+    /// leaf because it comes from a device query, which cannot run in-kernel.
+    Mma {
+        k: usize,
+        io: MmaIOConfig,
+    },
 }
 
 impl Leaf {
     pub fn is_cmma(&self) -> bool {
         matches!(self, Leaf::Cmma { .. })
+    }
+
+    /// Whether the leaf contracts a plane-level tile (either encoding), so operands and the
+    /// accumulator are plane-resident rather than memory.
+    pub fn is_plane(&self) -> bool {
+        matches!(self, Leaf::Cmma { .. } | Leaf::Mma { .. })
     }
 }
 
@@ -40,10 +52,22 @@ pub enum Partitioner {
     Level(Box<Level>),
 }
 
+/// What a level does with the tiles below it: spread them across hardware instances, or
+/// partition them sequentially across a grid. Decided once, when the level is built, so no
+/// consumer re-folds the per-axis distributions.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum LevelRole {
+    /// Spreads its tiles across hardware instances (`Spatial` on some axis).
+    Instance,
+    /// Partitions its tiles sequentially across a grid (every axis `Sequential`).
+    Partition,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
     edges: ByAxis<usize>,
     dists: ByAxis<Distribution>,
+    role: LevelRole,
     order: WalkOrder,
     schedule: Schedule,
     next: Partitioner,
@@ -52,6 +76,10 @@ pub struct Level {
 impl Level {
     pub fn schedule(&self) -> Schedule {
         self.schedule
+    }
+
+    pub(crate) fn role(&self) -> LevelRole {
+        self.role
     }
 }
 
@@ -92,12 +120,53 @@ impl Partitioner {
         self.level().dists.get(axis)
     }
 
+    /// This level's [`LevelRole`]. Panics on [`Final`](Partitioner::Final), which carries no level.
+    pub(crate) fn role(&self) -> LevelRole {
+        self.level().role
+    }
+
+    /// The axes this level distributes, which outlive the space they came from: a level keeps
+    /// every axis of the operation, so an output space (`{M, N}`) still names its contraction.
+    /// Panics on [`Final`](Partitioner::Final), which carries no level.
+    pub(crate) fn axes(&self) -> Vec<Axis> {
+        let dists = &self.level().dists;
+        (0..dists.len()).map(|i| dists.axis_at(i)).collect()
+    }
+
     pub fn order(&self) -> WalkOrder {
         self.level().order
     }
 
     pub fn schedule(&self) -> Schedule {
         self.level().schedule
+    }
+
+    /// Resolve every level's deferred [`PlaneLanes`](super::Coverage::PlaneLanes) count to
+    /// `Instances(plane_size)`. The launch's single stamping pass, so geometry and the walk
+    /// only ever see concrete instance counts.
+    pub(crate) fn resolve_lanes(self, plane_size: usize) -> Partitioner {
+        match self {
+            Partitioner::Final(leaf) => Partitioner::Final(leaf),
+            Partitioner::Level(level) => {
+                let Level {
+                    edges,
+                    dists,
+                    role,
+                    order,
+                    schedule,
+                    next,
+                } = *level;
+                // Resolving lane counts keeps every axis `Spatial`, so the role is unchanged.
+                Partitioner::Level(Box::new(Level {
+                    edges,
+                    dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
+                    role,
+                    order,
+                    schedule,
+                    next: next.resolve_lanes(plane_size),
+                }))
+            }
+        }
     }
 
     pub(crate) fn append(self, tail: Partitioner) -> Partitioner {
@@ -107,6 +176,7 @@ impl Partitioner {
                 let Level {
                     edges: sub_tile,
                     dists,
+                    role,
                     order,
                     schedule,
                     next,
@@ -114,6 +184,7 @@ impl Partitioner {
                 Partitioner::Level(Box::new(Level {
                     edges: sub_tile,
                     dists,
+                    role,
                     order,
                     schedule,
                     next: next.append(tail),
@@ -159,9 +230,18 @@ impl PartitionerBuilder {
     /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
     fn finish(self, schedule: Schedule) -> Partitioner {
+        // Instance when any axis spreads across hardware, else a sequential partition.
+        let role = self
+            .dists
+            .values()
+            .fold(LevelRole::Partition, |role, dist| match dist {
+                Distribution::Spatial { .. } => LevelRole::Instance,
+                Distribution::Sequential => role,
+            });
         Partitioner::Level(Box::new(Level {
             edges: self.sub_tile,
             dists: self.dists,
+            role,
             order: self.order,
             schedule,
             next: Partitioner::Final(Leaf::Register),

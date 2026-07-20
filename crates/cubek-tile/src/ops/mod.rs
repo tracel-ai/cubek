@@ -7,4 +7,4 @@ mod matmul;
 mod softmax;
 
 pub use softmax::*;
-// matmul adds `Tile::mma` impls only — nothing to re-export.
+// matmul adds `Tile::mma` impls only; nothing to re-export.
