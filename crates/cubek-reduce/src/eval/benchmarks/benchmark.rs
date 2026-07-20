@@ -47,6 +47,26 @@ pub fn bench(
     Ok(RunSamples::new(durations))
 }
 
+/// The pair of single-output configs a caller runs today to get both halves of
+/// `config`.
+fn two_launch_configs(
+    config: ReduceOperationConfig,
+) -> (ReduceOperationConfig, ReduceOperationConfig) {
+    match config {
+        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => (
+            ReduceOperationConfig::TopK(k),
+            ReduceOperationConfig::ArgTopK(k),
+        ),
+        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => {
+            (ReduceOperationConfig::Max, ReduceOperationConfig::ArgMax)
+        }
+        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => {
+            (ReduceOperationConfig::Min, ReduceOperationConfig::ArgMin)
+        }
+        other => panic!("{other:?} has no values/indices pair to compare"),
+    }
+}
+
 struct ReduceBench<E> {
     shape: Vec<usize>,
     axis: usize,
@@ -97,11 +117,6 @@ impl<E: Float> Benchmark for ReduceBench<E> {
         let index_dtype = u32::as_type_native_unchecked().storage_type();
         let acc_dtype = f32::as_type_native_unchecked().storage_type();
 
-        let k = match self.config {
-            ReduceOperationConfig::ArgTopK(k) | ReduceOperationConfig::TopK(k) => k,
-            _ => 1,
-        };
-
         match self.kind {
             ReduceBenchKind::Single => {
                 let output_dtype = match self.config {
@@ -128,13 +143,14 @@ impl<E: Float> Benchmark for ReduceBench<E> {
             // What a caller needing both halves does today: run the whole
             // reduction twice, discarding half of each result.
             ReduceBenchKind::TwoLaunch => {
+                let (values_config, indices_config) = two_launch_configs(self.config);
                 crate::reduce::<TestRuntime>(
                     &self.client,
                     input.clone().binding(),
                     out.binding(),
                     self.axis,
                     self.strategy.clone(),
-                    ReduceOperationConfig::TopK(k),
+                    values_config,
                     crate::ReduceDtypes {
                         input: value_dtype,
                         output: value_dtype,
@@ -148,7 +164,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                     indices.binding(),
                     self.axis,
                     self.strategy.clone(),
-                    ReduceOperationConfig::ArgTopK(k),
+                    indices_config,
                     crate::ReduceDtypes {
                         input: value_dtype,
                         output: index_dtype,
@@ -165,7 +181,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                     indices.binding(),
                     self.axis,
                     self.strategy.clone(),
-                    ReduceOperationConfig::TopK(k),
+                    self.config,
                     crate::ReduceWithIndicesDtypes {
                         input: value_dtype,
                         values: value_dtype,

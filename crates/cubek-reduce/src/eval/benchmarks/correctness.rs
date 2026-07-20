@@ -2,7 +2,6 @@ use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::ReduceStrategy;
-use crate::components::instructions::ReduceOperationConfig;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 use crate::eval::cpu_reference::{
     cpu_reference_result, strategy_result, strategy_result_with_indices,
@@ -34,20 +33,14 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
                 problem.config,
                 seeds[0],
             ),
-            ReduceBenchKind::Fused => {
-                let k = match problem.config {
-                    ReduceOperationConfig::ArgTopK(k) | ReduceOperationConfig::TopK(k) => k,
-                    _ => return Err("fused bench requires a top-k config".to_string()),
-                };
-                strategy_result_with_indices(
-                    client,
-                    problem.shape.clone(),
-                    problem.axis,
-                    strategy.clone(),
-                    k,
-                    seeds[0],
-                )
-            }
+            ReduceBenchKind::Fused => strategy_result_with_indices(
+                client,
+                problem.shape.clone(),
+                problem.axis,
+                strategy.clone(),
+                problem.config,
+                seeds[0],
+            ),
         }
     }
 
