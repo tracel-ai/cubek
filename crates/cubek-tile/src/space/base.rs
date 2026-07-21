@@ -516,6 +516,34 @@ impl Space {
         }
     }
 
+    /// The space of one *sub-tile* this level hands out, rather than of the whole region it
+    /// covers: every extent becomes the partitioner's comptime sub-tile edge, and the level
+    /// itself is kept. Sits between [`divide`](Space::divide), which takes those same edges
+    /// but also consumes the level to answer "the child one level down", and the untouched
+    /// space, which describes the region.
+    ///
+    /// This is the shape a register-resident form actually has. A
+    /// [`mirror`](crate::PlanePartition::mirror)ed accumulator sizes its fragments from the
+    /// partitioner alone and never reads the extents, so it must not inherit their dynamism:
+    /// the kernel-form space is [`all_dynamic`](Space::all_dynamic), and a plane tile has no
+    /// buffer bound to resolve a `Dynamic` axis back from.
+    ///
+    /// A [`Final`](Partitioner::Final) space has no level left to read edges from, and is
+    /// already the tile, so it is returned unchanged.
+    pub fn sub_tile_space(&self) -> Space {
+        if self.is_final() {
+            return self.clone();
+        }
+        let entries = self
+            .axes()
+            .map(|axis| (axis, Extent::Static(self.partitioner.edge(axis))))
+            .collect::<Vec<_>>();
+        Space {
+            extents: Extents::fixed(ByAxis::new(&entries)),
+            partitioner: self.partitioner.clone(),
+        }
+    }
+
     /// Divide until no partitioner level is left. Its extents are the finest tile
     /// shape, used to size the staging buffers and to read the final tile's `mr`/`nr`/`kc`.
     pub fn final_space(&self) -> Space {
