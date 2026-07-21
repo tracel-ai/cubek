@@ -7,6 +7,7 @@ mod cmma;
 mod mem;
 mod mma;
 mod plane;
+mod register;
 mod tma;
 mod view;
 
@@ -14,6 +15,7 @@ pub use cmma::*;
 pub use mem::*;
 pub use mma::*;
 pub use plane::*;
+pub use register::*;
 pub use tma::*;
 pub use view::*;
 
@@ -213,6 +215,18 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.store.vector_size,
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
                 comptime!(1usize)
+            }
+        }
+    }
+
+    /// What this tile's cells are to the plane's lanes: whole, or a partial only true once
+    /// combined across the plane. A resident form inherits it from the memory it was promoted
+    /// from — the split is the space's, not the storage's.
+    pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(LaneShare::Whole)
             }
         }
     }
