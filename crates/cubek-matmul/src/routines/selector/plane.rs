@@ -268,15 +268,20 @@ fn select_size(
     (rows, plane_count / rows, plane_count)
 }
 
-/// A heuristic to choose the instruction to use, based on input shape
+/// The instruction shape for this problem — [`cubek_std::find_instruction_size`]
+/// with matmul's own error on the empty case, and the client and element triple
+/// bound into its capability closures. The ladder itself is shape-only and takes
+/// neither, so a selector without a runtime in hand can call it.
 ///
-/// Will use 16x16 for balanced matrices, and 32x8 or 8x32 for degenerated ones.
+/// The heuristic itself is not matmul's: convolution and attention pick an
+/// instruction the same way, so it lives beside the size types in `cubek-std` and
+/// takes the device's capabilities as closures. Only the error is ours.
 #[allow(clippy::type_complexity)]
 pub fn find_instruction_size<R, IsSupported, SupportedSizes>(
     client: &ComputeClient<R>,
-    (lhs, rhs, acc): (StorageType, StorageType, StorageType),
+    elems: (StorageType, StorageType, StorageType),
     problem_size: MatmulProblemSize,
-    (tm, tn, tk): (Option<u32>, Option<u32>, Option<u32>),
+    forced: (Option<u32>, Option<u32>, Option<u32>),
     is_supported: IsSupported,
     supported_sizes: SupportedSizes,
 ) -> Result<TileSize, MatmulAvailabilityError>
@@ -285,62 +290,26 @@ where
     IsSupported: Fn(&ComputeClient<R>, MmaConfig) -> bool,
     SupportedSizes: Fn(&ComputeClient<R>, StorageType, StorageType, StorageType) -> Vec<TileSize>,
 {
-    let supported = |m: u32, n: u32, k: u32| {
-        is_supported(
-            client,
-            MmaConfig {
-                a_type: lhs,
-                b_type: rhs,
-                cd_type: acc,
-                m,
-                n,
-                k,
-            },
-        )
-    };
-
-    let matches_forced = |m: u32, n: u32, k: u32| {
-        tm.is_none_or(|v| m == v) && tn.is_none_or(|v| n == v) && tk.is_none_or(|v| k == v)
-    };
-
-    let is_valid = |m: u32, n: u32, k: u32| supported(m, n, k) && matches_forced(m, n, k);
-
-    let try_candidate = |m: u32, n: u32, k: u32| {
-        if is_valid(m, n, k) {
-            Some(TileSize::from((m, n, k)))
-        } else {
-            None
-        }
-    };
-
-    let (m, n) = (problem_size.m, problem_size.n);
-
-    if m >= 4 * n
-        && let Some(ts) = try_candidate(32, 8, 16)
-    {
-        return Ok(ts);
-    }
-
-    if n >= 4 * m
-        && let Some(ts) = try_candidate(8, 32, 16)
-    {
-        return Ok(ts);
-    }
-
-    if let Some(ts) = try_candidate(16, 16, 16) {
-        return Ok(ts);
-    }
-
-    if let Some(ts) = try_candidate(8, 8, 8) {
-        return Ok(ts);
-    }
-
-    let val = supported_sizes(client, lhs, rhs, acc)
-        .into_iter()
-        .find(|ts| matches_forced(ts.m, ts.n, ts.k))
-        .ok_or(MatmulAvailabilityError::TileSizeNotFound)?;
-
-    Ok(val)
+    let (lhs, rhs, acc) = elems;
+    cubek_std::find_instruction_size(
+        problem_size,
+        forced,
+        |m, n, k| {
+            is_supported(
+                client,
+                MmaConfig {
+                    a_type: lhs,
+                    b_type: rhs,
+                    cd_type: acc,
+                    m,
+                    n,
+                    k,
+                },
+            )
+        },
+        || supported_sizes(client, lhs, rhs, acc),
+    )
+    .ok_or(MatmulAvailabilityError::TileSizeNotFound)
 }
 
 fn selection_tiny<R: Runtime>(
