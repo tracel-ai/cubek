@@ -37,6 +37,11 @@ macro_rules! testgen_qr_baht_tsqr {
                 crate::suite::qr::baht_tsqr::test_qr_rect_row_major::<FloatT>(157, 47);
             }
 
+            #[test]
+            pub fn test_tf32_opt_in() {
+                crate::suite::qr::baht_tsqr::test_qr_tf32::<FloatT>(157);
+            }
+
     };
     ([$($float:ident),*]) => {
         mod baht_tsqr {

@@ -334,10 +334,10 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     let vec_split = |n: usize| -> (VectorSize, usize) {
         let v = client
             .io_optimized_vector_sizes(elem_size)
-            .filter(|v| n.is_multiple_of(*v as usize))
+            .filter(|v| n.is_multiple_of(*v))
             .max()
             .unwrap_or(1);
-        (v, n / v as usize)
+        (v, n / v)
     };
 
     let launch_matmul = |strategy: &Strategy,

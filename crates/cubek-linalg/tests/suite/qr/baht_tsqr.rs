@@ -134,8 +134,55 @@ fn run_qr_rect<F: Float + CubeElement>(rows: u32, cols: u32, row_major: bool) {
     assert_equals_approx::<F>(&out_data, &row_major_data, shape, 2e-3);
 }
 
+/// Same square reconstruction as [`run_qr_square`], but through
+/// `qr_with_strategy` with `allow_tf32`. The trailing-update GEMMs then run on
+/// tensor cores in tf32, so this asserts against the looser tolerance that
+/// documents — it exists to pin the opt-in path down, not to prove accuracy.
+fn run_qr_square_tf32<F: Float + CubeElement>(dim: u32) {
+    let client = TestRuntime::client(&Default::default());
+    if dtype_unsupported::<F>(&client) {
+        return;
+    }
+    let dim_usize = dim as usize;
+
+    let shape = vec![dim_usize, dim_usize];
+    let num_elements = shape.iter().product();
+    let mut data = vec![F::from_int(1); num_elements];
+    let mut pos = dim_usize - 1;
+    for _i in 0..dim {
+        data[pos] = F::from_int(2);
+        pos += dim_usize - 1;
+    }
+
+    let a = col_major_input(&client, shape.clone(), &data);
+
+    let strategy = cubek_linalg::routines::BahtTsqrStrategy { allow_tf32: true };
+    let (q_t, r) = match cubek_linalg::qr_with_strategy::<TestRuntime, F>(&client, &a, strategy) {
+        Ok((q_t, r)) => (q_t, r),
+        Err(e) => panic!("QR launch failed: {e:?}"),
+    };
+
+    let (q_t_vals, _) = read_contig::<F>(&client, &q_t);
+    let (r_vals_out, _) = read_contig::<F>(&client, &r);
+
+    let out_data = reconstruct_qr(
+        &q_t_vals,
+        &r_vals_out,
+        dim_usize,
+        dim_usize,
+        dim_usize,
+        dim_usize,
+    );
+
+    assert_equals_approx::<F>(&out_data, &data, shape, 5e-2);
+}
+
 pub fn test_qr<F: Float + CubeElement>(dim: u32) {
     run_qr_square::<F>(dim);
+}
+
+pub fn test_qr_tf32<F: Float + CubeElement>(dim: u32) {
+    run_qr_square_tf32::<F>(dim);
 }
 
 pub fn test_qr_rect<F: Float + CubeElement>(rows: u32, cols: u32) {

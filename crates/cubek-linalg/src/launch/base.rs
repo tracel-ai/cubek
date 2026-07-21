@@ -4,7 +4,7 @@ use cubecl::std::tensor::{TensorHandle, identity, into_contiguous};
 use crate::{
     components,
     definition::{QRProblem, QRSetupError},
-    routines::{BahtTsqrRoutine, BlueprintStrategy, QRRoutine},
+    routines::{BahtTsqrRoutine, BahtTsqrStrategy, BlueprintStrategy, QRRoutine},
 };
 
 /// The `(Q, R)` pair produced by a QR decomposition.
@@ -67,6 +67,20 @@ pub fn qr<R: Runtime, EG: Float + CubeElement>(
     client: &ComputeClient<R>,
     a: &TensorHandle<R>,
 ) -> Result<QRTuple<R>, QRSetupError> {
+    qr_with_strategy::<R, EG>(client, a, Default::default())
+}
+
+/// [`qr`] with explicit routine knobs.
+///
+/// The only knob today is [`BahtTsqrStrategy::allow_tf32`], which lets the
+/// trailing-update GEMMs run on tensor cores: about 2x faster end to end, at a
+/// reconstruction error near `1e-2` instead of f32 accuracy. [`qr`] leaves it
+/// off, so its accuracy is unchanged.
+pub fn qr_with_strategy<R: Runtime, EG: Float + CubeElement>(
+    client: &ComputeClient<R>,
+    a: &TensorHandle<R>,
+    strategy: BahtTsqrStrategy,
+) -> Result<QRTuple<R>, QRSetupError> {
     let problem = QRProblem::from_shape(a.shape(), a.dtype)?;
     let launched = EG::as_type_native_unchecked().storage_type();
     if problem.dtype != launched {
@@ -77,11 +91,8 @@ pub fn qr<R: Runtime, EG: Float + CubeElement>(
     }
     let (q, r) = initialize::<R>(client, a, &problem);
 
-    let (blueprint, settings) = BahtTsqrRoutine::prepare(
-        client,
-        &problem,
-        BlueprintStrategy::Inferred(Default::default()),
-    )?;
+    let (blueprint, settings) =
+        BahtTsqrRoutine::prepare(client, &problem, BlueprintStrategy::Inferred(strategy))?;
     components::baht_tsqr::launch::<R, EG>(client, &q, &r, blueprint, settings)?;
 
     Ok((q, r))

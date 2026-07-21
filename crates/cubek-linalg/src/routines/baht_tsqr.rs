@@ -1,6 +1,7 @@
 use cubecl::features::Plane;
 use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
+use cubecl::tf32;
 use cubek_matmul::strategy::Strategy;
 
 use crate::{
@@ -19,9 +20,13 @@ fn is_f64(problem: &QRProblem) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BahtTsqrRoutine;
 
-/// Tunable knobs for [`BahtTsqrRoutine`]. There are none yet.
+/// Tunable knobs for [`BahtTsqrRoutine`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct BahtTsqrStrategy;
+pub struct BahtTsqrStrategy {
+    /// Trade accuracy for speed on the trailing-update GEMMs. See
+    /// [`BahtTsqrBlueprint::allow_tf32`]. Off by default.
+    pub allow_tf32: bool,
+}
 
 /// Comptime specialization settings for the TSQR kernels.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -30,6 +35,14 @@ pub struct BahtTsqrBlueprint {
     /// slot per plane, two barriers) instead of the generic shared-memory
     /// tree. Requires plane-op support and a uniform plane size.
     pub use_plane_reduce: bool,
+    /// Let the trailing-update GEMMs pick a tensor-core matmul, whose f32
+    /// path rounds its inputs to tf32 (~10 mantissa bits instead of 24).
+    ///
+    /// Roughly **2x faster end to end** — those GEMMs are essentially the
+    /// entire matmul cost — at a reconstruction error around `1e-2` rather
+    /// than f32 accuracy. Off by default; enable it only when the caller's
+    /// tolerance permits. No effect for f64, which has no tensor-core path.
+    pub allow_tf32: bool,
 }
 
 /// Runtime launch parameters for the TSQR kernels and GEMM updates.
@@ -66,6 +79,10 @@ impl QRRoutine for BahtTsqrRoutine {
             && hardware.plane_size_min == hardware.plane_size_max
             && hardware.plane_size_min > 0;
 
+        let tf32_supported = client
+            .properties()
+            .supports_type(tf32::as_type_native_unchecked().storage_type());
+
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => {
                 if blueprint.use_plane_reduce && !plane_reduce_supported {
@@ -76,28 +93,47 @@ impl QRRoutine for BahtTsqrRoutine {
                 }
                 blueprint
             }
-            BlueprintStrategy::Inferred(_) => BahtTsqrBlueprint {
+            BlueprintStrategy::Inferred(strategy) => BahtTsqrBlueprint {
                 use_plane_reduce: plane_reduce_supported,
+                // Honour the opt-in only where tf32 actually exists. Without a
+                // tensor-core path `Strategy::Auto` resolves to something
+                // *slower* than the full-precision unit routine (measured on
+                // wgpu: 24.1ms -> 30.5ms at 1024x1024), so taking the accuracy
+                // hit there would buy nothing.
+                allow_tf32: strategy.allow_tf32 && tf32_supported,
             },
         };
         let thread_block_size = (hardware.max_cube_dim.0 as f64).sqrt() as u32;
         let max_cube_dim = hardware.max_cube_dim.0.min(256);
         let tile = 32u32.min(problem.cols as u32).min(max_cube_dim);
 
-        // Full-precision strategies only: `Strategy::Auto` resolves to a
-        // tensor-core (CMMA) matmul whose f32 path silently downgrades the
-        // stage/register types to tf32 (see `cubek_matmul::definition::
-        // adjust_dtypes`), which loses ~13 mantissa bits and breaks the QR
-        // reconstruction tolerance. The unit routines don't support f64, so
-        // f64 uses Auto — safe there because no f64 CMMA exists and Auto
-        // falls back to the full-precision SimpleUnit.
+        // `Strategy::Auto` resolves to a tensor-core (CMMA) matmul whose f32
+        // path silently downgrades the stage/register types to tf32 (see
+        // `cubek_matmul::definition::adjust_dtypes`), losing ~13 mantissa bits
+        // and pushing the QR reconstruction error to ~1e-2 — over the test
+        // tolerance — so f32 defaults to full-precision strategies.
+        //
+        // The unit routines don't support f64, so f64 uses Auto — safe there
+        // because no f64 CMMA exists and Auto falls back to the
+        // full-precision SimpleUnit.
+        //
+        // Only `strategy_tall` is worth trading accuracy for: measured at
+        // 1024x1024, forcing it to Auto takes the whole decomposition from
+        // 23.5ms to 12.0ms, while forcing gram or W to Auto changes nothing
+        // end to end. So the tf32 opt-in touches the trailing updates alone
+        // and gram/W stay full-precision unconditionally.
         let (strategy_gram, strategy_w, strategy_tall) = if is_f64(problem) {
             (Strategy::Auto, Strategy::Auto, Strategy::Auto)
         } else {
+            let tall = if blueprint.allow_tf32 {
+                Strategy::Auto
+            } else {
+                Strategy::DoubleUnit(Default::default())
+            };
             (
                 Strategy::SimpleVecMat(Default::default()),
                 Strategy::DoubleUnit(Default::default()),
-                Strategy::DoubleUnit(Default::default()),
+                tall,
             )
         };
 
