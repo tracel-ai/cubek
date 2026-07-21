@@ -186,44 +186,60 @@ fn apply_householder_kernel<F: Float + CubeElement>(
 /// depend on all previous columns, so `j` advances sequentially with a cube
 /// sync per step, but the rows `i < j` within a column are independent and
 /// are computed in parallel across the cube.
+///
+/// T and the Gram matrix are both staged in shared memory: each of the `tile`
+/// serialized steps reads back columns written by earlier steps, so building
+/// T directly in global memory puts a global round trip inside every step of
+/// the dependency chain. The whole working set is `tile * tile` elements
+/// (4 KiB at f32/tile=32), so it fits comfortably.
 #[cube(launch_unchecked)]
 fn build_t_tsqr_kernel<F: Float + CubeElement>(
-    tile: u32,
     current_tile: u32,
     gram: &[F],
     beta_vec: &[F],
     t_mat: &mut [F],
+    #[comptime] tile: u32,
 ) {
     let tdx = UNIT_POS_X;
     let cube_dim_x = CUBE_DIM_X;
     let zero = F::cast_from(0.0);
+    let total = comptime!(tile * tile);
 
-    let total = tile * tile;
+    let mut t_sh = Shared::<[F]>::new_slice(comptime!((tile * tile) as usize));
+    let mut g_sh = Shared::<[F]>::new_slice(comptime!((tile * tile) as usize));
+
     let mut idx = tdx;
     while idx < total {
-        t_mat[idx as usize] = zero;
+        t_sh[idx as usize] = zero;
+        g_sh[idx as usize] = gram[idx as usize];
         idx += cube_dim_x;
     }
     sync_cube();
 
     for j in 0u32..current_tile {
         if tdx == 0 {
-            t_mat[(j * tile + j) as usize] = beta_vec[j as usize];
+            t_sh[(j * tile + j) as usize] = beta_vec[j as usize];
         }
         let mut i = tdx;
         while i < j {
             let mut sum = zero;
             for k in i..j {
                 sum = fma(
-                    t_mat[(k * tile + i) as usize],
-                    gram[(k * tile + j) as usize],
+                    t_sh[(k * tile + i) as usize],
+                    g_sh[(k * tile + j) as usize],
                     sum,
                 );
             }
-            t_mat[(j * tile + i) as usize] = beta_vec[j as usize] * sum;
+            t_sh[(j * tile + i) as usize] = beta_vec[j as usize] * sum;
             i += cube_dim_x;
         }
         sync_cube();
+    }
+
+    let mut o = tdx;
+    while o < total {
+        t_mat[o as usize] = t_sh[o as usize];
+        o += cube_dim_x;
     }
 }
 
@@ -427,11 +443,11 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
                 client,
                 CubeCount::new_1d(1),
                 CubeDim::new_1d(tile),
-                tile,
                 current_tile,
                 BufferArg::from_raw_parts(gram_buf_global.clone(), tile_us * tile_us),
                 BufferArg::from_raw_parts(beta_vec.clone(), tile_us),
                 BufferArg::from_raw_parts(t_buf_global.clone(), tile_us * tile_us),
+                tile,
             );
         }
 
