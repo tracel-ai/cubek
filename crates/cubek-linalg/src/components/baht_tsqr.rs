@@ -75,8 +75,8 @@ fn cube_reduce_sum<F: Float>(
 /// the start of the tile) with the conventional implicit-1 head:
 /// `v_buf[j*rows + col] = 1`, tail `= r[k]/v0`.
 ///
-/// One cube; the `sigma = ||r_tail||²` reduction is tree-reduced in shared
-/// memory and the normalization is parallel over the cube. All flat offsets
+/// One cube; the `sigma = ||r_tail||²` reduction runs through
+/// [`cube_reduce_sum`] and the normalization is parallel over the cube. All flat offsets
 /// are computed in `usize` so `col*rows` cannot wrap on huge matrices.
 #[cube(launch_unchecked)]
 fn householder_kernel<F: Float + CubeElement>(
@@ -143,8 +143,8 @@ fn householder_kernel<F: Float + CubeElement>(
 
 /// Apply the reflector held in `v_buf` column `j` to the remaining panel
 /// columns of R. One cube per target column: the `v·r` dot product is
-/// tree-reduced in shared memory, then the rank-1 update runs parallel over
-/// the cube. The reflector head is the explicit 1 written by
+/// reduced through [`cube_reduce_sum`], then the rank-1 update runs parallel
+/// over the cube. The reflector head is the explicit 1 written by
 /// [`householder_kernel`], so the dot spans the full `dim` range uniformly.
 #[cube(launch_unchecked)]
 fn apply_householder_kernel<F: Float + CubeElement>(
@@ -227,6 +227,11 @@ fn build_t_tsqr_kernel<F: Float + CubeElement>(
     }
 }
 
+/// R's trailing block is col-major while Z is row-major, so this update is a
+/// transposing add and cannot be vectorized on both operands at once. Making Z
+/// col-major to fix that measurably de-vectorizes the matmul that writes it
+/// (its output write drops from `acc_size_4` to `acc_size_1`), which costs
+/// more than this kernel saves — so it stays scalar and 2D.
 #[cube(launch_unchecked)]
 fn update_trailing_r_kernel<F: Float + CubeElement>(
     rows: u32,
@@ -245,13 +250,19 @@ fn update_trailing_r_kernel<F: Float + CubeElement>(
     }
 }
 
+/// `dst += z` over a tight contiguous region, launched 1D over `Vector` lanes
+/// so the loads/stores are widened. Used for the Q^T update, whose two
+/// operands are tight col-major `[rows, rows]` buffers with identical flat
+/// indexing.
 #[cube(launch_unchecked)]
-fn update_qt_from_z_kernel<F: Float + CubeElement>(rows: u32, qt: &mut Tensor<F>, z_buf: &[F]) {
-    let row = ABSOLUTE_POS_X;
-    let col = ABSOLUTE_POS_Y;
-    if row < rows && col < rows {
-        let idx = col as usize * rows as usize + row as usize;
-        qt[idx] += z_buf[idx];
+fn add_assign_kernel<F: Float + CubeElement, N: Size>(
+    n_vecs: u32,
+    dst: &mut [Vector<F, N>],
+    z_buf: &[Vector<F, N>],
+) {
+    let idx = ABSOLUTE_POS_X;
+    if idx < n_vecs {
+        dst[idx as usize] += z_buf[idx as usize];
     }
 }
 
@@ -300,6 +311,18 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
     let z_buf_global = client.empty(rows_us * rows_us * elem_size);
 
     let mut matmul_dtypes = MatmulElems::from_single_dtype(dtype);
+
+    // Widest supported vector size dividing a contiguous element count, plus
+    // the resulting lane count. Both operands of every `add_assign_kernel`
+    // launch are tight, so divisibility of the count is the only constraint.
+    let vec_split = |n: usize| -> (VectorSize, usize) {
+        let v = client
+            .io_optimized_vector_sizes(elem_size)
+            .filter(|v| n.is_multiple_of(*v as usize))
+            .max()
+            .unwrap_or(1);
+        (v, n / v as usize)
+    };
 
     let launch_matmul = |strategy: &Strategy,
                          lhs: InputBinding<R>,
@@ -517,18 +540,19 @@ pub fn launch<R: Runtime, E: Float + CubeElement>(
             z_qt.clone().binding(),
             &mut matmul_dtypes,
         )?;
-        let cc_q = CubeCount::new_2d(
-            rows.div_ceil(thread_block_size),
-            rows.div_ceil(thread_block_size),
-        );
+        let n_q = rows_us * rows_us;
+        let (q_vec, n_q_vecs) = vec_split(n_q);
+        let cd_q = CubeDim::new_1d(max_cube_dim);
+        let cc_q = calculate_cube_count_elemwise(client, n_q_vecs, cd_q);
         unsafe {
-            update_qt_from_z_kernel::launch_unchecked::<E, R>(
+            add_assign_kernel::launch_unchecked::<E, R>(
                 client,
                 cc_q,
-                cube_dim_2d,
-                rows,
-                q_handle.clone().into_arg(),
-                BufferArg::from_raw_parts(z_buf_global.clone(), rows_us * rows_us),
+                cd_q,
+                q_vec,
+                n_q_vecs as u32,
+                BufferArg::from_raw_parts(q_handle.handle.clone(), n_q_vecs),
+                BufferArg::from_raw_parts(z_buf_global.clone(), n_q_vecs),
             );
         }
     }
