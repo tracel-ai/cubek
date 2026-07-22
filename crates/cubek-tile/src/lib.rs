@@ -1,26 +1,20 @@
 //! The axis-agnostic tile DSL engine
 #![allow(dead_code)]
 
-mod layout;
-mod load;
-mod matmul;
-mod partitioner;
-mod quantization;
-mod resident;
-mod scalar;
+mod fold;
+mod mma_config;
+mod ops;
+mod physical;
 mod space;
-mod stage;
+mod staging;
 mod tile;
-mod view;
 
 // `Axis`/`MAX_AXES` and `ConcreteLayout` are the storage-layout vocabulary; clients reach them
 // through `cubek_tile::{Axis, ...}`.
-pub use layout::*;
-pub use load::*;
-pub use partitioner::*;
-pub use quantization::*;
-pub use scalar::*;
+pub use fold::*;
+pub use mma_config::*;
+pub use ops::*;
+pub use physical::*;
 pub use space::*;
-pub use stage::*;
+pub use staging::*;
 pub use tile::*;
-pub use view::*;

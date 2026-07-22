@@ -14,7 +14,7 @@ use cubecl::{
 #[derive(CubeType)]
 pub struct PerpendicularWriter<'a, Out: NumericVector> {
     output: ViewMut<'a, Vector<Out::T, Out::N>, Coords2d>,
-    axis_size: usize,
+    pub(crate) axis_size: usize,
     #[cube(comptime)]
     input_vector_size: VectorSize,
     #[cube(comptime)]
@@ -61,10 +61,18 @@ impl<'a, Out: NumericVector> PerpendicularWriter<'a, Out> {
         inst: &I,
     ) {
         let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
+        self.push::<P::SI>(out);
+    }
 
+    /// Write an already-converted reduction result.
+    ///
+    /// Split out of [`Self::write`] so that a caller holding both a value and an
+    /// index result can write each through its own writer, without the writer
+    /// having to know how the results were produced.
+    pub fn push<S: Size>(&mut self, out: Value<Vector<Out::T, S>>) {
         match out {
-            Value::Multiple(array) => self.write_multiple::<P::SI>(array),
-            Value::Single(vector) => self.write_single::<P::SI>(vector.unwrap(), 0),
+            Value::Multiple(array) => self.write_multiple::<S>(array),
+            Value::Single(vector) => self.write_single::<S>(vector.unwrap(), 0),
             Value::None => unreachable!(),
         }
     }

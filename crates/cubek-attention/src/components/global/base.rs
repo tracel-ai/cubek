@@ -59,8 +59,12 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
         #[comptime] config: Self::Config,
     );
 
+    // `batch_index` flattens the query's `(batch, head)`; every reader resolves
+    // it with the query's `num_heads`, never its own tensor's head extent.
+
     fn init_query_reader(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         query: VirtualTensor<QG<AP>, QGS<AP>>,
         #[comptime] config: Self::Config,
@@ -68,18 +72,21 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
 
     fn init_key_reader(
         batch_index: u32,
+        num_heads: u32,
         key: VirtualTensor<KG<AP>, KGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::KeyReader;
 
     fn init_value_reader(
         batch_index: u32,
+        num_heads: u32,
         value: VirtualTensor<VG<AP>, VGS<AP>>,
         #[comptime] config: Self::Config,
     ) -> Self::ValueReader;
 
     fn init_mask_reader(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
         seq_kv_shape: u32,
@@ -88,6 +95,7 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
 
     fn init_writer(
         batch_index: u32,
+        num_heads: u32,
         stage_q_offset: u32,
         out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
         #[comptime] config: Self::Config,

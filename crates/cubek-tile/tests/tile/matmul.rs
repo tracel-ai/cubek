@@ -4,9 +4,12 @@
 use cubecl::{
     TestRuntime,
     cmma::{MatrixIdent, MatrixLayout},
+    features::TypeUsage,
+    ir::ElemType,
     prelude::*,
     zspace::shape,
 };
+use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx,
@@ -221,28 +224,29 @@ fn matmul_cpu_dynamic_k() {
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .tile(&[edge, edge])
         .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .tile(&[edge, edge])
-        .zeros();
+        .uniform(4242, 10., 100.);
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     launch_cpu_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(
+        StridedTileArgLaunch::strided(
             a.tensor_arg(1),
             1,
             a.space().with_dynamic(&[K]),
             a.storage(),
         ),
-        TileArgLaunch::strided(
+        StridedTileArgLaunch::strided(
             b.tensor_arg(1),
             1,
             b.space().with_dynamic(&[K]),
             b.storage(),
         ),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -475,9 +479,9 @@ fn check_matmul_batched(
         &client,
         cube_count,
         cube_dim,
-        TileArgLaunch::strided(a.tensor_arg(1), vector_size, a.space(), a.storage()),
-        TileArgLaunch::strided(rhs.tensor_arg(1), vector_size, rhs.space(), rhs.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), vector_size, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), vector_size, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(rhs.tensor_arg(1), vector_size, rhs.space(), rhs.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), vector_size, c.space(), c.storage()),
         dtype,
     );
 
@@ -543,9 +547,9 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
         &client,
         cube_count,
         cube_dim,
-        TileArgLaunch::strided(lhs.tensor_arg(1), vector_size, lhs.space(), lhs.storage()),
-        TileArgLaunch::strided(rhs.tensor_arg(1), vector_size, rhs.space(), rhs.storage()),
-        TileArgLaunch::strided(acc.tensor_arg(1), vector_size, acc.space(), acc.storage()),
+        StridedTileArgLaunch::strided(lhs.tensor_arg(1), vector_size, lhs.space(), lhs.storage()),
+        StridedTileArgLaunch::strided(rhs.tensor_arg(1), vector_size, rhs.space(), rhs.storage()),
+        StridedTileArgLaunch::strided(acc.tensor_arg(1), vector_size, acc.space(), acc.storage()),
         dtype,
     );
 
@@ -576,17 +580,18 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
-        .zeros();
+        .uniform(4242, 10., 100.);
 
     launch_cpu_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -628,7 +633,7 @@ fn matmul_multilevel_staged_then_direct() {
         ]),
     )
     .direct();
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
 }
 
 #[test]
@@ -651,7 +656,7 @@ fn matmul_multilevel_staged_then_staged() {
         ]),
     )
     .staged();
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
 }
 
 /// Double buffering at the higher level
@@ -677,7 +682,7 @@ fn matmul_multilevel_double_then_direct() {
     )
     .direct();
 
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
 }
 
 /// Double buffering at the lower level
@@ -693,7 +698,282 @@ fn matmul_multilevel_staged_then_double() {
     let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).staged();
     let l1 =
         Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).double_buffered();
-    check_matmul_multilevel(8, 8, 8, l0, l1);
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
+}
+
+/// A storage-tiled stage on a register leaf: the stage layout knob off its default,
+/// on any backend (each 4×4 stage cut into contiguous 2×2 blocks).
+#[test]
+fn matmul_multilevel_tiled_stage() {
+    let seq = || {
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ])
+    };
+    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).staged();
+    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).direct();
+    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Tiled);
+}
+
+/// A staged level whose walk leaves the lhs unchanged (an N-only walk at L1): the
+/// invariant operand fills its slot once, above the loop.
+#[test]
+fn matmul_staged_invariant_lhs() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (8usize, 8usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4))
+        })
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4))
+        })
+        .leaf(Leaf::Register);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint
+/// column of the register-leaf output and contracts the whole K in registers — the
+/// gemv-perpendicular mapping. `Cut::unit` declares the split without the lane count;
+/// [`Space::resolve_lanes`] (the launch's stamping pass) fills it from the hardware
+/// `plane_size`, so the Unit axis rides the warp's lanes on the cube's X dim.
+/// `plane_size == 1` on CPU degenerates to one lane doing all of N (still correct); the
+/// win is on GPU where the warp's lanes divide N.
+#[test]
+fn register_matmul_unit_spread_n() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+
+    let (m, k, nr) = (4usize, 8usize, 2usize);
+    let n = lanes * nr;
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, seq(m)).axis(N, Cut::unit(nr)).axis(K, seq(k))
+        })
+        .leaf(Leaf::Register)
+        // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
+        .resolve_lanes(lanes);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// K spread across a plane's lanes (`ComputeScope::Unit`) — the split-K reduction. Each lane
+/// contracts a disjoint K-slice into its register block, the plane `plane_sum`-combines the
+/// partials, and lane 0 writes the shared `(m, n)` cell; the legacy `SimpleVecMat` intra-plane
+/// split. Unlike N-spread the output columns overlap, so the combine is what makes it correct.
+/// `plane_size == 1` on CPU resolves the Unit K axis to a single lane owning the whole K, so the
+/// split gates off and the classic per-region accumulate runs (still correct); the reduction is
+/// exercised on GPU (`cargo test-metal`), where the warp's lanes divide K.
+#[test]
+fn register_matmul_unit_split_k() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+
+    let (m, n, slice) = (2usize, 4usize, 2usize);
+    let k = lanes * slice;
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, Cut::unit(slice))
+        })
+        .leaf(Leaf::Register)
+        // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
+        .resolve_lanes(lanes);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The legacy register budget as a level structure: a Direct contraction-step walk
+/// (windowing only), a `Staged` N-walk refilling one B fragment per step while the A
+/// column fills once above it, and an M-only fragment walk below. Exercises sub-block
+/// partition selection (the N-walk's regions each own a column of the accumulator) and
+/// the correctness-driven staged unroll. Tensor-core only.
+#[test]
+fn cmma_matmul_staged_n_walk_partition() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no cmma (tensor-core) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k) = (32usize, 32usize, 32usize);
+    let (part, i, stage_k) = (16usize, 8usize, 16usize);
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
+        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
+        })
+        // L1: the stage split one `part×part` partition per plane (2×2 planes).
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::plane(part))
+                .axis(N, Cut::plane(part))
+                .axis(K, seq(stage_k))
+        })
+        // L2: the contraction-step walk, windowing only.
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i))
+        })
+        // L3: the N-walk: one B fragment per step, the A column filled once above it.
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        // L4: the M-only fragment walk.
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        .leaf(Leaf::Cmma { k: i });
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
 }
 
 #[test]
@@ -716,7 +996,15 @@ fn matmul_double_buffered() {
 
 /// Drives the staged lowering with a two-level partitioner stack `[l0, l1]`. `l1`'s
 /// edge sizes the final tile (and the data tiling); the coarse `l0` drives launch geometry.
-fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Partitioner) {
+/// `stage` is the operands' stage-layout knob (the output is never staged).
+fn check_matmul_multilevel(
+    m: usize,
+    n: usize,
+    k: usize,
+    l0: Partitioner,
+    l1: Partitioner,
+    stage: StageStorage,
+) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let final_edge = l1.edge(M);
     let dtype = f32::as_type_native_unchecked().storage_type();
@@ -738,9 +1026,9 @@ fn check_matmul_multilevel(m: usize, n: usize, k: usize, l0: Partitioner, l1: Pa
         &client,
         space.cube_count(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()).stage(stage),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()).stage(stage),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -780,9 +1068,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         &client,
         space.cube_count(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -805,9 +1093,9 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// from its partitioner's `Schedule` (here `.staged()` or `.double_buffered()`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &StridedTileArg<'_, E>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
@@ -816,36 +1104,61 @@ fn launch_staged_matmul<E: Numeric>(
     c.mma(&a, &b);
 }
 
-/// The tensor-core kernel: promote the accumulator to its register form (the classic
-/// `init_accumulator`), run the whole contraction on it, copy it back (the epilogue).
+/// The tensor-core kernel: promote the accumulator to its register form, zero it (the
+/// classic `init_accumulator`), run the whole contraction on it, copy it back (the
+/// epilogue).
 #[cube(launch)]
 fn launch_resident_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &StridedTileArg<'_, E>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
     let mut acc = c.promote();
+    acc.zero();
     acc.mma(&a, &b);
     c.copy_from(&acc);
 }
 
-/// The CPU kernel: the same `c.mma(a, b)`; the partitioner's `Direct` schedule
-/// selects the no-staging move. Operands are size-free — vectorization is a launch
-/// concern, not threaded through the DSL.
+/// Quantized `A` through the resident K walk: `A` is served via `tile_dequant`, so `acc.mma`
+/// dequantizes each K-stage's smem fill on its own — the fill recovers the storage element from
+/// the scheme, so the kernel threads no `I` into the walk and the body is [`launch_resident_matmul`]
+/// verbatim but for `A`'s served type. Tensor-core only.
+#[cube(launch)]
+fn launch_resident_matmul_quant<I: Numeric, E: Numeric>(
+    a: &StridedTileArg<'_, I>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
+    #[define(I)] _idtype: StorageType,
+    #[define(E)] _edtype: StorageType,
+) {
+    let a = a.tile_dequant::<E>();
+    let b = b.tile();
+    let mut c = c.tile();
+    let mut acc = c.promote();
+    acc.zero();
+    acc.mma(&a, &b);
+    c.copy_from(&acc);
+}
+
+/// The CPU kernel: `c.zero()` then `c.mma(a, b)` (the production cpu_gemm body — the
+/// register leaf accumulates in place, so the routine zeroes first); the partitioner's
+/// `Direct` schedule selects the no-staging move. Operands are size-free —
+/// vectorization is a launch concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &StridedTileArg<'_, E>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
+    c.zero();
     c.mma(&a, &b);
 }
 
@@ -879,8 +1192,8 @@ fn cmma_fragment_roundtrip() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
-        TileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        StridedTileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
+        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
         dtype,
     );
 
@@ -894,14 +1207,18 @@ fn cmma_fragment_roundtrip() {
 /// gmem → smem → cmma accumulator → smem → gmem — pure transit, no arithmetic.
 #[cube(launch)]
 fn cmma_roundtrip<E: Numeric>(
-    input: &TileArg<'_, E>,
-    output: &TileArg<'_, E>,
+    input: &StridedTileArg<'_, E>,
+    output: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = input.tile();
     let space = comptime!(a.space.clone());
 
-    let mut a_smem = MemData::smem(comptime!(space.clone()), 1usize);
+    let mut a_smem = MemData::smem(
+        comptime!(space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&space)),
+    );
     a_smem.copy_from(&a);
     sync_cube();
 
@@ -915,7 +1232,11 @@ fn cmma_roundtrip<E: Numeric>(
     );
     frag.copy_from(&a_smem);
 
-    let mut c_smem = MemData::smem(comptime!(space.clone()), 1usize);
+    let mut c_smem = MemData::smem(
+        comptime!(space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&space)),
+    );
     c_smem.copy_from(&frag);
     sync_cube();
 
@@ -952,14 +1273,92 @@ fn cmma_matmul_8x8x8() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let expected = references::tiled_matmul(8, 8, 8, 8);
+    let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Per-tensor-quantized `A` (i8) through the cmma matmul: `A` dequantizes into smem, then the
+/// tensor-core matmul runs in f32. `C = (A·scale)·B`. Needs both cmma and native i8.
+#[test]
+fn cmma_matmul_quant_per_tensor_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let scale = 0.05f32;
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::Tensor)
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    // A: i8 quantized, with host values to build the reference.
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, 1])
+        .custom(vec![scale])
+        .generate_without_host_data();
+
+    // B: f32 row-major arange (b[p, j] = p·8 + j); C: zeros.
+    let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
+        .untiled()
+        .zeros();
+
+    let a_space = Space::new(&[(M, 8), (K, 8)]);
+    let a_storage = Storage::of(2, a_space.rank());
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    cmma_matmul_quant::launch::<TestRuntime>(
+        &client,
+        CubeCount::Static(1, 1, 1),
+        CubeDim::new_3d(32, 1, 1),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale) · (p·8 + j).
+    let expected: Vec<f32> = (0..8 * 8)
+        .map(|idx| {
+            let (i, j) = (idx / 8, idx % 8);
+            (0..8)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale) * ((p * 8 + j) as f32))
+                .sum()
+        })
+        .collect();
     let (_, expected) = TestInput::builder(client, shape![8, 8])
         .custom(expected)
         .generate_with_f32_host_data();
@@ -990,11 +1389,18 @@ fn cmma_matmul_double_buffered_odd_k_walk() {
     check_cmma_matmul_k_walk(24, Schedule::DoubleBuffered);
 }
 
-fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
-    check_cmma_matmul_k_walk_v(k, schedule, 1)
+/// The K walk staged into a plain strided stage (the legacy `sync_full_strided` storage):
+/// the cmma window transport reads through the layout stack either way.
+#[test]
+fn cmma_matmul_staged_k_walk_strided_stage() {
+    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 1, StageStorage::Strided);
 }
 
-fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
+fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
+    check_cmma_matmul_k_walk_v(k, schedule, 1, StageStorage::Tiled)
+}
+
+fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: StageStorage) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if client.properties().features.matmul.cmma.is_empty() {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -1023,15 +1429,84 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize) {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()).stage(stage),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()).stage(stage),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The manual/raw-mma leaf (`Leaf::Mma`): the raw-mma twin of `cmma_matmul_staged_k_walk` — the
+/// same resident promote → zero → mma → drain kernel, but the contraction runs through
+/// `MmaDefinition::execute` over register fragments rather than the cooperative `cmma::execute`.
+/// Gated on the backend exposing the manual-mma feature (`features.matmul.mma`); uses the universal
+/// manual transport (`MmaIOConfig::manual()`), so no `ldmatrix`/`stmatrix` path is taken. Run with
+/// `cargo test-metal` / `test-cuda` on a backend that advertises manual mma.
+#[test]
+fn mma_matmul_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.mma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no manual mma (features.matmul.mma) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Mma {
+            k: edge,
+            io: MmaIOConfig::manual(),
+        });
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -1092,15 +1567,16 @@ fn cmma_matmul_plane_partitioned_stage() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -1165,15 +1641,16 @@ fn cmma_matmul_multi_fragment_partition() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
 
     launch_resident_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
         dtype,
     );
 
@@ -1197,22 +1674,34 @@ fn cmma_matmul_multi_fragment_partition() {
 /// `cmma::execute` (`acc = A·B`), stored back through smem to gmem.
 #[cube(launch)]
 fn cmma_matmul<E: Numeric>(
-    a: &TileArg<'_, E>,
-    b: &TileArg<'_, E>,
-    c: &TileArg<'_, E>,
+    a: &StridedTileArg<'_, E>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let a = a.tile();
     let b = b.tile();
     let mut c = c.tile();
 
-    let mut a_smem_tile = MemData::smem(comptime!(a.space.clone()), 1usize);
+    let mut a_smem_tile = MemData::smem(
+        comptime!(a.space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&a.space)),
+    );
     a_smem_tile.copy_from(&a);
 
-    let mut b_smem_tile = MemData::smem(comptime!(b.space.clone()), 1usize);
+    let mut b_smem_tile = MemData::smem(
+        comptime!(b.space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&b.space)),
+    );
     b_smem_tile.copy_from(&b);
 
-    let mut c_smem_tile = MemData::smem(comptime!(c.space.clone()), 1usize);
+    let mut c_smem_tile = MemData::smem(
+        comptime!(c.space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&c.space)),
+    );
     c_smem_tile.copy_from(&c);
     sync_cube();
 
@@ -1251,6 +1740,601 @@ fn cmma_matmul<E: Numeric>(
     c_smem_tile.copy_from(&acc);
     sync_cube();
     c.copy_from(&c_smem_tile);
+}
+
+/// Quantized `A`: gmem `I` (i8) dequantized into smem by the plain `copy_from`, which recovers
+/// the storage element from the scheme on its own; `B`/`C` plain `E`. The cmma path then runs
+/// entirely in `E`. Mirrors [`cmma_matmul`] otherwise.
+#[cube(launch)]
+fn cmma_matmul_quant<I: Numeric, E: Numeric>(
+    a: &StridedTileArg<'_, I>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
+    #[define(I)] _idtype: StorageType,
+    #[define(E)] _edtype: StorageType,
+) {
+    let a = a.tile_dequant::<E>();
+    let b = b.tile();
+    let mut c = c.tile();
+
+    let mut a_smem = MemData::smem(
+        comptime!(a.space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&a.space)),
+    );
+    a_smem.copy_from(&a);
+
+    let mut b_smem = MemData::smem(
+        comptime!(b.space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&b.space)),
+    );
+    b_smem.copy_from(&b);
+
+    let mut c_smem = MemData::smem(
+        comptime!(c.space.clone()),
+        1usize,
+        comptime!(StagePlan::for_space(&c.space)),
+    );
+    c_smem.copy_from(&c);
+    sync_cube();
+
+    let mut a_frag = CmmaData::<E>::fragment(
+        MatrixIdent::A,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(a.space.clone()),
+    );
+    a_frag.copy_from(&a_smem);
+
+    let mut b_frag = CmmaData::<E>::fragment(
+        MatrixIdent::B,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(b.space.clone()),
+    );
+    b_frag.copy_from(&b_smem);
+
+    let mut acc = CmmaData::<E>::fragment(
+        MatrixIdent::Accumulator,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(c.space.clone()),
+    );
+    acc.copy_from(&c_smem);
+
+    acc.mma(&a_frag, &b_frag);
+
+    c_smem.copy_from(&acc);
+    sync_cube();
+    c.copy_from(&c_smem);
+}
+
+/// Block-quantized `A` (block along `M`): one flat `8×8` smem fill spans both scale blocks, the
+/// per-line lookup picking each line's scale — `A`'s space needs no block sub-level. The cmma
+/// fragment then reads the whole `8×8` smem. Validates block windowing into the matmul stage.
+#[test]
+fn cmma_matmul_quant_block_m_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let bm = 4usize; // 2 blocks along M, each 4×8; one scale each
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, 8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    // One distinct scale per M-block: scales shaped (8/bm, 1).
+    let scale_vals: Vec<f32> = (0..8 / bm).map(|k| 0.05 * (k + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), shape![8 / bm, 1])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
+    let a_space = Space::new(&[(M, 8), (K, 8)]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    cmma_matmul_quant::launch::<TestRuntime>(
+        &client,
+        CubeCount::Static(1, 1, 1),
+        CubeDim::new_3d(32, 1, 1),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[i/bm]) · (p·8 + j).
+    let expected: Vec<f32> = (0..8 * 8)
+        .map(|idx| {
+            let (i, j) = (idx / 8, idx % 8);
+            let scale = scale_vals[i / bm];
+            (0..8)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale) * ((p * 8 + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-quantized `A` along `K` (the contraction axis): the scale changes partway through each
+/// dot product, and the per-line lookup picks the right one mid-row. The case that matters for
+/// quantized-weight matmul.
+#[test]
+fn cmma_matmul_quant_block_k_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let bk = 4usize; // 2 blocks along K, each 8×4; the scale changes at p = 4
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([8, bk as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    // One distinct scale per K-block: scales shaped (1, 8/bk).
+    let scale_vals: Vec<f32> = (0..8 / bk).map(|k| 0.05 * (k + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), shape![1, 8 / bk])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
+    let a_space = Space::new(&[(M, 8), (K, 8)]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    cmma_matmul_quant::launch::<TestRuntime>(
+        &client,
+        CubeCount::Static(1, 1, 1),
+        CubeDim::new_3d(32, 1, 1),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[p/bk]) · (p·8 + j).
+    let expected: Vec<f32> = (0..8 * 8)
+        .map(|idx| {
+            let (i, j) = (idx / 8, idx % 8);
+            (0..8)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[p / bk]) * ((p * 8 + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Per-tensor-quantized `A` (i8) through the resident K walk, staged: `K = 16` runs in two
+/// `8`-deep K regions, and each region's smem fill dequantizes `A` on its own — the same
+/// `launch_resident_matmul_quant` body as the plain K walk. The self-describing fill in action.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_k_walk() {
+    check_cmma_matmul_quant_k_walk(16, Schedule::Staged);
+}
+
+/// The same self-describing quant K walk driven double-buffered: both slots' fills dequantize.
+#[test]
+fn cmma_matmul_quant_double_buffered_k_walk() {
+    check_cmma_matmul_quant_k_walk(32, Schedule::DoubleBuffered);
+}
+
+fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, edge) = (8usize, 8usize, 8usize); // K walked in `edge`-deep stages
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, schedule, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    let scale = 0.05f32;
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::Tensor)
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    // A: i8 quantized (m×k), with host values for the reference.
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, 1])
+        .custom(vec![scale])
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale) · (p·n + j), p over all of K.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-M-quantized `A` through the resident K walk: one K stage stages the whole `M = 8`, which
+/// spans two `bm = 4` scale blocks, so a single cooperative fill dequantizes across two scales —
+/// the per-line scale lookup, not the one-scale-per-window assumption. `acc.mma` still just works.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_m_k_walk() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bm) = (8usize, 8usize, 16usize, 8usize, 4usize); // 2 M-blocks
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per M-block, over the full K: block `[bm, k]`, scales shaped (m/bm, 1).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[i/bm]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[i / bm]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-K-quantized `A` through the resident K walk (the quantized-weight case): the scale
+/// changes partway through each `8`-deep K stage (`bk = 4`), and it changes again between stages —
+/// so the per-line scale lookup must fold in the stage's `window_start`. `acc.mma` just works.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_k_k_walk() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bk) = (8usize, 8usize, 16usize, 8usize, 4usize); // 4 K-blocks, 2 per stage
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, k / bk])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), 1, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[p/bk]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[p / bk]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Block-K-quantized `A` served in 2-wide lines: the blocks sit on the vectorized inner axis, so
+/// a line's coordinate counts lines while its scale block is cut in elements — the widening
+/// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a stage's scale still changes mid-fill.
+/// Tensor-core only.
+#[test]
+fn cmma_matmul_quant_block_k_k_walk_vectorized() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.cmma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
+            .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge, bk, v) = (8usize, 8usize, 16usize, 8usize, 4usize, 2usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .leaf(Leaf::Cmma { k: edge });
+
+    // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, k / bk])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let a_space = space.project(&[M, K]);
+    let a_storage = Storage::of(2, a_space.rank());
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a_input.binding().into_tensor_arg(), v, a_space, a_storage)
+            .quantized(scales.binding().into_tensor_arg(), scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // C[i, j] = Σ_p (a_host[i, p] · scale[p/bk]) · (p·n + j).
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale_vals[p / bk]) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
 }
 
 /// Vectorized operands (2-wide lines) through the Direct schedule: gmem-only line-unit
@@ -1300,9 +2384,9 @@ fn check_matmul_vectorized(schedule: Schedule) {
         &client,
         space.cube_count(),
         CubeDim::new_single(),
-        TileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()),
-        TileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()),
-        TileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), v, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), v, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), v, c.space(), c.storage()),
         dtype,
     );
 
@@ -1326,5 +2410,487 @@ fn check_matmul_vectorized(schedule: Schedule) {
 /// moves lines, the cmma transport addresses the scalar buffer underneath.
 #[test]
 fn cmma_matmul_staged_k_walk_vectorized() {
-    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 2);
+    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 2, StageStorage::Tiled);
+}
+
+// ---- Quantized A through the register (plain-ALU) leaf --------------------------------
+//
+// Every other quant matmul above runs `acc.mma()` on tensor cores and skips where cmma is
+// absent — which is everywhere the memory-bound GEMV actually lives. These pin the other
+// leaf: the staged walk stages `A`'s *packed storage words* into smem (`Tile::copy_from`), and
+// the software microkernel dequantizes each read out of smem through `matrix_transparent` — no
+// f32 inflation of the stage, no promotion, no cmma, no i8 needed for the packed cases (the
+// binding is a `u32`).
+
+/// The kernel: identical to [`launch_staged_matmul`] except `A` arrives storage-typed and is
+/// served via `tile_dequant`, so the same lowering runs quantized or not.
+#[cube(launch)]
+fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
+    a: &StridedTileArg<'_, I>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
+    #[define(I)] _a_dtype: StorageType,
+    #[define(E)] _e_dtype: StorageType,
+) {
+    let a = a.tile_dequant::<E>();
+    let b = b.tile();
+    let mut c = c.tile();
+    c.mma(&a, &b);
+}
+
+/// One staged level cutting `tm×tn×tk` register-leaf tiles — the shape `check_matmul`
+/// drives, minus the storage tiling (operands stay plain strided).
+fn register_staged_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
+    Partitioner::row_major(
+        ByAxis::new(&[(M, tm), (N, tn), (K, tk)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .staged()
+}
+
+/// The single-level direct-serve twin of [`register_staged_partitioner`]: no `.staged()`, so a
+/// quantized operand is read straight from gmem by the leaf rather than staged into smem first.
+fn register_direct_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
+    Partitioner::row_major(
+        ByAxis::new(&[(M, tm), (N, tn), (K, tk)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .direct()
+}
+
+/// Native i8 `A`, one scale per `bm`-row block, through the register leaf.
+#[test]
+fn register_matmul_quant_native_block_m() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let q: Vec<f32> = (0..m * k)
+        .map(|idx| a_host.get_f32(&[idx / k, idx % k]))
+        .collect();
+
+    let scale_vals: Vec<f32> = (0..m / bm).map(|g| 0.05 * (g + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
+    run_register_matmul_quant(
+        client,
+        (m, n, k),
+        register_staged_partitioner(4, 4, 4),
+        a_input.binding().into_tensor_arg(),
+        1,
+        a_dtype,
+        scheme,
+        scales.binding().into_tensor_arg(),
+        scale_vals,
+        bm,
+        q,
+    );
+}
+
+/// Native i8 `A` served DIRECTLY through the register leaf (Keystone K): a `.direct()` plan stages
+/// nothing, so the leaf reads i8 straight from gmem and scales per read. The native + lhs-arm twin
+/// of the packed-rhs [`register_matmul_quant_rhs_direct_serve_gemv`]; together they exercise every
+/// branch of the leaf's quant dispatch (lhs/rhs × native/packed).
+#[test]
+fn register_matmul_quant_native_direct_serve() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let q: Vec<f32> = (0..m * k)
+        .map(|idx| a_host.get_f32(&[idx / k, idx % k]))
+        .collect();
+
+    let scale_vals: Vec<f32> = (0..m / bm).map(|g| 0.05 * (g + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+
+    run_register_matmul_quant(
+        client,
+        (m, n, k),
+        register_direct_partitioner(4, 4, 4),
+        a_input.binding().into_tensor_arg(),
+        1,
+        a_dtype,
+        scheme,
+        scales.binding().into_tensor_arg(),
+        scale_vals,
+        bm,
+        q,
+    );
+}
+
+/// Packed-u32 Q8S `A` (4 values per word along `K`), served in whole-word lines.
+#[test]
+fn register_matmul_quant_packed_q8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_register_matmul_quant_packed(client, (8, 8, 8), 4, QuantValue::Q8S, 4);
+}
+
+/// Packed-u32 Q4S `A` (8 values per word): the widest served line, so it needs a device
+/// whose vectors reach the packing factor (cpu/cuda; WGSL-bound targets cap at 4).
+#[test]
+fn register_matmul_quant_packed_q4() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_register_matmul_quant_packed(client, (8, 8, 16), 8, QuantValue::Q4S, 4);
+}
+
+/// Build a packed `A` spanning the scheme's signed range and run the register matmul.
+fn run_register_matmul_quant_packed(
+    client: ComputeClient<TestRuntime>,
+    (m, n, k): (usize, usize, usize),
+    tk: usize,
+    value: QuantValue,
+    bm: usize,
+) {
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(value)
+        .with_param(QuantParam::F32);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let a = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
+        .untiled()
+        .packed(&scheme)
+        .arange();
+
+    let a_dtype = u32::as_type_native_unchecked().storage_type();
+    let q: Vec<f32> = a.q.iter().map(|&v| v as f32).collect();
+    run_register_matmul_quant(
+        client,
+        (m, n, k),
+        register_staged_partitioner(4, 4, tk),
+        a.tile.tensor_arg(1),
+        pack,
+        a_dtype,
+        scheme,
+        a.scales_arg(),
+        a.scale_values.clone(),
+        bm,
+        q,
+    );
+}
+
+/// Drive [`launch_staged_matmul_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[p,j]`.
+/// `plan` is the operand partitioner: `.staged()` stages `A`'s packed storage words into smem and
+/// dequantizes per read out of it, `.direct()` serves it straight from gmem — either way through
+/// the leaf's [`matrix_transparent`], no dequantized f32 stage.
+#[allow(clippy::too_many_arguments)]
+fn run_register_matmul_quant(
+    client: ComputeClient<TestRuntime>,
+    (m, n, k): (usize, usize, usize),
+    plan: Partitioner,
+    a_arg: TensorArg<TestRuntime>,
+    a_width: usize,
+    a_dtype: StorageType,
+    scheme: QuantScheme,
+    scales_arg: TensorArg<TestRuntime>,
+    scale_vals: Vec<f32>,
+    bm: usize,
+    q: Vec<f32>,
+) {
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(plan);
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_staged_matmul_quant::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        StridedTileArgLaunch::strided(a_arg, a_width, space.project(&[M, K]), Storage::of(2, 2))
+            .quantized(scales_arg, scheme),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| q[i * k + p] * scale_vals[i / bm] * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+// ---- Quantized B (RHS) through the register leaf ---------------------------------------
+//
+// The gemv production shape: the *weight* is the streamed RHS — `(K, N) = (d_in, d_out)`,
+// packed along `d_out` (the innermost axis) with one scale per `(k, N-group)` block
+// (`[1, bn]`). A stays float. The RHS's served width drives the accumulator's line width
+// in the register microkernel, so `C` is launched at the same width.
+
+/// [`launch_staged_matmul_quant`]'s mirror: `B` arrives storage-typed.
+#[cube(launch)]
+fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric>(
+    a: &StridedTileArg<'_, E>,
+    b: &StridedTileArg<'_, I>,
+    c: &StridedTileArg<'_, E>,
+    #[define(I)] _b_dtype: StorageType,
+    #[define(E)] _e_dtype: StorageType,
+) {
+    let a = a.tile();
+    let b = b.tile_dequant::<E>();
+    let mut c = c.tile();
+    c.mma(&a, &b);
+}
+
+/// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]` — the exact scheme
+/// family `metabolic`'s gemv ships (`q8s`, packed-u32, block scales along `d_out`).
+#[test]
+fn register_matmul_quant_rhs_packed_q8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_register_matmul_quant_rhs(
+        client,
+        (8, 8, 8),
+        register_staged_partitioner(4, 4, 4),
+        QuantValue::Q8S,
+        4,
+    );
+}
+
+/// The `q4s` twin (8 values per word): needs 8-wide bindings, so cpu/cuda only.
+#[test]
+fn register_matmul_quant_rhs_packed_q4() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_register_matmul_quant_rhs(
+        client,
+        (8, 16, 8),
+        register_staged_partitioner(4, 8, 4),
+        QuantValue::Q4S,
+        8,
+    );
+}
+
+/// The decode shape itself: a single activation row (`m = 1`) against the packed weight —
+/// what every projection degenerates to during token-by-token generation.
+#[test]
+fn register_matmul_quant_rhs_gemv_row() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_register_matmul_quant_rhs(
+        client,
+        (1, 8, 8),
+        register_staged_partitioner(1, 4, 4),
+        QuantValue::Q8S,
+        4,
+    );
+}
+
+/// The decode shape spread across the device: `N` across cubes on `X`, the geometry a gemv
+/// selector emits (`M = 1` leaves nothing else to spread).
+#[test]
+fn register_matmul_quant_rhs_gemv_row_multi_cube() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 1), (N, 16), (K, 8)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(1))
+                .axis(N, Cut::cube(CubeAxis::X, 4))
+                .axis(K, Cut::sequential(4))
+        })
+        .leaf(Leaf::Register)
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(client, (1, 16, 8), plan, QuantValue::Q8S, 4);
+}
+
+/// Direct-serve the quantized RHS weight (Keystone K): a `Direct` schedule stages nothing, so the
+/// register leaf reads the packed weight straight from gmem and dequantizes *per read* through
+/// [`matrix_transparent`] — the sync-free `m = 1` decode path. The `_rhs_*` tests above are all
+/// `.staged()`: they stage the weight's *packed words* into smem (plus its scales) and dequantize
+/// per read out of smem. Same answer; direct avoids even the smem round-trip.
+#[test]
+fn register_matmul_quant_rhs_direct_serve_gemv() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 1), (N, 8), (K, 8)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::sequential(1))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        .leaf(Leaf::Register)
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(client, (1, 8, 8), plan, QuantValue::Q8S, 4);
+}
+
+/// The Goal path: a `.staged()` packed weight whose smem stage holds the *packed u32 words*, not a
+/// dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with block `[1, bn]` scales —
+/// distinct along K — so each region refills both the staged packed words and the staged scales,
+/// and the leaf dequantizes per read out of smem via [`matrix_transparent`]. This is the batched
+/// weight-streaming case the change targets: the contrast to the f32-inflated stage the cmma leaf
+/// still uses, and to the sync-free direct serve above.
+#[test]
+fn register_matmul_quant_rhs_staged_packed_smem() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        .leaf(Leaf::Register)
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(client, (4, 8, 16), plan, QuantValue::Q8S, 4);
+}
+
+/// Drive [`launch_staged_matmul_quant_rhs`] and check
+/// `C[i,j] = Σ_p A[i,p] · q_b[p,j] · scale[p, j/bn]`.
+fn run_register_matmul_quant_rhs(
+    client: ComputeClient<TestRuntime>,
+    (m, n, k): (usize, usize, usize),
+    plan: Partitioner,
+    value: QuantValue,
+    bn: usize,
+) {
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([1, bn as u8]))
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(value)
+        .with_param(QuantParam::F32);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(plan);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    // The weight and its per-(k, N-group) scales, minted together.
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .packed(&scheme)
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let b_dtype = u32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    // Routine-like: the launcher derives geometry and argument wiring from the plan; the
+    // quantized RHS goes through the source builder, which binds it at the storage width.
+    let launcher = space.launcher(&client);
+    launch_staged_matmul_quant_rhs::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        launcher.arg(a.handle().binding()).subspace(&[M, K]).build(),
+        launcher
+            .arg(b.tile.handle().binding())
+            .subspace(&[K, N])
+            .vectorize(pack)
+            .quantized(b.scales_arg(), scheme)
+            .build(),
+        // The register microkernel lines the accumulator at the RHS's served width.
+        launcher
+            .arg(c.handle().binding())
+            .subspace(&[M, N])
+            .vectorize(pack)
+            .build(),
+        b_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // A is arange over (m, k): a[i, p] = i·k + p.
+    let sn = n / bn;
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| {
+                    ((i * k + p) as f32) * (b.q[p * n + j] as f32) * b.scale_values[p * sn + j / bn]
+                })
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
 }

@@ -46,13 +46,22 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
         // Assume [batch, num_heads, seq_*, head_dim] layout
         let seq_q = query.shape(2) as u32;
         let seq_kv = key.shape(2) as u32;
+        // The query's head count: `batch_index` decomposes with it in every reader.
+        let num_heads = query.shape(1) as u32;
 
         GA::execute(
-            GA::init_query_reader(batch_index, stage_q_offset, query, global_config),
-            GA::init_key_reader(batch_index, key, global_config),
-            GA::init_value_reader(batch_index, value, global_config),
-            GA::init_mask_reader(batch_index, stage_q_offset, mask, seq_kv, global_config),
-            GA::init_writer(batch_index, stage_q_offset, out, global_config),
+            GA::init_query_reader(batch_index, num_heads, stage_q_offset, query, global_config),
+            GA::init_key_reader(batch_index, num_heads, key, global_config),
+            GA::init_value_reader(batch_index, num_heads, value, global_config),
+            GA::init_mask_reader(
+                batch_index,
+                num_heads,
+                stage_q_offset,
+                mask,
+                seq_kv,
+                global_config,
+            ),
+            GA::init_writer(batch_index, num_heads, stage_q_offset, out, global_config),
             seq_q,
             seq_kv,
             config.global_config(),

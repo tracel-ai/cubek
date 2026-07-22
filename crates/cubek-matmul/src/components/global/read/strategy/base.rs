@@ -254,7 +254,11 @@ pub fn validate_tma_with_problem(
 }
 
 /// Defines the non-contiguous stride alignment in terms of powers of two
-fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &StorageType) -> u32 {
+pub(crate) fn stride_align_bits(
+    strides: &[usize],
+    layout: &MatrixLayout,
+    dtype: &StorageType,
+) -> u32 {
     let exclude_dim = match layout {
         MatrixLayout::RowMajor => strides.len() - 1,
         MatrixLayout::ColMajor => strides.len() - 2,

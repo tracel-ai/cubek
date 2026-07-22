@@ -93,10 +93,12 @@ where
         .uniform(5678, -1., 1.)
         .generate_with_f32_host_data();
 
+    // Poisoned, not zeroed: the routine owns `out = A·B` whatever the buffer held
+    // (burn launches with recycled pool memory).
     let out = TestInput::builder(client.clone(), problem.out_shape.clone())
         .dtype(problem.global_dtypes.out)
         .layout(MatrixLayout::RowMajor)
-        .zeros()
+        .uniform(4242, 10., 100.)
         .generate_without_host_data();
 
     problem.lhs_strides = lhs.strides().clone();

@@ -1,7 +1,7 @@
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
     e4m3, e5m2,
-    quant::scheme::{QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
 };
 
 pub fn quantize(
@@ -106,6 +106,26 @@ fn decode_native(bytes: &[u8], value: QuantValue) -> Vec<f32> {
     }
 }
 
+/// [`encode_packed_u32`] over exact integer quant values, as `u32` words: for tests that
+/// need bit-exact control of the packed payload rather than the quantize stub's rounding.
+pub fn pack_q_values(q: &[i32], scheme: &QuantScheme) -> Vec<u32> {
+    let size_quant = scheme.size_bits_value();
+    let num_quants = scheme.num_quants();
+    let mask = quant_mask(size_quant);
+    assert!(
+        q.len().is_multiple_of(num_quants),
+        "pack_q_values: {} values do not fill whole {num_quants}-value words",
+        q.len()
+    );
+    q.chunks(num_quants)
+        .map(|chunk| {
+            chunk.iter().enumerate().fold(0u32, |acc, (p, &v)| {
+                acc | ((v as u32 & mask) << (p * size_quant))
+            })
+        })
+        .collect()
+}
+
 /// Pack `num_quants` consecutive quants (along the innermost dimension) into
 /// each `u32`, low bits first, matching `pack_q`.
 fn encode_packed_u32(quantized: &[f32], scheme: &QuantScheme) -> Vec<u8> {
@@ -159,9 +179,21 @@ fn quant_mask(size_quant: usize) -> u32 {
     }
 }
 
+/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
+pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+    match scheme.level {
+        QuantLevel::Tensor => shape.to_vec(),
+        QuantLevel::Block(bs) => bs
+            .to_dim_vec(shape.len())
+            .iter()
+            .map(|&b| b as usize)
+            .collect(),
+    }
+}
+
 /// Shape of the per-block scale grid: each dimension divided by its block
 /// extent.
-fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
+pub(crate) fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
     assert_eq!(
         shape.len(),
         block_dims.len(),

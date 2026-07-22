@@ -161,6 +161,7 @@ pub struct SharedPartitionAttentionConfig {
     pub partition_size: AttentionPartitionSize,
     pub stage_size: AttentionStageSize,
     pub num_planes: u32,
+    pub query_vector_size: u32,
     pub key_smem_config: StageMemoryConfig,
     pub value_smem_config: StageMemoryConfig,
     pub out_smem_config: StageMemoryConfig,

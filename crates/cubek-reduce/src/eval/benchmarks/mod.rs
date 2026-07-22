@@ -7,7 +7,7 @@ mod strategy;
 
 pub use benchmark::bench;
 pub use correctness::ReduceCorrectness;
-pub use problem::{ReduceProblem, problems};
+pub use problem::{ReduceBenchKind, ReduceProblem, problems};
 pub use strategy::strategies;
 
 use cubek_test_utils::{CatalogEntry, RunSamples};

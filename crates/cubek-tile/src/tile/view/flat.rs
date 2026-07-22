@@ -1,0 +1,104 @@
+//! The flat 1-D view over a [`Tile`]. [`FlatLayout`] is a [`Layout`] that re-views the tile's N-D
+//! [`Space`] as a single row-major [`Coords1d`] index (`shape()` is the element count);
+//! [`Tile::flat`]/[`Tile::flat_mut`] then wrap it as a [`FlatView`]/[`FlatViewMut`] (a
+//! [`MaskedView`] carrying the comptime overhang-`check` flag). Used by elementwise leaves such as
+//! dequantize, which scan every element without re-deriving strides.
+
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Coords1d, CoordsDyn, Layout, LayoutExpand},
+};
+
+use crate::*;
+
+/// A masked 1-D ([`FlatLayout`]) view: a flat row-major scan over a [`Tile`].
+pub type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
+/// The mutable twin of [`FlatView`].
+pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
+
+/// Maps a flat row-major index to an N-D coordinate over `shape`: the inverse of a
+/// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it
+/// linearly (`shape()` is the element count) without re-deriving strides in the kernel.
+/// A static window's extents are constant handles, so the decode divides by constants.
+#[derive(CubeType, Clone)]
+pub struct FlatLayout {
+    shape: Coords<u32>,
+}
+
+#[cube]
+impl FlatLayout {
+    pub fn new(shape: Coords<u32>) -> Self {
+        FlatLayout { shape }
+    }
+}
+
+#[cube]
+impl Layout for FlatLayout {
+    type Coordinates = Coords1d;
+    type SourceCoordinates = CoordsDyn;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let rank = self.shape.len().comptime();
+        let mut out = CoordsDyn::new();
+        let mut offs = pos as u32;
+
+        // Peel off the least-significant dim each step (row-major), carrying the quotient up.
+        #[unroll]
+        for i in 0..rank {
+            let dim = rank - i - 1;
+            let extent = self.shape.at(dim);
+            out.push(offs % extent);
+            offs /= extent;
+        }
+
+        out.reverse(); // pushed last→first; restore ascending dim order
+        out
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        let rank = self.shape.len();
+        self.shape
+            .fproduct(comptime!((0..rank).collect::<Vec<_>>()))
+            .fcast::<usize>()
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        pos < self.shape()
+    }
+}
+
+#[cube]
+impl<T: Numeric> Tile<T> {
+    /// A flat 1-D view over `Vector<T, W>` lines (`W` = [`vector_size`](Tile::vector_size)): a
+    /// row-major scan over the tile's window, masking the overhang per its comptime `check` flag.
+    /// A quantized store is refused: it dequantizes under the fill ([`Tile::copy_from`]), which
+    /// recovers the storage element from the scheme itself.
+    pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                if comptime!(g.store.quant.is_some()) {
+                    panic!("Tile::flat: a quantized tile only dequantizes under Tile::copy_from")
+                }
+                g.flat::<W>()
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::flat: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
+        }
+    }
+
+    pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::flat_mut: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
+        }
+    }
+}

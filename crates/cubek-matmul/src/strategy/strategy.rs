@@ -33,8 +33,8 @@ use crate::{
             simple_unit::SimpleUnitAlgorithm,
             specialized::{SpecializedAlgorithm, SpecializedStrategy},
         },
+        cmma::{self, CmmaRoutine},
         cpu_gemm::{self, CpuGemmRoutine, WithLayout},
-        cyclic_cmma::{self, CyclicCmmaRoutine},
         gemm::{GemmRoutine, launch as launch_gemm},
         gemv_unit_perpendicular::{
             GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
@@ -191,7 +191,8 @@ pub enum Strategy {
     Gemm(BlueprintStrategy<(), GemmRoutine>),
     CpuGemm(BlueprintStrategy<(), CpuGemmRoutine>),
     /// The simple cyclic cmma matmul on the tile DSL (vs the legacy `SimpleCyclicCmma`).
-    CyclicCmma(BlueprintStrategy<(), CyclicCmmaRoutine>),
+    /// The strategy's `delivery` picks strided or TMA operands (`Unavailable` without TMA).
+    Cmma(BlueprintStrategy<(), CmmaRoutine>),
     Naive,
     #[default]
     Auto,
@@ -249,7 +250,7 @@ impl Display for Strategy {
             Strategy::GemvUnitPerpendicular(s) => write!(f, "vecmat_unit_perpendicular{}", s),
             Strategy::Gemm(s) => write!(f, "gemm{}", s),
             Strategy::CpuGemm(s) => write!(f, "cpu_gemm{}", s),
-            Strategy::CyclicCmma(s) => write!(f, "cyclic_cmma{}", s),
+            Strategy::Cmma(s) => write!(f, "cmma{}", s),
         }
     }
 }
@@ -536,18 +537,44 @@ impl Strategy {
             }
             Strategy::Naive => launch_naive::launch_ref(client, lhs, rhs, out, dtypes),
             Strategy::Auto => auto(client, lhs, rhs, out, dtypes),
+            // These two routines carry hard legality constraints (dimensions
+            // must be multiples of the plane size) while autotune caches their
+            // selection per *anchored* key: a winner picked on an aligned
+            // representative must still run on the bucket's other raw shapes.
+            // The entry stays reliable by degrading to the universal unit
+            // kernel on an invalid config, like [`auto`] does — availability
+            // and validation errors surface unchanged.
             Strategy::GemvUnitPerpendicular(blueprint_strategy) => {
-                launch_gemv_unit_perpendicular::launch_ref(
+                match launch_gemv_unit_perpendicular::launch_ref(
                     client,
-                    lhs,
-                    rhs,
-                    out,
+                    lhs.clone(),
+                    rhs.clone(),
+                    out.clone(),
                     blueprint_strategy,
                     dtypes,
-                )
+                ) {
+                    Err(MatmulSetupError::InvalidConfig(_)) => {
+                        Strategy::SimpleUnit(Default::default())
+                            .launch_ref(client, lhs, rhs, out, dtypes)
+                    }
+                    other => other,
+                }
             }
             Strategy::Gemm(blueprint_strategy) => {
-                launch_gemm::launch_ref(client, lhs, rhs, out, blueprint_strategy, dtypes)
+                match launch_gemm::launch_ref(
+                    client,
+                    lhs.clone(),
+                    rhs.clone(),
+                    out.clone(),
+                    blueprint_strategy,
+                    dtypes,
+                ) {
+                    Err(MatmulSetupError::InvalidConfig(_)) => {
+                        Strategy::SimpleUnit(Default::default())
+                            .launch_ref(client, lhs, rhs, out, dtypes)
+                    }
+                    other => other,
+                }
             }
             Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
                 client,
@@ -557,7 +584,7 @@ impl Strategy {
                 strategy,
                 dtypes,
             ),
-            Strategy::CyclicCmma(strategy) => cyclic_cmma::launch_ref(
+            Strategy::Cmma(strategy) => cmma::launch_ref(
                 client,
                 into_contiguous_if_highly_permuted(client, lhs)?,
                 into_contiguous_if_highly_permuted(client, rhs)?,

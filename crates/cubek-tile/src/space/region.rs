@@ -1,82 +1,55 @@
 use super::Space;
-use crate::Axis;
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use crate::{Axis, Coords, Fold, FoldExpand};
+use cubecl::prelude::*;
 
 /// One region of a partitioned [`Space`]: the subset the walk visits at a step,
-/// a `Space` at an origin.
+/// a `Space` at an origin. Coordinates carry their constness: a static walk's fold
+/// to comptime constants, so a region can select fragments as well as window memory.
 #[derive(CubeType)]
 pub struct Region {
-    coords: CoordsDyn,
+    coords: Coords<u32>,
     #[cube(comptime)]
     space: Space,
 }
 
 #[cube]
 impl Region {
-    pub fn new(coords: CoordsDyn, #[comptime] space: Space) -> Region {
+    pub fn new(coords: Coords<u32>, #[comptime] space: Space) -> Region {
         Region { coords, space }
+    }
+
+    /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere; comptime, so
+    /// it folds to constants and can select fragments.
+    pub fn trailing(
+        #[comptime] space: Space,
+        #[comptime] c0: usize,
+        #[comptime] c1: usize,
+    ) -> Region {
+        let rank = comptime!(space.rank());
+        let mut coords = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            let c = comptime!(if p == rank - 2 {
+                c0 as u32
+            } else if p == rank - 1 {
+                c1 as u32
+            } else {
+                0u32
+            });
+            coords.push(c);
+        }
+        Region::new(coords, comptime!(space.clone()))
     }
 
     /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
     /// the tile spans all of it).
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {
         if comptime!(self.space.contains(axis)) {
-            self.coords[comptime!(self.space.position(axis))] as usize
+            self.coords
+                .at(comptime!(self.space.position(axis)))
+                .fcast::<usize>()
         } else {
             0usize.runtime()
         }
-    }
-
-    /// The runtime form of a static region. Memory windowing is coordinate-kind-agnostic,
-    /// so the register-tier walk reuses [`Tile::at`](crate::Tile::at) through this.
-    pub(crate) fn from_static(#[comptime] region: &StaticRegion) -> Region {
-        let mut coords = CoordsDyn::new();
-        #[unroll]
-        for p in 0..comptime!(region.space().rank()) {
-            coords.push(comptime!(region.coord_at(p)) as u32);
-        }
-        Region::new(coords, comptime!(region.space().clone()))
-    }
-}
-
-/// [`Region`]'s static sibling, for the register tier: fragments are comptime-indexed,
-/// so a walk over them carries its coordinates as host data.
-#[derive(Clone, Debug)]
-pub struct StaticRegion {
-    coords: Vec<usize>,
-    space: Space,
-}
-
-impl StaticRegion {
-    pub fn new(coords: Vec<usize>, space: Space) -> StaticRegion {
-        assert!(coords.len() == space.rank(), "StaticRegion: rank mismatch");
-        StaticRegion { coords, space }
-    }
-
-    /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere.
-    pub fn trailing(space: &Space, c0: usize, c1: usize) -> StaticRegion {
-        let rank = space.rank();
-        let mut coords = vec![0; rank];
-        coords[rank - 2] = c0;
-        coords[rank - 1] = c1;
-        StaticRegion::new(coords, space.clone())
-    }
-
-    /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
-    /// the tile spans all of it).
-    pub fn coord(&self, axis: Axis) -> usize {
-        if self.space.contains(axis) {
-            self.coords[self.space.position(axis)]
-        } else {
-            0
-        }
-    }
-
-    pub fn coord_at(&self, p: usize) -> usize {
-        self.coords[p]
-    }
-
-    pub fn space(&self) -> &Space {
-        &self.space
     }
 }

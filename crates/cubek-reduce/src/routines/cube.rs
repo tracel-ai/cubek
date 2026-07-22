@@ -138,11 +138,14 @@ fn generate_blueprint<R: Runtime>(
     let cube_dim = CubeDim::new_2d(plane_size, plane_count);
     let cube_size = cube_dim.num_elems();
 
+    // Unchecked comptime fast paths only when raw shapes are their own
+    // autotune keys — see the twin comment in `plane.rs`.
+    let unchecked = settings.unchecked_fast_paths;
     let work_size = match settings.vectorization_mode {
         VectorizationMode::Parallel => problem.reduce_len / settings.vector_size_input,
         VectorizationMode::Perpendicular => problem.reduce_len,
     };
-    let bound_checks = match work_size.is_multiple_of(cube_size as usize) {
+    let bound_checks = match unchecked && work_size.is_multiple_of(cube_size as usize) {
         true => BoundChecks::None,
         false => BoundChecks::Mask,
     };
@@ -154,7 +157,7 @@ fn generate_blueprint<R: Runtime>(
 
     let (cube_count, launched_cubes) = cube_count_spread_with_total(client, working_cubes);
 
-    let cube_idle = match working_cubes != launched_cubes {
+    let cube_idle = match !unchecked || working_cubes != launched_cubes {
         true => match strategy.use_planes
             && !client
                 .properties()

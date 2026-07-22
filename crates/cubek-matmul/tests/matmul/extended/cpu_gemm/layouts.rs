@@ -13,7 +13,7 @@ use cubek_matmul::routines::cpu_gemm::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, Space, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, Space, StridedTileArg, StridedTileArgLaunch};
 
 use super::Dims;
 use crate::matmul::assert_result;
@@ -30,8 +30,8 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &TileArg<'_, E>,
-    dst: &TileArg<'_, E>,
+    src: &StridedTileArg<'_, E>,
+    dst: &StridedTileArg<'_, E>,
     #[define(E)] _dtype: StorageType,
 ) {
     let src = src.tile();
@@ -82,6 +82,25 @@ impl Operand {
         Self::wrap(handle, layout, axes, batch, rows, cols)
     }
 
+    /// [`zeros`](Self::zeros) with poisoned contents: an output must come out
+    /// `A·B` whatever its buffer held (burn launches with recycled pool memory).
+    fn poisoned(
+        client: &ComputeClient<TestRuntime>,
+        layout: InnerLayout,
+        axes: [Axis; 3],
+        batch: usize,
+        rows: usize,
+        cols: usize,
+    ) -> Self {
+        let handle = TestInput::builder(
+            client.clone(),
+            Shape::from(layout.physical_dims(&[batch], rows, cols)),
+        )
+        .uniform(4242, 10., 100.)
+        .generate_without_host_data();
+        Self::wrap(handle, layout, axes, batch, rows, cols)
+    }
+
     /// Wrap an existing `handle` as an operand of the given layout/axes.
     fn wrap(
         handle: TensorHandle<TestRuntime>,
@@ -122,12 +141,15 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
     binding
 }
 
-/// The operand's launchable `TileArg`, viewed in `space`: its tensor arg (with the
+/// The operand's launchable `StridedTileArg`, viewed in `space`: its tensor arg (with the
 /// layout's physical strides) and the matching [`Storage`]. Generic over the element
 /// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric>(op: &Operand, space: Space) -> TileArgLaunch<'static, E, TestRuntime> {
+fn tile_arg<E: Numeric>(
+    op: &Operand,
+    space: Space,
+) -> StridedTileArgLaunch<'static, E, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    TileArgLaunch::strided(tensor, 1, space, storage)
+    StridedTileArgLaunch::strided(tensor, 1, space, storage)
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.
@@ -192,7 +214,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     // through the views.
     let lhs = Operand::zeros(&client, lhs_layout, [B, M, K], lhs_batch, m, k);
     let rhs = Operand::zeros(&client, rhs_layout, [B, K, N], rhs_batch, k, n);
-    let out = Operand::zeros(&client, out_layout, [B, M, N], out_batch, m, n);
+    let out = Operand::poisoned(&client, out_layout, [B, M, N], out_batch, m, n);
 
     copy(
         &client,

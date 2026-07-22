@@ -61,6 +61,10 @@ impl TileAttention {
         self.materialized_mask
     }
 
+    pub fn requires_shared_query_stage(&self) -> bool {
+        matches!(self.score_matmul, AttentionTileMatmul::Cmma(_))
+    }
+
     /// Workspace kind for the softmax round-trip, chosen by the score matmul
     /// variant.
     pub fn softmax_kind(&self) -> SoftmaxKind {

@@ -11,6 +11,8 @@ pub use cubek_matmul::eval::benchmarks::gemm_cpu;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu_tiled;
 pub use cubek_matmul::eval::benchmarks::gemv;
 pub use cubek_matmul::eval::benchmarks::quantized_matmul;
+pub use cubek_matmul::eval::benchmarks::split_k;
+pub use cubek_matmul::eval::benchmarks::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
 pub use cubek_reduce::eval::benchmarks as reduce;
 pub use cubek_std::eval::benchmarks::contiguous;
@@ -40,6 +42,8 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::qr::Category,
         &crate::quantized_matmul::Category,
         &crate::reduce::Category,
+        &crate::split_k::Category,
+        &crate::tile_quant_stage::Category,
         &crate::unary::Category,
     ]
 }
@@ -47,15 +51,24 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
 /// Loop over every (strategy, problem) for `category`, run each at 10 samples,
 /// and print the resulting durations using the category's preferred
 /// [`cubecl::benchmark::TimingMethod`]. Used by `benches/*.rs` via [`run_bench!`].
+///
+/// `CUBEK_BENCH_SAMPLES` overrides the sample count (default 10), which matters
+/// on a GPU whose clocks idle low (a desktop card at 210MHz of a 3150MHz max,
+/// say): a handful of short samples then gets measured while the clocks are
+/// still ramping, and identical kernels can differ by the ratio of those two
+/// clocks. Raising the count is the difference between a usable number and noise.
 pub fn run_category(category: &dyn BenchmarkCategory) {
     use cubecl::benchmark::BenchmarkDurations;
 
-    const SAMPLES: usize = 10;
+    let samples: usize = std::env::var("CUBEK_BENCH_SAMPLES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
 
     for problem in category.problems() {
         for strategy in category.strategies() {
             println!("---- {} / {} ----", strategy.label, problem.label);
-            match category.run(&strategy.id, &problem.id, SAMPLES) {
+            match category.run(&strategy.id, &problem.id, samples) {
                 Ok(samples) => {
                     if let Some(tflops) = samples.tflops {
                         println!("{tflops:.3} TFLOPS");

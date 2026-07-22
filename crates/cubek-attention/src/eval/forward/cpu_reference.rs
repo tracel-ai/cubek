@@ -192,6 +192,22 @@ pub fn assert_result(
     elems: AttentionElems,
 ) -> ValidationResult {
     let epsilon = attention_epsilon(&elems, 0.01);
+    assert_result_with_epsilon(query, key, value, mask, problem, client, out, epsilon)
+}
+
+/// [`assert_result`] with an explicit epsilon, for inputs outside the default
+/// unit range where the absolute tolerance must scale with magnitude.
+#[allow(clippy::too_many_arguments)]
+pub fn assert_result_with_epsilon(
+    query: &HostData,
+    key: &HostData,
+    value: &HostData,
+    mask: Option<&HostData>,
+    problem: &AttentionProblem,
+    client: &ComputeClient<TestRuntime>,
+    out: TensorHandle<TestRuntime>,
+    epsilon: f32,
+) -> ValidationResult {
     let expected = flash_attention_v2_reference(query, key, value, mask, problem, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
@@ -230,6 +246,22 @@ pub fn flash_attention_v2_reference(
     problem: &AttentionProblem,
     progress: Option<&Progress>,
 ) -> HostData {
+    flash_attention_v2_reference_with_lse(query, key, value, mask, problem, progress).0
+}
+
+/// Like [`flash_attention_v2_reference`] but also returns the per-row
+/// `lse = m + ln(l)` tensor, shape `[B, H, seq_q]`. Fully-masked rows get
+/// `-inf`, matching the backward reference's convention. No kernel emits lse
+/// yet; this is the ground truth the tile port's epilogue will be tested
+/// against.
+pub fn flash_attention_v2_reference_with_lse(
+    query: &HostData,
+    key: &HostData,
+    value: &HostData,
+    mask: Option<&HostData>,
+    problem: &AttentionProblem,
+    progress: Option<&Progress>,
+) -> (HostData, HostData) {
     let batch = problem.dims.batch;
     let seq_q = problem.dims.seq_q;
     let seq_kv = problem.dims.seq_kv;
@@ -242,6 +274,8 @@ pub fn flash_attention_v2_reference(
 
     let out_shape = Shape::new([batch, num_heads, seq_q, val_dim]);
     let mut out = vec![0.; batch * num_heads * seq_q * val_dim];
+    let lse_shape = Shape::new([batch, num_heads, seq_q]);
+    let mut lse = vec![0.; batch * num_heads * seq_q];
 
     if let Some(p) = progress {
         p.set_total((batch * num_heads * seq_q) as u64);
@@ -271,7 +305,10 @@ pub fn flash_attention_v2_reference(
                     }
                     dot *= scale;
 
-                    let s_val = if problem.options.causal && j > i {
+                    // Bottom-right-aligned causality: the last query row
+                    // attends the whole key sequence, so a short query block
+                    // against a longer KV (cached decode) sees all past keys.
+                    let s_val = if problem.options.causal && j + seq_q > i + seq_kv {
                         f32::NEG_INFINITY
                     } else if let Some(mask) = mask {
                         m_index = [b, h, i, j];
@@ -303,6 +340,12 @@ pub fn flash_attention_v2_reference(
                     l = l_new;
                 }
 
+                lse[(b * num_heads + h) * seq_q + i] = if l > 0. {
+                    m + l.ln()
+                } else {
+                    f32::NEG_INFINITY
+                };
+
                 out_index[0] = b;
                 out_index[1] = h;
                 out_index[2] = i;
@@ -323,10 +366,18 @@ pub fn flash_attention_v2_reference(
         }
     }
 
-    let strides = StridedLayout::RowMajor.compute_strides(&out_shape);
-    HostData {
-        data: HostDataVec::F32(out),
-        shape: out_shape,
-        strides,
-    }
+    let out_strides = StridedLayout::RowMajor.compute_strides(&out_shape);
+    let lse_strides = StridedLayout::RowMajor.compute_strides(&lse_shape);
+    (
+        HostData {
+            data: HostDataVec::F32(out),
+            shape: out_shape,
+            strides: out_strides,
+        },
+        HostData {
+            data: HostDataVec::F32(lse),
+            shape: lse_shape,
+            strides: lse_strides,
+        },
+    )
 }

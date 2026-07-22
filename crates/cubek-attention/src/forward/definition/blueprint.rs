@@ -81,18 +81,11 @@ impl AttentionTilingScheme {
 
     pub fn check_bounds(&self, problem: &AttentionDims) -> AttentionCheckBounds {
         AttentionCheckBounds {
-            seq_q: !self
-                .elements_in_stage_seq_q()
-                .is_multiple_of(problem.seq_q as u32),
-            seq_kv: !self
-                .elements_in_partition_seq_kv()
-                .is_multiple_of(problem.seq_kv as u32),
-            head_dim: !self
-                .elements_in_partition_head_dim()
-                .is_multiple_of(problem.head_dim as u32),
-            val_dim: !self
-                .elements_in_partition_val_dim()
-                .is_multiple_of(problem.val_dim as u32),
+            seq_q: !(problem.seq_q as u32).is_multiple_of(self.elements_in_stage_seq_q()),
+            seq_kv: !(problem.seq_kv as u32).is_multiple_of(self.elements_in_partition_seq_kv()),
+            head_dim: !(problem.head_dim as u32)
+                .is_multiple_of(self.elements_in_partition_head_dim()),
+            val_dim: !(problem.val_dim as u32).is_multiple_of(self.elements_in_partition_val_dim()),
         }
     }
 }
@@ -174,4 +167,79 @@ pub struct AttentionCheckBounds {
     pub seq_kv: bool,
     pub head_dim: bool,
     pub val_dim: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scheme() -> AttentionTilingScheme {
+        // Spans: seq_q stage = 4 * 8 * 2 = 64, seq_kv partition = 4 * 8 = 32,
+        // head_dim partition = 8 * 2 = 16, val_dim partition = 8 * 2 = 16.
+        AttentionTilingScheme {
+            tile_size: AttentionTileSize {
+                seq_q: 8,
+                head_dim: 8,
+                seq_kv: 8,
+                val_dim: 8,
+            },
+            partition_size: AttentionPartitionSize {
+                seq_q: 4,
+                head_dim: 2,
+                seq_kv: 4,
+                val_dim: 2,
+            },
+            stage_size: AttentionStageSize { seq_q: 2 },
+        }
+    }
+
+    fn dims(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> AttentionDims {
+        AttentionDims {
+            batch: 1,
+            num_heads: 1,
+            seq_q,
+            seq_kv,
+            head_dim,
+            val_dim,
+        }
+    }
+
+    #[test]
+    fn no_checks_when_spans_divide_problem() {
+        let checks = scheme().check_bounds(&dims(128, 64, 32, 16));
+        assert!(!checks.seq_q);
+        assert!(!checks.seq_kv);
+        assert!(!checks.head_dim);
+        assert!(!checks.val_dim);
+    }
+
+    #[test]
+    fn no_checks_when_problem_equals_spans() {
+        let checks = scheme().check_bounds(&dims(64, 32, 16, 16));
+        assert!(!checks.seq_q);
+        assert!(!checks.seq_kv);
+        assert!(!checks.head_dim);
+        assert!(!checks.val_dim);
+    }
+
+    /// The historical inversion: when the problem dim divides the span
+    /// (smaller problem than one span), checks were wrongly disabled and the
+    /// tail ran unmasked.
+    #[test]
+    fn checks_when_problem_divides_span() {
+        let checks = scheme().check_bounds(&dims(32, 16, 8, 8));
+        assert!(checks.seq_q);
+        assert!(checks.seq_kv);
+        assert!(checks.head_dim);
+        assert!(checks.val_dim);
+    }
+
+    #[test]
+    fn checks_when_problem_coprime_with_span() {
+        let checks = scheme().check_bounds(&dims(1500, 1500, 17, 23));
+        assert!(checks.seq_q);
+        assert!(checks.seq_kv);
+        assert!(checks.head_dim);
+        assert!(checks.val_dim);
+    }
 }

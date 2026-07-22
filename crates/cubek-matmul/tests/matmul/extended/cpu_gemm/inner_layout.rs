@@ -155,7 +155,7 @@ impl InnerLayout {
     }
 
     /// The raw [`TensorArg`] (strides preserved) plus the physical [`Storage`] that
-    /// `TileArgLaunch::strided` turns into a `TiledViewLayout` view. `vector_size > 1` lines the
+    /// `StridedTileArgLaunch::strided` turns into a `TiledViewLayout` view. `vector_size > 1` lines the
     /// innermost (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
     pub fn tensor_arg<R: Runtime>(
         &self,

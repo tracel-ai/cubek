@@ -24,8 +24,11 @@ mod error;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
 
-pub use crate::launch::ReduceStrategy;
-use crate::{components::instructions::ReduceOperationConfig, launch::launch_reduce};
+pub use crate::launch::{ReduceStrategy, ReduceWithIndicesDtypes};
+use crate::{
+    components::instructions::ReduceOperationConfig,
+    launch::{launch_reduce, launch_reduce_with_indices},
+};
 pub use components::{
     args::init_tensors,
     config::*,
@@ -112,6 +115,80 @@ pub fn reduce<R: Runtime>(
     )?;
 
     launch_reduce::<R>(client, input, output, axis, strategy, dtypes, operation)
+}
+
+/// Reduce the given `axis` of `input`, writing the values into `values` and their indices
+/// into `indices` from a **single** kernel launch.
+///
+/// Callers wanting both halves of a top-k would otherwise launch the reduce twice, once as
+/// `TopK` and once as `ArgTopK`, and discard half of each result, even though one reduction
+/// already computes both. This runs it once.
+///
+/// `values` and `indices` must have the same shape (the `input` shape with `axis` set to
+/// `k`) and the same strides, since both outputs are written through one layout.
+/// Only [`ReduceOperationConfig::TopK`] and [`ReduceOperationConfig::ArgTopK`] are accepted,
+/// and they behave identically here since both halves are written regardless; any other
+/// operation returns [`ReduceError::IndicesUnsupported`].
+///
+/// The plain [`reduce`] entrypoint is unaffected and still writes a single output.
+#[allow(clippy::too_many_arguments)]
+pub fn reduce_with_indices<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    values: TensorBinding<R>,
+    indices: TensorBinding<R>,
+    axis: usize,
+    strategy: ReduceStrategy,
+    operation: ReduceOperationConfig,
+    dtypes: ReduceWithIndicesDtypes,
+) -> Result<(), ReduceError> {
+    let k = match operation {
+        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => k,
+        other => {
+            return Err(ReduceError::IndicesUnsupported {
+                operation: operation_name(&other),
+            });
+        }
+    };
+
+    validate_axis(input.shape.len(), axis)?;
+    validate_shapes(&input.shape, &values.shape, axis, Some(k))?;
+
+    if indices.shape.as_slice() != values.shape.as_slice() {
+        return Err(ReduceError::MismatchIndicesShape {
+            values_shape: values.shape.to_vec(),
+            indices_shape: indices.shape.to_vec(),
+        });
+    }
+
+    // The two outputs must also share a layout: vectorization and write positions are
+    // derived from the values tensor alone, so indices with different strides would be
+    // written as if they had the values layout, producing silently wrong data.
+    if indices.strides != values.strides {
+        return Err(ReduceError::MismatchIndicesStrides {
+            values_strides: values.strides.to_vec(),
+            indices_strides: indices.strides.to_vec(),
+        });
+    }
+
+    launch_reduce_with_indices::<R>(client, input, values, indices, axis, strategy, dtypes, k)
+}
+
+fn operation_name(operation: &ReduceOperationConfig) -> &'static str {
+    match operation {
+        ReduceOperationConfig::Sum => "Sum",
+        ReduceOperationConfig::Prod => "Prod",
+        ReduceOperationConfig::Mean => "Mean",
+        ReduceOperationConfig::MaxAbs => "MaxAbs",
+        ReduceOperationConfig::ArgMax => "ArgMax",
+        ReduceOperationConfig::ArgMin => "ArgMin",
+        ReduceOperationConfig::Max => "Max",
+        ReduceOperationConfig::Min => "Min",
+        ReduceOperationConfig::ArgTopK(_) => "ArgTopK",
+        ReduceOperationConfig::TopK(_) => "TopK",
+        ReduceOperationConfig::Any => "Any",
+        ReduceOperationConfig::All => "All",
+    }
 }
 
 // Check that the given axis is less than the rank of the input.

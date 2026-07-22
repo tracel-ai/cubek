@@ -7,6 +7,7 @@ use crate::routines::{
         ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
         simple_unit::SimpleUnitSelectionArgs,
     },
+    cmma::CmmaStrategy,
     cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid},
     gemm::GemmStrategy,
 };
@@ -147,9 +148,14 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
             Strategy::CpuGemm(BlueprintStrategy::default()),
         ),
         CatalogEntry::new(
-            "cyclic_cmma",
-            "CyclicCmma (tile-DSL)",
-            Strategy::CyclicCmma(BlueprintStrategy::default()),
+            "cmma",
+            "Cmma (tile-DSL)",
+            Strategy::Cmma(BlueprintStrategy::default()),
+        ),
+        CatalogEntry::new(
+            "cmma_tma",
+            "Cmma (tile-DSL, TMA)",
+            Strategy::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())),
         ),
         cpu_gemm_forced(
             "cpu_gemm_t64",

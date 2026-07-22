@@ -1,16 +1,26 @@
-//! The [`Tile`]: one operand's data, a [`TileKind`] backing store plus the comptime
-//! [`Space`] it projects. This module holds the tile-level surface; each backing
-//! store's own data and leaves live in its file ([`mem`], [`cmma`], [`tma`]).
+//! The [`Tile`]: one operand's data as a [`TileKind`] backing store, plus the comptime
+//! [`Space`] it projects. Structure only; each store's own data and leaves live in its file
+//! ([`mem`], [`cmma`], [`tma`]). The launch surface (args, deliveries, builder) rides on
+//! [`StridedTileArg`](crate::StridedTileArg) and its twin [`TmaTileArg`](crate::TmaTileArg).
 
 mod cmma;
 mod mem;
+mod mma;
+mod plane;
 mod tma;
+mod view;
 
 pub use cmma::*;
 pub use mem::*;
+pub use mma::*;
+pub use plane::*;
 pub use tma::*;
+pub use view::*;
 
-use cubecl::{prelude::*, quant::scheme::QuantScheme};
+use cubecl::{
+    prelude::*,
+    quant::scheme::{QuantLevel, QuantScheme},
+};
 
 use crate::*;
 
@@ -21,152 +31,148 @@ use crate::*;
 pub enum TileKind<T: Numeric> {
     Gmem(MemData<T>),
     Smem(MemData<T>),
-    /// MMA-unit-resident, not addressable (no memory view); contraction is `cmma::execute`.
-    Cmma(CmmaData<T>),
-    /// A partition of cmma fragments, `m_tiles × n_tiles`, comptime-indexed; walked
-    /// statically ([`at_static`](Tile::at_static)).
-    CmmaPartition(CmmaPartition<T>),
+    /// One plane-level tile: owned by a plane and sliced across its lanes, so never addressable
+    /// (no memory view). The [`Leaf`] picks the encoding; the contraction is its own.
+    PlaneTile(PlaneTile<T>),
+    /// The grid of plane tiles one plane owns, `m_tiles × n_tiles`, comptime-indexed; only a
+    /// static walk's regions (constant coordinates) can select through it.
+    PlanePartition(PlanePartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
-    /// copy into shared memory. Dormant: no launch-side constructor wires it yet.
+    /// copy into shared memory. Launched via [`TmaTileArg`], the twin of [`StridedTileArg`].
     TmaGmem(TmaData<T>),
 }
 
 #[cube]
 impl<T: Numeric> TileKind<T> {
-    /// Whether a level over `space` must be walked statically: fragments cannot be
-    /// indexed by a runtime region (a partition at its partition level). Comptime.
+    /// Whether a level must be walked with comptime coordinates. Fragments can't be picked out by
+    /// a runtime region, so a plane partition sitting at a real partition level forces the unrolled
+    /// walk. Comptime.
     pub(crate) fn static_level(&self, #[comptime] space: Space) -> comptime_type!(bool) {
         match self {
-            TileKind::CmmaPartition(_) => comptime!(partition_level(&space).is_some()),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
+            TileKind::PlanePartition(_) => comptime!(matches!(
+                space.partitioner(),
+                Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition)
+            )),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_) => {
+                comptime!(false)
+            }
+        }
+    }
+
+    /// Whether a staged walk here must unroll for correctness. When the level cuts a fragment
+    /// partition, each region picks its own block of fragments, which needs comptime coordinates.
+    /// A 1×1 level (a k-step walk) cuts nothing and passes the partition through, so it stays a
+    /// plain runtime loop. Comptime.
+    pub(crate) fn cuts_partition(&self, #[comptime] space: Space) -> comptime_type!(bool) {
+        match self {
+            TileKind::PlanePartition(_) => comptime!(space.cuts_tiles()),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_) => {
                 comptime!(false)
             }
         }
     }
 }
 
-/// How a launched tensor's `[pre…, grid…, tile…]` buffer maps to the logical
-/// [`Space`]. A property of the tensor, distinct from the space's partitioner.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Storage {
-    pub start_axis: usize,
-    pub levels: usize,
-    /// Whether this operand's logical extent can overhang its tile grid, so edge
-    /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
-    /// keeps the unchecked (divisible) fast path.
-    pub check_bounds: bool,
-}
-
-impl Storage {
-    /// Every axis tiled, no passthrough; `levels` read off the tensor's rank.
-    pub fn of(physical_rank: usize, logical_rank: usize) -> Self {
-        Storage {
-            start_axis: 0,
-            levels: physical_rank / logical_rank - 1,
-            check_bounds: false,
-        }
-    }
-
-    pub fn passthrough(start_axis: usize, levels: usize) -> Self {
-        Storage {
-            start_axis,
-            levels,
-            check_bounds: false,
-        }
-    }
-
-    /// Set whether edge reads/writes must be bounds-checked.
-    pub fn checked(mut self, check_bounds: bool) -> Self {
-        self.check_bounds = check_bounds;
-        self
-    }
-}
-
-/// The launchable form of a [`Tile`]: a scalar `&Tensor` plus its comptime line
-/// [`vector_size`](Self::vector_size), [`Space`] and [`Storage`]; [`tile`](TileArg::tile) turns
-/// it into a `Tile` in-kernel. For a quantized operand, `E` is the storage element and
-/// [`tile_dequant`](TileArg::tile_dequant) picks the served type.
-#[derive(CubeType, CubeLaunch)]
-pub struct TileArg<'a, E: Numeric> {
-    pub tensor: &'a Tensor<E>,
-    /// Physical vectorization (`Vector<E, vector_size>` line size) of the operand's contiguous
-    /// innermost axis; `1` is scalar.
-    #[cube(comptime)]
-    pub vector_size: usize,
-    #[cube(comptime)]
-    pub space: Space,
-    #[cube(comptime)]
-    pub storage: Storage,
-    /// Quantization side-channel, `None` for a plain operand (every constructor's default;
-    /// [`quantized`](TileArgLaunch::quantized) opts in).
-    pub quant: ComptimeOption<QuantArg>,
-}
-
-#[cube]
-impl<'a, E: Numeric> TileArg<'a, E> {
-    /// Serve the tensor's own element type. The plain path; a quantized operand goes
-    /// through [`tile_dequant`](Self::tile_dequant) to name its served type.
-    pub fn tile(&self) -> Tile<E> {
-        if comptime!(self.quant.is_some()) {
-            panic!("TileArg::tile: a quantized operand is served via TileArg::tile_dequant")
-        }
-        MemData::from_tensor(
-            self.tensor,
-            comptime!(self.vector_size),
-            comptime!(self.space.clone()),
-            comptime!(self.storage),
-        )
-    }
-
-    /// Serve `O` from a storage-typed operand: `quant = Some` attaches the scale + scheme so reads
-    /// dequantize `E → O` transparently; `quant = None` is the plain path (the launch binds
-    /// `E == O`). For kernels that thread both types via `#[define]` and run quantized or not.
-    pub fn tile_dequant<O: Numeric>(&self) -> Tile<O> {
-        // `#[comptime]`: whether the operand is quantized is a trace-time fact, so the match
-        // resolves at expand and the plain path pays nothing.
-        let quant = #[comptime]
-        match &self.quant {
-            // Per-tensor native: a single scale at flat index 0.
-            ComptimeOption::Some(q) => ComptimeOption::new_Some(QuantInfo {
-                scale: q.scales[0],
-                scheme: comptime!(q.scheme),
-            }),
-            ComptimeOption::None => ComptimeOption::new_None(),
-        };
-        MemData::<O>::from_tensor_quant::<E>(
-            self.tensor,
-            comptime!(self.vector_size),
-            comptime!(self.space.clone()),
-            comptime!(self.storage),
-            quant,
-        )
-    }
-}
-
-/// The quantization a tile's backing store carries so reads dequantize transparently: a
-/// runtime `scale` (per-tensor for now) plus the comptime [`QuantScheme`].
+/// Quantization a tile's store carries, so reads dequantize on their own. Holds the scale `buffer`
+/// plus what walks the scales in step with the values: a per-axis `strides`, a running
+/// `window_start`, and comptime `block` sizes. [`ScaleLayout`] turns those into an address ([`MemData::at`]).
+/// Per-tensor is the trivial case: one scale, every stride `0`, `window_start` never moves.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
-    pub scale: f32,
+    pub(crate) buffer: Box<[f32]>,
+    pub(crate) strides: Coords<u32>,
+    pub(crate) window_start: u32,
+    #[cube(comptime)]
+    pub(crate) block: Vec<usize>,
+    /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
+    /// ([`MemData::smem_quant`]): the values stage as packed words and their scales stage compactly
+    /// beside them, so the fill knows how many blocks to copy. Empty for a gmem operand, which reads
+    /// the tensor's own scales in place.
+    #[cube(comptime)]
+    pub(crate) scale_shape: Vec<usize>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
 }
 
-/// The quantization side-channel of a [`TileArg`]: the scale grid plus the comptime
-/// [`QuantScheme`] that says how to fold it back in. Optional on the arg so the *same* kernel runs
-/// quantized or not (the tile dequantizes on read).
-#[derive(CubeType, CubeLaunch)]
-pub struct QuantArg {
-    /// Per-tensor scales (currently a single value at flat index 0).
-    pub scales: OwnedTensor<f32>,
-    #[cube(comptime)]
-    pub scheme: QuantScheme,
+/// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
+/// tensor, so its edges are an unused placeholder ([`QuantInfo::native`] pairs them with `0`
+/// strides); a block scheme's edges come straight from the scheme.
+pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
+    match scheme.level {
+        QuantLevel::Tensor => vec![1; rank],
+        QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
+    }
 }
 
-/// One operand's data: the runtime [`TileKind`] and the comptime [`Space`] it projects. The
-/// generic `T` is the element the tile *serves/computes* in; the physical vectorization is a
-/// storage detail held inside the [`TileKind`] variant (read via [`vector_size`](Tile::vector_size)).
+#[cube]
+impl QuantInfo {
+    /// Build the native (unpacked) quant side-channel from a launched [`QuantArg`]: the whole scales
+    /// buffer, plus per axis the block size and the stride that steps one scale per block. A block
+    /// scheme reads those strides off the scales tensor; per-tensor has a single scale (every stride
+    /// `0`, window stays put).
+    pub(crate) fn native(q: &QuantArg, #[comptime] rank: usize) -> QuantInfo {
+        let block = comptime!(block_edges(q.scheme, rank));
+        let mut strides = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            if comptime!(q.scheme.level == QuantLevel::Tensor) {
+                strides.push(0u32);
+            } else {
+                strides.push(q.scales.stride(p) as u32);
+            }
+        }
+        QuantInfo {
+            buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
+            strides,
+            window_start: 0u32,
+            block: comptime!(block),
+            // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
+            scale_shape: comptime!(Vec::new()),
+            scheme: comptime!(q.scheme),
+        }
+    }
+
+    /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
+    /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
+    /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
+    /// the window's own block index in here lets [`ScaleLayout`] add only the within-window offset,
+    /// sound because a window never straddles a block (`validate_scheme` enforces it).
+    pub(crate) fn window(
+        &self,
+        origin: &Coords<u32>,
+        #[comptime] rank: usize,
+        #[comptime] vector_size: usize,
+    ) -> QuantInfo {
+        let last = comptime!(rank - 1);
+        let mut advances = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            let w = comptime!(if p == last { vector_size } else { 1usize });
+            let origin_elem = origin.at(p).fmul(comptime!(w as u32).runtime());
+            let block = comptime!(self.block[p] as u32).runtime();
+            advances.push(origin_elem.fdiv(block).fmul(self.strides.at(p)));
+        }
+        QuantInfo {
+            buffer: unsafe { self.buffer.as_boxed_unchecked() },
+            strides: self.strides.clone(),
+            window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
+            block: comptime!(self.block.clone()),
+            scale_shape: comptime!(self.scale_shape.clone()),
+            scheme: comptime!(self.scheme),
+        }
+    }
+}
+
+/// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it projects.
+/// `T` is the element the tile serves and computes in; its physical vector width is a storage detail
+/// inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
 #[derive(CubeType)]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
@@ -176,13 +182,26 @@ pub struct Tile<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Whether this operand is delivered by TMA (an async hardware bulk-copy source) rather than a
-    /// strided element copy. Comptime (the tile kind is fixed at trace); drives the staging sync.
-    #[allow(clippy::match_like_matches_macro)] // `matches!` isn't supported inside `#[cube]`.
-    pub fn is_tma(&self) -> comptime_type!(bool) {
+    /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
+    /// copy. Comptime (the kind is fixed at trace); drives the staging sync. A resident
+    /// fragment is never a fill source, so it reports strided.
+    pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.tile_kind {
-            TileKind::TmaGmem(_) => true,
-            _ => false,
+            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
+            TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(Delivery::Strided),
+        }
+    }
+
+    /// The [`StagePlan`] a stage derived from this tile takes: its [`StageStorage`] layout
+    /// and the launch's cube size. A TMA bulk copy writes its box rows raw and a fragment
+    /// is never a fill source, so both report the plain default (strided, units unknown).
+    pub fn stage(&self) -> comptime_type!(StagePlan) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.stage(),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(StagePlan::strided())
+            }
         }
     }
 
@@ -191,15 +210,26 @@ impl<T: Numeric> Tile<T> {
     /// size; a cmma fragment and a tma source are scalar (`1`).
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.vector_size,
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => comptime!(1usize),
-            TileKind::TmaGmem(_) => comptime!(1usize),
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.store.vector_size,
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(1usize)
+            }
         }
     }
 
-    /// Window this tile down to `region` (no copy). The tile projects `region` onto
-    /// its own axes, so `lhs ∈ {M,K}` and `out ∈ {M,N}` agree without the caller
-    /// matching them.
+    /// Comptime quant dispatch for a leaf read (`0` = plain, `1` = native i8, `>1` = packed u32);
+    /// see [`MemData::quant_pack`]. A resident fragment and a tma source are never quantized.
+    pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(0usize)
+            }
+        }
+    }
+
+    /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
+    /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.
     pub fn at(&self, region: &Region) -> Tile<T> {
         let tile_kind = match &self.tile_kind {
             TileKind::Gmem(g) => TileKind::new_Gmem(g.at(region, comptime!(self.space.clone()))),
@@ -207,34 +237,74 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
             }
-            // A resident fragment (or partition) passes through unchanged: a runtime
-            // region cannot select fragments. At the partition level, `at_static` selects.
-            TileKind::Cmma(c) => TileKind::new_Cmma(c.clone()),
-            TileKind::CmmaPartition(p) => TileKind::new_CmmaPartition(p.clone()),
+            // A plane tile has nothing to window: pass it through. Legal only where the level
+            // cuts nothing on m/n (a k-step walk); a cutting level would alias every region
+            // onto the one tile.
+            TileKind::PlaneTile(t) => {
+                comptime!(assert!(
+                    !self.space.cuts_tiles(),
+                    "Tile::at: a level that cuts tiles cannot select into a single plane \
+                     tile (it needs a partition, or a memory output)"
+                ));
+                TileKind::new_PlaneTile(t.clone())
+            }
+            // A partition selects under comptime coordinates (an unrolled walk folds regions
+            // to constants): each region owns a `sub_m × sub_n` block. An uncut level selects
+            // the whole partition; a 1×1 block is the tile itself. A runtime region passes the
+            // partition through whole, legal only on an uncut k-step level (the walk below
+            // then selects statically).
+            TileKind::PlanePartition(p) => {
+                let rank = comptime!(self.space.rank());
+                let a0 = comptime!(self.space.axis_at(rank - 2));
+                let a1 = comptime!(self.space.axis_at(rank - 1));
+                // A single-tile static axis (k-step, no m/n cut) folds to constant `0`, so a
+                // cut axis takes its constant digit and an uncut one selects the whole
+                // partition. A `Dynamic` axis (top level only) stays runtime, yielding `None`.
+                let mi = if comptime!(self.space.single_static_tile(a0)) {
+                    comptime!(Some(0u64))
+                } else {
+                    region.coord(a0).constant()
+                };
+                let ni = if comptime!(self.space.single_static_tile(a1)) {
+                    comptime!(Some(0u64))
+                } else {
+                    region.coord(a1).constant()
+                };
+                match comptime!(mi.zip(ni)) {
+                    Some((c0, c1)) => {
+                        let (sub_m, sub_n) = comptime!({
+                            let (cm, cn) = (self.space.count(a0), self.space.count(a1));
+                            assert!(
+                                p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),
+                                "Tile::at: the level's grid must divide the partition"
+                            );
+                            (p.m_tiles / cm, p.n_tiles / cn)
+                        });
+                        let mi = comptime!(c0 as usize * sub_m);
+                        let ni = comptime!(c1 as usize * sub_n);
+                        if comptime!(sub_m == 1 && sub_n == 1) {
+                            TileKind::new_PlaneTile(p.at(mi, ni))
+                        } else {
+                            TileKind::new_PlanePartition(p.window(mi, ni, sub_m, sub_n))
+                        }
+                    }
+                    // A runtime coordinate reaches here only from a `Dynamic` (top, instance)
+                    // level, which cuts nothing on m/n and passes the whole partition down to
+                    // the static levels below. A rolled *cut* would be a caller bug.
+                    None => {
+                        comptime!(assert!(
+                            !self.space.cuts_tiles(),
+                            "Tile::at: a level that cuts a partition must be \
+                             walked with compile-time coordinates (an unrolled walk)"
+                        ));
+                        TileKind::new_PlanePartition(p.clone())
+                    }
+                }
+            }
         };
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
-        }
-    }
-
-    /// [`at`](Tile::at) for a static region: the register tier's windowing. Memory
-    /// windows identically (the coordinates coerce to a runtime [`Region`]); a fragment
-    /// partition *selects* its `(mi, ni)` fragment, which only static coordinates can do.
-    pub fn at_static(&self, #[comptime] region: &StaticRegion) -> Tile<T> {
-        match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => {
-                self.at(&Region::from_static(region))
-            }
-            TileKind::CmmaPartition(p) => {
-                let mi = comptime!(region.coord(self.space.axis_at(self.space.rank() - 2)));
-                let ni = comptime!(region.coord(self.space.axis_at(self.space.rank() - 1)));
-                Tile::<T> {
-                    tile_kind: TileKind::new_Cmma(p.at(mi, ni)),
-                    space: comptime!(self.space.divide()),
-                }
-            }
-            TileKind::Cmma(_) => panic!("Tile::at_static: a single fragment has no regions"),
         }
     }
 
@@ -244,10 +314,10 @@ impl<T: Numeric> Tile<T> {
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let p = comptime!(self.space.position(axis));
         let raw = match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.bound[p] as usize,
-            TileKind::TmaGmem(t) => t.bound[p] as usize,
-            TileKind::Cmma(_) | TileKind::CmmaPartition(_) => {
-                panic!("Tile::runtime_extent: a cmma fragment has no extent")
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).fcast::<usize>(),
+            TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::runtime_extent: a plane tile has no extent")
             }
         };
         // `bound` is a line count on the vectorized innermost axis; the walk divides by
@@ -265,10 +335,41 @@ impl<T: Numeric> Tile<T> {
         if comptime!(!space.is_static()) {
             #[unroll]
             for p in 0..comptime!(space.rank()) {
-                sizes.push(self.runtime_extent(space.axis_at(p)));
+                let axis = comptime!(space.axis_at(p));
+                // `sizes` is positional, so every axis pushes — but only a `Dynamic` one is
+                // ever read back ([`Extents::count`] folds a `Static` axis to its comptime
+                // extent). Fold it here too rather than asking the tile: a plane tile has no
+                // buffer bound to answer with, and one `Dynamic` axis elsewhere in the space
+                // must not make its `Static` axes unreadable.
+                sizes.push(match comptime!(space.extent_raw(axis)) {
+                    Extent::Static(n) => comptime!(n).runtime(),
+                    Extent::Dynamic => self.runtime_extent(axis),
+                });
             }
         }
         Space::with_sizes(space, sizes)
+    }
+
+    /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
+    /// `out = A·B` zeroes first. Same shape as [`mma`](Tile::mma): a final tile clears its store,
+    /// a level walks and recurses (each region clears exactly the windows it owns; a fragment
+    /// output takes the unrolled walk, memory the compact loop).
+    pub fn zero(&mut self) {
+        match comptime!(self.space.partitioner().clone()) {
+            Partitioner::Final(_) => match &mut self.tile_kind {
+                TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
+                TileKind::PlaneTile(t) => t.zero(),
+                TileKind::PlanePartition(p) => p.zero(),
+                TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
+            },
+            Partitioner::Level(_) => {
+                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
+                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
+                    let mut sub = self.at(&region);
+                    sub.zero();
+                }
+            }
+        }
     }
 
     /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's
@@ -276,24 +377,42 @@ impl<T: Numeric> Tile<T> {
     /// destination tile, which the pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
         match &src.tile_kind {
-            TileKind::CmmaPartition(s) => s.drain_into(self),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::Cmma(_) | TileKind::TmaGmem(_) => {
-                match (&mut self.tile_kind, &src.tile_kind) {
-                    (TileKind::CmmaPartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
-                        d.fill_from(src)
-                    }
-                    (TileKind::Cmma(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
-                    (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Cmma(s)) => s.store_window(d),
-                    (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
-                    (
-                        TileKind::Gmem(d) | TileKind::Smem(d),
-                        TileKind::Gmem(s) | TileKind::Smem(s),
-                    ) => d.fill_from(s),
-                    (TileKind::Cmma(_), TileKind::Cmma(_)) => {
-                        panic!("Tile::copy_from: cmma→cmma cast not wired")
-                    }
-                    _ => panic!("Tile::copy_from: unsupported kind pairing"),
+            TileKind::PlanePartition(s) => s.drain_into(self),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_) => match (&mut self.tile_kind, &src.tile_kind) {
+                (TileKind::PlanePartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
+                    d.fill_from(src)
                 }
+                (TileKind::PlaneTile(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
+                    s.store_window(d)
+                }
+                (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
+                    d.fill_from(s)
+                }
+                (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
+                    panic!("Tile::copy_from: plane tile to plane tile cast not wired")
+                }
+                _ => panic!("Tile::copy_from: unsupported kind pairing"),
+            },
+        }
+    }
+
+    /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element
+    /// type. [`copy_from`](Self::copy_from) can't: its transports move bytes so stay same-type,
+    /// but a register accumulator (`f32`) is wider than the output it writes (`f16`). Only a
+    /// fragment partition drains this way.
+    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+        match &self.tile_kind {
+            TileKind::PlanePartition(s) => s.drain_cast_into(dst),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_) => {
+                panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
         }
     }
