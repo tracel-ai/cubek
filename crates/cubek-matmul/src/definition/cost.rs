@@ -56,11 +56,7 @@ impl MatmulCost {
             UNCONSTRAINED,
         );
 
-        compute_throughput_key(
-            cmma_tile,
-            elems.lhs_register.elem_type(),
-            elems.acc_register.elem_type(),
-        )
+        compute_throughput_key(cmma_tile, elems.lhs_register, elems.acc_register)
     }
 }
 
@@ -79,10 +75,10 @@ impl From<&MatmulProblem> for MatmulCost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::ir::{ElemType, FloatKind, StorageType};
+    use cubecl::ir::{ElemType, FloatKind};
 
     fn f32_elems() -> MatmulGlobalElems {
-        let f32 = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+        let f32 = ElemType::Float(FloatKind::F32);
 
         MatmulGlobalElems {
             lhs: f32,

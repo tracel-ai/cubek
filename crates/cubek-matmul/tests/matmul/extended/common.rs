@@ -1,6 +1,8 @@
 //! Shared helpers for the extended (forced-blueprint) tier.
 
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, zspace::shape};
+use cubecl::{
+    Runtime, TestRuntime, client::ComputeClient, frontend::Scalar, ir::AddressType, zspace::shape,
+};
 use cubek_matmul::{
     components::{
         global::LoadFlows,
@@ -21,13 +23,13 @@ pub(crate) fn client() -> ComputeClient<TestRuntime> {
 }
 
 pub(crate) fn f16_elems() -> MatmulGlobalElems {
-    use cubecl::frontend::CubePrimitive;
-    MatmulElems::from_single_dtype(half::f16::as_type_native_unchecked()).as_global_elems()
+    use cubecl::frontend::Scalar;
+    MatmulElems::from_single_dtype(half::f16::elem_type_native()).as_global_elems()
 }
 
 pub(crate) fn f32_elems() -> MatmulGlobalElems {
-    use cubecl::frontend::CubePrimitive;
-    MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
+    use cubecl::frontend::Scalar;
+    MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems()
 }
 
 pub(crate) fn problem(

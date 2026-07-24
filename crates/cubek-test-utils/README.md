@@ -191,7 +191,7 @@ use cubek_test_utils::{TestInput, StrideSpec, DataKind, Distribution};
 let (handle, host) = TestInput::new(
     client.clone(),
     [4, 4],
-    f32::as_type_native_unchecked().storage_type(),
+    f32::elem_type_native(),
     StrideSpec::RowMajor,
     DataKind::Random {
         seed: 0,

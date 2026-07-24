@@ -115,7 +115,7 @@ pub(crate) fn max_pool2d_launch<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: MaxPoolOptions<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),
@@ -168,7 +168,7 @@ pub(crate) fn max_pool2d_with_indices_launch<R: Runtime>(
     output: TensorBinding<R>,
     indices: TensorBinding<R>,
     options: MaxPoolOptions<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),

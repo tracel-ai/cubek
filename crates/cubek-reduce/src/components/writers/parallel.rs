@@ -78,12 +78,14 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
                 #[unroll]
                 for i in 0..self.accumulator_length {
                     let mut vec = self.buffer.multiple_mut()[i];
-                    vec.insert(local_index, array[i]);
+                    vec.insert_dynamic(local_index, array[i]);
                     self.buffer.multiple_mut()[i] = vec;
                 }
             }
             Value::Single(element) => {
-                self.buffer.item().insert(local_index, element.unwrap());
+                self.buffer
+                    .item()
+                    .insert_dynamic(local_index, element.unwrap());
             }
             Value::None => {
                 unreachable!()

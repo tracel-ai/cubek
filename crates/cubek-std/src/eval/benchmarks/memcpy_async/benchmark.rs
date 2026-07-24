@@ -733,7 +733,7 @@ fn make_uniform_1d<E: Float>(
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::from(vec![len]))
         .layout(StridedLayout::Explicit(vec![1]))
-        .dtype(E::as_type_native_unchecked().storage_type())
+        .dtype(E::elem_type_native())
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
 }
@@ -773,7 +773,7 @@ impl<E: Float> Benchmark for MemcpyAsyncBench<E> {
         format!(
             "memcpy_async-{}-{}-{:?}",
             <TestRuntime as Runtime>::name(&client),
-            E::as_type_native_unchecked(),
+            E::elem_type_native(),
             self.strategy
         )
         .to_lowercase()

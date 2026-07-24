@@ -24,7 +24,7 @@ fn copy_non_quantized_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     plain_copy::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
@@ -63,7 +63,7 @@ fn copy_quantized_per_tensor_matches_reference() {
         .with_param(QuantParam::F32);
 
     let shape = Shape::from(vec![m, n]);
-    let input_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let input_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
@@ -76,7 +76,7 @@ fn copy_quantized_per_tensor_matches_reference() {
         .custom(vec![scale])
         .generate_without_host_data();
 
-    let out_dtype = f32::as_type_native_unchecked().storage_type();
+    let out_dtype = f32::elem_type_native();
     dequant_copy::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
@@ -176,8 +176,8 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let input_dtype = u32::as_type_native_unchecked().storage_type();
-    let out_dtype = f32::as_type_native_unchecked().storage_type();
+    let input_dtype = u32::elem_type_native();
+    let out_dtype = f32::elem_type_native();
     // The packed binding stays a scalar `u32`: the scheme serves `pack` values per word,
     // so the copy moves whole lines and the destination is lined at that served width.
     dequant_copy::launch::<TestRuntime>(
@@ -218,7 +218,7 @@ pub fn plain_copy<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
@@ -232,8 +232,8 @@ pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
     input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, V>,
     #[comptime] space: Space,
-    #[define(I)] _input_dtype: StorageType,
-    #[define(O)] _output_dtype: StorageType,
+    #[define(I)] _input_dtype: ElemType,
+    #[define(O)] _output_dtype: ElemType,
 ) {
     let input = input.tile::<O>(comptime!(space.clone()));
     let mut output = output.tile(space);
@@ -260,7 +260,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         .with_param(QuantParam::F32);
 
     let shape = Shape::from(vec![m, n]);
-    let input_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let input_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
@@ -285,7 +285,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    let out_dtype = f32::as_type_native_unchecked().storage_type();
+    let out_dtype = f32::elem_type_native();
     dequant_copy::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),

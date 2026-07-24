@@ -45,7 +45,7 @@ impl ReduceCost {
     pub fn compute_key(&self) -> ThroughputKey {
         ThroughputKey {
             mode: ThroughputMode::ComputeDirect {
-                dtype: self.dtypes.accumulation.elem_type(),
+                dtype: self.dtypes.accumulation,
             },
         }
     }
@@ -104,10 +104,10 @@ impl From<&ReduceProblem> for ReduceCost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl::ir::{ElemType, FloatKind, StorageType, UIntKind};
+    use cubecl::ir::{ElemType, FloatKind, UIntKind};
 
     fn f32_dtypes() -> ReduceDtypes {
-        let f32 = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+        let f32 = ElemType::Float(FloatKind::F32);
 
         ReduceDtypes {
             input: f32,
@@ -223,7 +223,7 @@ mod tests {
         let argmax = ReduceCost {
             instruction: ReduceOperationConfig::ArgMax,
             dtypes: ReduceDtypes {
-                output: StorageType::Scalar(ElemType::UInt(UIntKind::U32)),
+                output: ElemType::UInt(UIntKind::U32),
                 ..f32_dtypes()
             },
             ..cost()

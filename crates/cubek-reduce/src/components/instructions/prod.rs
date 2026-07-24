@@ -85,7 +85,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         let accumulator = accumulator.elements.item();
         let mut prod = P::EA::from_int(1);
         #[unroll]
-        for k in 0..accumulator.size() {
+        for k in 0..accumulator.vector_size() {
             prod *= accumulator.extract(k);
         }
         (Value::new_single(Out::cast_from(prod)), Value::new_None())

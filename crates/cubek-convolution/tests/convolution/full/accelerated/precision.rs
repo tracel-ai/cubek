@@ -3,11 +3,11 @@ macro_rules! testgen_convolution_accelerated_precision {
     ($algorithm: expr) => {
         mod f16_ty {
             use super::*;
-            use cubecl::prelude::CubePrimitive;
+            use cubecl::prelude::Scalar;
             use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
 
             fn dtypes() -> MatmulElems {
-                let f16 = half::f16::as_type_native_unchecked().storage_type();
+                let f16 = half::f16::elem_type_native();
                 MatmulElems::from_globals(&MatmulGlobalElems {
                     lhs: f16,
                     rhs: f16,
@@ -20,13 +20,13 @@ macro_rules! testgen_convolution_accelerated_precision {
 
         mod f32_ty {
             use super::*;
-            use cubecl::prelude::CubePrimitive;
+            use cubecl::prelude::Scalar;
             use cubecl_common::tf32;
             use cubek_matmul::definition::MatmulElems;
 
             fn dtypes() -> MatmulElems {
-                let f32 = f32::as_type_native_unchecked().storage_type();
-                let tf32 = tf32::as_type_native_unchecked().storage_type();
+                let f32 = f32::elem_type_native();
+                let tf32 = tf32::elem_type_native();
                 MatmulElems {
                     lhs_global: f32,
                     rhs_global: f32,

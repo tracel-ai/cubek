@@ -2,7 +2,7 @@ mod nearest;
 
 pub(crate) use nearest::reference_nearest_backward;
 
-use super::{f32_storage_type, make_random_f32_host, make_zero_handle};
+use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{InterpolateBackwardProblem, InterpolateMode, InterpolateOptions};
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
@@ -16,7 +16,7 @@ pub fn strategy_result(
     problem: InterpolateBackwardProblem,
     seed: u64,
 ) -> Result<HostData, String> {
-    let dtype = f32_storage_type();
+    let dtype = f32_elem_type();
 
     let out_grad_shape = problem.out_grad_shape.to_vec();
 

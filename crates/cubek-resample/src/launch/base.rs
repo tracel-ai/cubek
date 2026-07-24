@@ -26,7 +26,7 @@ pub fn resample_launch<R: Runtime>(
     output: TensorBinding<R>,
     args: ResampleArgsLaunch<R>,
     config: Resample,
-    dtype: StorageType,
+    dtype: ElemType,
 ) {
     let (vector_size, vectorized_axis) = vectorize(client, &input, &output, dtype);
 
@@ -69,7 +69,7 @@ fn vectorize<R: Runtime>(
     client: &ComputeClient<R>,
     input: &TensorBinding<R>,
     output: &TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> (usize, usize) {
     let rank = input.shape.len();
 

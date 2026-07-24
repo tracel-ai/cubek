@@ -134,7 +134,7 @@ fn attention_fold_kernel<W: Size>(
     let workers = CUBE_DIM as usize;
     let mut i = UNIT_POS as usize;
     while i < total {
-        out[i] = acc_flat.read(i).extract(0);
+        out[i] = acc_flat.read(i).extract(0usize);
         i += workers;
     }
 }
@@ -153,8 +153,8 @@ fn run(
     // The register-blocking knob a routine would size from the register budget.
     let row_chunk = 4;
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 
@@ -486,9 +486,10 @@ fn attention_fold_split_kernel<W: Size>(
         let mut sum = 0.0f32;
         for ti in 0..splits {
             let sr = ti * rows + r;
-            sum += acc_flat.read(sr * val_dim + vi).extract(0) * w_flat.read(sr).extract(0);
+            sum +=
+                acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(sr).extract(0usize);
         }
-        out[i] = sum * r_flat.read(r).extract(0);
+        out[i] = sum * r_flat.read(r).extract(0usize);
         i += workers;
     }
 }
@@ -518,8 +519,8 @@ fn run_split(
     // The register-blocking knob a routine would size from the register budget.
     let row_chunk = 4;
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 
@@ -732,7 +733,7 @@ fn run_stream(
     let val_dim = d;
     let scale = 1. / (d as f32).sqrt();
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 

@@ -1,6 +1,6 @@
 use cubecl::{
     client::ComputeClient,
-    ir::{ElemType, FloatKind, StorageType},
+    ir::{ElemType, FloatKind},
     prelude::Runtime,
     throughput::{ThroughputKey, compute_throughput_key, select_cmma_tile},
     tune::Work,
@@ -86,16 +86,12 @@ impl AttentionCost {
         const UNCONSTRAINED: (usize, usize, usize) = (usize::MAX, usize::MAX, usize::MAX);
 
         // Softmax statistics accumulate in f32 regardless of operand types.
-        let acc = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+        let acc = ElemType::Float(FloatKind::F32);
 
         let cmma_tile =
             select_cmma_tile(client, self.types.query, self.types.key, acc, UNCONSTRAINED);
 
-        compute_throughput_key(
-            cmma_tile,
-            self.types.query.elem_type(),
-            ElemType::Float(FloatKind::F32),
-        )
+        compute_throughput_key(cmma_tile, self.types.query, ElemType::Float(FloatKind::F32))
     }
 }
 
@@ -115,7 +111,7 @@ mod tests {
     use super::*;
 
     fn f32_types() -> AttentionGlobalTypes {
-        let f32 = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+        let f32 = ElemType::Float(FloatKind::F32);
 
         AttentionGlobalTypes {
             query: f32,

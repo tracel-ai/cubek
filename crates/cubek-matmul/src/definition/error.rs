@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, VectorizationError, ir::StorageType, server::LaunchError};
+use cubecl::{CubeCount, CubeDim, VectorizationError, ir::ElemType, server::LaunchError};
 use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
 use std::fmt::{Debug, Display};
 
@@ -36,16 +36,16 @@ pub enum MatmulAvailabilityError {
 
     /// The required data types for input or output are not supported.
     TypesUnavailable {
-        lhs: StorageType,
-        rhs: StorageType,
-        output: StorageType,
+        lhs: ElemType,
+        rhs: ElemType,
+        output: ElemType,
     },
 
     /// The required CMMA instruction is not supported for the given element types and tile size.
     CmmaInstructionUnavailable {
-        lhs: StorageType,
-        rhs: StorageType,
-        output: StorageType,
+        lhs: ElemType,
+        rhs: ElemType,
+        output: ElemType,
         size: Option<TileSize>,
     },
 

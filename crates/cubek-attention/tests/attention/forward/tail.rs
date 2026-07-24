@@ -9,9 +9,7 @@
 //! no tail at all.
 
 use crate::attention::forward::launcher::{test_launch, test_launch_permuted, test_launch_scaled};
-use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive, ir::AddressType,
-};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, prelude::Scalar};
 use cubek_attention::{
     forward::definition::{
         AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionOptions,
@@ -26,7 +24,7 @@ const RANGE_EPSILON: f32 = 1e-2;
 
 fn f32_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
     )
 }

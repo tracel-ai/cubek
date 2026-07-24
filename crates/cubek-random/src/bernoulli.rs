@@ -71,7 +71,7 @@ pub fn random_bernoulli<R: Runtime>(
     client: &ComputeClient<R>,
     probability: f32,
     out: TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     random::<BernoulliFamily, R>(client, Bernoulli { probability }, out, dtype)
 }

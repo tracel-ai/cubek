@@ -1,8 +1,8 @@
 use cubecl::{
     CubeElement, TestRuntime,
     client::ComputeClient,
-    ir::{ElemType, FloatKind, StorageType},
-    prelude::CubePrimitive,
+    frontend::Scalar,
+    ir::{ElemType, FloatKind},
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
@@ -27,8 +27,8 @@ pub enum HostDataType {
 /// Convert a `Vec<f64>` accumulation buffer into a `HostDataVec` at the
 /// precision dictated by `dtype`: kept as `F64` for f64 tensors, downcast to
 /// `F32` for everything else (matching `HostDataType::from`).
-impl From<(Vec<f64>, StorageType)> for HostDataVec {
-    fn from((data, dtype): (Vec<f64>, StorageType)) -> Self {
+impl From<(Vec<f64>, ElemType)> for HostDataVec {
+    fn from((data, dtype): (Vec<f64>, ElemType)) -> Self {
         match HostDataType::from(dtype) {
             HostDataType::F64 => HostDataVec::F64(data),
             _ => HostDataVec::F32(data.into_iter().map(|x| x as f32).collect()),
@@ -36,12 +36,12 @@ impl From<(Vec<f64>, StorageType)> for HostDataVec {
     }
 }
 
-impl From<StorageType> for HostDataType {
+impl From<ElemType> for HostDataType {
     /// Map a tensor storage type to the host representation used in tests.
     /// `f64` tensors get `F64` so comparisons happen at full precision; all
     /// other numeric types collapse to `F32`.
-    fn from(dtype: StorageType) -> Self {
-        if matches!(dtype.elem_type(), ElemType::Float(FloatKind::F64)) {
+    fn from(dtype: ElemType) -> Self {
+        if matches!(dtype, ElemType::Float(FloatKind::F64)) {
             HostDataType::F64
         } else {
             HostDataType::F32
@@ -142,11 +142,7 @@ impl HostData {
 
         let data = match host_data_type {
             HostDataType::F32 => {
-                let handle = copy_casted(
-                    client,
-                    tensor_handle,
-                    f32::as_type_native_unchecked().storage_type(),
-                );
+                let handle = copy_casted(client, tensor_handle, f32::elem_type_native());
                 let data = f32::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )
@@ -155,11 +151,7 @@ impl HostData {
                 HostDataVec::F32(data)
             }
             HostDataType::F64 => {
-                let handle = copy_casted(
-                    client,
-                    tensor_handle,
-                    f64::as_type_native_unchecked().storage_type(),
-                );
+                let handle = copy_casted(client, tensor_handle, f64::elem_type_native());
                 let data = f64::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )
@@ -168,11 +160,7 @@ impl HostData {
                 HostDataVec::F64(data)
             }
             HostDataType::I32 => {
-                let handle = copy_casted(
-                    client,
-                    tensor_handle,
-                    i32::as_type_native_unchecked().storage_type(),
-                );
+                let handle = copy_casted(client, tensor_handle, i32::elem_type_native());
                 let data = i32::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )
@@ -181,11 +169,7 @@ impl HostData {
                 HostDataVec::I32(data)
             }
             HostDataType::Bool => {
-                let handle = copy_casted(
-                    client,
-                    tensor_handle,
-                    u32::as_type_native_unchecked().storage_type(),
-                );
+                let handle = copy_casted(client, tensor_handle, u32::elem_type_native());
                 let data = u32::from_bytes(
                     &client.read_one_unchecked_tensor(handle.into_copy_descriptor()),
                 )

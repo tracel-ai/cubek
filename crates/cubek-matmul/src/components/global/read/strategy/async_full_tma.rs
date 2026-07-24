@@ -53,7 +53,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullTmaLoading {
         _tiles_per_stage: u32,
         _vector_size: VectorSize,
         _plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         // Not sure this is the best value, but TMA is executed per-warpgroup so this is the maximum
         // number of planes executing one set of TMA loads.

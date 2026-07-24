@@ -1,8 +1,4 @@
-use cubecl::{
-    features::MmaConfig,
-    ir::{DeviceProperties, StorageType},
-    prelude::*,
-};
+use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
 use cubek_std::{
     CubeDimResource, InvalidConfigError, MatrixLayout, SwizzleModes, TileSize,
     tile::{ProductType, TileScope, Unit},
@@ -62,9 +58,9 @@ impl TileVariant for RegisterMatmul {
 
     fn supported_sizes<R: Runtime>(
         _client: &ComputeClient<R>,
-        _lhs_ty: StorageType,
-        _rhs_ty: StorageType,
-        _acc_ty: StorageType,
+        _lhs_ty: ElemType,
+        _rhs_ty: ElemType,
+        _acc_ty: ElemType,
     ) -> Vec<TileSize> {
         Vec::new()
     }

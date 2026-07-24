@@ -153,17 +153,17 @@ impl<EA: Float> Tile<EA> {
                     let vv = Vector::<EA, WV>::cast_from(vf.read(c * v_lines + li));
                     #[unroll]
                     for i in 0..height {
-                        let prob = EA::cast_from(pf.read((base + i) * cols + c).extract(0));
+                        let prob = EA::cast_from(pf.read((base + i) * cols + c).extract(0usize));
                         acc[i] += Vector::<EA, WV>::cast_from(prob) * vv;
                     }
                 }
                 #[unroll]
                 for i in 0..height {
-                    let f = ff.read(base + i).extract(0);
+                    let f = ff.read(base + i).extract(0usize);
                     #[unroll]
                     for j in 0..wv {
                         let idx = (base + i) * val_dim + li * wv + j;
-                        let cur = out.read(idx).extract(0);
+                        let cur = out.read(idx).extract(0usize);
                         out.write(idx, Vector::cast_from(cur * f + acc[i].extract(j)));
                     }
                 }

@@ -10,7 +10,7 @@ use crate::{
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{StorageType, VectorSize},
+    ir::{ElemType, VectorSize},
 };
 use cubek_std::{
     MatrixLayout,
@@ -620,7 +620,7 @@ fn selection(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-fn select_swizzle(swizzle_dim: usize, elem: StorageType, vector_size: VectorSize) -> SwizzleMode {
+fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSize) -> SwizzleMode {
     // Can't swizzle if vector size > swizzle atom
     if elem.size() * vector_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
@@ -681,6 +681,27 @@ fn halve_largest_partition(p: &mut (u32, u32, u32)) -> bool {
     true
 }
 
+/// Returns the factor pair `(a, b)` of `n` minimizing their difference,
+/// with `a >= b` and `a * b == n`.
+pub fn closest_factor_pair(n: u32) -> (u32, u32) {
+    let sqrt_n = (n as f64).sqrt() as u32;
+    for a in (1..=sqrt_n).rev() {
+        if n.is_multiple_of(a) {
+            return (n / a, a);
+        }
+    }
+    (n, 1)
+}
+
+fn scale_partition(setting: PartitionScaling, axis: usize, max_exp: u32, div_exp: u32) -> u32 {
+    if let PartitionScaling::Disabled = setting {
+        return 2u32.pow(max_exp);
+    }
+
+    let exp = u32::min((axis as u32 / 2u32.pow(div_exp)) + 1, max_exp);
+    2u32.pow(exp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,25 +723,4 @@ mod tests {
         let expected = 64 * 8 * 4 + 8 * 64 * 4 + 16 * 16 * 4;
         assert_eq!(unit_stage_smem_bytes(&scheme, &dtypes, 1), expected);
     }
-}
-
-/// Returns the factor pair `(a, b)` of `n` minimizing their difference,
-/// with `a >= b` and `a * b == n`.
-pub fn closest_factor_pair(n: u32) -> (u32, u32) {
-    let sqrt_n = (n as f64).sqrt() as u32;
-    for a in (1..=sqrt_n).rev() {
-        if n.is_multiple_of(a) {
-            return (n / a, a);
-        }
-    }
-    (n, 1)
-}
-
-fn scale_partition(setting: PartitionScaling, axis: usize, max_exp: u32, div_exp: u32) -> u32 {
-    if let PartitionScaling::Disabled = setting {
-        return 2u32.pow(max_exp);
-    }
-
-    let exp = u32::min((axis as u32 / 2u32.pow(div_exp)) + 1, max_exp);
-    2u32.pow(exp)
 }

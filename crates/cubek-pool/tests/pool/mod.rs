@@ -6,7 +6,7 @@ pub mod forward;
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    ir::{ElemType, IntKind, StorageType},
+    ir::{ElemType, IntKind},
     std::tensor::TensorHandle,
 };
 use cubek_pool::definition::PoolError;
@@ -18,7 +18,7 @@ use cubek_test_utils::{
 pub fn build_output_tensor(
     client: &ComputeClient<TestRuntime>,
     output_shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), output_shape)
         .dtype(dtype)
@@ -40,8 +40,8 @@ pub fn output_host_i32(
     HostData::from_tensor_handle(client, output, HostDataType::I32)
 }
 
-pub fn indices_storage_type() -> StorageType {
-    StorageType::Scalar(ElemType::Int(IntKind::I32))
+pub fn indices_elem_type() -> ElemType {
+    ElemType::Int(IntKind::I32)
 }
 
 pub fn validate_test(

@@ -1,10 +1,10 @@
 mod f16_ty {
     use super::*;
-    use cubecl::frontend::CubePrimitive;
+    use cubecl::frontend::Scalar;
     use cubek_matmul::{definition::MatmulElems, definition::MatmulGlobalElems};
 
     fn elems() -> MatmulGlobalElems {
-        MatmulElems::from_single_dtype(half::f16::as_type_native_unchecked()).as_global_elems()
+        MatmulElems::from_single_dtype(half::f16::elem_type_native()).as_global_elems()
     }
 
     include!("tiling_scheme/tile.rs");
@@ -12,11 +12,11 @@ mod f16_ty {
 
 mod f32_ty {
     use super::*;
-    use cubecl::frontend::CubePrimitive;
+    use cubecl::frontend::Scalar;
     use cubek_matmul::{definition::MatmulElems, definition::MatmulGlobalElems};
 
     fn elems() -> MatmulGlobalElems {
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems()
     }
 
     include!("tiling_scheme/tile.rs");

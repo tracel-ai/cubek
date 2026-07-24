@@ -36,7 +36,7 @@ pub struct BiasStageMemory<ES: Numeric, NS: Size> {
 impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
     /// Instantiate a new stage memory for the given identifier
     pub fn new(#[comptime] config: StageMemoryConfig) -> BiasStageMemory<ES, NS> {
-        Self::new_aligned(Vector::<ES, NS>::type_size(), config)
+        Self::new_aligned(Vector::<ES, NS>::size(), config)
     }
 
     /// Instantiate a new stage memory for the given identifier, with shared memory alignment
@@ -48,7 +48,7 @@ impl<ES: Numeric, NS: Size> BiasStageMemory<ES, NS> {
         let swizzle = as_swizzle_object(config.swizzle);
         let swizzle_align = swizzle.repeats_after();
         let align = comptime![Ord::max(alignment, swizzle_align as usize)];
-        let type_size = Vector::<ES, NS>::type_size().comptime();
+        let type_size = Vector::<ES, NS>::size().comptime();
 
         let stage_size_bytes =
             config.elements_per_stage_along_contiguous_dim() as usize * type_size;

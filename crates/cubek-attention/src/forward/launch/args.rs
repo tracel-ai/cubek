@@ -428,9 +428,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
     VectorizedExpand for TensorOutputExpand<Q, K, V, M, O, MA>
 {
-    fn vector_size(&self) -> VectorSize {
-        let scope = Scope::root(false);
-        TensorOutputExpand::__expand_vector_size_method(self, &scope)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        TensorOutputExpand::__expand_vector_size_method(self, scope)
     }
 }
 
@@ -505,9 +504,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
     VectorizedExpand for TensorQueryExpand<Q, K, V, M, O, MA>
 {
-    fn vector_size(&self) -> VectorSize {
-        let scope = Scope::root(false);
-        TensorQueryExpand::__expand_vector_size_method(self, &scope)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        TensorQueryExpand::__expand_vector_size_method(self, scope)
     }
 }
 
@@ -582,9 +580,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
     VectorizedExpand for TensorKeyExpand<Q, K, V, M, O, MA>
 {
-    fn vector_size(&self) -> VectorSize {
-        let scope = Scope::root(false);
-        TensorKeyExpand::__expand_vector_size_method(self, &scope)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        TensorKeyExpand::__expand_vector_size_method(self, scope)
     }
 }
 
@@ -659,9 +656,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
     VectorizedExpand for TensorValueExpand<Q, K, V, M, O, MA>
 {
-    fn vector_size(&self) -> VectorSize {
-        let scope = Scope::root(false);
-        TensorValueExpand::__expand_vector_size_method(self, &scope)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        TensorValueExpand::__expand_vector_size_method(self, scope)
     }
 }
 
@@ -736,9 +732,8 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA:
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine, O: FloatLine, MA: AttentionArgs>
     VectorizedExpand for TensorMaskExpand<Q, K, V, M, O, MA>
 {
-    fn vector_size(&self) -> VectorSize {
-        let scope = Scope::root(false);
-        TensorMaskExpand::__expand_vector_size_method(self, &scope)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        TensorMaskExpand::__expand_vector_size_method(self, scope)
     }
 }
 

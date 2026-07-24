@@ -35,7 +35,7 @@ fn recursive_two_level_tiled_view() {
         input.arg(),
         output.arg(),
         space,
-        f32::as_type_native_unchecked().storage_type(),
+        f32::elem_type_native(),
     );
 
     let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
@@ -61,7 +61,7 @@ fn copy_logical<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);

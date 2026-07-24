@@ -38,8 +38,8 @@ fn try_launch_config(
 ) -> Result<(), ReduceError> {
     let client = TestRuntime::client(&Default::default());
 
-    let input_dtype = f32::as_type_native_unchecked().storage_type();
-    let u32_dtype = u32::as_type_native_unchecked().storage_type();
+    let input_dtype = f32::elem_type_native();
+    let u32_dtype = u32::elem_type_native();
 
     let input = TestInput::builder(client.clone(), Shape::new([4, 8]))
         .dtype(input_dtype)

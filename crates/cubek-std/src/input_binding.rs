@@ -1,8 +1,9 @@
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    ir::{AddressType, StorageType},
-    prelude::{CubePrimitive, TensorBinding},
+    frontend::Scalar,
+    ir::{AddressType, ElemType},
+    prelude::TensorBinding,
     server::LaunchError,
     zspace::Shape,
 };
@@ -15,12 +16,12 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum InputBinding<R: Runtime> {
-    Normal(TensorBinding<R>, StorageType),
+    Normal(TensorBinding<R>, ElemType),
     Quantized {
         data: TensorBinding<R>,
-        data_dtype: StorageType,
+        data_dtype: ElemType,
         scale: TensorBinding<R>,
-        scale_dtype: StorageType,
+        scale_dtype: ElemType,
         /// Unpacked shape, excluding padding
         shape: Shape,
         scheme: QuantScheme,
@@ -51,7 +52,7 @@ impl<R: Runtime> Clone for InputBinding<R> {
 }
 
 impl<R: Runtime> InputBinding<R> {
-    pub fn new(data: TensorBinding<R>, dtype: StorageType) -> Self {
+    pub fn new(data: TensorBinding<R>, dtype: ElemType) -> Self {
         Self::Normal(data, dtype)
     }
 
@@ -104,8 +105,8 @@ impl<R: Runtime> InputBinding<R> {
         scale: TensorBinding<R>,
         shape: Shape,
         scheme: QuantScheme,
-        data_dtype: StorageType,
-        scale_dtype: StorageType,
+        data_dtype: ElemType,
+        scale_dtype: ElemType,
     ) -> Self {
         Self::Quantized {
             data,
@@ -190,7 +191,7 @@ impl<R: Runtime> InputBinding<R> {
                             packed_dim,
                             &shape,
                             scheme.num_quants(),
-                            u8::as_type_native_unchecked().storage_type(),
+                            u8::elem_type_native(),
                         );
                         scheme = scheme.with_store(QuantStore::PackedNative(0));
                         data.dtype = data_dtype;
@@ -203,7 +204,7 @@ impl<R: Runtime> InputBinding<R> {
                             packed_dim,
                             &shape,
                             scheme.num_quants(),
-                            u32::as_type_native_unchecked().storage_type(),
+                            u32::elem_type_native(),
                         );
                         data.dtype = data_dtype;
                         scheme = scheme.with_store(QuantStore::PackedU32(0));

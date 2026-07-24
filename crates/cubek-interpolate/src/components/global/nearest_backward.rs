@@ -1,7 +1,6 @@
 use crate::definition::NearestMode;
 use cubecl::prelude::*;
 use cubecl::{
-    ir::StorageType,
     num_traits::Zero,
     std::FastDivmod,
     std::tensor::layout::{linear::LinearLayout, *},
@@ -14,7 +13,7 @@ pub fn execute_interpolate_nearest_backward<F: Float, N: Size>(
     shape_out: Sequence<FastDivmod<usize>>,
     out_layout: LinearLayout,
     #[comptime] nearest_mode: NearestMode,
-    #[define(F)] _dtype: StorageType,
+    #[define(F)] _dtype: ElemType,
 ) {
     if ABSOLUTE_POS >= output.len() {
         terminate!();

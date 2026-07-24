@@ -137,7 +137,7 @@ impl MaskProbe {
             let size!(W) = mask.vector_size();
             let rank = comptime!(mask.space.rank());
             let cols = mask.runtime_extent(comptime!(mask.space.axis_at(rank - 1)));
-            masked = masked || mask.flat::<W>().read(q * cols + s).extract(0) != 0;
+            masked = masked || mask.flat::<W>().read(q * cols + s).extract(0usize) != 0;
         }
         masked
     }

@@ -1,7 +1,7 @@
 use cubecl::{
+    CubeDim, Runtime,
     client::ComputeClient,
-    prelude::CubePrimitive,
-    {CubeDim, Runtime},
+    prelude::Scalar,
 };
 use cubek_matmul::{
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
@@ -59,7 +59,7 @@ impl Routine for BlackboxAcceleratedRoutine {
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
         let dtypes = AttentionElems::from_global_types(
             &problem.global_dtypes,
-            half::f16::as_type_native_unchecked().storage_type(),
+            half::f16::elem_type_native(),
             &problem.options.accumulator_precision,
         );
 

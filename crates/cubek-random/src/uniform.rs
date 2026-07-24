@@ -81,7 +81,7 @@ pub fn random_uniform<R: Runtime>(
     lower_bound: f32,
     upper_bound: f32,
     out: TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     random::<UniformFamily, R>(
         client,

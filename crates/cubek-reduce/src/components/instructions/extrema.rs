@@ -1,6 +1,6 @@
 use super::lowest_coordinate_matching;
 use cubecl::{
-    ir::{Comparison, ElemType, Instruction, Type, UnaryOperands},
+    ir::{ElemType, Type, dialect::math::IsNanOp, interfaces::TypedExt},
     prelude::*,
 };
 
@@ -9,19 +9,16 @@ use cubecl::{
 #[cube]
 fn numeric_is_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<bool, N> {
     intrinsic!(|scope| {
-        let out_item = Type::scalar(ElemType::Bool).with_vector_size(item.expand.ty.vector_size());
-        let out = scope.create_value(out_item);
-        scope.register(Instruction::new(
-            Comparison::IsNan(UnaryOperands { input: item.expand }),
-            out,
-        ));
-        out.into()
+        let item = item.read_value(scope);
+        let out_item = Type::Scalar(ElemType::Bool).with_vector_size(item.vector_size(scope.ctx()));
+        let is_nan = IsNanOp::new(scope.ctx_mut(), item);
+        scope.register_with_result(&is_nan).into()
     })
 }
 
 #[cube]
 pub(crate) fn max_identity<E: Numeric>() -> E {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         // WGSL has no infinity literal, so construct it from its IEEE-754 bits.
         E::cast_from(f32::reinterpret(0xff80_0000u32))
@@ -32,7 +29,7 @@ pub(crate) fn max_identity<E: Numeric>() -> E {
 
 #[cube]
 pub(crate) fn min_identity<E: Numeric>() -> E {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         E::cast_from(f32::reinterpret(0x7f80_0000u32))
     } else {
@@ -45,7 +42,7 @@ pub(crate) fn select_max<E: Numeric, N: Size>(
     current: Vector<E, N>,
     candidate: Vector<E, N>,
 ) -> Vector<E, N> {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         let current_is_nan = numeric_is_nan(current);
         let keep_current = current_is_nan.or(current.greater_than(&candidate));
@@ -60,7 +57,7 @@ pub(crate) fn select_min<E: Numeric, N: Size>(
     current: Vector<E, N>,
     candidate: Vector<E, N>,
 ) -> Vector<E, N> {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         let current_is_nan = numeric_is_nan(current);
         let keep_current = current_is_nan.or(current.less_than(&candidate));
@@ -77,7 +74,7 @@ pub(crate) fn select_argmax<E: Numeric, N: Size>(
     candidate: Vector<E, N>,
     candidate_coord: Vector<u32, N>,
 ) -> (Vector<E, N>, Vector<u32, N>) {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     let keep_current = if comptime!(elem_type.is_float()) {
         let current_is_nan = numeric_is_nan(current);
         let candidate_is_nan = numeric_is_nan(candidate);
@@ -111,7 +108,7 @@ pub(crate) fn select_argmin<E: Numeric, N: Size>(
     candidate: Vector<E, N>,
     candidate_coord: Vector<u32, N>,
 ) -> (Vector<E, N>, Vector<u32, N>) {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     let keep_current = if comptime!(elem_type.is_float()) {
         let current_is_nan = numeric_is_nan(current);
         let candidate_is_nan = numeric_is_nan(candidate);
@@ -140,7 +137,7 @@ pub(crate) fn select_argmin<E: Numeric, N: Size>(
 
 #[cube]
 pub(crate) fn plane_max_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<E, N> {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         replace_plane_extreme_with_nan(plane_max(item), item)
     } else {
@@ -150,7 +147,7 @@ pub(crate) fn plane_max_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>)
 
 #[cube]
 pub(crate) fn plane_min_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<E, N> {
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         replace_plane_extreme_with_nan(plane_min(item), item)
     } else {
@@ -164,7 +161,7 @@ pub(crate) fn plane_argmax_propagating_nan<E: Numeric, N: Size>(
     coordinate: Vector<u32, N>,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let ordered_extreme = plane_max(item);
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         replace_plane_arg_extreme_with_nan(ordered_extreme, item, coordinate)
     } else {
@@ -179,7 +176,7 @@ pub(crate) fn plane_argmin_propagating_nan<E: Numeric, N: Size>(
     coordinate: Vector<u32, N>,
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let ordered_extreme = plane_min(item);
-    let elem_type = type_of::<E>();
+    let elem_type = elem_type_of::<E>();
     if comptime!(elem_type.is_float()) {
         replace_plane_arg_extreme_with_nan(ordered_extreme, item, coordinate)
     } else {

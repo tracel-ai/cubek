@@ -20,7 +20,7 @@ pub fn irfft<R: Runtime>(
     spectrum_re: TensorHandle<R>,
     spectrum_im: TensorHandle<R>,
     dim: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<R> {
     assert!(
         spectrum_re.shape() == spectrum_im.shape(),
@@ -60,7 +60,7 @@ pub fn irfft_launch<R: Runtime>(
     spectrum_im: TensorBinding<R>,
     signal: TensorBinding<R>,
     dim: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let spec_bins = spectrum_re.shape[dim];
     irfft_launch_padded::<R>(
@@ -82,7 +82,7 @@ pub fn irfft_launch_padded<R: Runtime>(
     signal: TensorBinding<R>,
     dim: usize,
     spec_bins: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     assert!(
         spectrum_re.shape == spectrum_im.shape,

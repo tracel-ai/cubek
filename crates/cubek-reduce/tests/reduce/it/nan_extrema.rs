@@ -2,7 +2,7 @@ use cubecl::{
     Runtime, TestRuntime,
     config::autotune::AutotuneLevel,
     features::{Plane, TypeUsage},
-    frontend::CubePrimitive,
+    prelude::Scalar,
     zspace::{Shape, Strides},
 };
 use cubek_reduce::{

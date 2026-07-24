@@ -1,6 +1,6 @@
 use cubecl::{
+    cmma::{MatrixIdent, MmaDefinition},
     prelude::*,
-    {cmma::MmaDefinition, ir::MatrixIdent},
 };
 
 use crate::{
@@ -160,7 +160,7 @@ fn store_stmatrix<
     let stage_vector_size = tile.container.vector_size().comptime();
     let stride = tile.unvectorized_stride();
 
-    let elem_size = E::type_size().comptime();
+    let elem_size = E::size().comptime();
     let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size / stage_vector_size) as u32;
 
@@ -196,7 +196,7 @@ pub(crate) fn stmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
 ) -> u32 {
     let (stride_row, stride_col) = (stride, 1);
 
-    let elem_size = E::type_size().comptime();
+    let elem_size = E::size().comptime();
     let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size) as u32;
     // Height is always 8, and lanes are divided into blocks of 8.

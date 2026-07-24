@@ -945,23 +945,21 @@ impl<T: Numeric> MemData<T> {
         #[comptime]
         match &self.store.quant {
             ComptimeOption::None => {
-                lines * comptime!(T::type_size() as u32 * self.store.vector_size as u32)
+                lines * T::size().comptime() as u32 * self.store.vector_size.comptime() as u32
             }
             ComptimeOption::Some(info) => {
                 let wp = comptime!(self.store.vector_size / info.scheme.num_quants());
                 match comptime!(info.scheme.store) {
                     QuantStore::Native => match comptime!(info.scheme.value) {
                         QuantValue::Q8F | QuantValue::Q8S => {
-                            lines * comptime!(i8::type_size() as u32 * wp as u32)
+                            lines * i8::size().comptime() as u32 * wp as u32
                         }
                         other => panic!(
                             "MemData::size_bytes: native quant storage element {:?} is not wired (i8 only)",
                             other
                         ),
                     },
-                    QuantStore::PackedU32(_) => {
-                        lines * comptime!(u32::type_size() as u32 * wp as u32)
-                    }
+                    QuantStore::PackedU32(_) => lines * u32::size().comptime() as u32 * wp as u32,
                     other => panic!(
                         "MemData::size_bytes: quant storage {:?} is not wired (native or packed-u32)",
                         other

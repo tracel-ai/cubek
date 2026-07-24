@@ -308,7 +308,7 @@ fn load_manual<
             let elem_idx = i * vector_size + e;
             let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
             let line = view.read((row, col / width));
-            vector.insert(e, line.extract((col % width).fcast::<usize>()));
+            vector.insert(e, line.extract_dynamic((col % width).fcast::<usize>()));
         }
         fragment[i] = vector;
     }

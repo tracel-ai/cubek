@@ -160,7 +160,7 @@ fn mma_register_direct<
             #[unroll(unroll)]
             for i in 0..mr {
                 let lhs_line = lhs.read((i as u32, (p / lw) as u32));
-                let a = Vector::<E, V>::cast_from(lhs_line.extract(p % lw));
+                let a = Vector::<E, V>::cast_from(lhs_line.extract_dynamic(p % lw));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     // Explicit `fma`: `+= a * b` lowers to a separate mul + dependent add (no
@@ -277,7 +277,7 @@ fn mma_register_gather<
                     0u32,
                     lw,
                 );
-                let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract(lane));
+                let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract_dynamic(lane));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     c[i * nr + n] = fma(a, b[n], c[i * nr + n]);

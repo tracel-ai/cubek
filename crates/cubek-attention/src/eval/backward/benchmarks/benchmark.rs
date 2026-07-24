@@ -29,7 +29,7 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
-        half::f16::as_type_native_unchecked(),
+        half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),
     );
     let problem = build_problem(spec, global_dtypes);
@@ -96,7 +96,7 @@ fn make_uniform<T: Numeric>(
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
-        .dtype(T::as_type_native_unchecked().storage_type())
+        .dtype(T::elem_type_native())
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
 }
@@ -106,7 +106,7 @@ fn make_zeros<T: Numeric>(
     shape: [usize; 4],
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
-        .dtype(T::as_type_native_unchecked().storage_type())
+        .dtype(T::elem_type_native())
         .zeros()
         .generate_without_host_data()
 }
@@ -116,7 +116,7 @@ fn make_zeros_row(
     shape: [usize; 3],
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
-        .dtype(f32::as_type_native_unchecked().storage_type())
+        .dtype(f32::elem_type_native())
         .zeros()
         .generate_without_host_data()
 }
@@ -213,7 +213,7 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
             "{}-attention-backward-{:?}-{}",
             <TestRuntime as Runtime>::name(&client),
             self.strategy,
-            QG::<AP>::as_type_native_unchecked(),
+            QG::<AP>::elem_type_native(),
         )
         .to_lowercase()
     }

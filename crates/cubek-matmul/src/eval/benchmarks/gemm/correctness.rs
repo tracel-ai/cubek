@@ -50,12 +50,12 @@ impl cubek_test_utils::Correctness for GemmCorrectness {
 
 fn build_matmul_problem(p: &GemmProblem) -> MatmulProblem {
     let global_dtypes = match p.precision {
-        Precision::F32 => MatmulElems::from_single_dtype(
-            <f32 as cubecl::frontend::CubePrimitive>::as_type_native_unchecked(),
-        )
-        .as_global_elems(),
+        Precision::F32 => {
+            MatmulElems::from_single_dtype(<f32 as cubecl::frontend::Scalar>::elem_type_native())
+                .as_global_elems()
+        }
         Precision::F16 => MatmulElems::from_single_dtype(
-            <half::f16 as cubecl::frontend::CubePrimitive>::as_type_native_unchecked(),
+            <half::f16 as cubecl::frontend::Scalar>::elem_type_native(),
         )
         .as_global_elems(),
     };

@@ -59,7 +59,7 @@ struct Conv2dBench<MP> {
 fn make_uniform_4d(
     client: &ComputeClient<TestRuntime>,
     shape: [usize; 4],
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
@@ -82,17 +82,17 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         let input = make_uniform_4d(
             &client,
             self.problem.input_shape,
-            LhsG::<MP>::as_type_native_unchecked().storage_type(),
+            LhsG::<MP>::elem_type_native(),
             0,
         );
         let weight = make_uniform_4d(
             &client,
             self.problem.weight_shape,
-            RhsG::<MP>::as_type_native_unchecked().storage_type(),
+            RhsG::<MP>::elem_type_native(),
             1,
         );
         let bias = TestInput::builder(client.clone(), Shape::from(vec![self.problem.bias_shape]))
-            .dtype(AccG::<MP>::as_type_native_unchecked().storage_type())
+            .dtype(AccG::<MP>::elem_type_native())
             .layout(cubek_test_utils::StridedLayout::Explicit(vec![1]))
             .uniform(2, 0.0, 1.0)
             .generate_without_host_data();
@@ -141,10 +141,10 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         format!(
             "{}-conv2d-{}-{}-{}-{}",
             <TestRuntime as Runtime>::name(&client),
-            LhsG::<MP>::as_type_native_unchecked(),
-            LhsS::<MP>::as_type_native_unchecked(),
-            AccR::<MP>::as_type_native_unchecked(),
-            AccG::<MP>::as_type_native_unchecked(),
+            LhsG::<MP>::elem_type_native(),
+            LhsS::<MP>::elem_type_native(),
+            AccR::<MP>::elem_type_native(),
+            AccG::<MP>::elem_type_native(),
         )
         .to_lowercase()
     }

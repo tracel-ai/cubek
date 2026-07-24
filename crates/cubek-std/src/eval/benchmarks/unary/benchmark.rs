@@ -72,7 +72,7 @@ impl<E: Float> Benchmark for UnaryBench<E> {
 
     fn prepare(&self) -> Self::Input {
         let client = <TestRuntime as Runtime>::client(&self.device);
-        let storage = E::as_type_native_unchecked().storage_type();
+        let storage = E::elem_type_native();
 
         let make = |seed: u64| -> TensorHandle<TestRuntime> {
             TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
@@ -117,7 +117,7 @@ impl<E: Float> Benchmark for UnaryBench<E> {
         format!(
             "unary-{}-{}-{:?}",
             <TestRuntime as Runtime>::name(&client),
-            E::as_type_native_unchecked(),
+            E::elem_type_native(),
             self.vectorization,
         )
         .to_lowercase()

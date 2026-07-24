@@ -26,8 +26,8 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
     #[comptime] space: Space,
-    #[define(I)] _b_dtype: StorageType,
-    #[define(E)] _e_dtype: StorageType,
+    #[define(I)] _b_dtype: ElemType,
+    #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
@@ -166,8 +166,8 @@ impl Benchmark for TileQuantStageBench {
             b.arg(),
             c.arg(),
             launcher.space().clone(),
-            u32::as_type_native_unchecked().storage_type(),
-            f32::as_type_native_unchecked().storage_type(),
+            u32::elem_type_native(),
+            f32::elem_type_native(),
         );
         Ok(())
     }

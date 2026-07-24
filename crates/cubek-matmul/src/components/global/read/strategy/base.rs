@@ -6,7 +6,7 @@ use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulTypes, StageIdent},
 };
 use cubecl::{
-    ir::{BarrierLevel, DeviceProperties, OpaqueType},
+    ir::{DeviceProperties, OpaqueType},
     prelude::*,
 };
 use cubek_std::{
@@ -73,10 +73,7 @@ pub trait LoadingValidation {
 
 /// Validates if async barrier instructions is available on the current device.
 pub fn validate_async_barrier(device_props: &DeviceProperties) -> Result<(), InvalidConfigError> {
-    if !device_props
-        .features
-        .supports_type(OpaqueType::Barrier(BarrierLevel::Cube))
-    {
+    if !device_props.features.supports_type(OpaqueType::Barrier) {
         return Err(Box::new(
             "Async barrier instructions are not available on the current device",
         ));
@@ -88,8 +85,8 @@ pub fn validate_async_barrier(device_props: &DeviceProperties) -> Result<(), Inv
 /// Validates if async copy instructions is available on the current device.
 pub fn validate_async_copy(
     device_props: &DeviceProperties,
-    dtype_global: &StorageType,
-    dtype_stage: &StorageType,
+    dtype_global: &ElemType,
+    dtype_stage: &ElemType,
 ) -> Result<(), InvalidConfigError> {
     if !device_props.features.copy_async {
         return Err(Box::new(
@@ -103,13 +100,13 @@ pub fn validate_async_copy(
         ));
     }
 
-    if matches!(dtype_global, StorageType::Packed(_, _))
-        && !matches!(dtype_stage, StorageType::Packed(_, _))
-    {
-        return Err(Box::new(
-            "Async copy doesn't support dequantizing on global read",
-        ));
-    }
+    // if matches!(dtype_global, StorageType::Packed(_, _))
+    //     && !matches!(dtype_stage, StorageType::Packed(_, _))
+    // {
+    //     return Err(Box::new(
+    //         "Async copy doesn't support dequantizing on global read",
+    //     ));
+    // }
 
     Ok(())
 }
@@ -143,7 +140,7 @@ pub fn validate_swizzle_atom_size(config: StageMemoryConfig) -> Result<(), Inval
 pub fn validate_tma(
     device_props: &DeviceProperties,
     smem_config: &StageMemoryConfig,
-    global_dtype: &StorageType,
+    global_dtype: &ElemType,
 ) -> Result<(), InvalidConfigError> {
     if !device_props.features.supports_type(OpaqueType::TensorMap) {
         return Err(Box::new(
@@ -159,11 +156,11 @@ pub fn validate_tma(
         ));
     }
 
-    if matches!(global_dtype, StorageType::Packed(_, _))
-        && !matches!(stage_dtype, StorageType::Packed(_, _))
-    {
-        return Err(Box::new("TMA doesn't support dequantizing on global read"));
-    }
+    // if matches!(global_dtype, StorageType::Packed(_, _))
+    //     && !matches!(stage_dtype, StorageType::Packed(_, _))
+    // {
+    //     return Err(Box::new("TMA doesn't support dequantizing on global read"));
+    // }
 
     if matches!(smem_config.swizzle, SwizzleMode::None) {
         return Ok(());
@@ -254,11 +251,7 @@ pub fn validate_tma_with_problem(
 }
 
 /// Defines the non-contiguous stride alignment in terms of powers of two
-pub(crate) fn stride_align_bits(
-    strides: &[usize],
-    layout: &MatrixLayout,
-    dtype: &StorageType,
-) -> u32 {
+pub(crate) fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &ElemType) -> u32 {
     let exclude_dim = match layout {
         MatrixLayout::RowMajor => strides.len() - 1,
         MatrixLayout::ColMajor => strides.len() - 2,

@@ -1,4 +1,4 @@
-use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
+use cubecl::{Runtime, TestRuntime, prelude::Scalar};
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulPrecision, MatrixPrecision};
 use cubek_test_utils::{HostData, Progress};
 
@@ -45,9 +45,9 @@ fn build_spec_and_dtypes<MP: MatmulPrecision>(p: &Conv2dProblem) -> (ConvSpec, M
     let [n, c_in, h_in, w_in] = p.input_shape;
     let [c_out, _, k_h, k_w] = p.weight_shape;
     let dtypes = MatmulElems::from_globals(&MatmulGlobalElems {
-        lhs: LhsG::<MP>::as_type_native_unchecked().storage_type(),
-        rhs: RhsG::<MP>::as_type_native_unchecked().storage_type(),
-        out: AccG::<MP>::as_type_native_unchecked().storage_type(),
+        lhs: LhsG::<MP>::elem_type_native(),
+        rhs: RhsG::<MP>::elem_type_native(),
+        out: AccG::<MP>::elem_type_native(),
     });
     let spec = ConvSpec {
         batches: n,

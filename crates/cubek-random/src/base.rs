@@ -37,7 +37,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     client: &ComputeClient<R>,
     prng: F::Runtime,
     output: TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let seeds = get_seeds();
     let args = prng.args();
@@ -138,7 +138,7 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
     seed_3: u32,
     args: Args<F>,
     #[comptime] n_values_per_thread: usize,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let cube_offset = CUBE_POS * CUBE_DIM as usize;
 

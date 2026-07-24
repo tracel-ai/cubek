@@ -25,7 +25,7 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
-        half::f16::as_type_native_unchecked(),
+        half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),
     );
     let problem = build_problem(spec, global_dtypes);
@@ -80,7 +80,7 @@ fn make_uniform<T: Numeric>(
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
-        .dtype(T::as_type_native_unchecked().storage_type())
+        .dtype(T::elem_type_native())
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
 }
@@ -138,10 +138,10 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
         format!(
             "{}-attention-{}-{}-{}-{}--{:?}",
             <TestRuntime as Runtime>::name(&client),
-            QG::<AP>::as_type_native_unchecked(),
-            KG::<AP>::as_type_native_unchecked(),
-            VG::<AP>::as_type_native_unchecked(),
-            OG::<AP>::as_type_native_unchecked(),
+            QG::<AP>::elem_type_native(),
+            KG::<AP>::elem_type_native(),
+            VG::<AP>::elem_type_native(),
+            OG::<AP>::elem_type_native(),
             self.strategy
         )
         .to_lowercase()

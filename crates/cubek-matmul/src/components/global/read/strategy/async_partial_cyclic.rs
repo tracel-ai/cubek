@@ -113,7 +113,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncPartialCyclicLoading<TO> {
         tiles_per_stage: u32,
         _vector_size: VectorSize,
         plane_dim: u32,
-        dtype: StorageType,
+        dtype: ElemType,
     ) -> u32 {
         let vector_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
         let num_vectors_per_tile = elements_per_tile / vector_size;
@@ -136,7 +136,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> PartialLoadingStrategy<RC>
         #[comptime] stage_index: u32,
         #[comptime] config: GlobalReaderConfig,
     ) -> AsyncPartialCyclicJob {
-        let type_size = ES::type_size_bits().comptime();
+        let type_size = ES::size_bits().comptime();
         let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
         let num_stage_elements = config.smem_config.elements_per_stage();
 

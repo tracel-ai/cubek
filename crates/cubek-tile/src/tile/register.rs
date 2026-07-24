@@ -199,7 +199,7 @@ impl<T: Numeric> RegisterData<T> {
             #[unroll(unroll)]
             for i in 0..mr {
                 let lhs_line = lhs_mat.read((i as u32, (p / lw) as u32));
-                let a = Vector::<T, RA>::cast_from(lhs_line.extract(p % lw));
+                let a = Vector::<T, RA>::cast_from(lhs_line.extract_dynamic(p % lw));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);

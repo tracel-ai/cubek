@@ -95,7 +95,7 @@ impl LoadMaxRoundPlaneCount for SyncFullOrderedLoading {
         tiles_per_stage: u32,
         _vector_size: VectorSize,
         _plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         tiles_per_stage
     }

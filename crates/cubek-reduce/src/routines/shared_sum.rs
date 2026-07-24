@@ -72,7 +72,7 @@ pub fn shared_sum<R: Runtime>(
         .atomic_type_usage(Type::atomic(input_elem))
         .contains(AtomicUsage::Add)
     {
-        return Err(ReduceError::MissingAtomicAdd(input_elem.into()));
+        return Err(ReduceError::MissingAtomicAdd(input_elem));
     }
 
     let input_len = input.shape.iter().product::<usize>();

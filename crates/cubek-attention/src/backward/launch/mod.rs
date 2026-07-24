@@ -49,7 +49,7 @@ pub fn flash_attention_backward<R: Runtime>(
     global_dtypes: &AttentionGlobalTypes,
     config: BackwardConfig,
 ) -> Result<(), AttentionSetupError> {
-    let f32_dtype = f32::as_type_native_unchecked().storage_type();
+    let f32_dtype = f32::elem_type_native();
 
     // D = rowsum(dO ⊙ O), shape [B, H, N_q], always fp32.
     let d_shape = lse.shape.clone();

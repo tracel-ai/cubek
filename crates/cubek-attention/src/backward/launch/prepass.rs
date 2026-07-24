@@ -13,7 +13,7 @@ fn flash_attention_backward_prepass_kernel<E: Float>(
     o: &Tensor<E>,
     do_: &Tensor<E>,
     d: &mut Tensor<E>,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let row_idx = ABSOLUTE_POS;
     if row_idx >= d.len() {
@@ -45,7 +45,7 @@ pub fn flash_attention_backward_prepass<R: Runtime>(
     do_: TensorBinding<R>,
     d: TensorBinding<R>,
 ) -> Result<(), AttentionSetupError> {
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     let working_units = d.shape.iter().product::<usize>();
     let cube_dim = CubeDim::new(client, working_units);

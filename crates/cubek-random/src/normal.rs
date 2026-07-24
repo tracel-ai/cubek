@@ -97,7 +97,7 @@ pub fn random_normal<R: Runtime>(
     mean: f32,
     std: f32,
     out: TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     random::<NormalFamily, R>(client, Normal { mean, std }, out, dtype)
 }

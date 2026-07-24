@@ -1,9 +1,4 @@
-use cubecl::{
-    frontend::CubePrimitive,
-    prelude::StorageType,
-    std::tensor::TensorHandle,
-    {Runtime, TestRuntime},
-};
+use cubecl::{Runtime, TestRuntime, ir::ElemType, prelude::Scalar, std::tensor::TensorHandle};
 use cubek_fft::{CfftBindings, FftMode, cfft, cfft_launch_any_size};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,
@@ -13,7 +8,7 @@ use cubek_test_utils::{
 fn empty_tensor(
     client: &cubecl::client::ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     let elems = shape.iter().product::<usize>();
     TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
@@ -43,7 +38,7 @@ fn combine_re_im(re: ValidationResult, im: ValidationResult) -> ValidationResult
 /// transform is unnormalized in both directions).
 fn cfft_roundtrip_case(signal_shape: Vec<usize>, dim: usize) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let n = signal_shape[dim] as f32;
 
     let (input_re, input_re_data) = TestInput::builder(client.clone(), signal_shape.clone())
@@ -130,7 +125,7 @@ fn cfft_roundtrip_batched_larger() {
 #[test]
 fn cfft_wrapper_roundtrip() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let signal_shape = [2, 8].to_vec();
     let dim = 1;
     let n = signal_shape[dim] as f32;

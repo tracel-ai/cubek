@@ -25,10 +25,10 @@ pub fn cmma_kernel<
     b: &D::Arg<ER, VB>,
     c: &TileArg<'_, E, VC>,
     #[comptime] space: Space,
-    #[define(EL)] _lhs_dtype: StorageType,
-    #[define(ER)] _rhs_dtype: StorageType,
-    #[define(E)] _acc_dtype: StorageType,
-    #[define(EA)] _acc_register_dtype: StorageType,
+    #[define(EL)] _lhs_dtype: ElemType,
+    #[define(ER)] _rhs_dtype: ElemType,
+    #[define(E)] _acc_dtype: ElemType,
+    #[define(EA)] _acc_register_dtype: ElemType,
 ) {
     let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));

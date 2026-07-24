@@ -29,7 +29,7 @@ use crate::{
 /// accumulator is always at least the output's precision. Reuses the canonical upgrade in
 /// [`MatmulElems::from_globals`]. Keying both the `MmaConfig` lookup and the kernel's `EA`
 /// type on this keeps selection and codegen consistent.
-fn mandated_acc(dtypes: &MatmulElems) -> StorageType {
+fn mandated_acc(dtypes: &MatmulElems) -> ElemType {
     MatmulElems::from_globals(&dtypes.as_global_elems()).acc_register
 }
 
@@ -117,7 +117,7 @@ fn setup<R: Runtime>(
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
     if blueprint.delivery.is_tma() {
-        let aligned = |strides: &[usize], dtype: &StorageType| {
+        let aligned = |strides: &[usize], dtype: &ElemType| {
             stride_align_bits(strides, &MatrixLayout::RowMajor, dtype) >= 4
         };
         if !aligned(&lhs.data().strides, &dtypes.lhs_global)
@@ -263,7 +263,7 @@ fn launch_strided<R: Runtime>(
     dtypes: &MatmulElems,
     leaf: Leaf,
 ) {
-    let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: StorageType| {
+    let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: ElemType| {
         let [outer, inner] = axes;
         let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
         launch
@@ -322,7 +322,7 @@ fn launch_tma<R: Runtime>(
         axes: [Axis; 2],
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
-        dtype: StorageType,
+        dtype: ElemType,
     ) -> TmaTileArgLaunch<E, R> {
         let (map, transposed) = tma_operand(
             binding,

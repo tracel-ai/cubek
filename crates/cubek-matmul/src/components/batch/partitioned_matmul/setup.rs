@@ -217,7 +217,7 @@ mod tests {
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages,
-            dtype: ElemType::Float(FloatKind::F16).into(),
+            dtype: ElemType::Float(FloatKind::F16),
         }
     }
 
@@ -269,7 +269,7 @@ mod tests {
             matrix_layout: MatrixLayout::RowMajor,
             swizzle: SwizzleMode::None,
             num_stages: 1,
-            dtype: ElemType::Float(FloatKind::F32).into(),
+            dtype: ElemType::Float(FloatKind::F32),
         }
     }
 

@@ -37,7 +37,7 @@ pub fn matmul_entry<
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: GemmBlueprint,
-    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [ElemType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
@@ -118,7 +118,9 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
         let out_batch = Args::batch_out(state, batch_cube as usize);
 
-        let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
+        let lhs_vec = lhs.vector_size();
+        let rhs_vec = rhs.vector_size();
+        let vector_size = comptime![Ord::max(lhs_vec, rhs_vec)];
         let size!(N) = vector_size;
 
         let check_bounds = config.check_bounds;

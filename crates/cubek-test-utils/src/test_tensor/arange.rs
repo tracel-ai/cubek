@@ -11,7 +11,7 @@ use crate::test_tensor::base::BaseInputSpec;
 fn arange_launch<T: Numeric>(
     tensor: &mut Tensor<T>,
     scale: InputScalar,
-    #[define(T)] _types: StorageType,
+    #[define(T)] _types: ElemType,
 ) {
     let linear = ABSOLUTE_POS;
 
@@ -36,7 +36,7 @@ fn new_arange(
     client: &ComputeClient<TestRuntime>,
     shape: Shape,
     strides: Strides,
-    dtype: StorageType,
+    dtype: ElemType,
     scale: f32,
 ) -> TensorHandle<TestRuntime> {
     let num_elems = shape.iter().product::<usize>();

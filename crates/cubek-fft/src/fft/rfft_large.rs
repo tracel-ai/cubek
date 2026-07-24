@@ -57,7 +57,7 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
     spectrum_im: TensorBinding<R>,
     dim: usize,
     signal_len: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let n_fft = (spectrum_re.shape[dim] - 1) * 2;
     let m = n_fft / 2;
@@ -155,7 +155,7 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
     signal: TensorBinding<R>,
     dim: usize,
     spec_bins: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let n_fft = signal.shape[dim];
     let m = n_fft / 2;

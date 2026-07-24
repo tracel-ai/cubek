@@ -26,7 +26,7 @@ fn flash_attention_backward_dv_kernel<E: Float>(
     #[comptime] head_dim: usize,
     #[comptime] val_dim: usize,
     #[comptime] causal: bool,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let row_idx = ABSOLUTE_POS;
     let seq_kv = k.shape(k.rank() - 2);
@@ -90,7 +90,7 @@ fn flash_attention_backward_dk_kernel<E: Float>(
     #[comptime] head_dim: usize,
     #[comptime] val_dim: usize,
     #[comptime] causal: bool,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let row_idx = ABSOLUTE_POS;
     let seq_kv = k.shape(k.rank() - 2);
@@ -175,7 +175,7 @@ pub fn flash_attention_backward_dkdv<R: Runtime>(
     _global_dtypes: &AttentionGlobalTypes,
     config: BackwardConfig,
 ) -> Result<(), AttentionSetupError> {
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     let head_dim = q.shape[q.shape.len() - 1];
     let val_dim = v.shape[v.shape.len() - 1];

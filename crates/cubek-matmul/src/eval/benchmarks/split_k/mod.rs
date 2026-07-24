@@ -60,7 +60,7 @@ fn launch_split_k_matmul<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -234,7 +234,7 @@ fn run(
     lanes: usize,
 ) -> TileInput {
     let space = mapping.space(problem, lanes);
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -281,7 +281,7 @@ impl Benchmark for SplitKBench {
 
     fn execute(&self, _: Self::Input) -> Result<Self::Output, String> {
         let (a, b, c) = (&self.a, &self.b, &self.c);
-        let dtype = f32::as_type_native_unchecked().storage_type();
+        let dtype = f32::elem_type_native();
         launch_split_k_matmul::launch::<TestRuntime>(
             &self.client,
             self.cube_count.clone(),

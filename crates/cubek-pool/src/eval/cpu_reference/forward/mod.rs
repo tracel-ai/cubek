@@ -6,7 +6,7 @@ pub use adaptive_avg_pool::run_adaptive_avg_pool;
 pub use avg_pool::run_avg_pool;
 pub use max_pool::{run_max_pool, run_max_pool_with_indices};
 
-use super::{f32_storage_type, i32_storage_type, make_random_f32_host, make_zero_handle};
+use super::{f32_elem_type, i32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{PoolForwardProblem, PoolMode};
 use crate::eval::cpu_reference::{cpu_reference_pool, decode_index, geometry::PoolGeometry};
 use crate::{pool2d, pool2d_with_indices};
@@ -54,7 +54,7 @@ pub fn strategy_result(
     problem: PoolForwardProblem<2>,
     seed: u64,
 ) -> Result<HostData, String> {
-    let dtype = f32_storage_type();
+    let dtype = f32_elem_type();
     let (input_handle, _input_host) =
         make_random_f32_host(&client, problem.input_shape.to_vec(), seed);
 
@@ -67,8 +67,7 @@ pub fn strategy_result(
                 return Err("pool indices only supported for max".to_string()).into();
             }
 
-            let indices_handle =
-                make_zero_handle(&client, output_shape.to_vec(), i32_storage_type());
+            let indices_handle = make_zero_handle(&client, output_shape.to_vec(), i32_elem_type());
 
             pool2d_with_indices::<TestRuntime>(
                 c,

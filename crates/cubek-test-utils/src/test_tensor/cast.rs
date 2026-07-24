@@ -13,7 +13,7 @@ use cubecl::{
 fn cast_launch<From: Numeric, To: Numeric, N: Size>(
     from: &Tensor<Vector<From, N>>,
     to: &mut Tensor<Vector<To, N>>,
-    #[define(From, To)] _types: [StorageType; 2],
+    #[define(From, To)] _types: [ElemType; 2],
 ) {
     cast_inner::<From, To, N>(from, to);
 }
@@ -32,7 +32,7 @@ fn cast_inner<From: Numeric, To: Numeric, N: Size>(
 pub fn copy_casted(
     client: &ComputeClient<TestRuntime>,
     original: TensorHandle<TestRuntime>,
-    target_type: StorageType,
+    target_type: ElemType,
 ) -> TensorHandle<TestRuntime> {
     if target_type == original.dtype {
         return TensorHandle::new_contiguous(
