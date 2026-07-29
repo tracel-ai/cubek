@@ -116,8 +116,11 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
 
         // Validate that the kernel's shared-memory footprint fits in the
         // per-cube budget the runtime reports.
-        let requested = smem_bytes(&stage_config.lhs_smem_config())
-            + smem_bytes(&stage_config.rhs_smem_config());
+        let requested = requested_smem_bytes(
+            &stage_config.lhs_smem_config(),
+            &stage_config.rhs_smem_config(),
+            &stage_config.out_smem_config(),
+        );
         let available = client.properties().hardware.max_shared_memory_size;
 
         if requested > available {
@@ -133,6 +136,81 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
     }
 }
 
+/// Shared memory one cube of this matmul allocates.
+///
+/// The operands are not the whole footprint: the kernel also holds an
+/// accumulator/output stage. `expand_config` builds that one once and hands it
+/// back as both `acc_smem_config` and `out_smem_config`, so `out` covers both
+/// and is counted a single time.
+///
+/// This has to match what the kernel allocates. A total that comes in under the
+/// real footprint admits a blueprint that then over-requests at launch, which
+/// autotune profiling surfaces as a lost device rather than a skipped candidate.
+fn requested_smem_bytes(
+    lhs: &StageMemoryConfig,
+    rhs: &StageMemoryConfig,
+    out: &StageMemoryConfig,
+) -> usize {
+    smem_bytes(lhs) + smem_bytes(rhs) + smem_bytes(out)
+}
+
 fn smem_bytes(cfg: &StageMemoryConfig) -> usize {
     cfg.elements_per_stage() as usize * cfg.num_stages as usize * cfg.dtype.size()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+    use cubek_std::MatrixLayout;
+    use cubek_std::stage::SwizzleMode;
+
+    /// A stage holding `rows * cols` f16 elements per stage, `num_stages` deep,
+    /// so its footprint is `rows * cols * num_stages * 2` bytes.
+    fn stage(rows: u32, cols: u32, num_stages: u32) -> StageMemoryConfig {
+        StageMemoryConfig {
+            num_planes: 1,
+            elements_per_tile_along_row: rows,
+            elements_per_tile_along_col: cols,
+            tiles_per_partition_along_row: 1,
+            tiles_per_partition_along_col: 1,
+            partitions_per_stage_along_row: 1,
+            partitions_per_stage_along_col: 1,
+            vector_size: 1,
+            matrix_layout: MatrixLayout::RowMajor,
+            swizzle: SwizzleMode::None,
+            num_stages,
+            dtype: ElemType::Float(FloatKind::F16).into(),
+        }
+    }
+
+    /// The operand stages are only part of what a cube allocates. These are the
+    /// sizes from a blueprint that lost a device on a 48 KB budget: the operands
+    /// land on exactly that budget, which a `>` check admits by equality, and
+    /// the accumulator/output stage on top is what took the launch to 81920
+    /// bytes. It has to be in the total the check sees.
+    #[test]
+    fn requested_bytes_include_the_accumulator_stage() {
+        let lhs = stage(128, 64, 2);
+        let rhs = stage(64, 64, 2);
+        let out = stage(128, 128, 1);
+
+        assert_eq!(smem_bytes(&lhs), 32_768);
+        assert_eq!(smem_bytes(&rhs), 16_384);
+        assert_eq!(smem_bytes(&out), 32_768);
+
+        assert_eq!(smem_bytes(&lhs) + smem_bytes(&rhs), 49_152);
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 81_920);
+    }
+
+    /// The accumulator and output are one buffer, so a config that reports the
+    /// same stage for both must not be charged for it twice.
+    #[test]
+    fn the_accumulator_stage_is_counted_once() {
+        let lhs = stage(64, 64, 1);
+        let rhs = stage(64, 64, 1);
+        let out = stage(64, 64, 1);
+
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 3 * 8_192);
+    }
 }
