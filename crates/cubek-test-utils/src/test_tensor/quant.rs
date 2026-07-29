@@ -120,6 +120,9 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
         .collect();
 
     let scales = match &scheme.level {
+        QuantLevel::BlockTensor { .. } => {
+            unimplemented!("two-level quantization is not supported in test tensors yet")
+        }
         QuantLevel::Tensor => vec![1.0 / max_abs_q],
         QuantLevel::Block(_) => {
             let rank = shape.len();

@@ -109,12 +109,8 @@ pub struct QuantInfo {
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     match scheme.level {
         QuantLevel::Tensor => vec![1; rank],
-        QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
-        QuantLevel::BlockTensor { .. } => {
-            unimplemented!(
-                "two-level quantization is not supported here, got {:?}",
-                scheme.level
-            )
+        QuantLevel::Block(bs) | QuantLevel::BlockTensor { block: bs, .. } => {
+            bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
         }
     }
 }

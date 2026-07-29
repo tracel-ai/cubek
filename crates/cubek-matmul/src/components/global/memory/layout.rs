@@ -257,7 +257,10 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
             match scheme.level {
                 QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
-                QuantLevel::Block(block_size) => {
+                QuantLevel::Block(block_size)
+                | QuantLevel::BlockTensor {
+                    block: block_size, ..
+                } => {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =

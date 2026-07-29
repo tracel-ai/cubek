@@ -122,7 +122,7 @@ struct QuantMatmulInputs {
 fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
     match &scheme.level {
         QuantLevel::Tensor => vec![1; shape.len()],
-        QuantLevel::Block(block) => {
+        QuantLevel::Block(block) | QuantLevel::BlockTensor { block, .. } => {
             let rank = shape.len();
             let block_dims = block.to_dim_vec(rank);
             shape

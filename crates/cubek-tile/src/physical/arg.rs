@@ -209,6 +209,13 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
              (native or packed-u32)"
         ),
     }
+    // A per-tensor scale normalizing the block scales is not applied anywhere in this path, so
+    // serving one would silently drop it and scale every value wrong.
+    assert!(
+        scheme.level.global_param().is_none(),
+        "StridedTileArgLaunch::quantized: two-level quantization is not supported here, got {:?}",
+        scheme.level
+    );
     // The scales ride a plain `f32` tensor read straight through, so a narrower param
     // would reinterpret its bytes.
     assert!(

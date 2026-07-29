@@ -183,7 +183,7 @@ fn quant_mask(size_quant: usize) -> u32 {
 pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
     match scheme.level {
         QuantLevel::Tensor => shape.to_vec(),
-        QuantLevel::Block(bs) => bs
+        QuantLevel::Block(bs) | QuantLevel::BlockTensor { block: bs, .. } => bs
             .to_dim_vec(shape.len())
             .iter()
             .map(|&b| b as usize)
