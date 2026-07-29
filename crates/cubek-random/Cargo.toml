@@ -21,6 +21,7 @@ full = ["extended"]
 [dependencies]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
+cubecl-environment = { workspace = true }
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }
 rand = { workspace = true }
