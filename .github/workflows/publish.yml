@@ -34,6 +34,7 @@ jobs:
   publish-cubek-quant:
     needs:
       - publish-cubek-tile
+      - publish-cubek-test-utils
     uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
     with:
       crate: cubek-quant
