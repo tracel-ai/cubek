@@ -93,12 +93,12 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
                 for k_iter in 0..self.accumulator_length {
                     let k_u32 = comptime!(k_iter as u32);
                     self.output
-                        .write((write_index, k_u32.runtime()), array[k_iter])
+                        .write_checked((write_index, k_u32.runtime()), array[k_iter])
                 }
             }
             Value::Single(vector) => self
                 .output
-                .write((self.write_index as u32, 0), vector.unwrap()),
+                .write_checked((self.write_index as u32, 0), vector.unwrap()),
             Value::None => unreachable!(),
         }
     }

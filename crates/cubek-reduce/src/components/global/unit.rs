@@ -2,7 +2,7 @@ use crate::{
     BoundChecks, ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericVector,
-        global::{idle_check, reduction_output_base, write_enabled},
+        global::{idle_check, reduction_output_base},
         instructions::{Accumulator, ReduceStep, ReduceWithIndices, reduce_inplace},
         readers::{Reader, unit::UnitReader},
         writers::{IndicesWriter, ReduceWriter, Writer},
@@ -136,8 +136,6 @@ impl GlobalFullUnitReduce {
             vectorization_mode,
             blueprint.unit_idle,
         );
-        let write_enabled =
-            write_enabled::<P, Out>(input, &*output, reduce_index_start, vectorization_mode);
 
         for b in 0..write_count {
             let reduce_index = reduce_index_start + b;
@@ -150,14 +148,10 @@ impl GlobalFullUnitReduce {
                 idle,
                 vectorization_mode,
             );
-            if write_enabled {
-                W::write(writer, b, accumulator, inst);
-            }
+            W::write(writer, b, accumulator, inst);
         }
 
-        if write_enabled {
-            W::commit(writer);
-        }
+        W::commit(writer);
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -94,7 +94,7 @@ impl<'a, Out: NumericVector> PerpendicularWriter<'a, Out> {
 impl<Out: NumericVector> PerpendicularWriter<'_, Out> {
     fn write_single<S: Size>(&mut self, vector: Vector<Out::T, S>, k_index: usize) {
         if comptime![self.output_vector_size == self.input_vector_size] {
-            self.output.write(
+            self.output.write_checked(
                 (self.write_index as u32, k_index as u32),
                 Vector::cast_from(vector),
             );
@@ -114,7 +114,8 @@ impl<Out: NumericVector> PerpendicularWriter<'_, Out> {
                 }
 
                 let index = self.write_index * num_iters + i;
-                self.output.write((index as u32, k_index as u32), tmp);
+                self.output
+                    .write_checked((index as u32, k_index as u32), tmp);
             }
         }
     }

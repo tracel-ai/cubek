@@ -63,26 +63,3 @@ pub fn idle_check<P: ReducePrecision, Out: NumericVector>(
         ComptimeOption::new_None()
     }
 }
-
-/// Whether this worker's writes may proceed: its write offsets must fall
-/// inside the output.
-///
-/// Excess workers launched by grid rounding still run the whole reduction
-/// body (masked, or unmasked garbage if the driver ignores `terminate!`),
-/// and their `write_index` points at or past the output extent, so letting
-/// them write corrupts the output or neighboring memory. The offset test is
-/// deliberately independent of [`IdleMode`]: it is the writer-side bound.
-#[cube]
-pub(crate) fn write_enabled<P: ReducePrecision, Out: NumericVector>(
-    input: &VirtualTensor<P::EI, P::SI>,
-    output: &VirtualTensor<Out::T, Out::N, ReadWrite>,
-    reduce_index_start: usize,
-    #[comptime] vectorization_mode: VectorizationMode,
-) -> bool {
-    let count = reduce_count(
-        output.len() * output.vector_size(),
-        vectorization_mode,
-        input.vector_size(),
-    );
-    reduce_index_start < count
-}

@@ -2,7 +2,7 @@ use crate::{
     ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericVector,
-        global::{idle_check, reduction_output_base, write_enabled},
+        global::{idle_check, reduction_output_base},
         instructions::{Accumulator, ReduceWithIndices, reduce_inplace},
         readers::{Reader, plane::PlaneReader},
         writers::{IndicesWriter, ReduceWriter, Writer},
@@ -149,8 +149,6 @@ impl GlobalFullPlaneReduce {
             vectorization_mode,
             blueprint.plane_idle,
         );
-        let write_enabled =
-            write_enabled::<P, Out>(input, &*output, reduce_index_start, vectorization_mode);
 
         for b in 0..write_count {
             let reduce_index = reduce_index_start + b;
@@ -165,11 +163,8 @@ impl GlobalFullPlaneReduce {
                 blueprint,
             );
 
-            #[allow(clippy::collapsible_if)]
             if UNIT_POS_X == 0 {
-                if write_enabled {
-                    W::write(writer, b, result, inst);
-                }
+                W::write(writer, b, result, inst);
             }
         }
 
@@ -178,9 +173,7 @@ impl GlobalFullPlaneReduce {
         #[allow(clippy::collapsible_if)]
         if commit_required {
             if UNIT_POS_X == 0u32 {
-                if write_enabled {
-                    W::commit(writer);
-                }
+                W::commit(writer);
             }
         }
     }
