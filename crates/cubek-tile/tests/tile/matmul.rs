@@ -1240,15 +1240,12 @@ fn register_matmul_promoted_accumulator() {
         .enforce()
 }
 
-/// KNOWN FAILING on a vectorized operand — see the ignore reason. Kept as the reproduction.
-///
-/// The promoted register accumulator under the two-level cube/plane space a real gemm
-/// composes: the cube grid, then the plane split, `K` walked sequentially under both. This is
-/// the shape metabolic's register composition launches, unlike the single-level test above.
+/// The promoted register accumulator under the two-level cube/plane space a real gemm composes,
+/// with **vectorized** operands (rhs and output in 2-wide lines). This is the case that once
+/// failed to compile on the CPU backend, when the block was allocated scalar and re-viewed as
+/// lines; the block is now allocated at its vector element (`Array<Vector<T, RA>>`), so the
+/// store is a real vector write and the numbers are right on every runtime.
 #[test]
-#[ignore = "known gap: RegisterData allocates scalars and re-views them as lines, a reinterpret \
-            with nothing behind it, so a vectorized operand fails to compile on the CPU backend. \
-            The unvectorized case is covered by the test above."]
 fn register_matmul_promoted_cube_plane() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (4usize, 4usize, 16usize);
@@ -1284,9 +1281,10 @@ fn register_matmul_promoted_cube_plane() {
         space.cube_count(),
         space.cube_dim(&client),
         StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        // Vectorized along N, as a real launch does for the rhs and the output.
-        StridedTileArgLaunch::strided(b.tensor_arg(2), 2, b.space(), b.storage()),
-        StridedTileArgLaunch::strided(c.tensor_arg(2), 2, c.space(), c.storage()),
+        // Vectorized along N, as a real launch does for the rhs and the output: the tensor arg
+        // stays scalar (`tensor_arg(1)`) and the launch vectorizes it to `2` (the second arg).
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 2, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 2, c.space(), c.storage()),
         dtype,
         dtype,
     );

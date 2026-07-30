@@ -5,14 +5,17 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-/// An `mr × nr` block of accumulators living in registers, the [`Leaf::Register`] encoding of
-/// a [`PlaneTile`].
-///
-/// Vectorization stays *inside*: `data` is scalar-typed by Rust-side erasure, exactly as
-/// [`Store`](crate::Store)'s buffer is, and the real element is `Vector<T, vector_size>`. Every
-/// operation re-groups it with `size!` at the width held here, so the lines never reach a
-/// generic — a `Vector<T, W>` field would put `W` on [`PlaneTile`] and from there on
-/// [`TileKind`] and [`Tile`], for a width that is a storage detail of one leaf.
+// The block's line width, as a scope-registered size rather than a generic. `RA` names the
+// vector element `data` is allocated at; `alloc` binds it to the promoting tile's width with
+// `register_size`, and every op reads the block as `Vector<T, RA>`. This is exactly how
+// `MmaData` carries `NA`/`NL`/`NR` — the width stays a storage detail of the leaf and never
+// reaches `PlaneTile` / `TileKind` / `Tile` as a generic. (An earlier version allocated
+// `Array::<T>` scalar and re-viewed it as lines; that reinterpret has nothing behind it and the
+// CPU backend refuses a vectorized operand — allocate at the vector element instead.)
+define_size!(pub(crate) RA);
+
+/// An `mr × nr` block of `RA`-wide accumulators living in registers, the [`Leaf::Register`]
+/// encoding of a [`PlaneTile`].
 ///
 /// The block exists so the software leaf can accumulate the way the hardware ones do. It used
 /// to allocate its own inside the microkernel, which meant the accumulator could not outlive a
@@ -23,9 +26,9 @@ use crate::*;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RegisterData<T: Numeric> {
-    /// `mr * nr` lines of `vector_size`, scalar-typed by erasure (see the type docs).
-    pub(crate) data: Array<T>,
-    /// Physical line size of `data`; comptime so `size!` can read it.
+    /// `mr * nr` lines, each `Vector<T, RA>` (width registered in [`alloc`](Self::alloc)).
+    pub(crate) data: Array<Vector<T, RA>>,
+    /// Physical line width, the numeric twin of `RA`; comptime, for the line arithmetic.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
     /// Rows in the block.
@@ -39,6 +42,14 @@ pub struct RegisterData<T: Numeric> {
     /// partial is not the answer until the plane's lanes are summed.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
+}
+
+/// Bind the block width `RA` for the rest of the kernel's scope.
+#[cube]
+fn register_block_size(#[comptime] vector_size: usize) {
+    intrinsic!(|scope| {
+        scope.register_size::<RA>(vector_size);
+    });
 }
 
 #[cube]
@@ -55,9 +66,10 @@ impl<T: Numeric> RegisterData<T> {
             vector_size > 0 && n.is_multiple_of(vector_size),
             "RegisterData::alloc: n ({n}) must be a whole number of {vector_size}-wide lines"
         ));
+        register_block_size(vector_size);
         let nr = comptime!(n / vector_size);
         RegisterData::<T> {
-            data: Array::<T>::new(comptime!(m * n)),
+            data: Array::<Vector<T, RA>>::new(comptime!(m * nr)),
             vector_size,
             mr: m,
             nr,
@@ -65,26 +77,14 @@ impl<T: Numeric> RegisterData<T> {
         }
     }
 
-    /// The block re-grouped into its real `Vector<T, W>` element.
-    pub(crate) fn lines<W: Size>(&self) -> &[Vector<T, W>] {
-        self.data.as_vectorized().with_vector_size::<W>()
-    }
-
-    /// The mutable twin of [`lines`](Self::lines).
-    pub(crate) fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.data.as_vectorized_mut().with_vector_size_mut::<W>()
-    }
-
     pub(crate) fn zero(&mut self) {
-        let size!(W) = comptime!(self.vector_size);
         let count = comptime!(self.mr * self.nr);
-        let lines = self.lines_mut::<W>();
         // Indexed rather than iterated: `#[cube]` traces this loop, and the expansion has no
         // `iter_mut` to trace through.
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for i in 0..count {
-            lines[i] = Vector::<T, W>::cast_from(0u32);
+            self.data[i] = Vector::<T, RA>::cast_from(0u32);
         }
     }
 
@@ -96,15 +96,15 @@ impl<T: Numeric> RegisterData<T> {
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
     /// every lane writing its own fraction over the last.
     pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
-        let size!(W) = comptime!(self.vector_size);
         let vw = comptime!(self.vector_size);
         // `row_stride` counts scalars, but the window is indexed in *lines* (its offset is a
         // line offset, and the buffer's real element is `Vector<Out, vector_size>`). Write whole
         // lines at line indices — stepping by scalars here spreads each row `vw` times too far.
         let line_stride = mem.row_stride() / comptime!(vw as u32);
         let window = mem.window_slice_mut();
-        let out_lines = window.as_vectorized_mut().with_vector_size_mut::<W>();
-        let lines = self.lines::<W>();
+        // The sink's storage is vectorized at the same width the block was promoted at, so re-view
+        // it at `RA` too — this is a real vector store, not the reinterpret the block once did.
+        let out_lines = window.as_vectorized_mut().with_vector_size_mut::<RA>();
 
         // Split comptime rather than branching per line: a value-producing `match` plus a
         // lane guard emits a binding the CPU backend cannot resolve ("Value should have been
@@ -119,7 +119,7 @@ impl<T: Numeric> RegisterData<T> {
                     for n in 0..comptime!(self.nr) {
                         let offset = (i as u32) * line_stride + comptime!(n as u32);
                         out_lines[offset as usize] =
-                            Vector::<Out, W>::cast_from(lines[comptime!(i * self.nr + n)]);
+                            Vector::<Out, RA>::cast_from(self.data[comptime!(i * self.nr + n)]);
                     }
                 }
             }
@@ -129,10 +129,10 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = plane_sum(lines[comptime!(i * self.nr + n)]);
+                        let combined = plane_sum(self.data[comptime!(i * self.nr + n)]);
                         if UNIT_POS_X == 0 {
                             let offset = (i as u32) * line_stride + comptime!(n as u32);
-                            out_lines[offset as usize] = Vector::<Out, W>::cast_from(combined);
+                            out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
                         }
                     }
                 }
@@ -161,31 +161,30 @@ impl<T: Numeric> RegisterData<T> {
             "RegisterData::mma: the block's lines must match the rhs's"
         ));
 
-        let size!(W) = comptime!(self.vector_size);
         let size!(L) = lw;
         let kc = comptime!(rhs.space.extent_at(rhs.space.rank() - 2));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         let lhs_mat = lhs.matrix_transparent::<EL, L, L>(0usize);
-        let rhs_mat = rhs.matrix_transparent::<ER, W, W>(0usize);
+        // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
+        let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
         // Matches the memory-backed leaf's cap: past it, hundreds of inlined cells
         // overflow the optimizer's recursive block pass.
         let unroll = comptime!(mr * nr <= 64);
-        let c = self.lines_mut::<W>();
 
         for p in 0..kc {
-            let mut b = Array::<Vector<T, W>>::new(nr);
+            let mut b = Array::<Vector<T, RA>>::new(nr);
             #[unroll(unroll)]
             for n in 0..nr {
-                b[n] = Vector::<T, W>::cast_from(rhs_mat.read((p as u32, n as u32)));
+                b[n] = Vector::<T, RA>::cast_from(rhs_mat.read((p as u32, n as u32)));
             }
             #[unroll(unroll)]
             for i in 0..mr {
                 let lhs_line = lhs_mat.read((i as u32, (p / lw) as u32));
-                let a = Vector::<T, W>::cast_from(lhs_line.extract(p % lw));
+                let a = Vector::<T, RA>::cast_from(lhs_line.extract(p % lw));
                 #[unroll(unroll)]
                 for n in 0..nr {
-                    c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+                    self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);
                 }
             }
         }
