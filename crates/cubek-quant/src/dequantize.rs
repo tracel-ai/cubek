@@ -169,10 +169,27 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     }
 }
 
+/// The scale to reconstruct with: the block scale, times the per-tensor scale when there is one.
+///
+/// Both the load and the multiply sit inside the comptime match, so a one-level scheme emits
+/// neither. The per-tensor scale is read once here and kept in a register.
+#[cube]
+fn scale_with_global<F: Float, FS: Numeric>(
+    block: FS,
+    global: ComptimeOption<LinearView<'_, F>>,
+) -> F {
+    #[comptime]
+    match global {
+        ComptimeOption::Some(global) => global.read(0) * F::cast_from(block),
+        ComptimeOption::None => F::cast_from(block),
+    }
+}
+
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<Q, N>>,
     scale: ScalesView<'_, FS>,
+    global: ComptimeOption<LinearView<'_, F>>,
     mut output: LinearViewMut<'_, Vector<F, N>>,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
@@ -182,11 +199,12 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
 
     let native_packing = Q::packing_factor();
     // Absolute pos represents the logical block (scale) used to dequantize, not layout
-    let scale = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
+    let block = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
+    let scale = scale_with_global::<F, FS>(block, global);
 
     output.write(
         ABSOLUTE_POS,
-        dequantize_symmetric::<F, FS, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
+        dequantize_symmetric::<F, F, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
     );
 }
 
@@ -197,6 +215,7 @@ pub fn launch_ref<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     scheme: &QuantScheme,
     output_dtype: StorageType,
 ) -> Result<(), LaunchError> {
@@ -237,6 +256,7 @@ pub fn launch_ref<R: Runtime>(
                 input,
                 *scheme,
                 scale,
+                global,
                 output,
                 output_dtype,
                 scale_dtype,
@@ -313,11 +333,13 @@ fn dequantize_packed<R: Runtime>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dequantize_native<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     scheme: QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     output_dtype: StorageType,
     scale_dtype: StorageType,
@@ -339,7 +361,7 @@ fn dequantize_native<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
+            level: QuantLevel::Tensor | QuantLevel::Block(_) | QuantLevel::BlockTensor { .. },
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
@@ -358,6 +380,7 @@ fn dequantize_native<R: Runtime>(
                     vector_size,
                     linear_view(input.clone()),
                     scales_view(input, scale, 1, &scheme),
+                    global.map(linear_view).into(),
                     linear_view(output),
                     [output_dtype, scale_dtype, input_dtype.into()],
                 )

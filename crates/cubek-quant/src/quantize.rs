@@ -98,14 +98,45 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     scale
 }
 
+/// The scale to quantize against: the block scale, times the per-tensor scale when there is one.
+///
+/// Both the load and the multiply sit inside the comptime match, so a one-level scheme emits
+/// neither. The per-tensor scale is read once here and kept in a register; nothing reloads it.
+#[cube]
+fn scale_with_global<F: Float, FS: CubePrimitive>(
+    block: FS,
+    global: ComptimeOption<LinearView<'_, F>>,
+    out_global: ComptimeOption<LinearViewMut<'_, F>>,
+) -> F {
+    #[comptime]
+    match global {
+        ComptimeOption::Some(global) => {
+            let global = global.read(0);
+
+            if ABSOLUTE_POS == 0 {
+                #[comptime]
+                match out_global {
+                    ComptimeOption::Some(mut out) => out.write(0, global),
+                    ComptimeOption::None => {}
+                }
+            }
+
+            global * F::cast_from(block)
+        }
+        ComptimeOption::None => F::cast_from(block),
+    }
+}
+
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
+    global: ComptimeOption<LinearView<'_, F>>,
     range_min: InputScalar,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
+    out_global: ComptimeOption<LinearViewMut<'_, F>>,
     scales_layout: ScalesLayout,
     #[define(F, FS, Q)] _dtypes: [StorageType; 3],
 ) {
@@ -115,11 +146,12 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 
     let native_packing = Q::packing_factor();
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
-    let scale = write_scale(in_pos, scale, out_scale, scales_layout);
+    let block = write_scale(in_pos, scale, out_scale, scales_layout);
+    let scale = scale_with_global::<F, FS>(block, global, out_global);
 
     output.write(
         ABSOLUTE_POS,
-        quantize_symmetric_q::<F, N, FS, Q>(
+        quantize_symmetric_q::<F, N, F, Q>(
             input.read(ABSOLUTE_POS),
             scale,
             range_min.get::<F>(),
@@ -181,13 +213,15 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
     }
 }
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
@@ -229,7 +263,9 @@ pub fn launch_ref<R: Runtime>(
                 input,
                 scheme,
                 scale,
+                global,
                 out_scale,
+                out_global,
                 output,
                 input_elem,
                 scale_dtype,
@@ -251,7 +287,9 @@ fn quantize_native<R: Runtime>(
     input: TensorBinding<R>,
     scheme: &QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
@@ -274,7 +312,7 @@ fn quantize_native<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
+            level: QuantLevel::Tensor | QuantLevel::Block(_) | QuantLevel::BlockTensor { .. },
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
@@ -299,10 +337,12 @@ fn quantize_native<R: Runtime>(
                     linear_view(input),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(output.clone(), scale, 1, scheme),
+                    global.map(linear_view).into(),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
+                    out_global.map(linear_view).into(),
                     scales_layout,
                     [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
                 )

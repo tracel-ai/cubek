@@ -1,4 +1,5 @@
 use cubecl::{
+    features::TypeUsage,
     ir::ElemType,
     ir::FloatKind,
     server::CopyDescriptor,
@@ -96,7 +97,9 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         input.binding(),
         output.clone().binding(),
         scale.binding(),
+        None,
         output_scale.clone().binding(),
+        None,
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -109,6 +112,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         // We use a new buffer to make sure all values are correctly dequantized back.
         output_f.clone().binding(),
         output_scale.clone().binding(),
+        None,
         &scheme,
         f32::as_type_native_unchecked().storage_type(),
     )
@@ -237,7 +241,9 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         input.binding(),
         output.clone().binding(),
         scale.binding(),
+        None,
         output_scale.clone().binding(),
+        None,
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -250,6 +256,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         // We use a new buffer to make sure all values are correctly dequantized back.
         output_f.clone().binding(),
         output_scale.binding(),
+        None,
         &scheme,
         f32::as_type_native_unchecked().storage_type(),
     )
@@ -275,5 +282,159 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
             diff <= max_error,
             "Mismatch at {i}, Expected: {expected} | Actual: {actual} (diff {diff} > {max_error})"
         );
+    }
+}
+
+#[test]
+fn test_quantization_symmetric_block_tensor() {
+    test_quantization_block_tensor_symmetric(SHAPE_X, SHAPE_Y, QuantValue::Q8S, SHAPE_X);
+}
+
+/// Two-level: per-block scales normalized by one per-tensor scale.
+///
+/// The block scales are deliberately split so that neither level alone reconstructs the data. If
+/// the kernel dropped the per-tensor scale, or applied it twice, every value would come back off
+/// by that factor and the tolerance below would not save it.
+fn test_quantization_block_tensor_symmetric(
+    m: usize,
+    n: usize,
+    value: QuantValue,
+    block_size: usize,
+) {
+    let client = TestRuntime::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        return; // backend has no native i8 (e.g. wgpu), and two-level needs native storage
+    }
+
+    let shape = shape![m, n];
+
+    let num_elems: usize = m * n;
+    let half = num_elems as f32 / 2.0;
+    let data: Vec<_> = (0..num_elems)
+        .map(|v| (v as f32 - half) / num_elems as f32)
+        .collect();
+    let input_alloc =
+        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
+
+    let (q_min, q_max) = value.range();
+    let scale_count = data.len() / block_size;
+    let shape_scale = shape![m, n / block_size];
+
+    // Raw per-block scales, as a one-level scheme would use.
+    let mut raw = Vec::with_capacity(scale_count);
+    for block in 0..scale_count {
+        let mut amax = 0.0f32;
+        for i in 0..block_size {
+            amax = amax.max(data[block * block_size + i].abs());
+        }
+        raw.push(2.0 * amax / (q_max - q_min));
+    }
+
+    // Split them: the per-tensor scale takes the magnitude, the block scales keep the spread.
+    let peak = raw.iter().copied().fold(0.0f32, f32::max);
+    let global_f32 = peak / 4.0;
+    let scales: Vec<f32> = raw.iter().map(|s| s / global_f32).collect();
+
+    let scale_alloc = client.create_tensor_from_slice(
+        f32::as_bytes(&scales),
+        shape_scale.clone(),
+        f32::type_size(),
+    );
+    let global_alloc = client.create_tensor_from_slice(
+        f32::as_bytes(&[global_f32]),
+        shape![1],
+        f32::type_size(),
+    );
+
+    let input = TensorHandle::new(
+        input_alloc.memory,
+        shape.clone(),
+        input_alloc.strides,
+        f32::as_type_native_unchecked(),
+    );
+    let scale = TensorHandle::new(
+        scale_alloc.memory,
+        shape_scale.clone(),
+        scale_alloc.strides,
+        f32::as_type_native_unchecked(),
+    );
+    let global = TensorHandle::new(
+        global_alloc.memory,
+        shape![1],
+        global_alloc.strides,
+        f32::as_type_native_unchecked(),
+    );
+    let output_f = TensorHandle::zeros(&client, shape.clone(), f32::as_type_native_unchecked());
+
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block_tensor(
+            [block_size as u8],
+            QuantParam::F32,
+        ))
+        .with_value(value)
+        .with_store(QuantStore::Native)
+        .with_param(QuantParam::F32)
+        .with_mode(QuantMode::Symmetric);
+
+    let output = TensorHandle::zeros(&client, shape.clone(), i8::as_type_native_unchecked());
+    let output_scale =
+        TensorHandle::zeros(&client, shape_scale.clone(), f32::as_type_native_unchecked());
+    let output_global = TensorHandle::zeros(&client, shape![1], f32::as_type_native_unchecked());
+
+    cubek_quant::quantize::launch_ref(
+        &client,
+        input.binding(),
+        output.clone().binding(),
+        scale.binding(),
+        Some(global.clone().binding()),
+        output_scale.clone().binding(),
+        Some(output_global.clone().binding()),
+        &scheme,
+        ElemType::Float(FloatKind::F32),
+    )
+    .unwrap();
+
+    cubek_quant::dequantize::launch_ref(
+        &client,
+        output.binding(),
+        output_f.clone().binding(),
+        output_scale.binding(),
+        Some(output_global.clone().binding()),
+        &scheme,
+        f32::as_type_native_unchecked().storage_type(),
+    )
+    .unwrap();
+
+    // The per-tensor scale has to survive the round trip: the kernel writes it into the quantized
+    // tensor's own region, and dequantize reads it back from there rather than from the input.
+    let written = client.read_one_unchecked_tensor(CopyDescriptor::new(
+        output_global.handle.clone().binding(),
+        output_global.shape().clone(),
+        output_global.strides().clone(),
+        core::mem::size_of::<f32>(),
+    ));
+    assert_eq!(f32::from_bytes(&written)[0], global_f32);
+
+    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
+        output_f.handle.clone().binding(),
+        output_f.shape().clone(),
+        output_f.strides().clone(),
+        core::mem::size_of::<f32>(),
+    ));
+    let data_restored = f32::from_bytes(&computed);
+
+    assert_eq!(data_restored.len(), data.len());
+    for (block, chunk) in data.chunks(block_size).enumerate() {
+        // Error is bounded by half a step of the effective scale, which is the product of the two.
+        let max_error = (global_f32 * scales[block] / 2.0) * (1f32 + 1e-4);
+        for (i, expected) in chunk.iter().enumerate() {
+            let actual = data_restored[block * block_size + i];
+            let diff = f32::abs(actual - expected);
+            assert!(
+                diff <= max_error,
+                "block {block} index {i}: got {actual}, expected {expected}, \
+                 diff {diff} over {max_error}"
+            );
+        }
     }
 }
