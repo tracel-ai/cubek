@@ -138,8 +138,20 @@ impl<X: CubePrimitive> Value<X> {
             _ => panic!("Tried assigning different accumulator kinds"),
         }
     }
+
+    /// The `index`-th candidate as a standalone value; `None` stays `None`.
+    pub fn slot(&self, index: usize) -> Value<X> {
+        match self {
+            Value::Multiple(array) => Value::new_single(array[index]),
+            Value::Single(item) => Value::new_single(item.val),
+            Value::None => Value::new_None(),
+        }
+    }
 }
 
+/// Plane-cooperative top-k insertion; the candidate's coordinate decides which
+/// algorithm runs, since winners are identified by their coordinate when one
+/// rides along and by lane id otherwise.
 #[cube]
 pub fn plane_topk_insert<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
@@ -147,82 +159,117 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
     item: Vector<N, S>,
     coord: &Value<Vector<u32, S>>,
     #[comptime] k: usize,
-    #[comptime] has_coords: bool,
+) {
+    match coord {
+        Value::None => plane_topk_insert_values(elements, item, k),
+        Value::Single(coord) => plane_topk_insert_with_coords(
+            elements,
+            coordinates.multiple_mut(),
+            item,
+            coord.unwrap(),
+            k,
+        ),
+        Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
+    }
+}
+
+#[cube]
+fn plane_topk_insert_with_coords<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Array<Vector<u32, S>>,
+    item: Vector<N, S>,
+    coord: Vector<u32, S>,
+    #[comptime] k: usize,
 ) {
     let mut local_best_val = item;
-    let lane_id = Vector::new(UNIT_POS_X);
-
-    let mut local_best_coord = if has_coords {
-        coord.item()
-    } else {
-        Vector::new(u32::MAX)
-    };
+    let mut local_best_coord = coord;
 
     #[unroll]
     for _i in 0..k {
         let winning_val = plane_max(local_best_val);
-
-        let winning_coord = if has_coords {
-            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord)
-        } else {
-            let is_match = local_best_val.equal(&winning_val);
-            let claim = select_many(is_match, lane_id, Vector::new(u32::MAX));
-            plane_min(claim)
-        };
+        let winning_coord =
+            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord);
 
         let mut insert_val = winning_val;
         let mut insert_coord = winning_coord;
 
-        if has_coords {
-            let coordinates = coordinates.multiple_mut();
-            #[unroll]
-            for j in 0..k {
-                let to_keep = select_many(
-                    elements[j].equal(&insert_val),
-                    coordinates[j].less_than(&insert_coord),
-                    elements[j].greater_than(&insert_val),
-                );
+        #[unroll]
+        for j in 0..k {
+            let to_keep = select_many(
+                elements[j].equal(&insert_val),
+                coordinates[j].less_than(&insert_coord),
+                elements[j].greater_than(&insert_val),
+            );
 
-                let next_val = select_many(to_keep, insert_val, elements[j]);
-                elements[j] = select_many(to_keep, elements[j], insert_val);
-                insert_val = next_val;
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
 
-                let next_coord = select_many(to_keep, insert_coord, coordinates[j]);
-                coordinates[j] = select_many(to_keep, coordinates[j], insert_coord);
-                insert_coord = next_coord;
-            }
-        } else {
-            #[unroll]
-            for j in 0..k {
-                let to_keep = elements[j].greater_than(&insert_val);
-                let next_val = select_many(to_keep, insert_val, elements[j]);
-                elements[j] = select_many(to_keep, elements[j], insert_val);
-                insert_val = next_val;
-            }
+            let next_coord = select_many(to_keep, insert_coord, coordinates[j]);
+            coordinates[j] = select_many(to_keep, coordinates[j], insert_coord);
+            insert_coord = next_coord;
         }
 
         // Winner masking logic
-        let is_winner = if has_coords {
-            local_best_val
-                .equal(&winning_val)
-                .vec_and(local_best_coord.equal(&winning_coord))
-        } else {
-            lane_id.equal(&winning_coord)
-        };
-
+        let is_winner = local_best_val
+            .equal(&winning_val)
+            .vec_and(local_best_coord.equal(&winning_coord));
         local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
-        if has_coords {
-            local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
-        }
+        local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
     }
 }
 
+#[cube]
+fn plane_topk_insert_values<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    item: Vector<N, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best_val = item;
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll]
+    for _i in 0..k {
+        let winning_val = plane_max(local_best_val);
+        let is_match = local_best_val.equal(&winning_val);
+        let winning_lane = plane_min(select_many(is_match, lane_id, Vector::new(u32::MAX)));
+
+        let mut insert_val = winning_val;
+
+        #[unroll]
+        for j in 0..k {
+            let to_keep = elements[j].greater_than(&insert_val);
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
+        }
+
+        // Winner masking logic
+        let is_winner = lane_id.equal(&winning_lane);
+        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+    }
+}
+
+/// Plane-cooperative merge of per-lane top-k candidates; the accumulator's
+/// coordinates decide which algorithm runs, as in [`plane_topk_insert`].
 #[cube]
 pub fn plane_topk_merge<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
     coordinates: &mut Value<Vector<u32, S>>,
     #[comptime] k: usize,
-    #[comptime] has_coords: bool,
+) {
+    match coordinates {
+        Value::None => plane_topk_merge_values(elements, k),
+        Value::Multiple(coordinates) => plane_topk_merge_with_coords(elements, coordinates, k),
+        Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
+    }
+}
+
+#[cube]
+fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Array<Vector<u32, S>>,
+    #[comptime] k: usize,
 ) {
     let mut final_elements = Array::new(k);
     let mut final_coords = Array::new(k);
@@ -238,24 +285,16 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
         for j in 0..k {
             let is_pointed = cursor.equal(&Vector::new(j as u32));
             local_val = select_many(is_pointed, elements[j], local_val);
-            if has_coords {
-                let coords = coordinates.multiple_mut();
-                local_coord = select_many(is_pointed, coords[j], local_coord);
-            }
+            local_coord = select_many(is_pointed, coordinates[j], local_coord);
         }
 
         let winning_val = plane_max(local_val);
-        let winning_lane = if has_coords {
-            let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
-            final_coords[i] = best_c;
-            let is_cand = local_val
-                .equal(&winning_val)
-                .vec_and(local_coord.equal(&best_c));
-            plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
-        } else {
-            let is_cand = local_val.equal(&winning_val);
-            plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
-        };
+        let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
+        final_coords[i] = best_c;
+        let is_cand = local_val
+            .equal(&winning_val)
+            .vec_and(local_coord.equal(&best_c));
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
 
         final_elements[i] = winning_val;
         let is_winner_thread = lane_id.equal(&winning_lane);
@@ -265,10 +304,41 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
     #[unroll]
     for i in 0..k {
         elements[i] = final_elements[i];
-        if has_coords {
-            let coords = coordinates.multiple_mut();
-            coords[i] = final_coords[i];
+        coordinates[i] = final_coords[i];
+    }
+}
+
+#[cube]
+fn plane_topk_merge_values<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_elements = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll]
+    for i in 0..k {
+        let mut local_val = Vector::new(N::min_value());
+
+        #[unroll]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local_val = select_many(is_pointed, elements[j], local_val);
         }
+
+        let winning_val = plane_max(local_val);
+        let is_cand = local_val.equal(&winning_val);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+
+        final_elements[i] = winning_val;
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        elements[i] = final_elements[i];
     }
 }
 

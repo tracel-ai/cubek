@@ -2,7 +2,7 @@ use super::{ArgAccumulator, ReduceFamily, ReduceInstruction, lowest_coordinate_m
 use crate::components::{
     instructions::{
         Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
-        ReduceWithIndices, ReduceWithIndicesFamily, Value,
+        ReduceWithIndices, ReduceWithIndicesFamily, Value, ValueExpand,
     },
     precision::ReducePrecision,
 };
@@ -26,25 +26,63 @@ impl ReduceWithIndicesFamily for Max {
     type Config = ReduceOutputMode;
 }
 
+/// Fold `candidate` into the accumulator, keeping the larger item per vector
+/// element (and its coordinate, when the candidate carries one).
+///
+/// Ties break towards the lower coordinate, matching the CPU reference. A
+/// coordinate-less candidate emits no index arithmetic at all.
 #[cube]
-impl Max {
-    /// Compare two pairs of items and coordinates and return a new pair
-    /// where each element in the vectors is the maximal item with its coordinate.
-    /// In case of equality, the lowest coordinate is selected.
-    pub fn choose_argmax<T: Numeric, N: Size>(
-        items0: Vector<T, N>,
-        coordinates0: Vector<u32, N>,
-        items1: Vector<T, N>,
-        coordinates1: Vector<u32, N>,
-    ) -> (Vector<T, N>, Vector<u32, N>) {
-        let to_keep = select_many(
-            items0.equal(&items1),
-            coordinates0.less_than(&coordinates1),
-            items0.greater_than(&items1),
-        );
-        let items = select_many(to_keep, items0, items1);
-        let coordinates = select_many(to_keep, coordinates0, coordinates1);
-        (items, coordinates)
+fn max_insert<T: Numeric, N: Size>(
+    elements: &mut Value<Vector<T, N>>,
+    coordinates: &mut Value<Vector<u32, N>>,
+    candidate: Vector<T, N>,
+    candidate_coord: &Value<Vector<u32, N>>,
+) {
+    let acc = elements.item();
+
+    match candidate_coord {
+        Value::None => {
+            elements.assign(&Value::new_single(select_many(
+                acc.greater_than(&candidate),
+                acc,
+                candidate,
+            )));
+        }
+        Value::Single(coord) => {
+            let candidate_coord = coord.unwrap();
+            let acc_coord = coordinates.item();
+            let to_keep = select_many(
+                acc.equal(&candidate),
+                acc_coord.less_than(&candidate_coord),
+                acc.greater_than(&candidate),
+            );
+
+            elements.assign(&Value::new_single(select_many(to_keep, acc, candidate)));
+            coordinates.assign(&Value::new_single(select_many(
+                to_keep,
+                acc_coord,
+                candidate_coord,
+            )));
+        }
+        Value::Multiple(_) => panic!("a max candidate carries at most one coordinate"),
+    }
+}
+
+/// Reduce `item` across the plane to one winning candidate, with its lowest
+/// matching coordinate when the item carries one.
+#[cube]
+fn plane_max_candidate<T: Numeric, N: Size>(
+    item: Vector<T, N>,
+    coordinates: &Value<Vector<u32, N>>,
+) -> (Vector<T, N>, Value<Vector<u32, N>>) {
+    let winning = plane_max(item);
+    match coordinates {
+        Value::None => (winning, Value::new_None()),
+        Value::Single(coord) => {
+            let winning_coord = lowest_coordinate_matching(winning, item, coord.unwrap());
+            (winning, Value::new_single(winning_coord))
+        }
+        Value::Multiple(_) => panic!("a max candidate carries at most one coordinate"),
     }
 }
 
@@ -85,112 +123,43 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn reduce(
-        this: &Self,
+        _this: &Self,
         accumulator: &mut Accumulator<P>,
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let has_indices = comptime!(this.output.has_indices());
+        let (candidate, candidate_coord) = match reduce_step {
+            ReduceStep::Plane => plane_max_candidate(item.elements, &item.args),
+            ReduceStep::Identity => (item.elements, item.args),
+        };
 
-        if has_indices {
-            let coordinate = item.args.item();
-            let item = item.elements;
-
-            let (candidate_item, candidate_coordinate) = match reduce_step {
-                ReduceStep::Plane => {
-                    let candidate_item = plane_max(item);
-                    let candidate_coordinate =
-                        lowest_coordinate_matching(candidate_item, item, coordinate);
-                    (candidate_item, candidate_coordinate)
-                }
-                ReduceStep::Identity => (item, coordinate),
-            };
-
-            let (elements, args) = Self::choose_argmax(
-                Vector::cast_from(candidate_item),
-                candidate_coordinate,
-                accumulator.elements.item(),
-                accumulator.args.item(),
-            );
-
-            accumulator.elements.assign(&Value::new_single(elements));
-            accumulator.args.assign(&Value::new_single(args));
-        } else {
-            let accumulator_item = accumulator.elements.item();
-            let elements = match reduce_step {
-                ReduceStep::Plane => {
-                    let candidate_item = Vector::cast_from(plane_max(item.elements));
-                    select_many(
-                        accumulator_item.greater_than(&candidate_item),
-                        accumulator_item,
-                        candidate_item,
-                    )
-                }
-                ReduceStep::Identity => {
-                    let item = Vector::cast_from(item.elements);
-                    select_many(accumulator_item.greater_than(&item), accumulator_item, item)
-                }
-            };
-
-            accumulator.elements.assign(&Value::new_single(elements));
-        }
+        max_insert(
+            &mut accumulator.elements,
+            &mut accumulator.args,
+            Vector::cast_from(candidate),
+            &candidate_coord,
+        );
     }
 
-    fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        let has_indices = comptime!(this.output.has_indices());
+    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
+        let (candidate, candidate_coord) =
+            plane_max_candidate(accumulator.elements.item(), &accumulator.args);
 
-        if has_indices {
-            let acc_item = accumulator.elements.item();
-            let coordinate = accumulator.args.item();
-
-            let candidate_item = plane_max(acc_item);
-            let candidate_coordinate =
-                lowest_coordinate_matching(candidate_item, acc_item, coordinate);
-
-            let (elements, args) = Self::choose_argmax(
-                accumulator.elements.item(),
-                accumulator.args.item(),
-                Vector::cast_from(candidate_item),
-                candidate_coordinate,
-            );
-
-            accumulator.elements.assign(&Value::new_single(elements));
-            accumulator.args.assign(&Value::new_single(args));
-        } else {
-            let acc_item = accumulator.elements.item();
-            let candidate_item = Vector::cast_from(plane_max(acc_item));
-            let max = select_many(
-                acc_item.greater_than(&candidate_item),
-                acc_item,
-                candidate_item,
-            );
-            accumulator.elements.assign(&Value::new_single(max));
-        }
+        max_insert(
+            &mut accumulator.elements,
+            &mut accumulator.args,
+            candidate,
+            &candidate_coord,
+        );
     }
 
-    fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let has_indices = comptime!(this.output.has_indices());
-
-        if has_indices {
-            let (elements, args) = Self::choose_argmax(
-                accumulator.elements.item(),
-                accumulator.args.item(),
-                other.elements.item(),
-                other.args.item(),
-            );
-
-            accumulator.elements.assign(&Value::new_single(elements));
-            accumulator.args.assign(&Value::new_single(args));
-        } else {
-            let accumulator_item = accumulator.elements.item();
-            let other_item = other.elements.item();
-
-            accumulator.elements.assign(&Value::new_single(select_many(
-                accumulator_item.greater_than(&other_item),
-                accumulator_item,
-                other_item,
-            )));
-        }
+    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+        max_insert(
+            &mut accumulator.elements,
+            &mut accumulator.args,
+            other.elements.item(),
+            &other.args,
+        );
     }
 
     fn to_output_parallel<Out: Numeric>(
@@ -198,21 +167,24 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> Value<Out> {
-        let has_indices = comptime!(this.output.has_indices());
-
-        if has_indices {
-            let (_max, coordinate) = max_finalize_with_coords::<P>(&accumulator);
-            Value::new_single(Out::cast_from(coordinate))
-        } else {
-            let mut max = P::EA::min_value();
-            let accumulator = accumulator.elements.item();
-            #[unroll]
-            for k in 0..accumulator.size() {
-                let candidate = accumulator.extract(k);
-                max = select(candidate > max, candidate, max);
+        let value = match comptime!(this.output) {
+            ReduceOutputMode::Values => {
+                let acc = accumulator.elements.item();
+                let mut max = P::EA::min_value();
+                #[unroll]
+                for k in 0..acc.size() {
+                    let candidate = acc.extract(k);
+                    max = select(candidate > max, candidate, max);
+                }
+                Out::cast_from(max)
             }
-            Value::new_single(Out::cast_from(max))
-        }
+            ReduceOutputMode::Indices => {
+                let (_max, coordinate) = max_finalize_with_coords::<P>(&accumulator);
+                Out::cast_from(coordinate)
+            }
+        };
+
+        Value::new_single(value)
     }
 
     fn to_output_perpendicular<Out: Numeric>(
@@ -220,12 +192,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> Value<Vector<Out, P::SI>> {
-        let has_indices = comptime!(this.output.has_indices());
-
-        if has_indices {
-            Value::new_single(Vector::cast_from(accumulator.args.item()))
-        } else {
-            Value::new_single(Vector::cast_from(accumulator.elements.item()))
+        match comptime!(this.output) {
+            ReduceOutputMode::Values => {
+                Value::new_single(Vector::cast_from(accumulator.elements.item()))
+            }
+            ReduceOutputMode::Indices => {
+                Value::new_single(Vector::cast_from(accumulator.args.item()))
+            }
         }
     }
 }
