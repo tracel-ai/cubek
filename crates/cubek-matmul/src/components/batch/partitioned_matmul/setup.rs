@@ -108,6 +108,17 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
+        // Multi-stage k-loops round their stage count up to `stage_buffering`, so a
+        // blueprint that skips k-bounds checks must divide k by the whole group.
+        let k_group = blueprint.tiling_scheme.elements_per_stage_along_k()
+            * GMM::num_stages().stage_buffering();
+        if !blueprint.check_k_bounds && !(problem.k as u32).is_multiple_of(k_group) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "k-bounds checks are disabled but k={} is not a multiple of the k-loop group {k_group}",
+                problem.k
+            ))));
+        }
+
         GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)?;
 
         let stage_config =

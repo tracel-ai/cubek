@@ -299,3 +299,50 @@ impl From<LoadingPrecomputeStrategy> for bool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::definition::MatmulElems;
+    use cubecl::{ir::AddressType, zspace::shape};
+
+    /// Regression for #434: multi-stage k-loops consume `stage_buffering` stages
+    /// per iteration, so the k-bounds guard must cover the whole group.
+    #[test]
+    fn check_k_bounds_covers_stage_buffering() {
+        let tiling_scheme = TilingScheme::builder()
+            .with_tile_size((16, 16, 16).into())
+            .with_partition_size((1, 1, 2).into())
+            .with_stage_size((1, 1, 1).into())
+            .build()
+            .unwrap();
+        assert_eq!(tiling_scheme.elements_per_stage_along_k(), 32);
+
+        // k % 32 == 0 but k % 64 == 32: one stage fits, a stage pair does not.
+        let problem = MatmulProblem::from_parameters(
+            32,
+            256,
+            2848,
+            shape![1],
+            shape![1],
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            None,
+            None,
+            MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+            AddressType::default(),
+        );
+
+        let single =
+            BatchMatmulBlueprint::builder(TileMatmulKind::Cmma, tiling_scheme, 32, &problem)
+                .build();
+        assert!(!single.check_k_bounds);
+
+        let double =
+            BatchMatmulBlueprint::builder(TileMatmulKind::Cmma, tiling_scheme, 32, &problem)
+                .stage_buffering(2)
+                .build();
+        assert!(double.check_k_bounds);
+    }
+}

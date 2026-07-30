@@ -25,7 +25,7 @@ use crate::{
 pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 /// Options to select the best plane matmul [selection](BatchMatmulBlueprint).
 pub struct PlaneTilingBlueprintOptions {
     pub partition_k: Option<u32>,
@@ -36,6 +36,23 @@ pub struct PlaneTilingBlueprintOptions {
     pub partition_buffering: Option<PartitionBuffering>,
     /// Enables the tiny selector when the [matmul problem](MatmulProblem) is flagged as tiny.
     pub tiny_selection_enabled: bool,
+    /// K-stages the routine's k-loop consumes per iteration (`NumStages::stage_buffering`).
+    pub stage_buffering: u32,
+}
+
+impl Default for PlaneTilingBlueprintOptions {
+    fn default() -> Self {
+        Self {
+            partition_k: None,
+            specialized: false,
+            swizzled: false,
+            row_count: None,
+            multi_row_strategy: MultiRowStrategy::default(),
+            partition_buffering: None,
+            tiny_selection_enabled: false,
+            stage_buffering: 1,
+        }
+    }
 }
 
 pub fn infer_blueprint_plane<R: Runtime>(
@@ -183,6 +200,7 @@ pub fn infer_blueprint_plane<R: Runtime>(
 
     let mut builder = BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(partition_buffering)
+        .stage_buffering(options.stage_buffering)
         .hypercube_blueprint(hypercube);
 
     if options.specialized {
