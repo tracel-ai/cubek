@@ -14,6 +14,9 @@ pub mod quantize;
 #[cfg(feature = "kernels")]
 pub mod layout;
 
+#[cfg(feature = "kernels")]
+pub(crate) mod global;
+
 pub use cubecl_common::quant::scheme;
 
 #[cfg(feature = "kernels")]

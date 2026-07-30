@@ -5,6 +5,7 @@ use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
+    global::{apply_global, read_global},
     layout::{ScalesView, scales_view},
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
@@ -179,40 +180,6 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     }
 }
 
-/// Load the per-tensor scale, when there is one.
-///
-/// Splitting the load from the multiply lets a caller that scales several blocks hoist the load out
-/// of its loop and still emit nothing at all for a one-level scheme.
-#[cube]
-fn read_global<F: Float>(global: ComptimeOption<LinearView<'_, F>>) -> ComptimeOption<F> {
-    #[comptime]
-    match global {
-        ComptimeOption::Some(global) => ComptimeOption::new_Some(global.read(0)),
-        ComptimeOption::None => ComptimeOption::new_None(),
-    }
-}
-
-/// The scale to reconstruct with: the block scale, times the per-tensor scale when there is one.
-///
-/// The multiply sits inside the comptime match, so a one-level scheme emits neither it nor the load
-/// in [read_global].
-#[cube]
-fn apply_global<F: Float, FS: CubePrimitive>(block: FS, global: ComptimeOption<F>) -> F {
-    #[comptime]
-    match global {
-        ComptimeOption::Some(global) => global * F::cast_from(block),
-        ComptimeOption::None => F::cast_from(block),
-    }
-}
-
-#[cube]
-fn scale_with_global<F: Float, FS: Numeric>(
-    block: FS,
-    global: ComptimeOption<LinearView<'_, F>>,
-) -> F {
-    apply_global::<F, FS>(block, read_global::<F>(global))
-}
-
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<Q, N>>,
@@ -228,7 +195,7 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
     let native_packing = Q::packing_factor();
     // Absolute pos represents the logical block (scale) used to dequantize, not layout
     let block = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
-    let scale = scale_with_global::<F, FS>(block, global);
+    let scale = apply_global::<F, FS>(block, read_global::<F>(global));
 
     output.write(
         ABSOLUTE_POS,

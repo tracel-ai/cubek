@@ -11,6 +11,7 @@ use cubecl::{
 };
 
 use crate::{
+    global::{apply_global, read_global, write_global},
     layout::{ScalesLayout, ScalesViewMut, scales_view},
     utils::{check_block_size_compat, packed_storage_elem},
 };
@@ -98,33 +99,16 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     scale
 }
 
-/// The scale to quantize against: the block scale, times the per-tensor scale when there is one.
-///
-/// Both the load and the multiply sit inside the comptime match, so a one-level scheme emits
-/// neither. The per-tensor scale is read once here and kept in a register; nothing reloads it.
+/// The scale to quantize against, also copying the per-tensor scale into the output.
 #[cube]
 fn scale_with_global<F: Float, FS: CubePrimitive>(
     block: FS,
     global: ComptimeOption<LinearView<'_, F>>,
     out_global: ComptimeOption<LinearViewMut<'_, F>>,
 ) -> F {
-    #[comptime]
-    match global {
-        ComptimeOption::Some(global) => {
-            let global = global.read(0);
-
-            if ABSOLUTE_POS == 0 {
-                #[comptime]
-                match out_global {
-                    ComptimeOption::Some(mut out) => out.write(0, global),
-                    ComptimeOption::None => {}
-                }
-            }
-
-            global * F::cast_from(block)
-        }
-        ComptimeOption::None => F::cast_from(block),
-    }
+    let global = read_global::<F>(global);
+    write_global::<F>(global, out_global);
+    apply_global::<F, FS>(block, global)
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
