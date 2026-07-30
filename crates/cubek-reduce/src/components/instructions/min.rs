@@ -162,13 +162,17 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         );
     }
 
-    fn to_output_parallel<Out: Numeric>(
-        this: &Self,
+    fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode) {
+        comptime!(this.output)
+    }
+
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
+        _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Value<Out> {
-        let value = match comptime!(this.output) {
-            ReduceOutputMode::Values => {
+    ) -> (Value<Out>, Value<Idx>) {
+        match accumulator.args {
+            Value::None => {
                 let acc = accumulator.elements.item();
                 let mut min = P::EA::max_value();
                 #[unroll]
@@ -176,58 +180,35 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
                     let candidate = acc.extract(k);
                     min = select(candidate < min, candidate, min);
                 }
-                Out::cast_from(min)
+                (Value::new_single(Out::cast_from(min)), Value::new_None())
             }
-            ReduceOutputMode::Indices => {
-                let (_min, coordinate) = min_finalize_with_coords::<P>(&accumulator);
-                Out::cast_from(coordinate)
+            Value::Single(_) => {
+                let (min, coordinate) = min_finalize_with_coords::<P>(&accumulator);
+                (
+                    Value::new_single(Out::cast_from(min)),
+                    Value::new_single(Idx::cast_from(coordinate)),
+                )
             }
-        };
-
-        Value::new_single(value)
-    }
-
-    fn to_output_perpendicular<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        _shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>> {
-        match comptime!(this.output) {
-            ReduceOutputMode::Values => {
-                Value::new_single(Vector::cast_from(accumulator.elements.item()))
-            }
-            ReduceOutputMode::Indices => {
-                Value::new_single(Vector::cast_from(accumulator.args.item()))
-            }
+            Value::Multiple(_) => panic!("a min accumulator holds at most one coordinate vector"),
         }
     }
-}
 
-#[cube]
-impl<P: ReducePrecision> ReduceWithIndices<P> for Min {
-    fn to_output_both_parallel<Out: Numeric, Idx: Numeric>(
-        _this: &Self,
-        accumulator: Accumulator<P>,
-        _shape_axis_reduce: usize,
-    ) -> (Value<Out>, Value<Idx>) {
-        let (min, coordinate) = min_finalize_with_coords::<P>(&accumulator);
-        (
-            Value::new_single(Out::cast_from(min)),
-            Value::new_single(Idx::cast_from(coordinate)),
-        )
-    }
-
-    fn to_output_both_perpendicular<Out: Numeric, Idx: Numeric>(
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        (
-            Value::new_single(Vector::cast_from(accumulator.elements.item())),
-            Value::new_single(Vector::cast_from(accumulator.args.item())),
-        )
+        let values = Value::new_single(Vector::cast_from(accumulator.elements.item()));
+        let indices = match accumulator.args {
+            Value::None => Value::new_None(),
+            Value::Single(coord) => Value::new_single(Vector::cast_from(coord.unwrap())),
+            Value::Multiple(_) => panic!("a min accumulator holds at most one coordinate vector"),
+        };
+        (values, indices)
     }
 }
+
+impl<P: ReducePrecision> ReduceWithIndices<P> for Min {}
 
 /// Collapse the vectorized accumulator lanes down to the final minimum and its
 /// coordinate, for the parallel layout.

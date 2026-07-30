@@ -2,7 +2,7 @@ use crate::{
     ReduceInstruction, ReducePrecision,
     components::{
         args::NumericVector,
-        instructions::{Accumulator, AccumulatorFormat, Value, ValueExpand},
+        instructions::{Accumulator, AccumulatorFormat, ReduceOutputMode, Value, ValueExpand},
         writers::build_reduce_output_layout,
     },
 };
@@ -56,7 +56,13 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
         accumulator: Accumulator<P>,
         inst: &I,
     ) {
-        let out = I::to_output_parallel::<Out::T>(inst, accumulator, self.axis_size);
+        let (values, indices) =
+            I::to_output_parallel::<Out::T, Out::T>(inst, accumulator, self.axis_size);
+        let mode = I::output_mode(inst);
+        let out = match comptime!(mode) {
+            ReduceOutputMode::Values => values,
+            ReduceOutputMode::Indices => indices,
+        };
         self.push(local_index, out);
     }
 

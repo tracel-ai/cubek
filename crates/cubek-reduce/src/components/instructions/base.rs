@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 
 /// Which of a reduction's two results the single-output path writes.
 ///
-/// For instructions whose accumulator carries both candidate values and their
-/// coordinates ([`TopK`](super::TopK), [`Min`](super::Min), [`Max`](super::Max)),
-/// the reduction is identical either way: only
-/// [`ReduceInstruction::requirements`] and the `to_output_*` conversions differ,
-/// which is why one instruction serves both the value and `Arg*` configs.
+/// For instructions that can track their candidates' coordinates
+/// ([`TopK`](super::TopK), [`Min`](super::Min), [`Max`](super::Max)), the mode
+/// only decides construction ([`ReduceInstruction::requirements`],
+/// `null_accumulator`) and which half of the `to_output_*` pair the writer
+/// keeps; everything in between reads the accumulator's own state.
 ///
-/// The fused path (values *and* indices) is not a third variant here: it goes
-/// through [`ReduceWithIndices`] and its `to_output_both_*` conversions, sizing
-/// the accumulator with [`Self::Indices`] so coordinates are tracked.
+/// The fused path (values *and* indices) is not a third variant here: it writes
+/// both halves regardless, sizing the accumulator with [`Self::Indices`] so
+/// coordinates are tracked.
 #[derive_cube_comptime]
 #[derive(Serialize, Deserialize)]
 pub enum ReduceOutputMode {
@@ -430,48 +430,36 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     /// Reduce a whole accumulator (other) in accumulator.
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>);
 
-    /// Reduce all elements of the accumulator into a single output element of type `Out`.
-    fn to_output_parallel<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        shape_axis_reduce: usize,
-    ) -> Value<Out>;
+    /// Which half of the `to_output_*` pair the single-output kernel writes.
+    fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode);
 
-    /// Convert each element of the accumulator into the expected output element of type `Out`.
-    fn to_output_perpendicular<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>>;
-}
-
-/// An instruction that can emit its values *and* their coordinates from a single
-/// reduction.
-///
-/// Instructions that track coordinates already carry both results in their
-/// [`Accumulator`]; the two `to_output_both_*` conversions expose them together
-/// so a fused reduce writes both outputs from one launch, instead of running the
-/// reduction twice and throwing one half away each time.
-///
-/// This is a separate trait rather than extra [`ReduceInstruction`] methods so
-/// that instructions with no meaningful index (`Sum`, `Mean`, ...) are not
-/// forced to implement it.
-#[cube]
-pub trait ReduceWithIndices<P: ReducePrecision>: ReduceInstruction<P> {
-    /// Counterpart of [`ReduceInstruction::to_output_parallel`] emitting both results.
-    fn to_output_both_parallel<Out: Numeric, Idx: Numeric>(
+    /// Reduce all elements of the accumulator into a single output element of type `Out`,
+    /// with its coordinate as `Idx` when the accumulator tracks coordinates
+    /// (`Value::None` otherwise).
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>);
 
-    /// Counterpart of [`ReduceInstruction::to_output_perpendicular`] emitting both results.
-    fn to_output_both_perpendicular<Out: Numeric, Idx: Numeric>(
+    /// Convert each element of the accumulator into the expected output element of type
+    /// `Out`, with its coordinates as `Idx` when the accumulator tracks coordinates
+    /// (`Value::None` otherwise).
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>);
 }
+
+/// Marker for instructions whose `to_output_*` conversions emit a non-`None`
+/// indices half whenever the accumulator tracks coordinates, so a fused reduce
+/// can write both outputs from one launch.
+///
+/// A separate trait rather than a [`ReduceInstruction`] guarantee so that
+/// instructions with no meaningful index (`Sum`, `Mean`, ...) are not accepted
+/// by the fused entrypoint.
+pub trait ReduceWithIndices<P: ReducePrecision>: ReduceInstruction<P> {}
 
 #[derive(CubeType)]
 pub struct Item<P: ReducePrecision> {

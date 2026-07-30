@@ -1,6 +1,6 @@
 use super::{ReduceFamily, ReduceInstruction, ReduceRequirements};
 use crate::components::{
-    instructions::{Accumulator, AccumulatorFormat, Item, ReduceStep, Value},
+    instructions::{Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceStep, Value},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -70,21 +70,28 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
             .assign(&Value::new_single(accumulator_item + other_item));
     }
 
-    fn to_output_parallel<Out: Numeric>(
-        _this: &Self,
-        accumulator: Accumulator<P>,
-        _shape_axis_reduce: usize,
-    ) -> Value<Out> {
-        let sum = Vector::vector_sum(accumulator.elements.item());
-
-        Value::new_single(Out::cast_from(sum))
+    fn output_mode(_this: &Self) -> comptime_type!(ReduceOutputMode) {
+        ReduceOutputMode::Values
     }
 
-    fn to_output_perpendicular<Out: Numeric>(
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>> {
-        Value::new_single(Vector::cast_from(accumulator.elements.item()))
+    ) -> (Value<Out>, Value<Idx>) {
+        let sum = Vector::vector_sum(accumulator.elements.item());
+
+        (Value::new_single(Out::cast_from(sum)), Value::new_None())
+    }
+
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
+        _this: &Self,
+        accumulator: Accumulator<P>,
+        _shape_axis_reduce: usize,
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
+        (
+            Value::new_single(Vector::cast_from(accumulator.elements.item())),
+            Value::new_None(),
+        )
     }
 }

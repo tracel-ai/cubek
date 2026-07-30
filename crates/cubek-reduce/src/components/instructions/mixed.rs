@@ -435,93 +435,96 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
         }
     }
 
-    fn to_output_parallel<Out: Numeric>(
+    fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode) {
+        match this {
+            ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::output_mode(sum),
+            ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::output_mode(prod),
+            ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::output_mode(mean),
+            ReduceOperation::MaxAbs(maxabs) => {
+                <MaxAbs as ReduceInstruction<P>>::output_mode(maxabs)
+            }
+            ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::output_mode(max),
+            ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::output_mode(min),
+            ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::output_mode(topk),
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::output_mode(any),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::output_mode(all),
+        }
+    }
+
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
-    ) -> Value<Out> {
+    ) -> (Value<Out>, Value<Idx>) {
         match this {
-            ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                sum,
-                accumulator,
-                shape_axis_reduce,
-            ),
-            ReduceOperation::Prod(prod) => {
-                <Prod as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                    prod,
-                    accumulator,
-                    shape_axis_reduce,
-                )
-            }
-            ReduceOperation::Mean(mean) => {
-                <Mean as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                    mean,
-                    accumulator,
-                    shape_axis_reduce,
-                )
-            }
+            ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(sum, accumulator, shape_axis_reduce),
+            ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(prod, accumulator, shape_axis_reduce),
+            ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(mean, accumulator, shape_axis_reduce),
             ReduceOperation::MaxAbs(maxabs) => {
-                <MaxAbs as ReduceInstruction<P>>::to_output_parallel::<Out>(
+                <MaxAbs as ReduceInstruction<P>>::to_output_parallel::<Out, Idx>(
                     maxabs,
                     accumulator,
                     shape_axis_reduce,
                 )
             }
-            ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                max,
-                accumulator,
-                shape_axis_reduce,
-            ),
-            ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                min,
-                accumulator,
-                shape_axis_reduce,
-            ),
-            ReduceOperation::TopK(topk) => {
-                <TopK as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                    topk,
-                    accumulator,
-                    shape_axis_reduce,
-                )
-            }
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                any,
-                accumulator,
-                shape_axis_reduce,
-            ),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_parallel::<Out>(
-                all,
-                accumulator,
-                shape_axis_reduce,
-            ),
+            ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(max, accumulator, shape_axis_reduce),
+            ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(min, accumulator, shape_axis_reduce),
+            ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(topk, accumulator, shape_axis_reduce),
+            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(any, accumulator, shape_axis_reduce),
+            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_parallel::<
+                Out,
+                Idx,
+            >(all, accumulator, shape_axis_reduce),
         }
     }
 
-    fn to_output_perpendicular<Out: Numeric>(
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>> {
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         match this {
             ReduceOperation::Sum(sum) => <Sum as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
+                Idx,
             >(sum, accumulator, shape_axis_reduce),
             ReduceOperation::Prod(prod) => {
-                <Prod as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
+                <Prod as ReduceInstruction<P>>::to_output_perpendicular::<Out, Idx>(
                     prod,
                     accumulator,
                     shape_axis_reduce,
                 )
             }
             ReduceOperation::Mean(mean) => {
-                <Mean as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
+                <Mean as ReduceInstruction<P>>::to_output_perpendicular::<Out, Idx>(
                     mean,
                     accumulator,
                     shape_axis_reduce,
                 )
             }
             ReduceOperation::MaxAbs(maxabs) => {
-                <MaxAbs as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
+                <MaxAbs as ReduceInstruction<P>>::to_output_perpendicular::<Out, Idx>(
                     maxabs,
                     accumulator,
                     shape_axis_reduce,
@@ -529,12 +532,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::Max(max) => <Max as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
+                Idx,
             >(max, accumulator, shape_axis_reduce),
             ReduceOperation::Min(min) => <Min as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
+                Idx,
             >(min, accumulator, shape_axis_reduce),
             ReduceOperation::TopK(topk) => {
-                <TopK as ReduceInstruction<P>>::to_output_perpendicular::<Out>(
+                <TopK as ReduceInstruction<P>>::to_output_perpendicular::<Out, Idx>(
                     topk,
                     accumulator,
                     shape_axis_reduce,
@@ -542,9 +547,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             }
             ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
+                Idx,
             >(any, accumulator, shape_axis_reduce),
             ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_perpendicular::<
                 Out,
+                Idx,
             >(all, accumulator, shape_axis_reduce),
         }
     }

@@ -1,8 +1,8 @@
 use super::{ReduceFamily, ReduceInstruction};
 use crate::components::{
     instructions::{
-        Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value,
-        normalize_to_flag,
+        Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
+        Value, normalize_to_flag,
     },
     precision::ReducePrecision,
 };
@@ -100,11 +100,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
         )));
     }
 
-    fn to_output_parallel<Out: Numeric>(
+    fn output_mode(_this: &Self) -> comptime_type!(ReduceOutputMode) {
+        ReduceOutputMode::Values
+    }
+
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Value<Out> {
+    ) -> (Value<Out>, Value<Idx>) {
         // Fold the vectorized flags from the OR identity (0).
         let mut any = P::EA::from_int(0);
         let accumulator = accumulator.elements.item();
@@ -113,14 +117,17 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
             let candidate = accumulator.extract(k);
             any = select(candidate > any, candidate, any);
         }
-        Value::new_single(Out::cast_from(any))
+        (Value::new_single(Out::cast_from(any)), Value::new_None())
     }
 
-    fn to_output_perpendicular<Out: Numeric>(
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>> {
-        Value::new_single(Vector::cast_from(accumulator.elements.item()))
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
+        (
+            Value::new_single(Vector::cast_from(accumulator.elements.item())),
+            Value::new_None(),
+        )
     }
 }
