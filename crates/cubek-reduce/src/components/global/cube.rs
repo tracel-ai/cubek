@@ -2,7 +2,7 @@ use crate::{
     ReduceInstruction, ReducePrecision, VectorizationMode,
     components::{
         args::NumericVector,
-        global::{idle_check, reduction_output_base},
+        global::{idle_check, reduction_output_base, write_enabled},
         instructions::{
             Accumulator, ReduceStep, ReduceWithIndices, SharedAccumulator,
             fuse_accumulator_inplace, reduce_inplace,
@@ -143,6 +143,8 @@ impl GlobalFullCubeReduce {
             vectorization_mode,
             blueprint.cube_idle,
         );
+        let write_enabled =
+            write_enabled::<P, Out>(input, &*output, reduce_index_start, vectorization_mode);
 
         for b in 0..write_count {
             let reduce_index = reduce_index_start + b;
@@ -162,6 +164,7 @@ impl GlobalFullCubeReduce {
 
             match blueprint.use_planes {
                 true => {
+                    #[allow(clippy::collapsible_if)]
                     if worker_pos == 0 {
                         reduce_scan::<P, I>(
                             inst,
@@ -169,7 +172,9 @@ impl GlobalFullCubeReduce {
                             &mut accumulator_final,
                             accumulator_size,
                         );
-                        W::write(writer, b, accumulator_final, inst);
+                        if write_enabled {
+                            W::write(writer, b, accumulator_final, inst);
+                        }
                     }
 
                     // Wait for plane 0 to finish reading SM before next iter overwrites it.
@@ -183,8 +188,11 @@ impl GlobalFullCubeReduce {
                         worker_pos,
                         accumulator_size,
                     );
+                    #[allow(clippy::collapsible_if)]
                     if worker_pos == 0 {
-                        W::write(writer, b, accumulator_final, inst);
+                        if write_enabled {
+                            W::write(writer, b, accumulator_final, inst);
+                        }
                     }
                 }
             };
@@ -195,7 +203,9 @@ impl GlobalFullCubeReduce {
         #[allow(clippy::collapsible_if)]
         if commit_required {
             if worker_pos == 0 {
-                W::commit(writer);
+                if write_enabled {
+                    W::commit(writer);
+                }
             }
         }
     }
