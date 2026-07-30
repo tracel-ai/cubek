@@ -165,10 +165,12 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
+    global: ComptimeOption<LinearView<'_, F>>,
     range_min: InputScalar,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, QS>,
     out_scale: ScalesViewMut<'_, FS>,
+    out_global: ComptimeOption<LinearViewMut<'_, F>>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, QS)] _dtypes: [StorageType; 3],
@@ -179,12 +181,13 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
 
     let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
-    let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
+    let block = write_scale(packed_pos, scale, out_scale, scales_layout);
+    let scale = scale_with_global::<F, FS>(block, global, out_global);
 
     if input.vector_size().comptime() == num_quants {
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, N, FS, QS>(
+            quantize_packed_value::<F, N, F, QS>(
                 input.read(ABSOLUTE_POS),
                 scale,
                 range_min.get::<F>(),
@@ -202,7 +205,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
         }
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, NQ, FS, QS>(
+            quantize_packed_value::<F, NQ, F, QS>(
                 values,
                 scale,
                 range_min.get::<F>(),
@@ -236,7 +239,9 @@ pub fn launch_ref<R: Runtime>(
             input,
             scheme,
             scale,
+            global,
             out_scale,
+            out_global,
             output,
             input_elem,
             scale_dtype,
@@ -360,7 +365,9 @@ fn quantize_packed<R: Runtime>(
     input: TensorBinding<R>,
     scheme: &QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
@@ -370,7 +377,7 @@ fn quantize_packed<R: Runtime>(
     // Determine if we can use vectorized packing
     let mut can_vectorize = match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
+            level: QuantLevel::Tensor | QuantLevel::Block(_) | QuantLevel::BlockTensor { .. },
             mode: QuantMode::Symmetric,
             store: QuantStore::PackedU32(dim),
             ..
@@ -419,10 +426,12 @@ fn quantize_packed<R: Runtime>(
             linear_view(input),
             // scale is computed based on input float dtype, but stored based on qparams precision
             scales_view(output.clone(), scale, 1, scheme),
+            global.map(linear_view).into(),
             InputScalar::new(range_min, input_dtype),
             InputScalar::new(range_max, input_dtype),
             linear_view(output.clone()),
             scales_view(output, out_scale, 1, scheme),
+            out_global.map(linear_view).into(),
             scales_layout,
             *scheme,
             [input_dtype.into(), scale_dtype.into(), output_dtype.into()],

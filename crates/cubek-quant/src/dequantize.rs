@@ -39,12 +39,14 @@ pub fn dequantize_symmetric_packed_values<
     position: usize,
     values: &View<Vector<QI, NQ>, usize>,
     scales: &View<FS, usize>,
+    global: ComptimeOption<LinearView<'_, F>>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value_at::<F, NF, FS, QI, NQ>(
         position,
         values.read(position),
         scales,
+        global,
         scheme,
     )
 }
@@ -64,9 +66,10 @@ pub fn dequantize_symmetric_packed_value_at<
     position: usize,
     values: Vector<QI, NQ>,
     scales: &View<FS, usize>,
+    global: ComptimeOption<LinearView<'_, F>>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
-    dequantize_symmetric_packed_value::<F, NF, FS, QI, NQ>(values, scales, position, scheme)
+    dequantize_symmetric_packed_value::<F, NF, FS, QI, NQ>(values, scales, global, position, scheme)
 }
 
 /// Dequantize a single packed value using the scale provided.
@@ -83,6 +86,7 @@ pub fn dequantize_symmetric_packed_value<
 >(
     values: Vector<QS, NQ>,
     scales: &View<FS, usize>,
+    global: ComptimeOption<LinearView<'_, F>>,
     position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
@@ -90,11 +94,15 @@ pub fn dequantize_symmetric_packed_value<
     let num_quants = scheme.num_quants();
     let mut tmp = Array::new(vector_size_values);
 
+    // Hoisted: every block below scales against the same per-tensor value.
+    let global = read_global::<F>(global);
+
     #[unroll]
     for i in 0..vector_size_values {
         let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
-        let scale = scales.read((position * vector_size_values) + i * num_quants);
-        let values = dequantize_symmetric::<F, FS, NF>(floats, scale);
+        let block = scales.read((position * vector_size_values) + i * num_quants);
+        let scale = apply_global::<F, FS>(block, global);
+        let values = dequantize_symmetric::<F, F, NF>(floats, scale);
         tmp[i] = values;
     }
 
@@ -142,6 +150,7 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
 fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, NQ: Size>(
     input: LinearView<'_, Vector<QS, NQ>>,
     scales: ScalesView<'_, FS>,
+    global: ComptimeOption<LinearView<'_, F>>,
     mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, QS)] _dtypes: [StorageType; 3],
@@ -160,8 +169,9 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     let values = input.read(ABSOLUTE_POS);
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
-    let out =
-        dequantize_symmetric_packed_value::<F, NF, FS, QS, NQ>(values, &scales, packed_pos, scheme);
+    let out = dequantize_symmetric_packed_value::<F, NF, FS, QS, NQ>(
+        values, &scales, global, packed_pos, scheme,
+    );
 
     #[unroll]
     for i in 0..vector_size_in {
@@ -169,20 +179,38 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     }
 }
 
+/// Load the per-tensor scale, when there is one.
+///
+/// Splitting the load from the multiply lets a caller that scales several blocks hoist the load out
+/// of its loop and still emit nothing at all for a one-level scheme.
+#[cube]
+fn read_global<F: Float>(global: ComptimeOption<LinearView<'_, F>>) -> ComptimeOption<F> {
+    #[comptime]
+    match global {
+        ComptimeOption::Some(global) => ComptimeOption::new_Some(global.read(0)),
+        ComptimeOption::None => ComptimeOption::new_None(),
+    }
+}
+
 /// The scale to reconstruct with: the block scale, times the per-tensor scale when there is one.
 ///
-/// Both the load and the multiply sit inside the comptime match, so a one-level scheme emits
-/// neither. The per-tensor scale is read once here and kept in a register.
+/// The multiply sits inside the comptime match, so a one-level scheme emits neither it nor the load
+/// in [read_global].
+#[cube]
+fn apply_global<F: Float, FS: CubePrimitive>(block: FS, global: ComptimeOption<F>) -> F {
+    #[comptime]
+    match global {
+        ComptimeOption::Some(global) => global * F::cast_from(block),
+        ComptimeOption::None => F::cast_from(block),
+    }
+}
+
 #[cube]
 fn scale_with_global<F: Float, FS: Numeric>(
     block: FS,
     global: ComptimeOption<LinearView<'_, F>>,
 ) -> F {
-    #[comptime]
-    match global {
-        ComptimeOption::Some(global) => global.read(0) * F::cast_from(block),
-        ComptimeOption::None => F::cast_from(block),
-    }
+    apply_global::<F, FS>(block, read_global::<F>(global))
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -230,6 +258,7 @@ pub fn launch_ref<R: Runtime>(
             input,
             *scheme,
             scale,
+            global,
             output,
             output_dtype,
             scale_dtype,
@@ -272,11 +301,13 @@ pub fn launch_ref<R: Runtime>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dequantize_packed<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     scheme: QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     output_dtype: StorageType,
     scale_dtype: StorageType,
@@ -308,7 +339,7 @@ fn dequantize_packed<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
+            level: QuantLevel::Tensor | QuantLevel::Block(_) | QuantLevel::BlockTensor { .. },
             store: QuantStore::PackedU32(_),
             mode: QuantMode::Symmetric,
             ..
@@ -322,6 +353,7 @@ fn dequantize_packed<R: Runtime>(
                 vector_size_in,
                 linear_view(input.clone()),
                 scales_view(input, scale, 1, &scheme),
+                global.map(linear_view).into(),
                 linear_view(output),
                 scheme,
                 [output_dtype, scale_dtype, input_dtype.into()],

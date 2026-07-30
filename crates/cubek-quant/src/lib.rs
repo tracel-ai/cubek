@@ -24,7 +24,11 @@ pub(crate) mod utils {
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
         if let QuantScheme {
-            level: QuantLevel::Block(block_size),
+            level:
+                QuantLevel::Block(block_size)
+                | QuantLevel::BlockTensor {
+                    block: block_size, ..
+                },
             ..
         } = scheme
         {

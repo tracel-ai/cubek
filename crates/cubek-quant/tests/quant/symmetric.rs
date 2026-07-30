@@ -287,7 +287,24 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
 
 #[test]
 fn test_quantization_symmetric_block_tensor() {
-    test_quantization_block_tensor_symmetric(SHAPE_X, SHAPE_Y, QuantValue::Q8S, SHAPE_X);
+    test_quantization_block_tensor_symmetric(
+        SHAPE_X,
+        SHAPE_Y,
+        QuantValue::Q8S,
+        SHAPE_X,
+        QuantStore::Native,
+    );
+}
+
+#[test]
+fn test_quantization_symmetric_block_tensor_packed() {
+    test_quantization_block_tensor_symmetric(
+        SHAPE_X,
+        SHAPE_Y,
+        VALUE,
+        SHAPE_X,
+        QuantStore::PackedU32(0),
+    );
 }
 
 /// Two-level: per-block scales normalized by one per-tensor scale.
@@ -300,10 +317,11 @@ fn test_quantization_block_tensor_symmetric(
     n: usize,
     value: QuantValue,
     block_size: usize,
+    store: QuantStore,
 ) {
     let client = TestRuntime::client(&Default::default());
-    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
-        return; // backend has no native i8 (e.g. wgpu), and two-level needs native storage
+    if store == QuantStore::Native && !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        return; // backend has no native i8 (e.g. wgpu), which packed storage does not need
     }
 
     let shape = shape![m, n];
@@ -372,11 +390,21 @@ fn test_quantization_block_tensor_symmetric(
             QuantParam::F32,
         ))
         .with_value(value)
-        .with_store(QuantStore::Native)
+        .with_store(store)
         .with_param(QuantParam::F32)
         .with_mode(QuantMode::Symmetric);
 
-    let output = TensorHandle::zeros(&client, shape.clone(), i8::as_type_native_unchecked());
+    let output = match store {
+        QuantStore::Native => {
+            TensorHandle::zeros(&client, shape.clone(), i8::as_type_native_unchecked())
+        }
+        // The shape is from the POV of packed u32s.
+        _ => TensorHandle::zeros(
+            &client,
+            shape![m, n / scheme.num_quants()],
+            u32::as_type_native_unchecked(),
+        ),
+    };
     let output_scale =
         TensorHandle::zeros(&client, shape_scale.clone(), f32::as_type_native_unchecked());
     let output_global = TensorHandle::zeros(&client, shape![1], f32::as_type_native_unchecked());
