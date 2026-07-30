@@ -1,4 +1,4 @@
-//! Cube-routine coverage for the fused top-k.
+//! Cube-routine coverage for the fused reduce paths.
 //!
 //! The `reduce_dim` matrix only instantiates the unit and plane routines, so
 //! nothing there reaches [`GlobalFullCubeReduce`]. That matters for the fused
@@ -73,6 +73,29 @@ fn cube_planes_topk_with_indices_k3() {
 #[test]
 fn cube_planes_topk_with_indices_k5() {
     case(true).test_topk_with_indices(5);
+}
+
+// The fused min/max monomorphise over `Min`/`Max` the same way, so the cube
+// routine is likewise the only caller of `ArgAccumulator`'s optional index
+// slices; the single-output paths stage through the mixed accumulator instead.
+#[test]
+fn cube_planes_min_with_indices() {
+    case(true).test_min_with_indices();
+}
+
+#[test]
+fn cube_planes_max_with_indices() {
+    case(true).test_max_with_indices();
+}
+
+#[test]
+fn cube_units_min_with_indices() {
+    case(false).test_min_with_indices();
+}
+
+#[test]
+fn cube_units_max_with_indices() {
+    case(false).test_max_with_indices();
 }
 
 #[test]

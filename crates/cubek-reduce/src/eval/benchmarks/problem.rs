@@ -4,14 +4,14 @@ use crate::components::instructions::ReduceOperationConfig;
 
 /// Which launch pattern a problem measures.
 ///
-/// Callers wanting a top-k's values *and* their indices have to run the reduce
-/// twice today, so comparing [`Self::TwoLaunch`] against [`Self::Fused`] on the
-/// same problem is what says whether fusing the two is actually worth it.
+/// Callers wanting a reduction's values *and* their indices have to run the
+/// reduce twice today, so comparing [`Self::TwoLaunch`] against [`Self::Fused`]
+/// on the same problem is what says whether fusing the two is actually worth it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReduceBenchKind {
     /// One `reduce` launch writing a single output.
     Single,
-    /// Two `reduce` launches, `TopK` then `ArgTopK`, to get both halves.
+    /// Two `reduce` launches, the values config then its `Arg*`, to get both halves.
     TwoLaunch,
     /// One `reduce_with_indices` launch writing both halves.
     Fused,
@@ -103,6 +103,44 @@ pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
                 shape: shape(),
                 axis: 2,
                 config: ReduceOperationConfig::TopK(k),
+                kind: ReduceBenchKind::Fused,
+            },
+        ));
+    }
+
+    // The same comparison for min and max, which reach `reduce_with_indices`
+    // through their own collapsed instructions rather than the top-k one.
+    for (name, label, config) in [
+        ("max", "Max", ReduceOperationConfig::Max),
+        ("min", "Min", ReduceOperationConfig::Min),
+    ] {
+        entries.push(CatalogEntry::new(
+            format!("{name}_single_axis2_32x512x4095"),
+            format!("{label} values only, 1 launch, axis=2 (32x512x4095)"),
+            ReduceProblem {
+                shape: shape(),
+                axis: 2,
+                config,
+                kind: ReduceBenchKind::Single,
+            },
+        ));
+        entries.push(CatalogEntry::new(
+            format!("{name}_two_launch_axis2_32x512x4095"),
+            format!("{label} values+indices, 2 launches, axis=2 (32x512x4095)"),
+            ReduceProblem {
+                shape: shape(),
+                axis: 2,
+                config,
+                kind: ReduceBenchKind::TwoLaunch,
+            },
+        ));
+        entries.push(CatalogEntry::new(
+            format!("{name}_fused_axis2_32x512x4095"),
+            format!("{label} values+indices, 1 fused launch, axis=2 (32x512x4095)"),
+            ReduceProblem {
+                shape: shape(),
+                axis: 2,
+                config,
                 kind: ReduceBenchKind::Fused,
             },
         ));

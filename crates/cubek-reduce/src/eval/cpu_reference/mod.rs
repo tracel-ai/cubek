@@ -112,13 +112,12 @@ pub fn strategy_result_with_indices(
     shape: Vec<usize>,
     axis: usize,
     strategy: ReduceStrategy,
-    k: usize,
+    config: ReduceOperationConfig,
     seed: u64,
 ) -> Result<HostData, String> {
     let input_dtype = f32::as_type_native_unchecked().storage_type();
     let index_dtype = u32::as_type_native_unchecked().storage_type();
     let accumulation_dtype = f32::as_type_native_unchecked().storage_type();
-    let config = ReduceOperationConfig::TopK(k);
 
     let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)

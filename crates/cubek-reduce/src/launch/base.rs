@@ -220,6 +220,11 @@ pub fn reduce_kernel<
 
 /// Launch a reduce kernel writing both the values and their indices. This function assumes
 /// that all parameters are already validated; see `reduce_with_indices` in `lib.rs`.
+///
+/// Both halves are written, so the instruction always tracks coordinates regardless
+/// of which config of a values/`Arg*` pair the caller reached this path with. The
+/// fused `to_output_both_*` conversions ignore the mode; it only sizes the
+/// accumulator, and `Indices` is what turns coordinate tracking on.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
     client: &ComputeClient<Run>,
@@ -229,17 +234,65 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
     reduce_axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceWithIndicesDtypes,
-    k: usize,
+    operation: ReduceOperationConfig,
 ) -> Result<(), ReduceError> {
-    // Both halves are written, so the instruction always tracks coordinates
-    // regardless of which top-k config the caller reached this path with. The
-    // fused `to_output_both_*` conversions ignore this mode; it only sizes the
-    // accumulator, and `Indices` is what turns coordinate tracking on.
-    let config = TopKConfig {
-        k,
-        output: ReduceOutputMode::Indices,
-    };
+    match operation {
+        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => {
+            launch_fused::<Run, TopK>(
+                client,
+                input,
+                values,
+                indices,
+                reduce_axis,
+                strategy,
+                dtypes,
+                TopKConfig {
+                    k,
+                    output: ReduceOutputMode::Indices,
+                },
+                ReduceOperationConfig::ArgTopK(k),
+            )
+        }
+        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => launch_fused::<Run, Max>(
+            client,
+            input,
+            values,
+            indices,
+            reduce_axis,
+            strategy,
+            dtypes,
+            ReduceOutputMode::Indices,
+            ReduceOperationConfig::ArgMax,
+        ),
+        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => launch_fused::<Run, Min>(
+            client,
+            input,
+            values,
+            indices,
+            reduce_axis,
+            strategy,
+            dtypes,
+            ReduceOutputMode::Indices,
+            ReduceOperationConfig::ArgMin,
+        ),
+        _ => unreachable!("reduce_with_indices rejects operations without indices"),
+    }
+}
 
+/// The launch shared by every fused operation: only the instruction family, its
+/// config, and the `Arg*` config sizing the blueprint differ.
+#[allow(clippy::too_many_arguments)]
+fn launch_fused<Run: Runtime, R: ReduceWithIndicesFamily>(
+    client: &ComputeClient<Run>,
+    input: TensorBinding<Run>,
+    values: TensorBinding<Run>,
+    indices: TensorBinding<Run>,
+    reduce_axis: usize,
+    strategy: ReduceStrategy,
+    dtypes: ReduceWithIndicesDtypes,
+    config: R::Config,
+    blueprint_operation: ReduceOperationConfig,
+) -> Result<(), ReduceError> {
     let address_type = input
         .required_address_type(dtypes.input.size())
         .max(values.required_address_type(dtypes.values.size()))
@@ -252,11 +305,11 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
         reduce_axis,
         strategy,
         dtypes.values_dtypes(),
-        // Always size the blueprint as ArgTopK, never TopK: this path tracks
-        // coordinates whichever config the caller passed, so the shared
-        // accumulator needs its index slices too. Sizing it as TopK would
-        // under-allocate shared memory by `k` u32 slices per accumulator.
-        ReduceOperationConfig::ArgTopK(k),
+        // Always size the blueprint as the Arg* config, never the values one:
+        // this path tracks coordinates whichever config the caller passed, so
+        // the shared accumulator needs its index slices too. Sizing it as the
+        // values config would under-allocate shared memory.
+        blueprint_operation,
         address_type,
         // The index output shares the values layout but not its dtype, so the
         // shared output width must stay legal for the index dtype too.
@@ -264,7 +317,7 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
     )?;
 
     unsafe {
-        reduce_with_indices_kernel::launch_unchecked::<TensorArgs, TopK, Run>(
+        reduce_with_indices_kernel::launch_unchecked::<TensorArgs, R, Run>(
             client,
             settings.cube_count,
             settings.cube_dim,

@@ -54,7 +54,7 @@ pub enum ReduceError {
     },
     /// Indicate the operation cannot report indices alongside its values.
     #[error(
-        "The operation {operation} has no index to report; reduce_with_indices only supports TopK and ArgTopK."
+        "The operation {operation} has no index to report; reduce_with_indices only supports TopK, ArgTopK, Max, ArgMax, Min and ArgMin."
     )]
     IndicesUnsupported { operation: &'static str },
 

@@ -199,6 +199,38 @@ impl TestCase {
     /// separate `TopK` and `ArgTopK` launches are checked against, so one launch
     /// has to agree with what two launches produce.
     pub fn test_topk_with_indices(&self, k: usize) {
+        self.run_with_indices_test(
+            ReduceOperationConfig::TopK(k),
+            move |input, axis| reference_topk(input, axis, k, None),
+            move |input, axis| reference_argtopk(input, axis, k, None),
+        );
+    }
+
+    pub fn test_min_with_indices(&self) {
+        self.run_with_indices_test(
+            ReduceOperationConfig::Min,
+            |input, axis| reference_min(input, axis, None),
+            |input, axis| reference_argmin(input, axis, None),
+        );
+    }
+
+    pub fn test_max_with_indices(&self) {
+        self.run_with_indices_test(
+            ReduceOperationConfig::Max,
+            |input, axis| reference_max(input, axis, None),
+            |input, axis| reference_argmax(input, axis, None),
+        );
+    }
+
+    /// Run the fused reduce and check both outputs against the very references the
+    /// separate values and `Arg*` launches are checked against, so one launch has
+    /// to agree with what two launches produce.
+    fn run_with_indices_test(
+        &self,
+        config: ReduceOperationConfig,
+        values_reference: impl FnOnce(&HostData, usize) -> HostData,
+        indices_reference: impl FnOnce(&HostData, usize) -> HostData,
+    ) {
         let client = TestRuntime::client(&Default::default());
         let axis = self.axis.unwrap();
         let u32_dtype = u32::as_type_native_unchecked().storage_type();
@@ -211,13 +243,10 @@ impl TestCase {
             .random(1234, Distribution::Uniform(-1., 1.))
             .generate_with_f32_host_data();
 
-        // The config only selects `k`: `reduce_with_indices` always writes both halves.
-        let config = ReduceOperationConfig::TopK(k);
-
         let expected_values =
-            cast_host_through_dtype(reference_topk(&input_host, axis, k, None), self.input_dtype);
+            cast_host_through_dtype(values_reference(&input_host, axis), self.input_dtype);
         let expected_indices =
-            cast_host_through_dtype(reference_argtopk(&input_host, axis, k, None), u32_dtype);
+            cast_host_through_dtype(indices_reference(&input_host, axis), u32_dtype);
 
         let values_handle =
             self.build_output_tensor(&client, self.input_dtype, &expected_values.shape, &config);

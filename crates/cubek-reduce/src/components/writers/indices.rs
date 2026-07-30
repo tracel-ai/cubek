@@ -68,11 +68,8 @@ impl<'a, Out: NumericVector, Idx: NumericVector, P: ReducePrecision, I: ReduceWi
     fn write(this: &mut Self, local_index: usize, accumulator: Accumulator<P>, inst: &I) {
         match &mut this.values {
             Writer::Parallel(values) => {
-                let (out_values, out_indices) = I::to_output_both_parallel::<Out::T, Idx::T>(
-                    inst,
-                    accumulator,
-                    values.axis_size,
-                );
+                let (out_values, out_indices) =
+                    I::to_output_parallel::<Out::T, Idx::T>(inst, accumulator, values.axis_size);
                 values.push(local_index, out_values);
 
                 match &mut this.indices {
@@ -83,7 +80,7 @@ impl<'a, Out: NumericVector, Idx: NumericVector, P: ReducePrecision, I: ReduceWi
                 }
             }
             Writer::Perpendicular(values) => {
-                let (out_values, out_indices) = I::to_output_both_perpendicular::<Out::T, Idx::T>(
+                let (out_values, out_indices) = I::to_output_perpendicular::<Out::T, Idx::T>(
                     inst,
                     accumulator,
                     values.axis_size,
