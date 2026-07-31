@@ -11,9 +11,9 @@ use cubecl::{
 };
 
 use crate::{
-    global::{apply_global, read_global, write_global},
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    utils::{check_block_size_compat, packed_storage_elem},
+    per_tensor::{apply_global, read_global, write_global},
+    utils::{check_block_size_compat, check_global_bindings, global_dtype, packed_storage_elem},
 };
 use crate::{
     layout::{ScalesView, scales_layout},
@@ -99,30 +99,18 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     scale
 }
 
-/// The scale to quantize against, also copying the per-tensor scale into the output.
-#[cube]
-fn scale_with_global<F: Float, FS: CubePrimitive>(
-    block: FS,
-    global: ComptimeOption<LinearView<'_, F>>,
-    out_global: ComptimeOption<LinearViewMut<'_, F>>,
-) -> F {
-    let global = read_global::<F>(global);
-    write_global::<F>(global, out_global);
-    apply_global::<F, FS>(block, global)
-}
-
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
+fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
-    global: ComptimeOption<LinearView<'_, F>>,
+    global: ComptimeOption<LinearView<'_, FG>>,
     range_min: InputScalar,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
-    out_global: ComptimeOption<LinearViewMut<'_, F>>,
+    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
-    #[define(F, FS, Q)] _dtypes: [StorageType; 3],
+    #[define(F, FS, FG, Q)] _dtypes: [StorageType; 4],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -131,7 +119,9 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     let native_packing = Q::packing_factor();
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let block = write_scale(in_pos, scale, out_scale, scales_layout);
-    let scale = scale_with_global::<F, FS>(block, global, out_global);
+    let global = read_global::<FG>(global);
+    write_global::<FG>(global, out_global);
+    let scale = apply_global::<F, FG, FS>(block, global);
 
     output.write(
         ABSOLUTE_POS,
@@ -146,18 +136,18 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
-fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
+fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric, QS: Int>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
-    global: ComptimeOption<LinearView<'_, F>>,
+    global: ComptimeOption<LinearView<'_, FG>>,
     range_min: InputScalar,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, QS>,
     out_scale: ScalesViewMut<'_, FS>,
-    out_global: ComptimeOption<LinearViewMut<'_, F>>,
+    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
-    #[define(F, FS, QS)] _dtypes: [StorageType; 3],
+    #[define(F, FS, FG, QS)] _dtypes: [StorageType; 4],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -166,7 +156,9 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
     let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
     let block = write_scale(packed_pos, scale, out_scale, scales_layout);
-    let scale = scale_with_global::<F, FS>(block, global, out_global);
+    let global = read_global::<FG>(global);
+    write_global::<FG>(global, out_global);
+    let scale = apply_global::<F, FG, FS>(block, global);
 
     if input.vector_size().comptime() == num_quants {
         output.write(
@@ -213,6 +205,10 @@ pub fn launch_ref<R: Runtime>(
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
     let scale_dtype = ElemType::from_quant_param(scheme.param);
+    let global_dtype = global_dtype(scheme);
+
+    check_global_bindings(scheme, global.is_some(), "global");
+    check_global_bindings(scheme, out_global.is_some(), "out_global");
 
     match scheme {
         QuantScheme {
@@ -229,6 +225,7 @@ pub fn launch_ref<R: Runtime>(
             output,
             input_elem,
             scale_dtype,
+            global_dtype,
         ),
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
@@ -258,6 +255,7 @@ pub fn launch_ref<R: Runtime>(
                 output,
                 input_elem,
                 scale_dtype,
+                global_dtype,
             )
         }
         QuantScheme {
@@ -282,6 +280,7 @@ fn quantize_native<R: Runtime>(
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
+    global_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
     let output_dtype = ElemType::from_quant_value(scheme.value);
@@ -333,7 +332,12 @@ fn quantize_native<R: Runtime>(
                     scales_view(output, out_scale, 1, scheme),
                     out_global.map(linear_view).into(),
                     scales_layout,
-                    [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
+                    [
+                        input_dtype.into(),
+                        scale_dtype.into(),
+                        global_dtype.into(),
+                        output_dtype.into(),
+                    ],
                 )
             }
         }
@@ -355,6 +359,7 @@ fn quantize_packed<R: Runtime>(
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
+    global_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
 
@@ -418,7 +423,12 @@ fn quantize_packed<R: Runtime>(
             out_global.map(linear_view).into(),
             scales_layout,
             *scheme,
-            [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
+            [
+                input_dtype.into(),
+                scale_dtype.into(),
+                global_dtype.into(),
+                output_dtype.into(),
+            ],
         )
     };
 

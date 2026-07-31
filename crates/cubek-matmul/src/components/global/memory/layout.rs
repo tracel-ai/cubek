@@ -257,10 +257,18 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
             match scheme.level {
                 QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
-                QuantLevel::Block(block_size)
-                | QuantLevel::BlockTensor {
-                    block: block_size, ..
-                } => {
+                // Reads here apply one scale per value and never see a per-tensor one, so serving
+                // a two-level scheme would leave every product short by that factor. This is the
+                // gate for the matmul path: unlike the tile path there is no launch-time
+                // validation upstream, `TensorInputs::create` builds the view straight from the
+                // handles.
+                QuantLevel::BlockTensor { .. } => {
+                    unimplemented!(
+                        "two-level quantization is not supported by the quantized matmul, got {:?}",
+                        scheme.level
+                    )
+                }
+                QuantLevel::Block(block_size) => {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =

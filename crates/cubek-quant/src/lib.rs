@@ -15,7 +15,7 @@ pub mod quantize;
 pub mod layout;
 
 #[cfg(feature = "kernels")]
-pub(crate) mod global;
+pub(crate) mod per_tensor;
 
 pub use cubecl_common::quant::scheme;
 
@@ -41,6 +41,34 @@ pub(crate) mod utils {
                 "Block size must be divisible by {div}, got block_size={block_size}"
             );
         }
+    }
+
+    /// The element type of the per-tensor scale, defaulting to `f32` for the levels that have
+    /// none, where the kernel never builds the view and the type goes unused.
+    pub(crate) fn global_dtype(scheme: &QuantScheme) -> ElemType {
+        scheme
+            .level
+            .global_param()
+            .map(ElemType::from_quant_param)
+            .unwrap_or(ElemType::Float(cubecl::ir::FloatKind::F32))
+    }
+
+    /// The scheme is what decides whether a per-tensor scale exists; a binding that disagrees with
+    /// it silently drops the scale or applies one that should not be there.
+    pub(crate) fn check_global_bindings(scheme: &QuantScheme, provided: bool, name: &str) {
+        let expected = scheme.level.global_param().is_some();
+        assert_eq!(
+            provided,
+            expected,
+            "{name} was {}, but {:?} {} a per-tensor scale",
+            if provided { "provided" } else { "omitted" },
+            scheme.level,
+            if expected {
+                "requires"
+            } else {
+                "does not take"
+            }
+        );
     }
 
     pub(crate) fn packed_storage_elem(scheme: &QuantScheme) -> ElemType {

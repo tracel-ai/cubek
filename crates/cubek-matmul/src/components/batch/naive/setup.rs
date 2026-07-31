@@ -139,7 +139,10 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.lhs_scheme
-            && let QuantLevel::Block(block_size) = scheme.level
+            && let QuantLevel::Block(block_size)
+            | QuantLevel::BlockTensor {
+                block: block_size, ..
+            } = scheme.level
         {
             let vector_size = vector_sizes.lhs * scheme.num_quants();
             let block_size = block_size.to_dim_vec(2.max(block_size.len()));
@@ -152,7 +155,10 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.rhs_scheme
-            && let QuantLevel::Block(block_size) = scheme.level
+            && let QuantLevel::Block(block_size)
+            | QuantLevel::BlockTensor {
+                block: block_size, ..
+            } = scheme.level
         {
             let vector_size = vector_sizes.rhs * scheme.num_quants();
             let block_size = block_size.to_dim_vec(2.max(block_size.len()));

@@ -27,7 +27,12 @@ const EXACT_SCALES: [f32; 4] = [1.0, 1.5, 2.0, 3.0];
 #[test]
 fn ue4m3_block_scales_with_an_f32_global_round_trip() {
     let client = TestRuntime::client(&Default::default());
-    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+    // Both are needed and they are separate capabilities: `i8` for the native value storage, e4m3
+    // for the block scales. The CPU runtime has the first and not the second, so guarding on `i8`
+    // alone lets this run somewhere it cannot work.
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion)
+        || !e4m3::supported_uses(&client).contains(TypeUsage::Conversion)
+    {
         return;
     }
 
