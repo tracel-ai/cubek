@@ -98,6 +98,57 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
+    /// Merge a split fold's per-team running states into cross-split weights:
+    /// `self` is the `{splits · rows}` weight tile, `m`/`l` the published
+    /// per-split running max/sum (same shape), `recip` the `{rows}`
+    /// inverse-sum tile. Per row: `m* = max_t m_t`, each split's weight is
+    /// `exp(m_t − m*)`, `l* = Σ_t l_t · exp(m_t − m*)`, and `recip = 1/l*`
+    /// (exactly zero for a fully-masked row, so its output stays zero). A
+    /// split that folded nothing publishes `(min, 0)` and gets weight zero on
+    /// its own. One unit per row, cyclic across the whole cube; the caller
+    /// syncs on both sides. `splits == 1` degenerates to the plain epilogue.
+    pub fn merge_splits(
+        &mut self,
+        recip: &mut Tile<EA>,
+        m: &Tile<EA>,
+        l: &Tile<EA>,
+        #[comptime] splits: usize,
+    ) {
+        let total = comptime!(self.space.extent_at(0));
+        let rows = comptime!(total / splits);
+        comptime!(assert!(
+            self.space.rank() == 1 && total.is_multiple_of(splits),
+            "merge_splits: a rank-1 {{splits · rows}} weight tile"
+        ));
+        let size!(W) = self.vector_size();
+        let size!(WR) = recip.vector_size();
+        let size!(WM) = m.vector_size();
+        let size!(WL) = l.vector_size();
+        let mf = m.flat::<WM>();
+        let lf = l.flat::<WL>();
+        let mut rf = recip.flat_mut::<WR>();
+        let mut wf = self.flat_mut::<W>();
+
+        let workers = CUBE_DIM as usize;
+        let mut r = UNIT_POS as usize;
+        while r < rows {
+            let mut mstar = EA::min_value();
+            for t in 0..splits {
+                mstar = max(mstar, mf.read(t * rows + r).extract(0));
+            }
+            let mut lstar = EA::from_int(0);
+            for t in 0..splits {
+                let w = (mf.read(t * rows + r).extract(0) - mstar).exp();
+                lstar += lf.read(t * rows + r).extract(0) * w;
+                wf.write(t * rows + r, Vector::cast_from(w));
+            }
+            let eps = EA::new(FULLY_MASKED_ROW_THRESHOLD);
+            let rv = EA::cast_from(lstar >= eps) * clamp_min(lstar, eps).recip();
+            rf.write(r, Vector::cast_from(rv));
+            r += workers;
+        }
+    }
+
     /// Publish per-owned-row `values` into this rank-1 factors tile, one cell
     /// per row of the score space. Owners write their own rows only; the caller
     /// syncs before any cross-unit read.

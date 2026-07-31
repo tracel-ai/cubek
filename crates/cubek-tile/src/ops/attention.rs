@@ -1,6 +1,9 @@
 //! The attention verb's matmul leaves, at column ownership: each unit owns a
 //! cyclic slice of the output's trailing axis, so a gmem operand streamed
-//! along it is read exactly once across the cube. Leaf-scoped like
+//! along it is read exactly once across the owning team. Ownership is
+//! team-local (`UNIT_POS_X` of `CUBE_DIM_X`): a split fold lays its teams on
+//! the cube's y dim, each folding its own S range; an unsplit cube (y = 1)
+//! spans every unit. Leaf-scoped like
 //! [`softmax`](super::softmax): the verb owns the walk, the staging, and the
 //! syncs; these run on already-lowered final tiles with no syncs of their own.
 //!
@@ -56,9 +59,9 @@ impl<EA: Float> Tile<EA> {
         let mut out = self.flat_mut::<W>();
 
         let chunks = comptime!(rows.div_ceil(ROW_CHUNK));
-        let workers = CUBE_DIM as usize;
+        let workers = CUBE_DIM_X as usize;
         let bound = min(cols_bound, cols);
-        let mut c = UNIT_POS as usize;
+        let mut c = UNIT_POS_X as usize;
         while c < bound {
             #[unroll]
             for ch in 0..chunks {
@@ -137,8 +140,8 @@ impl<EA: Float> Tile<EA> {
 
         let bound = min(cols_bound, cols);
         let chunks = comptime!(rows.div_ceil(ROW_CHUNK));
-        let workers = CUBE_DIM as usize;
-        let mut li = UNIT_POS as usize;
+        let workers = CUBE_DIM_X as usize;
+        let mut li = UNIT_POS_X as usize;
         while li < v_lines {
             #[unroll]
             for ch in 0..chunks {

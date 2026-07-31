@@ -269,3 +269,341 @@ fn fold_prefill_gqa_causal() {
 fn fold_scalar_odd_bound() {
     run((16, 4, 4, 24, 8, 8, 4), 13, true, 1);
 }
+
+/// The split fold: teams on the cube's y dim each fold a disjoint slice of
+/// the S walk with their own running state into their own window of
+/// split-wide smem tiles, then the states merge cross-team
+/// ([`merge_splits`](cubek_tile::Tile)) and the drain folds the split
+/// weights and the normalizer in. `splits == 1` degenerates to the plain
+/// fold — one code path for both.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn attention_fold_split_kernel(
+    q: &StridedTileArg<'_, f32>,    // {G, QP, D}
+    k: &StridedTileArg<'_, f32>,    // {S, D} — omits the group axis
+    v: &StridedTileArg<'_, f32>,    // {S, V}
+    mask: &StridedTileArg<'_, u32>, // 1-cell dummy (materialized = false)
+    out: &mut Tensor<f32>,          // [G·QP·V] flat
+    scale: f32,
+    bound: u32,
+    #[comptime] team: usize,
+    #[comptime] splits: usize,
+    #[comptime] causal: bool,
+    #[comptime] block: usize,
+) {
+    let q = q.tile();
+    let k = k.tile();
+    let v = v.tile();
+    let mask_tile = mask.tile();
+
+    let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
+    let q_rows = comptime!(q.space.extent(QP));
+    let val_dim = comptime!(v.space.extent(V));
+
+    let mut q_s = MemData::<f32>::smem(
+        comptime!(q.space.clone()),
+        q.vector_size(),
+        comptime!(StagePlan::strided()),
+    );
+    q_s.copy_from(&q);
+
+    // Split-wide working set: a leading `splits` slice on every tile, one
+    // window per team.
+    let split_rows = comptime!(splits * rows);
+    let score_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, split_rows), (C, block)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(R, Cut::sequential(rows))
+                    .axis(C, Cut::sequential(block))
+            })
+            .leaf(Leaf::Register)
+    );
+    let row_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, split_rows)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(R, Cut::sequential(rows))
+            })
+            .leaf(Leaf::Register)
+    );
+    let acc_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, split_rows), (V, val_dim)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(R, Cut::sequential(rows))
+                    .axis(V, Cut::sequential(val_dim))
+            })
+            .leaf(Leaf::Register)
+    );
+    let score_all =
+        MemData::<f32>::smem(score_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let p_all = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::strided()));
+    let mut factors_all =
+        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let mut recip = MemData::<f32>::smem(
+        comptime!(Space::new(&[(R, rows)])),
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    acc_all.zero();
+
+    // This team's windows.
+    let t = UNIT_POS_Y as usize;
+    let tw = Walk::over(score_all.runtime_space());
+    let mut score = score_all.at(&tw.region(t));
+    let mut p = p_all.at(&tw.region(t));
+    let rw = Walk::over(factors_all.runtime_space());
+    let mut factors = factors_all.at(&rw.region(t));
+    let mut m_win = m_all.at(&rw.region(t));
+    let mut l_win = l_all.at(&rw.region(t));
+    let aw = Walk::over(acc_all.runtime_space());
+    let mut acc = acc_all.at(&aw.region(t));
+
+    let kept = comptime!(Space::new(&[(R, rows)]));
+    let mut state = RowState::<f32>::new(kept, team);
+    let rpu = comptime!(state.rows_per_unit);
+    let bound_s = bound as usize;
+    sync_cube();
+
+    // Interleaved split walk: team t folds blocks t, t + splits, …; every
+    // team runs every round (the barriers must stay uniform), an out-of-range
+    // block just skips its compute.
+    let k_walk = Walk::over(k.runtime_space());
+    let blocks = bound_s.div_ceil(block);
+    let rounds = blocks.div_ceil(splits);
+    for round in 0..rounds {
+        let blk = round * splits + t;
+        let live = blk < blocks;
+        let region = k_walk.region(blk);
+        let s0 = region.coord(S) * block;
+        let cols_bound = max(bound_s, s0) - s0;
+
+        if live {
+            let kb = k.at(&region);
+            score.score_columns(&q_s, &kb, cols_bound);
+        }
+        sync_cube();
+
+        if live {
+            let probe = MaskProbe {
+                origin_q: 0,
+                origin_s: s0,
+                bound_q: q_rows.runtime(),
+                bound_s,
+                q_rows,
+                causal,
+                materialized: false,
+            };
+            let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
+            factors.store_rows(&corr, rpu);
+        }
+        sync_cube();
+
+        if live {
+            let vb = v.at(&region);
+            acc.mix_columns(&p, &vb, &factors, cols_bound);
+        }
+        sync_cube();
+    }
+
+    // Publish each team's running state, merge across splits, drain with the
+    // split weights and the normalizer folded in.
+    m_win.store_rows(&state.m, rpu);
+    l_win.store_rows(&state.l, rpu);
+    sync_cube();
+    factors_all.merge_splits(&mut recip, &m_all, &l_all, splits);
+    sync_cube();
+
+    let size!(W1) = 1usize;
+    let acc_flat = acc_all.flat::<W1>();
+    let w_flat = factors_all.flat::<W1>();
+    let r_flat = recip.flat::<W1>();
+    let total = comptime!(rows * val_dim);
+    let workers = CUBE_DIM as usize;
+    let mut i = UNIT_POS as usize;
+    while i < total {
+        let r = i / val_dim;
+        let vi = i % val_dim;
+        let mut sum = 0.0f32;
+        for ti in 0..splits {
+            let sr = ti * rows + r;
+            sum += acc_flat.read(sr * val_dim + vi).extract(0) * w_flat.read(sr).extract(0);
+        }
+        out[i] = sum * r_flat.read(r).extract(0);
+        i += workers;
+    }
+}
+
+/// Launch the split fold and check against direct host math.
+#[allow(clippy::too_many_arguments)]
+fn run_split(
+    (team, splits, g, qp, s_total, block, d, val_dim): (
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    ),
+    bound_s: usize,
+    causal: bool,
+    vec: usize,
+) {
+    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let cap = client.properties().hardware.max_units_per_cube as usize;
+    let team = team.min((cap / splits).max(1));
+    let rows = g * qp;
+    let scale = 1. / (d as f32).sqrt();
+
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let wobble =
+        |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
+
+    let (q_handle, q_data) = TestInput::builder(client.clone(), Shape::new([g, qp, d]))
+        .dtype(f32_ty)
+        .custom((0..g * qp * d).map(|i| wobble(i, 1)).collect())
+        .generate_with_f32_host_data();
+    let (k_handle, k_data) = TestInput::builder(client.clone(), Shape::new([s_total, d]))
+        .dtype(f32_ty)
+        .custom((0..s_total * d).map(|i| wobble(i, 2)).collect())
+        .generate_with_f32_host_data();
+    let (v_handle, v_data) = TestInput::builder(client.clone(), Shape::new([s_total, val_dim]))
+        .dtype(f32_ty)
+        .custom((0..s_total * val_dim).map(|i| wobble(i, 3) / 2.).collect())
+        .generate_with_f32_host_data();
+    let mask_handle = TestInput::builder(client.clone(), Shape::new([1]))
+        .dtype(u32_ty)
+        .zeros()
+        .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([rows, val_dim]))
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let q_space = Space::new(&[(G, g), (QP, qp), (D, d)]);
+    let k_space = Tiling::new()
+        .extents(&[(S, s_total), (D, d)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(S, Cut::sequential(block))
+                .axis(D, Cut::sequential(d))
+        })
+        .leaf(Leaf::Register);
+    let v_space = Tiling::new()
+        .extents(&[(S, s_total), (V, val_dim)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(S, Cut::sequential(block))
+                .axis(V, Cut::sequential(val_dim))
+        })
+        .leaf(Leaf::Register);
+    let mask_space = Space::new(&[(R, 1), (C, 1)]);
+
+    attention_fold_split_kernel::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_2d(team as u32, splits as u32),
+        StridedTileArgLaunch::strided(
+            q_handle.clone().binding().into_tensor_arg(),
+            vec,
+            q_space,
+            Storage::of(3, 3),
+        ),
+        StridedTileArgLaunch::strided(
+            k_handle.clone().binding().into_tensor_arg(),
+            vec,
+            k_space,
+            Storage::of(2, 2),
+        ),
+        StridedTileArgLaunch::strided(
+            v_handle.clone().binding().into_tensor_arg(),
+            vec,
+            v_space,
+            Storage::of(2, 2),
+        ),
+        StridedTileArgLaunch::strided(
+            mask_handle.clone().binding().into_tensor_arg(),
+            1,
+            mask_space,
+            Storage::of(2, 2),
+        ),
+        out_handle.clone().binding().into_tensor_arg(),
+        scale,
+        bound_s as u32,
+        team,
+        splits,
+        causal,
+        block,
+    );
+
+    let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+
+    for gi in 0..g {
+        for qi in 0..qp {
+            let r = gi * qp + qi;
+            let mut scores = Vec::new();
+            for j in 0..s_total {
+                let masked = j >= bound_s || (causal && j > qi);
+                if !masked {
+                    let dot: f32 = (0..d)
+                        .map(|p| q_data.get_f32(&[gi, qi, p]) * k_data.get_f32(&[j, p]))
+                        .sum();
+                    scores.push((dot * scale, j));
+                }
+            }
+            if scores.is_empty() {
+                for vi in 0..val_dim {
+                    assert_eq!(
+                        out.get_f32(&[r, vi]),
+                        0.,
+                        "fully-masked row {r}: out must be exactly 0"
+                    );
+                }
+                continue;
+            }
+            let m = scores.iter().fold(f32::NEG_INFINITY, |m, (s, _)| m.max(*s));
+            let l: f32 = scores.iter().map(|(s, _)| (s - m).exp()).sum();
+            for vi in 0..val_dim {
+                let expected: f32 = scores
+                    .iter()
+                    .map(|(s, j)| (s - m).exp() / l * v_data.get_f32(&[*j, vi]))
+                    .sum();
+                let got = out.get_f32(&[r, vi]);
+                assert!(
+                    (got - expected).abs() <= 1e-4 * expected.abs().max(1.),
+                    "row ({gi},{qi}) v {vi}: out {got} vs direct {expected}"
+                );
+            }
+        }
+    }
+}
+
+/// The decode shape split four ways, with an idle team in the last round
+/// (7 blocks over 4 teams) and a ragged prefix.
+#[test]
+fn split_fold_decode_gqa() {
+    run_split((8, 4, 4, 1, 64, 8, 16, 16), 50, false, 2);
+}
+
+/// Causal prefill split two ways.
+#[test]
+fn split_fold_prefill_gqa_causal() {
+    run_split((8, 2, 2, 8, 32, 8, 8, 8), 29, true, 2);
+}
+
+/// One split: the degenerate path must match the plain fold.
+#[test]
+fn split_fold_degenerates_to_one() {
+    run_split((16, 1, 4, 1, 24, 8, 8, 4), 13, false, 1);
+}
+
+/// More teams than blocks: whole teams idle, weight zero on their own.
+#[test]
+fn split_fold_idle_teams() {
+    run_split((4, 4, 2, 1, 16, 8, 8, 8), 10, false, 1);
+}
