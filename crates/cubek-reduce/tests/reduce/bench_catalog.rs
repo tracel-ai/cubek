@@ -87,3 +87,23 @@ fn topk3_fused_axis2_32x512x4095_unit_parallel() {
 fn topk3_two_launch_axis2_32x512x4095_cube_serial() {
     run("cube_serial", "topk3_two_launch_axis2_32x512x4095");
 }
+
+#[test]
+fn max_fused_axis2_32x512x4095_unit_parallel() {
+    run("unit_parallel", "max_fused_axis2_32x512x4095");
+}
+
+#[test]
+fn max_fused_axis2_32x512x4095_cube_serial() {
+    run("cube_serial", "max_fused_axis2_32x512x4095");
+}
+
+#[test]
+fn min_fused_axis2_32x512x4095_unit_parallel() {
+    run("unit_parallel", "min_fused_axis2_32x512x4095");
+}
+
+#[test]
+fn min_fused_axis2_32x512x4095_cube_serial() {
+    run("cube_serial", "min_fused_axis2_32x512x4095");
+}

@@ -21,6 +21,10 @@ impl<Acc: Numeric> Tile<Acc> {
     /// type, distinct from the served/stored `Acc` (e.g. `f32` accumulate under an `f16`
     /// output). The register form itself belongs to the declared [`Leaf`](crate::Leaf).
     pub fn promote<EA: Numeric>(&self) -> Tile<EA> {
-        PlanePartition::<EA>::mirror(comptime!(self.space.clone()))
+        // The block's lines match the memory it drains back into; the hardware
+        // encodings ignore it.
+        let vector_size = self.vector_size();
+        let lane_share = self.lane_share();
+        PlanePartition::<EA>::mirror(comptime!(self.space.clone()), vector_size, lane_share)
     }
 }

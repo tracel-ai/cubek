@@ -121,24 +121,18 @@ impl BatchMatmulBlueprint {
     ) -> BatchMatmulBlueprintBuilder {
         let hypercube_blueprint = HypercubeBlueprint::builder().build();
 
-        let check_m_bounds =
-            !(problem.m as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_m());
-        let check_n_bounds =
-            !(problem.n as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_n());
-        let check_k_bounds =
-            !(problem.k as u32).is_multiple_of(tiling_scheme.elements_per_stage_along_k());
-
         BatchMatmulBlueprintBuilder {
             plane_dim,
             tile_matmul,
             tiling_scheme,
             hypercube_blueprint,
-            check_m_bounds,
-            check_n_bounds,
-            check_k_bounds,
+            m: problem.m as u32,
+            n: problem.n as u32,
+            k: problem.k as u32,
             lhs_layout: problem.lhs_layout,
             rhs_layout: problem.rhs_layout,
             shared_swizzle: Default::default(),
+            stage_buffering: 1,
             partition_buffering: PartitionBuffering::default(),
             loading_precompute_strategy: LoadingPrecomputeStrategy::default(),
             reader_mode: ReaderMode::default(),
@@ -190,12 +184,13 @@ pub struct BatchMatmulBlueprintBuilder {
     tile_matmul: TileMatmulKind,
     tiling_scheme: TilingScheme,
 
-    check_m_bounds: bool,
-    check_n_bounds: bool,
-    check_k_bounds: bool,
+    m: u32,
+    n: u32,
+    k: u32,
     lhs_layout: MatrixLayout,
     rhs_layout: MatrixLayout,
 
+    stage_buffering: u32,
     hypercube_blueprint: HypercubeBlueprint,
 
     shared_swizzle: SwizzleModes,
@@ -221,6 +216,11 @@ impl BatchMatmulBlueprintBuilder {
         self
     }
 
+    pub fn stage_buffering(mut self, stage_buffering: u32) -> Self {
+        self.stage_buffering = stage_buffering;
+        self
+    }
+
     pub fn loading_precompute_strategy(
         mut self,
         loading_precompute_strategy: LoadingPrecomputeStrategy,
@@ -240,6 +240,18 @@ impl BatchMatmulBlueprintBuilder {
     }
 
     pub fn build(self) -> BatchMatmulBlueprint {
+        let k_group = self.stage_buffering;
+
+        let check_m_bounds = !self
+            .m
+            .is_multiple_of(self.tiling_scheme.elements_per_stage_along_m());
+        let check_n_bounds = !self
+            .n
+            .is_multiple_of(self.tiling_scheme.elements_per_stage_along_n());
+        let check_k_bounds = !self
+            .k
+            .is_multiple_of(self.tiling_scheme.elements_per_stage_along_k() * k_group);
+
         BatchMatmulBlueprint {
             plane_dim: self.plane_dim,
             tile_matmul: self.tile_matmul,
@@ -252,9 +264,9 @@ impl BatchMatmulBlueprintBuilder {
             load_flows: self.load_specialization_config,
             lhs_layout: self.lhs_layout,
             rhs_layout: self.rhs_layout,
-            check_m_bounds: self.check_m_bounds,
-            check_n_bounds: self.check_n_bounds,
-            check_k_bounds: self.check_k_bounds,
+            check_m_bounds,
+            check_n_bounds,
+            check_k_bounds,
         }
     }
 }
@@ -285,5 +297,52 @@ impl From<LoadingPrecomputeStrategy> for bool {
             LoadingPrecomputeStrategy::Always => true,
             LoadingPrecomputeStrategy::Never => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::definition::MatmulElems;
+    use cubecl::{ir::AddressType, zspace::shape};
+
+    /// Regression for #434: multi-stage k-loops consume `stage_buffering` stages
+    /// per iteration, so the k-bounds guard must cover the whole group.
+    #[test]
+    fn check_k_bounds_covers_stage_buffering() {
+        let tiling_scheme = TilingScheme::builder()
+            .with_tile_size((16, 16, 16).into())
+            .with_partition_size((1, 1, 2).into())
+            .with_stage_size((1, 1, 1).into())
+            .build()
+            .unwrap();
+        assert_eq!(tiling_scheme.elements_per_stage_along_k(), 32);
+
+        // k % 32 == 0 but k % 64 == 32: one stage fits, a stage pair does not.
+        let problem = MatmulProblem::from_parameters(
+            32,
+            256,
+            2848,
+            shape![1],
+            shape![1],
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            None,
+            None,
+            MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+            AddressType::default(),
+        );
+
+        let single =
+            BatchMatmulBlueprint::builder(TileMatmulKind::Cmma, tiling_scheme, 32, &problem)
+                .build();
+        assert!(!single.check_k_bounds);
+
+        let double =
+            BatchMatmulBlueprint::builder(TileMatmulKind::Cmma, tiling_scheme, 32, &problem)
+                .stage_buffering(2)
+                .build();
+        assert!(double.check_k_bounds);
     }
 }

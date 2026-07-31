@@ -1,6 +1,9 @@
 use super::{ReduceFamily, ReduceInstruction};
 use crate::components::{
-    instructions::{Accumulator, AccumulatorFormat, Item, ReduceRequirements, ReduceStep, Value},
+    instructions::{
+        Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
+        Value,
+    },
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -70,25 +73,32 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
             .assign(&Value::new_single(accumulator_item * other_item));
     }
 
-    fn to_output_parallel<Out: Numeric>(
+    fn output_mode(_this: &Self) -> comptime_type!(ReduceOutputMode) {
+        ReduceOutputMode::Values
+    }
+
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Value<Out> {
+    ) -> (Value<Out>, Value<Idx>) {
         let accumulator = accumulator.elements.item();
         let mut prod = P::EA::from_int(1);
         #[unroll]
         for k in 0..accumulator.size() {
             prod *= accumulator.extract(k);
         }
-        Value::new_single(Out::cast_from(prod))
+        (Value::new_single(Out::cast_from(prod)), Value::new_None())
     }
 
-    fn to_output_perpendicular<Out: Numeric>(
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         _this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>> {
-        Value::new_single(Vector::cast_from(accumulator.elements.item()))
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
+        (
+            Value::new_single(Vector::cast_from(accumulator.elements.item())),
+            Value::new_None(),
+        )
     }
 }

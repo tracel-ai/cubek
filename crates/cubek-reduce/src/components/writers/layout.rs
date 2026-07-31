@@ -21,6 +21,8 @@ pub struct ReduceOutputLayout {
     write_stride: usize,
     num_writes: usize,
     accumulator_length: usize,
+    /// Total output extent in vector units; bounds checked writes.
+    len: usize,
 }
 
 #[cube]
@@ -30,12 +32,14 @@ impl ReduceOutputLayout {
         write_stride: usize,
         num_writes: usize,
         accumulator_length: usize,
+        len: usize,
     ) -> ReduceOutputLayout {
         ReduceOutputLayout {
             k_stride,
             write_stride,
             num_writes,
             accumulator_length,
+            len,
         }
     }
 }
@@ -59,8 +63,12 @@ impl Layout for ReduceOutputLayout {
         (self.num_writes as u32, self.accumulator_length as u32)
     }
 
+    /// Bounded in source space, not against `shape()`: `write_index` is a flat
+    /// offset over the whole output, which spans several axes when the output
+    /// has batch dims. Excess workers launched by grid rounding map at or past
+    /// `len`, so this is what keeps their writes inside the output.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        pos.0 < self.num_writes as u32 && pos.1 < self.accumulator_length as u32
+        self.to_source_pos(pos) < self.len
     }
 }
 
@@ -87,6 +95,7 @@ pub(crate) fn build_reduce_output_layout<Out: NumericVector>(
 ) -> ReduceOutputLayout {
     let vec = output.vector_size();
     let num_vectored_reductions = output.shape(out_vec_axis) / vec;
+    let len = output.len();
 
     if comptime![accumulator_length == 1] {
         // Simple reduce: `write_index` is a flat vector offset into the
@@ -96,6 +105,7 @@ pub(crate) fn build_reduce_output_layout<Out: NumericVector>(
             1,
             num_vectored_reductions,
             accumulator_length,
+            len,
         )
     } else {
         let k_stride = output.stride(reduce_axis) / vec;
@@ -103,6 +113,6 @@ pub(crate) fn build_reduce_output_layout<Out: NumericVector>(
         let distinct = usize::cast_from(reduce_axis != out_vec_axis);
         let write_stride = distinct;
         let num_writes = distinct * num_vectored_reductions + (1 - distinct);
-        ReduceOutputLayout::new(k_stride, write_stride, num_writes, accumulator_length)
+        ReduceOutputLayout::new(k_stride, write_stride, num_writes, accumulator_length, len)
     }
 }

@@ -120,15 +120,15 @@ pub fn reduce<R: Runtime>(
 /// Reduce the given `axis` of `input`, writing the values into `values` and their indices
 /// into `indices` from a **single** kernel launch.
 ///
-/// Callers wanting both halves of a top-k would otherwise launch the reduce twice, once as
-/// `TopK` and once as `ArgTopK`, and discard half of each result, even though one reduction
-/// already computes both. This runs it once.
+/// Callers wanting both halves of a reduction would otherwise launch the reduce twice,
+/// once for the values and once for the `Arg*` half, and discard half of each result,
+/// even though one reduction already computes both. This runs it once.
 ///
 /// `values` and `indices` must have the same shape (the `input` shape with `axis` set to
-/// `k`) and the same strides, since both outputs are written through one layout.
-/// Only [`ReduceOperationConfig::TopK`] and [`ReduceOperationConfig::ArgTopK`] are accepted,
-/// and they behave identically here since both halves are written regardless; any other
-/// operation returns [`ReduceError::IndicesUnsupported`].
+/// `k` for top-k, `1` otherwise) and the same strides, since both outputs are written
+/// through one layout. Only the operations with a meaningful index are accepted, and the
+/// two configs of each values/`Arg*` pair behave identically here since both halves are
+/// written regardless; any other operation returns [`ReduceError::IndicesUnsupported`].
 ///
 /// The plain [`reduce`] entrypoint is unaffected and still writes a single output.
 #[allow(clippy::too_many_arguments)]
@@ -144,6 +144,10 @@ pub fn reduce_with_indices<R: Runtime>(
 ) -> Result<(), ReduceError> {
     let k = match operation {
         ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => k,
+        ReduceOperationConfig::Max
+        | ReduceOperationConfig::ArgMax
+        | ReduceOperationConfig::Min
+        | ReduceOperationConfig::ArgMin => 1,
         other => {
             return Err(ReduceError::IndicesUnsupported {
                 operation: operation_name(&other),
@@ -171,7 +175,9 @@ pub fn reduce_with_indices<R: Runtime>(
         });
     }
 
-    launch_reduce_with_indices::<R>(client, input, values, indices, axis, strategy, dtypes, k)
+    launch_reduce_with_indices::<R>(
+        client, input, values, indices, axis, strategy, dtypes, operation,
+    )
 }
 
 fn operation_name(operation: &ReduceOperationConfig) -> &'static str {

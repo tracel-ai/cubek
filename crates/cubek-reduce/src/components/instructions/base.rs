@@ -1,5 +1,33 @@
 use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
 use cubecl::prelude::*;
+use serde::{Deserialize, Serialize};
+
+/// Which of a reduction's two results the single-output path writes.
+///
+/// For instructions that can track their candidates' coordinates
+/// ([`TopK`](super::TopK), [`Min`](super::Min), [`Max`](super::Max)), the mode
+/// only decides construction ([`ReduceInstruction::requirements`],
+/// `null_accumulator`) and which half of the `to_output_*` pair the writer
+/// keeps; everything in between reads the accumulator's own state.
+///
+/// The fused path (values *and* indices) is not a third variant here: it writes
+/// both halves regardless, sizing the accumulator with [`Self::Indices`] so
+/// coordinates are tracked.
+#[derive_cube_comptime]
+#[derive(Serialize, Deserialize)]
+pub enum ReduceOutputMode {
+    /// Write only the reduced values.
+    Values,
+    /// Write only the coordinates of the reduced values.
+    Indices,
+}
+
+impl ReduceOutputMode {
+    /// Whether coordinates must be tracked through the reduction.
+    pub fn has_indices(&self) -> bool {
+        matches!(self, ReduceOutputMode::Indices)
+    }
+}
 
 pub trait ReduceFamily: Send + Sync + 'static + std::fmt::Debug {
     type Instruction<P: ReducePrecision>: ReduceInstruction<P, Config = Self::Config>;
@@ -110,8 +138,20 @@ impl<X: CubePrimitive> Value<X> {
             _ => panic!("Tried assigning different accumulator kinds"),
         }
     }
+
+    /// The `index`-th candidate as a standalone value; `None` stays `None`.
+    pub fn slot(&self, index: usize) -> Value<X> {
+        match self {
+            Value::Multiple(array) => Value::new_single(array[index]),
+            Value::Single(item) => Value::new_single(item.val),
+            Value::None => Value::new_None(),
+        }
+    }
 }
 
+/// Plane-cooperative top-k insertion; the candidate's coordinate decides which
+/// algorithm runs, since winners are identified by their coordinate when one
+/// rides along and by lane id otherwise.
 #[cube]
 pub fn plane_topk_insert<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
@@ -119,82 +159,117 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
     item: Vector<N, S>,
     coord: &Value<Vector<u32, S>>,
     #[comptime] k: usize,
-    #[comptime] has_coords: bool,
+) {
+    match coord {
+        Value::None => plane_topk_insert_values(elements, item, k),
+        Value::Single(coord) => plane_topk_insert_with_coords(
+            elements,
+            coordinates.multiple_mut(),
+            item,
+            coord.unwrap(),
+            k,
+        ),
+        Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
+    }
+}
+
+#[cube]
+fn plane_topk_insert_with_coords<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Array<Vector<u32, S>>,
+    item: Vector<N, S>,
+    coord: Vector<u32, S>,
+    #[comptime] k: usize,
 ) {
     let mut local_best_val = item;
-    let lane_id = Vector::new(UNIT_POS_X);
-
-    let mut local_best_coord = if has_coords {
-        coord.item()
-    } else {
-        Vector::new(u32::MAX)
-    };
+    let mut local_best_coord = coord;
 
     #[unroll]
     for _i in 0..k {
         let winning_val = plane_max(local_best_val);
-
-        let winning_coord = if has_coords {
-            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord)
-        } else {
-            let is_match = local_best_val.equal(&winning_val);
-            let claim = select_many(is_match, lane_id, Vector::new(u32::MAX));
-            plane_min(claim)
-        };
+        let winning_coord =
+            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord);
 
         let mut insert_val = winning_val;
         let mut insert_coord = winning_coord;
 
-        if has_coords {
-            let coordinates = coordinates.multiple_mut();
-            #[unroll]
-            for j in 0..k {
-                let to_keep = select_many(
-                    elements[j].equal(&insert_val),
-                    coordinates[j].less_than(&insert_coord),
-                    elements[j].greater_than(&insert_val),
-                );
+        #[unroll]
+        for j in 0..k {
+            let to_keep = select_many(
+                elements[j].equal(&insert_val),
+                coordinates[j].less_than(&insert_coord),
+                elements[j].greater_than(&insert_val),
+            );
 
-                let next_val = select_many(to_keep, insert_val, elements[j]);
-                elements[j] = select_many(to_keep, elements[j], insert_val);
-                insert_val = next_val;
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
 
-                let next_coord = select_many(to_keep, insert_coord, coordinates[j]);
-                coordinates[j] = select_many(to_keep, coordinates[j], insert_coord);
-                insert_coord = next_coord;
-            }
-        } else {
-            #[unroll]
-            for j in 0..k {
-                let to_keep = elements[j].greater_than(&insert_val);
-                let next_val = select_many(to_keep, insert_val, elements[j]);
-                elements[j] = select_many(to_keep, elements[j], insert_val);
-                insert_val = next_val;
-            }
+            let next_coord = select_many(to_keep, insert_coord, coordinates[j]);
+            coordinates[j] = select_many(to_keep, coordinates[j], insert_coord);
+            insert_coord = next_coord;
         }
 
         // Winner masking logic
-        let is_winner = if has_coords {
-            local_best_val
-                .equal(&winning_val)
-                .vec_and(local_best_coord.equal(&winning_coord))
-        } else {
-            lane_id.equal(&winning_coord)
-        };
-
+        let is_winner = local_best_val
+            .equal(&winning_val)
+            .vec_and(local_best_coord.equal(&winning_coord));
         local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
-        if has_coords {
-            local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
-        }
+        local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
     }
 }
 
+#[cube]
+fn plane_topk_insert_values<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    item: Vector<N, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best_val = item;
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll]
+    for _i in 0..k {
+        let winning_val = plane_max(local_best_val);
+        let is_match = local_best_val.equal(&winning_val);
+        let winning_lane = plane_min(select_many(is_match, lane_id, Vector::new(u32::MAX)));
+
+        let mut insert_val = winning_val;
+
+        #[unroll]
+        for j in 0..k {
+            let to_keep = elements[j].greater_than(&insert_val);
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
+        }
+
+        // Winner masking logic
+        let is_winner = lane_id.equal(&winning_lane);
+        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+    }
+}
+
+/// Plane-cooperative merge of per-lane top-k candidates; the accumulator's
+/// coordinates decide which algorithm runs, as in [`plane_topk_insert`].
 #[cube]
 pub fn plane_topk_merge<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
     coordinates: &mut Value<Vector<u32, S>>,
     #[comptime] k: usize,
-    #[comptime] has_coords: bool,
+) {
+    match coordinates {
+        Value::None => plane_topk_merge_values(elements, k),
+        Value::Multiple(coordinates) => plane_topk_merge_with_coords(elements, coordinates, k),
+        Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
+    }
+}
+
+#[cube]
+fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Array<Vector<u32, S>>,
+    #[comptime] k: usize,
 ) {
     let mut final_elements = Array::new(k);
     let mut final_coords = Array::new(k);
@@ -210,24 +285,16 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
         for j in 0..k {
             let is_pointed = cursor.equal(&Vector::new(j as u32));
             local_val = select_many(is_pointed, elements[j], local_val);
-            if has_coords {
-                let coords = coordinates.multiple_mut();
-                local_coord = select_many(is_pointed, coords[j], local_coord);
-            }
+            local_coord = select_many(is_pointed, coordinates[j], local_coord);
         }
 
         let winning_val = plane_max(local_val);
-        let winning_lane = if has_coords {
-            let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
-            final_coords[i] = best_c;
-            let is_cand = local_val
-                .equal(&winning_val)
-                .vec_and(local_coord.equal(&best_c));
-            plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
-        } else {
-            let is_cand = local_val.equal(&winning_val);
-            plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)))
-        };
+        let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
+        final_coords[i] = best_c;
+        let is_cand = local_val
+            .equal(&winning_val)
+            .vec_and(local_coord.equal(&best_c));
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
 
         final_elements[i] = winning_val;
         let is_winner_thread = lane_id.equal(&winning_lane);
@@ -237,10 +304,41 @@ pub fn plane_topk_merge<N: Numeric, S: Size>(
     #[unroll]
     for i in 0..k {
         elements[i] = final_elements[i];
-        if has_coords {
-            let coords = coordinates.multiple_mut();
-            coords[i] = final_coords[i];
+        coordinates[i] = final_coords[i];
+    }
+}
+
+#[cube]
+fn plane_topk_merge_values<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_elements = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll]
+    for i in 0..k {
+        let mut local_val = Vector::new(N::min_value());
+
+        #[unroll]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local_val = select_many(is_pointed, elements[j], local_val);
         }
+
+        let winning_val = plane_max(local_val);
+        let is_cand = local_val.equal(&winning_val);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+
+        final_elements[i] = winning_val;
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        elements[i] = final_elements[i];
     }
 }
 
@@ -288,7 +386,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
 
 /// An instruction for a reduce algorithm that works with [`Vector`].
 ///
-/// See a provided implementation, such as [`Sum`](super::Sum) or [`ArgMax`](super::ArgMax) for an example how to implement
+/// See a provided implementation, such as [`Sum`](super::Sum) or [`Max`](super::Max) for an example how to implement
 /// this trait for a custom instruction.
 ///
 /// A reduction works at three levels. First, it takes input data of type `In` and reduce them
@@ -332,48 +430,36 @@ pub trait ReduceInstruction<P: ReducePrecision>:
     /// Reduce a whole accumulator (other) in accumulator.
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>);
 
-    /// Reduce all elements of the accumulator into a single output element of type `Out`.
-    fn to_output_parallel<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        shape_axis_reduce: usize,
-    ) -> Value<Out>;
+    /// Which half of the `to_output_*` pair the single-output kernel writes.
+    fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode);
 
-    /// Convert each element of the accumulator into the expected output element of type `Out`.
-    fn to_output_perpendicular<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>>;
-}
-
-/// An instruction that can emit its values *and* their coordinates from a single
-/// reduction.
-///
-/// Instructions that track coordinates already carry both results in their
-/// [`Accumulator`]; the two `to_output_both_*` conversions expose them together
-/// so a fused reduce writes both outputs from one launch, instead of running the
-/// reduction twice and throwing one half away each time.
-///
-/// This is a separate trait rather than extra [`ReduceInstruction`] methods so
-/// that instructions with no meaningful index (`Sum`, `Mean`, ...) are not
-/// forced to implement it.
-#[cube]
-pub trait ReduceWithIndices<P: ReducePrecision>: ReduceInstruction<P> {
-    /// Counterpart of [`ReduceInstruction::to_output_parallel`] emitting both results.
-    fn to_output_both_parallel<Out: Numeric, Idx: Numeric>(
+    /// Reduce all elements of the accumulator into a single output element of type `Out`,
+    /// with its coordinate as `Idx` when the accumulator tracks coordinates
+    /// (`Value::None` otherwise).
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>);
 
-    /// Counterpart of [`ReduceInstruction::to_output_perpendicular`] emitting both results.
-    fn to_output_both_perpendicular<Out: Numeric, Idx: Numeric>(
+    /// Convert each element of the accumulator into the expected output element of type
+    /// `Out`, with its coordinates as `Idx` when the accumulator tracks coordinates
+    /// (`Value::None` otherwise).
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>);
 }
+
+/// Marker for instructions whose `to_output_*` conversions emit a non-`None`
+/// indices half whenever the accumulator tracks coordinates, so a fused reduce
+/// can write both outputs from one launch.
+///
+/// A separate trait rather than a [`ReduceInstruction`] guarantee so that
+/// instructions with no meaningful index (`Sum`, `Mean`, ...) are not accepted
+/// by the fused entrypoint.
+pub trait ReduceWithIndices<P: ReducePrecision>: ReduceInstruction<P> {}
 
 #[derive(CubeType)]
 pub struct Item<P: ReducePrecision> {
@@ -420,11 +506,13 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 }
 
-/// A pair of shared memory used for [`ArgMax`](super::ArgMax) and [`ArgMin`](super::ArgMin).
+/// A pair of shared memory used for [`Max`](super::Max) and [`Min`](super::Min).
 #[derive(CubeType)]
 pub struct ArgAccumulator<P: ReducePrecision> {
     pub elements: Shared<[Vector<P::EA, P::SI>]>,
-    pub args: Shared<[Vector<u32, P::SI>]>,
+    /// Empty unless the instruction tracks coordinates; its length is the single
+    /// source of truth for whether coordinates are staged (see `read`/`write`).
+    pub args: Sequence<Shared<[Vector<u32, P::SI>]>>,
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -438,23 +526,40 @@ pub enum ReduceStep {
 
 #[cube]
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
-    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, _inst: &I) -> Self {
+    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, _inst: &I) -> Self {
+        let mut args = Sequence::new();
+        if coordinate {
+            args.push(Shared::new_slice(length));
+        }
+
         ArgAccumulator::<P> {
             elements: Shared::new_slice(length),
-            args: Shared::new_slice(length),
+            args,
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
+        let num_args = comptime!(accumulator.args.len());
+        let args = if comptime!(num_args != 0) {
+            Value::new_single(accumulator.args[0][index])
+        } else {
+            Value::new_None()
+        };
+
         Accumulator::<P> {
             elements: Value::new_single(accumulator.elements[index]),
-            args: Value::new_single(accumulator.args[index]),
+            args,
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         accumulator.elements[index] = item.elements.item();
-        accumulator.args[index] = item.args.item();
+
+        let num_args = comptime!(accumulator.args.len());
+        if comptime!(num_args != 0) {
+            let shared_args = &mut accumulator.args[0];
+            shared_args[index] = item.args.item();
+        }
     }
 }
 

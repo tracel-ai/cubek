@@ -43,6 +43,14 @@ impl From<(u32, u32)> for NumStages {
     }
 }
 
+impl NumStages {
+    /// K-stages the global k-loop consumes per iteration: multi-stage loops
+    /// round their stage count up to the deepest buffered operand.
+    pub fn stage_buffering(&self) -> u32 {
+        self.lhs.max(self.rhs)
+    }
+}
+
 // =====================================================================
 // Partitioner glue — pair cubek-std's `Partitioner` with the matmul-flow
 // `StageMatmulKind` selector + the role-rule-derived coordinate helper.

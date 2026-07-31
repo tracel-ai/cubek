@@ -19,6 +19,10 @@ use crate::*;
 pub enum PlaneTile<T: Numeric> {
     Cmma(CmmaData<T>),
     Mma(MmaData<T>),
+    /// The software leaf's accumulator: a register block, not a hardware fragment. Its lanes
+    /// hold the block the way the encoding above holds a matrix, so the partition over the
+    /// three stays encoding-blind.
+    Register(RegisterData<T>),
 }
 
 #[cube]
@@ -28,6 +32,8 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] leaf: Leaf,
         #[comptime] m: usize,
         #[comptime] n: usize,
+        #[comptime] vector_size: usize,
+        #[comptime] lane_share: LaneShare,
     ) -> PlaneTile<T> {
         match comptime!(leaf) {
             Leaf::Cmma { k } => {
@@ -36,8 +42,10 @@ impl<T: Numeric> PlaneTile<T> {
             Leaf::Mma { k, io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
+            // `vector_size` is the promoting tile's, so the block's lines match the memory it
+            // will drain into; the hardware encodings above have no say in their layout.
             Leaf::Register => {
-                panic!("Tile::promote: the register leaf runs in place, nothing to promote")
+                PlaneTile::new_Register(RegisterData::<T>::alloc(m, n, vector_size, lane_share))
             }
         }
     }
@@ -72,6 +80,7 @@ impl<T: Numeric> PlaneTile<T> {
         match self {
             PlaneTile::Cmma(d) => d.zero(),
             PlaneTile::Mma(d) => d.zero(),
+            PlaneTile::Register(d) => d.zero(),
         }
     }
 
@@ -79,6 +88,11 @@ impl<T: Numeric> PlaneTile<T> {
         match self {
             PlaneTile::Cmma(d) => d.load_window(mem),
             PlaneTile::Mma(d) => d.load_window(mem),
+            // Only an accumulator takes this encoding, and an accumulator is filled by
+            // `zero` or by contracting into it — never by loading an operand window.
+            PlaneTile::Register(_) => {
+                panic!("PlaneTile::load_window: a register accumulator is not a fill sink")
+            }
         }
     }
 
@@ -86,6 +100,9 @@ impl<T: Numeric> PlaneTile<T> {
         match self {
             PlaneTile::Cmma(d) => d.store_window(mem),
             PlaneTile::Mma(d) => d.store_window(mem),
+            // Same-type store; the block drains through `store_cast_window`, which is the
+            // same write with the cast the wider accumulator needs.
+            PlaneTile::Register(d) => d.store_cast_window(mem),
         }
     }
 
@@ -93,6 +110,7 @@ impl<T: Numeric> PlaneTile<T> {
         match self {
             PlaneTile::Cmma(d) => d.store_cast_window(mem),
             PlaneTile::Mma(d) => d.store_cast_window(mem),
+            PlaneTile::Register(d) => d.store_cast_window(mem),
         }
     }
 }
@@ -144,7 +162,11 @@ impl<T: Numeric> PlanePartition<T> {
 
     /// The plane-resident form of an accumulator over `space`: a partition mirroring its grid,
     /// tiles uninitialized. `promote` is purely structural; the caller states the init.
-    pub(crate) fn mirror(#[comptime] space: Space) -> Tile<T> {
+    pub(crate) fn mirror(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] lane_share: LaneShare,
+    ) -> Tile<T> {
         let leaf = comptime!(space.partitioner().leaf());
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
@@ -156,7 +178,7 @@ impl<T: Numeric> PlanePartition<T> {
         for _mi in 0..m_tiles {
             #[unroll]
             for _ni in 0..n_tiles {
-                frags.push(PlaneTile::<T>::acc(leaf, m, n));
+                frags.push(PlaneTile::<T>::acc(leaf, m, n, vector_size, lane_share));
             }
         }
         Tile::<T> {

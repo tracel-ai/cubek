@@ -181,6 +181,7 @@ macro_rules! double_buffering_impl {
                                 minimum_stage_count: 8,
                             },
                             swizzled: tile_matmul.should_swizzle(&device_settings.client),
+                            stage_buffering: <$batch>::num_stages().stage_buffering(),
                             ..Default::default()
                         },
                     )?,

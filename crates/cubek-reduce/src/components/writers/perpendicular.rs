@@ -2,7 +2,7 @@ use crate::{
     ReduceInstruction, ReducePrecision,
     components::{
         args::NumericVector,
-        instructions::{Accumulator, AccumulatorFormat, Value, ValueExpand},
+        instructions::{Accumulator, AccumulatorFormat, ReduceOutputMode, Value, ValueExpand},
         writers::build_reduce_output_layout,
     },
 };
@@ -60,7 +60,13 @@ impl<'a, Out: NumericVector> PerpendicularWriter<'a, Out> {
         accumulator: Accumulator<P>,
         inst: &I,
     ) {
-        let out = I::to_output_perpendicular::<Out::T>(inst, accumulator, self.axis_size);
+        let (values, indices) =
+            I::to_output_perpendicular::<Out::T, Out::T>(inst, accumulator, self.axis_size);
+        let mode = I::output_mode(inst);
+        let out = match comptime!(mode) {
+            ReduceOutputMode::Values => values,
+            ReduceOutputMode::Indices => indices,
+        };
         self.push::<P::SI>(out);
     }
 
@@ -94,7 +100,7 @@ impl<'a, Out: NumericVector> PerpendicularWriter<'a, Out> {
 impl<Out: NumericVector> PerpendicularWriter<'_, Out> {
     fn write_single<S: Size>(&mut self, vector: Vector<Out::T, S>, k_index: usize) {
         if comptime![self.output_vector_size == self.input_vector_size] {
-            self.output.write(
+            self.output.write_checked(
                 (self.write_index as u32, k_index as u32),
                 Vector::cast_from(vector),
             );
@@ -114,7 +120,8 @@ impl<Out: NumericVector> PerpendicularWriter<'_, Out> {
                 }
 
                 let index = self.write_index * num_iters + i;
-                self.output.write((index as u32, k_index as u32), tmp);
+                self.output
+                    .write_checked((index as u32, k_index as u32), tmp);
             }
         }
     }

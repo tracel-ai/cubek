@@ -54,6 +54,16 @@ pub fn test_topk_with_indices_5() {
 }
 
 #[test]
+pub fn test_min_with_indices() {
+    test_case().test_min_with_indices();
+}
+
+#[test]
+pub fn test_max_with_indices() {
+    test_case().test_max_with_indices();
+}
+
+#[test]
 pub fn test_plane_reduction_simple() {
     let strategy = ReduceStrategy { autotune_level: AutotuneLevel::Full,
         vectorization: VectorizationStrategy {

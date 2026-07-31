@@ -40,6 +40,9 @@ pub fn idle_check<P: ReducePrecision, Out: NumericVector>(
     #[comptime] idle_mode: IdleMode,
 ) -> ComptimeOption<bool> {
     if idle_mode.is_enabled() {
+        // `reduce_index_start` is a layout offset, so for multi-slot (top-k)
+        // outputs this compares in offset space: real reductions always map
+        // below the output extent and excess workers at or past it.
         let reduce_count = reduce_count(
             output.len() * output.vector_size(),
             vectorization_mode,

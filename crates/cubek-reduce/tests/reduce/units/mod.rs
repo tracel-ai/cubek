@@ -94,7 +94,7 @@ fn launch_plane_reduce_inplace<N: Numeric, S: Size>(
     }
 
     let mut args = Value::new_None();
-    plane_topk_merge::<N, S>(&mut elements, &mut args, k, false);
+    plane_topk_merge::<N, S>(&mut elements, &mut args, k);
 
     #[unroll]
     for i in 0..k {
@@ -234,7 +234,7 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     let args = Value::new_None();
     let mut coordinates = Value::new_None();
 
-    plane_topk_insert::<N, S>(&mut elements, &mut coordinates, item, &args, k, false);
+    plane_topk_insert::<N, S>(&mut elements, &mut coordinates, item, &args, k);
 
     if valid {
         #[unroll]

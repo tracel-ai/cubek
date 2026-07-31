@@ -190,6 +190,7 @@ where
                         minimum_stage_count: 8,
                     },
                     swizzled: tile_matmul.should_swizzle(&device_settings.client),
+                    stage_buffering: SpecializedBatch::<RC, L, AL>::num_stages().stage_buffering(),
                     ..Default::default()
                 },
             )?,
@@ -288,6 +289,7 @@ fn infer_blueprint_specialized<R: Runtime>(
                 partition_buffering: Some(PartitionBuffering::Single),
                 multi_row_strategy: MultiRowStrategy::Always(2),
                 partition_k: Some(2),
+                stage_buffering: 2,
                 ..Default::default()
             },
         );
@@ -300,6 +302,7 @@ fn infer_blueprint_specialized<R: Runtime>(
 
     let mut builder = BatchMatmulBlueprint::builder(tile_matmul, tiling_scheme, plane_dim, problem)
         .partition_buffering(PartitionBuffering::Single)
+        .stage_buffering(2)
         .hypercube_blueprint(hypercube)
         .load_specialization_config(LoadFlows {
             lhs: InputLoadFlow::LoadOnly,
