@@ -100,7 +100,6 @@ pub fn dequantize_symmetric_packed_value<
     let num_quants = scheme.num_quants();
     let mut tmp = Array::new(vector_size_values);
 
-    // Hoisted: every block below scales against the same per-tensor value.
     let global = read_global::<FG>(global);
 
     #[unroll]
