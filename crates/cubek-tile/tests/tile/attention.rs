@@ -34,6 +34,7 @@ fn attention_fold_kernel(
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
+    #[comptime] row_chunk: usize,
 ) {
     let q = q.tile();
     let k = k.tile();
@@ -75,7 +76,7 @@ fn attention_fold_kernel(
 
         // Clip the ragged tail: no reads past the attended prefix.
         let cols_bound = max(bound_s, s0) - s0;
-        score.score_columns(&q_s, &kb, cols_bound);
+        score.score_columns(&q_s, &kb, cols_bound, row_chunk);
         sync_cube();
 
         let probe = MaskProbe {
@@ -93,7 +94,7 @@ fn attention_fold_kernel(
 
         // The mix folds the rescale in; stale cache beyond the attended
         // prefix must not ride a zero probability into the accumulator.
-        acc.mix_columns(&p, &vb, &factors, cols_bound);
+        acc.mix_columns(&p, &vb, &factors, cols_bound, row_chunk);
         sync_cube();
     }
 
@@ -129,6 +130,8 @@ fn run(
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
     let rows = g * qp;
     let scale = 1. / (d as f32).sqrt();
+    // The register-blocking knob a routine would size from the register budget.
+    let row_chunk = 4;
 
     let f32_ty = f32::as_type_native_unchecked().storage_type();
     let u32_ty = u32::as_type_native_unchecked().storage_type();
@@ -208,6 +211,7 @@ fn run(
         units,
         causal,
         block,
+        row_chunk,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -290,6 +294,7 @@ fn attention_fold_split_kernel(
     #[comptime] splits: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
+    #[comptime] row_chunk: usize,
 ) {
     let q = q.tile();
     let k = k.tile();
@@ -384,7 +389,7 @@ fn attention_fold_split_kernel(
 
         if live {
             let kb = k.at(&region);
-            score.score_columns(&q_s, &kb, cols_bound);
+            score.score_columns(&q_s, &kb, cols_bound, row_chunk);
         }
         sync_cube();
 
@@ -405,7 +410,7 @@ fn attention_fold_split_kernel(
 
         if live {
             let vb = v.at(&region);
-            acc.mix_columns(&p, &vb, &factors, cols_bound);
+            acc.mix_columns(&p, &vb, &factors, cols_bound, row_chunk);
         }
         sync_cube();
     }
@@ -460,6 +465,8 @@ fn run_split(
     let team = team.min((cap / splits).max(1));
     let rows = g * qp;
     let scale = 1. / (d as f32).sqrt();
+    // The register-blocking knob a routine would size from the register budget.
+    let row_chunk = 4;
 
     let f32_ty = f32::as_type_native_unchecked().storage_type();
     let u32_ty = u32::as_type_native_unchecked().storage_type();
@@ -539,6 +546,7 @@ fn run_split(
         splits,
         causal,
         block,
+        row_chunk,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -652,7 +660,7 @@ fn attention_stream_test_kernel(
         let region = k_walk.region(blk);
         let s0 = region.coord(S) * block;
         let cols_bound = max(bound_s, s0) - s0;
-        fold.block(&k.at(&region), &v.at(&region), scale, cols_bound);
+        fold.absorb(&k.at(&region), &v.at(&region), scale, cols_bound);
         blk += 1;
     }
 

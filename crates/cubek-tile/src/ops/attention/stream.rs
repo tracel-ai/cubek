@@ -1,24 +1,25 @@
-//! The register-resident streaming fold: the decode reading of the online
-//! softmax, where a single query position makes a materialized score tile
-//! pure overhead. Each plane streams its K/V slice once — per position, a
-//! lane-cooperative dot closes with one `plane_sum`, the running state
-//! absorbs the score ([`RowState::absorb`]), and the probability multiplies
-//! the value row into register accumulators immediately. No shared memory,
-//! no barriers; the caller owns the walk and the cross-split ending
-//! ([`Tile::merge_splits`] over the published states).
+//! Register-resident attention for the decode shape: a few query rows, K/V
+//! streamed straight through registers, no score tile, no shared memory, no
+//! barriers until the ending.
 //!
-//! Plane-scoped by construction (`plane_sum` closes the dots): the cube's x
-//! dim must be exactly one plane wide; split teams ride the y dim as in the
-//! shared-memory fold.
+//! The fold is the online softmax: a per-row running `(max, sum)` state
+//! ([`RowState`]) plus a value accumulator, updated one key position at a
+//! time. Streaming means each K/V row is read from gmem once, folded in
+//! immediately, and dropped. Plane-scoped by construction (a `plane_sum`
+//! closes each dot): the cube's x dim must be exactly one plane; split teams
+//! ride the y dim, each folding its own slice of the key positions.
 
 use cubecl::prelude::*;
 
+use super::columns::hsum;
 use crate::*;
 
-/// One plane's slice of the streaming fold: the group's query rows and
-/// output accumulators at lane-cyclic line ownership (lane `l` owns lines
-/// `l, l + lanes, …` of every row), plus the per-row running state — every
-/// lane tracks all rows, since a `plane_sum`ed score is plane-uniform.
+/// One plane's share of the streamed fold.
+///
+/// Holds the plane's query rows and output accumulators in registers, at
+/// lane-cyclic line ownership: lane `l` owns lines `l, l + lanes, ...` of
+/// every row. The running [`RowState`] is replicated in every lane, since a
+/// `plane_sum`ed score is plane-uniform.
 #[derive(CubeType)]
 pub struct StreamFold<EA: Float, N: Size> {
     q: Array<Vector<EA, N>>,
@@ -38,11 +39,12 @@ pub struct StreamFold<EA: Float, N: Size> {
 
 #[cube]
 impl<EA: Float, N: Size> StreamFold<EA, N> {
-    /// Load the fold's register operands off the final query tile (trailing
-    /// axis the head dim, everything before it the rows, group-major): this
-    /// lane's lines of every row, zeroed accumulators, the identity state.
-    /// `lanes` is the plane width (the cube's x dim); `N` must be bound to
-    /// the operands' vector width (`let size!(N) = q.vector_size()`).
+    /// Load the fold's operands off the final query tile: this lane's lines
+    /// of every row, zeroed accumulators, the identity state.
+    ///
+    /// `q` is `{rows..., head_dim}`, group-major. `lanes` is the plane width
+    /// (the cube's x dim). `N` must be bound to the operands' vector width
+    /// (`let size!(N) = q.vector_size()`).
     pub fn new<EI: Numeric>(
         q: &Tile<EI>,
         #[comptime] lanes: usize,
@@ -54,7 +56,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let rows = comptime!(row_space.tile_size());
         comptime!(assert!(
             q.space.tile_size() == rows * d && d.is_multiple_of(w),
-            "StreamFold: q is {{rows…, head_dim}} with the line width dividing the head dim"
+            "StreamFold: q is {{rows..., head_dim}} with the line width dividing the head dim"
         ));
         let lines = comptime!(d / w);
         let per_lane = comptime!(lines.div_ceil(lanes));
@@ -89,12 +91,18 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// Stream one K/V block: for each position below `cols_bound`, the
-    /// lane-cooperative dot, one `plane_sum` per row, the state update, and
-    /// the fused rescale-and-accumulate of the value row. Positions at or
-    /// past the bound are neither read nor folded (the ragged tail — stale
-    /// cache never enters), so the block need not divide anything.
-    pub fn block<EI: Numeric>(&mut self, k: &Tile<EI>, v: &Tile<EI>, scale: EA, cols_bound: usize) {
+    /// Fold one K/V block in: per key position, the lane-cooperative dot,
+    /// one `plane_sum` per row, the state update, then the value row
+    /// rescaled-and-accumulated. Positions at or past `cols_bound` (the
+    /// ragged tail) are neither read nor folded, so the block need not
+    /// divide anything.
+    pub fn absorb<EI: Numeric>(
+        &mut self,
+        k: &Tile<EI>,
+        v: &Tile<EI>,
+        scale: EA,
+        cols_bound: usize,
+    ) {
         let wk = k.vector_size();
         let wv = v.vector_size();
         let rank = comptime!(k.space.rank());
@@ -132,11 +140,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                     let kv = Vector::<EA, N>::cast_from(kf[s * lines + li]);
                     #[unroll]
                     for g in 0..rows {
-                        let prod = self.q[g * per_lane + p] * kv;
-                        #[unroll]
-                        for j in 0..w {
-                            partial[g] += prod.extract(j);
-                        }
+                        partial[g] += hsum(self.q[g * per_lane + p] * kv, w);
                     }
                 }
             }
@@ -174,13 +178,10 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// The one-barrier split ending: every plane parks its state (lane 0 —
-    /// the states are plane-uniform) and its owned accumulator lines in
-    /// shared memory, one `sync_cube`, then plane 0 merges the states
-    /// (`RowState`'s epilogue math across splits), folds the split weights
-    /// and the normalizer in, and stores straight to the output window —
-    /// vectorized, cast to the output element. Fully-masked rows store
-    /// exact zeros.
+    /// The fused ending: every plane parks its state and accumulator lines
+    /// in shared memory, one `sync_cube`, then plane 0 merges the states
+    /// across splits and writes the normalized output, vectorized and cast
+    /// to the output element. Fully-masked rows store exact zeros.
     pub fn store<EI: Numeric>(&self, out: &mut Tile<EI>, #[comptime] splits: usize) {
         let rows = comptime!(self.rows);
         let per_lane = comptime!(self.per_lane);
@@ -198,14 +199,15 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
 
         let mut partials =
             Shared::<[Vector<EA, N>]>::new_slice(comptime!(rows * splits * per_lane * lanes));
-        let mut states = Shared::<[EA]>::new_slice(comptime!(2 * rows * splits));
+        let mut maxes = Shared::<[EA]>::new_slice(comptime!(rows * splits));
+        let mut sums = Shared::<[EA]>::new_slice(comptime!(rows * splits));
         let lane = UNIT_POS_X as usize;
         let split = UNIT_POS_Y as usize;
         if lane == 0 {
             #[unroll]
             for g in 0..rows {
-                states[(g * 2) * splits + split] = self.state.m[g];
-                states[(g * 2 + 1) * splits + split] = self.state.l[g];
+                maxes[g * splits + split] = self.state.m[g];
+                sums[g * splits + split] = self.state.l[g];
             }
         }
         #[unroll]
@@ -223,26 +225,25 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             let of = out.dense_mut::<N>();
             #[unroll]
             for g in 0..rows {
-                let mut row_max = states[(g * 2) * splits];
-                for p in 1..splits {
-                    row_max = max(row_max, states[(g * 2) * splits + p]);
+                let mut row_max = maxes[g * splits];
+                for t in 1..splits {
+                    row_max = max(row_max, maxes[g * splits + t]);
                 }
+                let mut weights = Array::<EA>::new(splits);
                 let mut norm = EA::from_int(0);
-                for p in 0..splits {
-                    norm += states[(g * 2 + 1) * splits + p]
-                        * (states[(g * 2) * splits + p] - row_max).exp();
+                for t in 0..splits {
+                    weights[t] = (maxes[g * splits + t] - row_max).exp();
+                    norm += sums[g * splits + t] * weights[t];
                 }
-                let eps = EA::new(FULLY_MASKED_ROW_THRESHOLD);
-                let recip = EA::cast_from(norm >= eps) * clamp_min(norm, eps).recip();
+                let recip = masked_recip::<EA>(norm);
                 #[unroll]
                 for i in 0..per_lane {
                     let li = lane + i * lanes;
                     if li < lines {
                         let mut total = Vector::<EA, N>::cast_from(0u32);
-                        for p in 0..splits {
-                            let weight = (states[(g * 2) * splits + p] - row_max).exp();
-                            total += partials[((g * splits + p) * per_lane + i) * lanes + lane]
-                                * Vector::cast_from(weight);
+                        for t in 0..splits {
+                            total += partials[((g * splits + t) * per_lane + i) * lanes + lane]
+                                * Vector::cast_from(weights[t]);
                         }
                         of[g * lines + li] = Vector::cast_from(total * Vector::cast_from(recip));
                     }
@@ -251,8 +252,8 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// The split ending: publish this plane's running state (lane 0 — the
-    /// states are plane-uniform) and its owned accumulator lines into the
+    /// The split ending: publish this plane's running state (lane 0 writes,
+    /// the states are plane-uniform) and its accumulator lines into the
     /// team's windows of the split-wide buffers. The caller syncs, merges
     /// ([`Tile::merge_splits`]) and drains with the weights folded in.
     pub fn publish(&self, m_win: &mut Tile<EA>, l_win: &mut Tile<EA>, acc_win: &mut Tile<EA>) {
