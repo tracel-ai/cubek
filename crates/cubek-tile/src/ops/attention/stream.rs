@@ -59,7 +59,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let lines = comptime!(d / w);
         let per_lane = comptime!(lines.div_ceil(lanes));
 
-        let qf = q.flat::<N>();
+        let qf = q.dense::<N>();
         let mut qa = Array::<Vector<EA, N>>::new(comptime!(rows * per_lane));
         let mut acc = Array::<Vector<EA, N>>::new(comptime!(rows * per_lane));
         let lane = UNIT_POS_X as usize;
@@ -70,7 +70,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                 let li = lane + p * lanes;
                 let mut qv = Vector::<EA, N>::cast_from(0u32);
                 if li < lines {
-                    qv = Vector::<EA, N>::cast_from(qf.read(g * lines + li));
+                    qv = Vector::<EA, N>::cast_from(qf[g * lines + li]);
                 }
                 qa[g * per_lane + p] = qv;
                 acc[g * per_lane + p] = Vector::<EA, N>::cast_from(0u32);
@@ -114,8 +114,8 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let lanes = comptime!(self.lanes);
         let w = comptime!(self.width);
 
-        let kf = k.flat::<N>();
-        let vf = v.flat::<N>();
+        let kf = k.dense::<N>();
+        let vf = v.dense::<N>();
         let lane = UNIT_POS_X as usize;
         let bound = min(cols_bound, cols);
 
@@ -129,7 +129,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             for p in 0..per_lane {
                 let li = lane + p * lanes;
                 if li < lines {
-                    let kv = Vector::<EA, N>::cast_from(kf.read(s * lines + li));
+                    let kv = Vector::<EA, N>::cast_from(kf[s * lines + li]);
                     #[unroll]
                     for g in 0..rows {
                         let prod = self.q[g * per_lane + p] * kv;
@@ -162,7 +162,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             for p in 0..per_lane {
                 let li = lane + p * lanes;
                 if li < lines {
-                    let vv = Vector::<EA, N>::cast_from(vf.read(s * lines + li));
+                    let vv = Vector::<EA, N>::cast_from(vf[s * lines + li]);
                     #[unroll]
                     for g in 0..rows {
                         self.acc[g * per_lane + p] = self.acc[g * per_lane + p]

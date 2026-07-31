@@ -386,6 +386,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
+    /// own width): index `i` reads line `origin + i` — one add, no layout
+    /// walk. See [`MemData::dense_lines`] for the (caller-owned) contiguity
+    /// contract; the streaming fold's operands satisfy it by construction.
+    pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines::<W>(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::dense: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::dense: a tma source has no element view"),
+        }
+    }
+
     /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's
     /// transport leaf. A partition source is matched first: it needs the whole
     /// destination tile, which the pairing match below would keep borrowed.
