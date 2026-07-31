@@ -75,12 +75,19 @@ impl<E: Float> RowState<E> {
 /// The masking predicates and where the score tile sits in the global
 /// (kept, reduced) space: origin of its top-left element and the valid
 /// extents. Causal and materialized are comptime knobs.
+///
+/// `q_rows` maps a score row to its query position: a GQA score tile stacks
+/// the group members over the same query block (group-major), so row `r` sits
+/// at query `origin_q + r % q_rows`. A group-free tile sets `q_rows` to its
+/// row count, and the modulo is the identity.
 #[derive(CubeType)]
 pub struct MaskProbe {
     pub origin_q: usize,
     pub origin_s: usize,
     pub bound_q: usize,
     pub bound_s: usize,
+    #[cube(comptime)]
+    pub q_rows: usize,
     #[cube(comptime)]
     pub causal: bool,
     #[cube(comptime)]
@@ -106,6 +113,12 @@ impl MaskProbe {
         masked
     }
 
+    /// The query position of score row `r` (see `q_rows`).
+    pub fn row_q(&self, r: usize) -> usize {
+        let q_rows = comptime!(self.q_rows);
+        self.origin_q + r % q_rows
+    }
+
     /// The probe advanced `offset` along the reduced axis: how a walk hands
     /// each region its own origin.
     pub fn step_s(&self, offset: usize) -> MaskProbe {
@@ -114,6 +127,7 @@ impl MaskProbe {
             origin_s: self.origin_s + offset,
             bound_q: self.bound_q,
             bound_s: self.bound_s,
+            q_rows: comptime!(self.q_rows),
             causal: comptime!(self.causal),
             materialized: comptime!(self.materialized),
         }

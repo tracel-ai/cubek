@@ -26,7 +26,7 @@ impl<EA: Float> Tile<EA> {
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
-                let q = probe.origin_q + r;
+                let q = probe.row_q(r);
                 for c in 0..cols {
                     let masked = probe.masked(q, probe.origin_s + c, mask);
                     let val = select(

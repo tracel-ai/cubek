@@ -73,6 +73,7 @@ fn softmax_walk_kernel(
             origin_s: blk * cols,
             bound_q: rows,
             bound_s: bound_s as usize,
+            q_rows: rows,
             causal,
             materialized,
         };
@@ -292,8 +293,7 @@ fn softmax_smem_acc_kernel(
     let mut state = RowState::<f32>::new(kept_space.clone(), units);
     let rpu = comptime!(state.rows_per_unit);
 
-    let mut factors =
-        MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::strided()));
+    let mut factors = MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::strided()));
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
     acc.zero();
@@ -322,6 +322,7 @@ fn softmax_smem_acc_kernel(
             origin_s: blk * cols,
             bound_q: rows,
             bound_s: bound_s as usize,
+            q_rows: rows,
             causal,
             materialized: false,
         };
@@ -416,7 +417,11 @@ fn run_smem_acc(
     let (values_handle, values_data) =
         TestInput::builder(client.clone(), Shape::new([total_cols, val_dim]))
             .dtype(f32_ty)
-            .custom((0..total_cols * val_dim).map(|i| wobble(i, 2) / 2.).collect())
+            .custom(
+                (0..total_cols * val_dim)
+                    .map(|i| wobble(i, 2) / 2.)
+                    .collect(),
+            )
             .generate_with_f32_host_data();
     let out_handle = TestInput::builder(client.clone(), Shape::new([rows, val_dim]))
         .dtype(f32_ty)
