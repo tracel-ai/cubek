@@ -287,13 +287,12 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
 
 #[test]
 fn test_quantization_symmetric_block_tensor() {
-    test_quantization_block_tensor_symmetric(
-        SHAPE_X,
-        SHAPE_Y,
-        QuantValue::Q8S,
-        SHAPE_X,
-        QuantStore::Native,
-    );
+    // Native storage holds byte-wide values only; the packed sibling covers every value.
+    if !matches!(VALUE, QuantValue::Q8F | QuantValue::Q8S) {
+        return;
+    }
+
+    test_quantization_block_tensor_symmetric(SHAPE_X, SHAPE_Y, VALUE, SHAPE_X, QuantStore::Native);
 }
 
 #[test]
