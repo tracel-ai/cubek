@@ -22,8 +22,12 @@ impl<EA: Float> Tile<EA> {
     /// `UNIT_POS, UNIT_POS + CUBE_DIM, …` and streams whole `k` rows for
     /// them, so a gmem `k` is read once across the cube; `q` is read
     /// `cols`-fold and belongs in shared memory. Accumulates in `EA` lanes,
-    /// horizontal-summed once per cell. The caller syncs after.
-    pub fn score_columns<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>) {
+    /// horizontal-summed once per cell. `cols_bound` clips the ragged tail:
+    /// columns at or past it are neither read from `k` (which may end before
+    /// the block does) nor written — the softmax's mask probe overwrites
+    /// every out-of-prefix cell regardless of its stale content.
+    /// The caller syncs after.
+    pub fn score_columns<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>, cols_bound: usize) {
         let rank = comptime!(self.space.rank());
         let rows = comptime!(self.space.extent_at(rank - 2));
         let cols = comptime!(self.space.extent_at(rank - 1));
@@ -53,8 +57,9 @@ impl<EA: Float> Tile<EA> {
 
         let chunks = comptime!(rows.div_ceil(ROW_CHUNK));
         let workers = CUBE_DIM as usize;
+        let bound = min(cols_bound, cols);
         let mut c = UNIT_POS as usize;
-        while c < cols {
+        while c < bound {
             #[unroll]
             for ch in 0..chunks {
                 let base = comptime!(ch * ROW_CHUNK);
@@ -86,17 +91,20 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// `self[r, v..] += Σ_{c < cols_bound} p[r, c] · val[c, v..]` — the value
-    /// matmul, `self` a final rank-2 `{rows, val_dim}` accumulator. Each unit
-    /// owns cyclic *lines* of the value axis, so a gmem `val` is read once
-    /// across the cube and adjacent units read adjacent lines (coalesced).
-    /// `cols_bound` clips the block's ragged tail: stale cache beyond the
-    /// attended prefix (possibly NaN) must not ride a zero probability.
-    /// The caller syncs on both sides.
+    /// `self[r, v..] = self[r, v..] · factors[r] + Σ_{c < cols_bound}
+    /// p[r, c] · val[c, v..]` — the value matmul with the online-softmax
+    /// rescale fused in (each cell has one owner here, so the correction
+    /// rides the same visit). `self` is a final rank-2 `{rows, val_dim}`
+    /// accumulator; each unit owns cyclic *lines* of the value axis, so a
+    /// gmem `val` is read once across the cube and adjacent units read
+    /// adjacent lines (coalesced). `cols_bound` clips the block's ragged
+    /// tail: stale cache beyond the attended prefix (possibly NaN) must not
+    /// ride a zero probability. The caller syncs on both sides.
     pub fn mix_columns<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
+        factors: &Tile<EA>,
         cols_bound: usize,
     ) {
         let rank = comptime!(self.space.rank());
@@ -119,8 +127,12 @@ impl<EA: Float> Tile<EA> {
         let size!(WP) = wp;
         let size!(WV) = wv;
 
+        let wf = factors.vector_size();
+        comptime!(assert!(wf == 1, "mix_columns: a scalar factors tile"));
+        let size!(WF) = wf;
         let pf = p.flat::<WP>();
         let vf = val.flat::<WV>();
+        let ff = factors.flat::<WF>();
         let mut out = self.flat_mut::<W>();
 
         let bound = min(cols_bound, cols);
@@ -147,11 +159,12 @@ impl<EA: Float> Tile<EA> {
                 }
                 #[unroll]
                 for i in 0..height {
+                    let f = ff.read(base + i).extract(0);
                     #[unroll]
                     for j in 0..wv {
                         let idx = (base + i) * val_dim + li * wv + j;
                         let cur = out.read(idx).extract(0);
-                        out.write(idx, Vector::cast_from(cur + acc[i].extract(j)));
+                        out.write(idx, Vector::cast_from(cur * f + acc[i].extract(j)));
                     }
                 }
             }

@@ -73,7 +73,9 @@ fn attention_fold_kernel(
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
 
-        score.score_columns(&q_s, &kb);
+        // Clip the ragged tail: no reads past the attended prefix.
+        let cols_bound = max(bound_s, s0) - s0;
+        score.score_columns(&q_s, &kb, cols_bound);
         sync_cube();
 
         let probe = MaskProbe {
@@ -89,13 +91,9 @@ fn attention_fold_kernel(
         factors.store_rows(&corr, rpu);
         sync_cube();
 
-        acc.scale_rows(&factors);
-        sync_cube();
-
-        // Clip the ragged tail: stale cache beyond the attended prefix must
-        // not ride a zero probability into the accumulator.
-        let cols_bound = max(bound_s, s0) - s0;
-        acc.mix_columns(&p, &vb, cols_bound);
+        // The mix folds the rescale in; stale cache beyond the attended
+        // prefix must not ride a zero probability into the accumulator.
+        acc.mix_columns(&p, &vb, &factors, cols_bound);
         sync_cube();
     }
 
