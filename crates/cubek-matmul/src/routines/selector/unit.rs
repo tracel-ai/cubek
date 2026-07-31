@@ -70,6 +70,9 @@ pub fn infer_blueprint_unit<R: Runtime>(
 ) -> (BatchMatmulBlueprint, MatmulElems) {
     let kind: MatmulKind = problem.into();
     let num_sms = client.properties().hardware.num_streaming_multiprocessors;
+    // Per-cube shared-memory budget; the selectors cap the tiling so the chosen
+    // blueprint never over-requests it (see `selection`).
+    let max_smem = client.properties().hardware.max_shared_memory_size;
     let min_tile_size = usize::max(vector_sizes.lhs, vector_sizes.rhs);
     let min_tile_size = usize::max(vector_sizes.out, min_tile_size) as u32;
     let tile_size = u32::max(min_tile_size, 4);
@@ -82,6 +85,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -92,6 +96,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -102,6 +107,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -112,6 +118,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -122,6 +129,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -132,6 +140,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -142,6 +151,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -152,6 +162,7 @@ pub fn infer_blueprint_unit<R: Runtime>(
             double_buffering,
             tile_size,
             num_sms,
+            max_smem,
             options,
             &dtypes,
             vector_sizes,
@@ -169,6 +180,7 @@ fn general_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -222,6 +234,7 @@ fn general_unit_selector(
             num_plane,
         },
         num_sms,
+        max_smem,
         GlobalOrder::SwizzleRow(4),
         options.stage,
         options.swizzle,
@@ -240,6 +253,7 @@ fn matvec_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -259,6 +273,7 @@ fn matvec_unit_selector(
             n: 2,
         },
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -277,6 +292,7 @@ fn vecmat_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -293,6 +309,7 @@ fn vecmat_unit_selector(
             n: (plane_dim / 2).max(1),
         },
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -311,6 +328,7 @@ fn scalarvec_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -333,6 +351,7 @@ fn scalarvec_unit_selector(
             n: (plane_dim / 2).max(1),
         },
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -351,6 +370,7 @@ fn vecscalar_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -367,6 +387,7 @@ fn vecscalar_unit_selector(
             n: 2,
         },
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -385,6 +406,7 @@ fn inner_product_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -404,6 +426,7 @@ fn inner_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: plane_dim, n: 1 }, // TODO: most planes does nothing.
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -422,6 +445,7 @@ fn outer_product_unit_selector(
     double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -435,6 +459,7 @@ fn outer_product_unit_selector(
         plane_dim,
         StageSelection::Fixed { m: 8, n: 8 },
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -453,6 +478,7 @@ fn scalar_product_unit_selector(
     double_buffering: bool,
     _tile_size: u32,
     num_sms: Option<u32>,
+    max_smem: usize,
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
@@ -469,6 +495,7 @@ fn scalar_product_unit_selector(
             num_plane: 1,
         },
         num_sms,
+        max_smem,
         GlobalOrder::default(),
         StageScaling::Disabled,
         options.swizzle,
@@ -507,6 +534,7 @@ fn selection(
     plane_dim: u32,
     stage: StageSelection,
     num_sms: Option<u32>,
+    max_smem: usize,
     global_order: GlobalOrder,
     stage_scaling: StageScaling,
     swizzle: bool,
@@ -527,12 +555,35 @@ fn selection(
         StageScaling::Disabled => (stage_size_m, stage_size_n),
     };
 
-    let tiling_scheme = TilingScheme::builder()
-        .with_tile_size(t.into())
-        .with_partition_size(p.into())
-        .with_stage_size((stage_size_m, stage_size_n, 1).into())
-        .build()
-        .unwrap();
+    let stage_buffering = if double_buffering { 2 } else { 1 };
+
+    // Shrink the register partition until the stage footprint fits the per-cube
+    // shared-memory budget. `MaxTileSize` can scale the partition up enough that
+    // the accumulator stage alone (`elements_per_stage_m × elements_per_stage_n`)
+    // blows a small budget (e.g. 48 KB on wgpu). An over-budget blueprint is
+    // rejected by `validate_blueprint` at launch, so if autotune benchmarked it
+    // on a shape where it fit, cached it, then reused it on a larger shape in the
+    // same key bucket, the launch would fail the `SharedMemoryTooBig` check and
+    // panic ("Should run when selected by autotune"). Partition is the safe knob:
+    // fewer register tiles per unit (more cubes), while the tile (vectorization)
+    // and stage (unit mapping) are left intact. The estimate mirrors
+    // `requested_smem_bytes` in the batch setup so a capped blueprint is never
+    // then rejected as unavailable.
+    let mut p = p;
+    let tiling_scheme = loop {
+        let tiling_scheme = TilingScheme::builder()
+            .with_tile_size(t.into())
+            .with_partition_size(p.into())
+            .with_stage_size((stage_size_m, stage_size_n, 1).into())
+            .build()
+            .unwrap();
+
+        if unit_stage_smem_bytes(&tiling_scheme, dtypes, stage_buffering) <= max_smem
+            || !halve_largest_partition(&mut p)
+        {
+            break tiling_scheme;
+        }
+    };
 
     let cube_count_strategy = match num_sms {
         Some(num_sms) => CubeCountStrategy::Sm {
@@ -548,7 +599,6 @@ fn selection(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
-    let stage_buffering = if double_buffering { 2 } else { 1 };
     let mut builder =
         BatchMatmulBlueprint::builder(TileMatmulKind::Register, tiling_scheme, plane_dim, problem)
             .partition_buffering(buffering)
@@ -592,6 +642,45 @@ fn select_swizzle(swizzle_dim: usize, elem: StorageType, vector_size: VectorSize
         64 => SwizzleMode::B64,
         _ => SwizzleMode::B128,
     }
+}
+
+/// Shared-memory bytes one cube allocates for a unit blueprint with this tiling.
+///
+/// Mirrors `requested_smem_bytes` in the batch setup: the lhs and rhs operand
+/// stages (each `num_stages = stage_buffering`) plus the accumulator/output
+/// stage, which `expand_config` builds once and is therefore counted once.
+/// Keeping this in step with the launch-time check is what lets [`selection`]
+/// cap the tiling to a blueprint the check will accept.
+fn unit_stage_smem_bytes(
+    tiling_scheme: &TilingScheme,
+    dtypes: &MatmulElems,
+    stage_buffering: u32,
+) -> usize {
+    let em = tiling_scheme.elements_per_stage_along_m() as usize;
+    let ek = tiling_scheme.elements_per_stage_along_k() as usize;
+    let en = tiling_scheme.elements_per_stage_along_n() as usize;
+    let buf = stage_buffering as usize;
+
+    em * ek * buf * dtypes.lhs_stage.size()
+        + ek * en * buf * dtypes.rhs_stage.size()
+        + em * en * dtypes.acc_stage.size()
+}
+
+/// Halve the largest partition dimension greater than 1, returning whether a
+/// reduction was made. Once every dimension is 1 there is nothing left to trim.
+fn halve_largest_partition(p: &mut (u32, u32, u32)) -> bool {
+    let max = p.0.max(p.1).max(p.2);
+    if max <= 1 {
+        return false;
+    }
+    if p.0 == max {
+        p.0 /= 2;
+    } else if p.1 == max {
+        p.1 /= 2;
+    } else {
+        p.2 /= 2;
+    }
+    true
 }
 
 /// Returns the factor pair `(a, b)` of `n` minimizing their difference,
