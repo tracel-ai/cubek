@@ -74,9 +74,7 @@ impl<R: Runtime> InputBinding<R> {
                 data.shape.swap(dim0, dim1);
                 data.strides.swap(dim0, dim1);
 
-                // Swap dims for scale and block size if block scaled quant is used. A per-tensor
-                // scale sitting above the blocks does not change their geometry, so it swaps the
-                // same way.
+                // A per-tensor scale does not change block geometry, so it swaps the same way.
                 if let QuantLevel::Block(block) | QuantLevel::BlockTensor { block, .. } =
                     &mut scheme.level
                 {

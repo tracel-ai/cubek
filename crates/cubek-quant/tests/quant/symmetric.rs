@@ -343,7 +343,6 @@ fn test_quantization_block_tensor_symmetric(
         raw.push(2.0 * amax / (q_max - q_min));
     }
 
-    // Split them: the per-tensor scale takes the magnitude, the block scales keep the spread.
     let peak = raw.iter().copied().fold(0.0f32, f32::max);
     let global_f32 = peak / 4.0;
     let scales: Vec<f32> = raw.iter().map(|s| s / global_f32).collect();
@@ -428,8 +427,7 @@ fn test_quantization_block_tensor_symmetric(
     )
     .unwrap();
 
-    // The per-tensor scale has to survive the round trip: the kernel writes it into the quantized
-    // tensor's own region, and dequantize reads it back from there rather than from the input.
+    // Dequantize reads the per-tensor scale from the output's own region, not from the input.
     let written = client.read_one_unchecked_tensor(CopyDescriptor::new(
         output_global.handle.clone().binding(),
         output_global.shape().clone(),

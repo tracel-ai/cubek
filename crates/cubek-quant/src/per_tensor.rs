@@ -7,7 +7,6 @@
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
-/// Load the per-tensor scale, once.
 #[cube]
 pub(crate) fn read_global<FG: Numeric>(
     global: ComptimeOption<LinearView<'_, FG>>,

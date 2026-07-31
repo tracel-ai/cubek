@@ -88,8 +88,6 @@ fn fixture(scheme: &QuantScheme) -> Fixture {
     }
 }
 
-/// A scheme declaring a per-tensor scale, launched without one, used to quantize against the block
-/// scales alone and leave the output's per-tensor region at zero.
 #[test]
 #[should_panic(expected = "requires a per-tensor scale")]
 fn quantize_rejects_a_missing_per_tensor_scale() {
@@ -110,8 +108,6 @@ fn quantize_rejects_a_missing_per_tensor_scale() {
     .unwrap();
 }
 
-/// The mirror: a one-level scheme served a per-tensor scale used to apply it anyway, so the scheme
-/// was not the source of truth for whether a tensor is two-level.
 #[test]
 #[should_panic(expected = "does not take a per-tensor scale")]
 fn quantize_rejects_an_unexpected_per_tensor_scale() {
@@ -151,9 +147,6 @@ fn dequantize_rejects_a_missing_per_tensor_scale() {
     .unwrap();
 }
 
-/// The per-tensor scale is stored as `f32` regardless of what the kernel computes in. Reading it as
-/// the compute type instead returned zeros for an f16 dequantize while the one-level path at the
-/// same dtypes was fine.
 #[test]
 fn the_per_tensor_scale_is_read_as_f32_not_as_the_compute_type() {
     let scheme = two_level();
