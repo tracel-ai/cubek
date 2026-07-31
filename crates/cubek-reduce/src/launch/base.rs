@@ -116,6 +116,7 @@ fn prepare_reduce_launch<Run: Runtime>(
             strategy.autotune_level,
             cubecl::config::autotune::AutotuneLevel::Full
         ),
+        fuse_on_read: false,
     };
 
     let (blueprint, settings) = match strategy.routine {

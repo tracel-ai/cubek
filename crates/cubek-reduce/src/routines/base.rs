@@ -12,6 +12,9 @@ pub struct ReduceVectorSettings {
     /// See [`ReduceStrategy::autotune_level`](crate::ReduceStrategy): gates
     /// the unchecked comptime fast paths in the blueprint derivations.
     pub unchecked_fast_paths: bool,
+    /// Whether reading the input has side effects (fuse-on-read: the read also
+    /// writes a materialized intermediate).
+    pub fuse_on_read: bool,
 }
 
 #[derive(Debug)]

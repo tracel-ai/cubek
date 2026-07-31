@@ -35,8 +35,14 @@ impl<P: ReducePrecision> ReaderBoundChecks<P> {
         };
 
         let bound_checks = comptime!(match idle.is_some() {
-            // When idle may be true, we have to force bound checks.
-            true => BoundChecks::Mask,
+            // When idle may be true, we have to force bound checks. A branching
+            // caller (fuse-on-read, where the read has a write side effect) must
+            // keep branching: masking would clamp the idle unit's index and still
+            // perform the side-effecting read, clobbering position 0.
+            true => match bound_checks {
+                BoundChecks::Branch => BoundChecks::Branch,
+                _ => BoundChecks::Mask,
+            },
             false => bound_checks,
         });
 
