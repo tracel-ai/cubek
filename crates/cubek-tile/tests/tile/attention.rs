@@ -8,7 +8,7 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, Storage,
+    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, Storage, StreamFold,
     StridedTileArg, StridedTileArgLaunch, Tiling, Walk, WalkOrder,
 };
 
@@ -606,4 +606,234 @@ fn split_fold_degenerates_to_one() {
 #[test]
 fn split_fold_idle_teams() {
     run_split((4, 4, 2, 1, 16, 8, 8, 8), 10, false, 1);
+}
+
+/// The streaming fold: the decode shape with no score tile — each plane (one
+/// per split team on the cube's y dim) streams its S slice through
+/// [`StreamFold`], and the same split ending as the shared-memory fold
+/// (publish, [`merge_splits`](cubek_tile::Tile), weighted drain) closes it.
+/// No barriers until the ending.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn attention_stream_test_kernel(
+    q: &StridedTileArg<'_, f32>, // {G, QP(=1), D}
+    k: &StridedTileArg<'_, f32>, // {S, D}
+    v: &StridedTileArg<'_, f32>, // {S, V}
+    out: &mut Tensor<f32>,       // [G·V] flat
+    scale: f32,
+    bound: u32,
+    #[comptime] lanes: usize,
+    #[comptime] splits: usize,
+    #[comptime] block: usize,
+) {
+    let q = q.tile();
+    let k = k.tile();
+    let v = v.tile();
+
+    let rank = comptime!(q.space.rank());
+    let d = comptime!(q.space.extent_at(rank - 1));
+    let rows = comptime!(q.space.tile_size() / d);
+    let val_dim = comptime!(v.space.extent(V));
+
+    let split_rows = comptime!(splits * rows);
+    let row_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, split_rows)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(R, Cut::sequential(rows))
+            })
+            .leaf(Leaf::Register)
+    );
+    let acc_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, split_rows), (V, val_dim)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(R, Cut::sequential(rows))
+                    .axis(V, Cut::sequential(val_dim))
+            })
+            .leaf(Leaf::Register)
+    );
+    let mut factors_all =
+        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let l_all = MemData::<f32>::smem(row_space, 1usize, comptime!(StagePlan::strided()));
+    let acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let mut recip = MemData::<f32>::smem(
+        comptime!(Space::new(&[(R, rows)])),
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+
+    let t = UNIT_POS_Y as usize;
+    let rw = Walk::over(m_all.runtime_space());
+    let mut m_win = m_all.at(&rw.region(t));
+    let mut l_win = l_all.at(&rw.region(t));
+    let aw = Walk::over(acc_all.runtime_space());
+    let mut acc_win = acc_all.at(&aw.region(t));
+
+    let kept = comptime!(Space::new(&[(R, rows)]));
+    let size!(N) = q.vector_size();
+    let mut fold = StreamFold::<f32, N>::new(&q, lanes, kept);
+
+    // This team's interleaved slice of the walk — no barriers anywhere.
+    let bound_s = bound as usize;
+    let k_walk = Walk::over(k.runtime_space());
+    let blocks = bound_s.div_ceil(block);
+    let mut blk = t;
+    while blk < blocks {
+        let region = k_walk.region(blk);
+        let s0 = region.coord(S) * block;
+        let cols_bound = max(bound_s, s0) - s0;
+        fold.block(&k.at(&region), &v.at(&region), scale, cols_bound);
+        blk += splits;
+    }
+
+    fold.publish(&mut m_win, &mut l_win, &mut acc_win);
+    sync_cube();
+    factors_all.merge_splits(&mut recip, &m_all, &l_all, splits);
+    sync_cube();
+
+    let size!(W1) = 1usize;
+    let acc_flat = acc_all.flat::<W1>();
+    let w_flat = factors_all.flat::<W1>();
+    let r_flat = recip.flat::<W1>();
+    let total = comptime!(rows * val_dim);
+    let workers = CUBE_DIM as usize;
+    let mut i = UNIT_POS as usize;
+    while i < total {
+        let r = i / val_dim;
+        let vi = i % val_dim;
+        let mut sum = 0.0f32;
+        for ti in 0..splits {
+            let sr = ti * rows + r;
+            sum += acc_flat.read(sr * val_dim + vi).extract(0) * w_flat.read(sr).extract(0);
+        }
+        out[i] = sum * r_flat.read(r).extract(0);
+        i += workers;
+    }
+}
+
+/// Launch the streaming fold and check against direct host math.
+fn run_stream(
+    (splits, g, s_total, block, d): (usize, usize, usize, usize, usize),
+    bound_s: usize,
+    vec: usize,
+) {
+    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let cap = client.properties().hardware.max_units_per_cube as usize;
+    let splits = splits.min((cap / lanes).max(1));
+    let rows = g;
+    let val_dim = d;
+    let scale = 1. / (d as f32).sqrt();
+
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let wobble =
+        |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
+
+    let (q_handle, q_data) = TestInput::builder(client.clone(), Shape::new([g, 1, d]))
+        .dtype(f32_ty)
+        .custom((0..g * d).map(|i| wobble(i, 1)).collect())
+        .generate_with_f32_host_data();
+    let (k_handle, k_data) = TestInput::builder(client.clone(), Shape::new([s_total, d]))
+        .dtype(f32_ty)
+        .custom((0..s_total * d).map(|i| wobble(i, 2)).collect())
+        .generate_with_f32_host_data();
+    let (v_handle, v_data) = TestInput::builder(client.clone(), Shape::new([s_total, val_dim]))
+        .dtype(f32_ty)
+        .custom((0..s_total * val_dim).map(|i| wobble(i, 3) / 2.).collect())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([rows, val_dim]))
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let q_space = Space::new(&[(G, g), (QP, 1), (D, d)]);
+    let k_space = Tiling::new()
+        .extents(&[(S, s_total), (D, d)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(S, Cut::sequential(block))
+                .axis(D, Cut::sequential(d))
+        })
+        .leaf(Leaf::Register);
+    let v_space = Tiling::new()
+        .extents(&[(S, s_total), (V, val_dim)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(S, Cut::sequential(block))
+                .axis(V, Cut::sequential(val_dim))
+        })
+        .leaf(Leaf::Register);
+
+    attention_stream_test_kernel::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_2d(lanes as u32, splits as u32),
+        StridedTileArgLaunch::strided(
+            q_handle.clone().binding().into_tensor_arg(),
+            vec,
+            q_space,
+            Storage::of(3, 3),
+        ),
+        StridedTileArgLaunch::strided(
+            k_handle.clone().binding().into_tensor_arg(),
+            vec,
+            k_space,
+            Storage::of(2, 2),
+        ),
+        StridedTileArgLaunch::strided(
+            v_handle.clone().binding().into_tensor_arg(),
+            vec,
+            v_space,
+            Storage::of(2, 2),
+        ),
+        out_handle.clone().binding().into_tensor_arg(),
+        scale,
+        bound_s as u32,
+        lanes,
+        splits,
+        block,
+    );
+
+    let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+
+    for gi in 0..g {
+        let mut scores = Vec::new();
+        for j in 0..s_total.min(bound_s) {
+            let dot: f32 = (0..d)
+                .map(|p| q_data.get_f32(&[gi, 0, p]) * k_data.get_f32(&[j, p]))
+                .sum();
+            scores.push((dot * scale, j));
+        }
+        let m = scores.iter().fold(f32::NEG_INFINITY, |m, (s, _)| m.max(*s));
+        let l: f32 = scores.iter().map(|(s, _)| (s - m).exp()).sum();
+        for vi in 0..val_dim {
+            let expected: f32 = scores
+                .iter()
+                .map(|(s, j)| (s - m).exp() / l * v_data.get_f32(&[*j, vi]))
+                .sum();
+            let got = out.get_f32(&[gi, vi]);
+            assert!(
+                (got - expected).abs() <= 1e-4 * expected.abs().max(1.),
+                "row {gi} v {vi}: out {got} vs direct {expected}"
+            );
+        }
+    }
+}
+
+/// The decode shape split four ways: ragged prefix, idle team in the tail.
+#[test]
+fn stream_fold_decode_gqa() {
+    run_stream((4, 4, 64, 8, 16), 50, 2);
+}
+
+/// One split, scalar reads, bound not on a block edge.
+#[test]
+fn stream_fold_single_split_scalar() {
+    run_stream((1, 4, 24, 8, 8), 13, 1);
+}
+
+/// More teams than blocks: whole teams idle, weight zero through the merge.
+#[test]
+fn stream_fold_idle_teams() {
+    run_stream((4, 2, 16, 8, 8), 10, 1);
 }

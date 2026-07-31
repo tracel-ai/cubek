@@ -13,8 +13,9 @@ pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 /// Per-row online-softmax running state `(m, l)`, in the owning unit's
 /// registers. Its space is the kept axes of the softmax: the score axis it
 /// omits is the one reduced over. Allocated once before the walk, threaded
-/// through every [`Tile::softmax`](crate::Tile::softmax) call,
-/// materialized by the epilogue.
+/// through every [`Tile::softmax`](crate::Tile::softmax) call (or every
+/// [`absorb`](RowState::absorb) of a streamed fold), materialized by the
+/// epilogue.
 #[derive(CubeType)]
 pub struct RowState<E: Float> {
     pub m: Array<E>,
@@ -23,6 +24,17 @@ pub struct RowState<E: Float> {
     pub space: Space,
     #[cube(comptime)]
     pub rows_per_unit: usize,
+}
+
+/// What one streamed [`absorb`](RowState::absorb) tells the row's
+/// accumulators: rescale what you hold by `correction`, weight the incoming
+/// value row by `weight`.
+#[derive(CubeType)]
+pub struct Rescale<E: Float> {
+    /// `exp(m_old − m_new)` — rescales the accumulated mix.
+    pub correction: E,
+    /// `exp(score − m_new)` — weights the new position's value.
+    pub weight: E,
 }
 
 #[cube]
@@ -56,6 +68,20 @@ impl<E: Float> RowState<E> {
             self.m[i] = max_buf[i];
         }
         corr
+    }
+
+    /// Fold one streamed score into row `i`'s `(m, l)` — the per-position
+    /// reading of the same update [`update`](RowState::update) applies per
+    /// block. The `min_value` identity makes the first real score overwrite
+    /// the state cleanly (`exp(min − score) = 0`), and a row that never
+    /// absorbs keeps `l = 0` for the epilogue's masked guard.
+    pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
+        let m_new = max(self.m[i], score);
+        let correction = (self.m[i] - m_new).exp();
+        let weight = (score - m_new).exp();
+        self.l[i] = self.l[i] * correction + weight;
+        self.m[i] = m_new;
+        Rescale::<E> { correction, weight }
     }
 
     /// Epilogue `lse = m + ln(l)`. Fully-masked rows give -inf via `ln(0)`.

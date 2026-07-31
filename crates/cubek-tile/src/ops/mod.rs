@@ -7,5 +7,6 @@ mod attention;
 mod matmul;
 mod softmax;
 
+pub use attention::*;
 pub use softmax::*;
-// attention and matmul add `Tile` impls only; nothing to re-export.
+// matmul adds `Tile` impls only; nothing to re-export.
