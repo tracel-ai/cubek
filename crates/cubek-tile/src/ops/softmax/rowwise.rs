@@ -98,6 +98,57 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
+    /// Publish per-owned-row `values` into this rank-1 factors tile, one cell
+    /// per row of the score space. Owners write their own rows only; the caller
+    /// syncs before any cross-unit read.
+    pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] rpu: usize) {
+        let rows = comptime!(self.space.extent_at(0));
+        comptime!(assert!(
+            self.space.rank() == 1,
+            "store_rows: a rank-1 factors tile, one cell per score row"
+        ));
+        let size!(W) = self.vector_size();
+        let mut view = self.flat_mut::<W>();
+
+        for ri in 0..rpu {
+            let r = UNIT_POS_X as usize * rpu + ri;
+            if r < rows {
+                view.write(r, Vector::cast_from(values[ri]));
+            }
+        }
+    }
+
+    /// `self[r, c] *= factors[r]` over the whole rank-2 tile: the accumulator
+    /// rescale between fold steps (and the epilogue normalize, with `recip_l`
+    /// factors). Cyclic across the cube so each cell is touched exactly once,
+    /// whatever ownership the interleaved matmuls use; the caller syncs on both
+    /// sides.
+    pub fn scale_rows(&mut self, factors: &Tile<EA>) {
+        let cols = comptime!(self.space.extent_at(1));
+        comptime!(assert!(
+            self.space.rank() == 2,
+            "scale_rows: a rank-2 accumulator tile"
+        ));
+        let w = self.vector_size();
+        let wf = factors.vector_size();
+        comptime!(assert!(
+            w == 1 && wf == 1,
+            "scale_rows: vectorized tiles not supported yet"
+        ));
+        let total = comptime!(self.space.tile_size());
+        let size!(W) = w;
+        let size!(WF) = wf;
+        let f = factors.flat::<WF>();
+        let mut view = self.flat_mut::<W>();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            let v = view.read(i).extract(0) * f.read(i / cols).extract(0);
+            view.write(i, Vector::cast_from(v));
+            i += workers;
+        }
+    }
+
     /// Cast-copy the owned rows into `dest`.
     pub fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.extent_at(0));
