@@ -616,10 +616,10 @@ fn split_fold_idle_teams() {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_stream_test_kernel(
-    q: &StridedTileArg<'_, f32>, // {G, QP(=1), D}
-    k: &StridedTileArg<'_, f32>, // {S, D}
-    v: &StridedTileArg<'_, f32>, // {S, V}
-    out: &mut Tensor<f32>,       // [G·V] flat
+    q: &StridedTileArg<'_, f32>,   // {G, QP(=1), D}
+    k: &StridedTileArg<'_, f32>,   // {S, D}
+    v: &StridedTileArg<'_, f32>,   // {S, V}
+    out: &StridedTileArg<'_, f32>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
     #[comptime] lanes: usize,
@@ -629,88 +629,35 @@ fn attention_stream_test_kernel(
     let q = q.tile();
     let k = k.tile();
     let v = v.tile();
+    let mut out = out.tile();
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
     let rows = comptime!(q.space.tile_size() / d);
-    let val_dim = comptime!(v.space.extent(V));
-
-    let split_rows = comptime!(splits * rows);
-    let row_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, split_rows)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-                l.axis(R, Cut::sequential(rows))
-            })
-            .leaf(Leaf::Register)
-    );
-    let acc_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, split_rows), (V, val_dim)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-                l.axis(R, Cut::sequential(rows))
-                    .axis(V, Cut::sequential(val_dim))
-            })
-            .leaf(Leaf::Register)
-    );
-    let mut factors_all =
-        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let l_all = MemData::<f32>::smem(row_space, 1usize, comptime!(StagePlan::strided()));
-    let acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
-    let mut recip = MemData::<f32>::smem(
-        comptime!(Space::new(&[(R, rows)])),
-        1usize,
-        comptime!(StagePlan::strided()),
-    );
-
-    let t = UNIT_POS_Y as usize;
-    let rw = Walk::over(m_all.runtime_space());
-    let mut m_win = m_all.at(&rw.region(t));
-    let mut l_win = l_all.at(&rw.region(t));
-    let aw = Walk::over(acc_all.runtime_space());
-    let mut acc_win = acc_all.at(&aw.region(t));
 
     let kept = comptime!(Space::new(&[(R, rows)]));
     let size!(N) = q.vector_size();
     let mut fold = StreamFold::<f32, N>::new(&q, lanes, kept);
 
-    // This team's interleaved slice of the walk — no barriers anywhere.
+    // This team's contiguous slice of the walk — no barriers anywhere.
+    let t = UNIT_POS_Y as usize;
     let bound_s = bound as usize;
     let k_walk = Walk::over(k.runtime_space());
     let blocks = bound_s.div_ceil(block);
-    let mut blk = t;
-    while blk < blocks {
+    let per_team = blocks.div_ceil(splits);
+    let start_b = t * per_team;
+    let end_b = min(start_b + per_team, blocks);
+    let mut blk = start_b;
+    while blk < end_b {
         let region = k_walk.region(blk);
         let s0 = region.coord(S) * block;
         let cols_bound = max(bound_s, s0) - s0;
         fold.block(&k.at(&region), &v.at(&region), scale, cols_bound);
-        blk += splits;
+        blk += 1;
     }
 
-    fold.publish(&mut m_win, &mut l_win, &mut acc_win);
-    sync_cube();
-    factors_all.merge_splits(&mut recip, &m_all, &l_all, splits);
-    sync_cube();
-
-    let size!(W1) = 1usize;
-    let acc_flat = acc_all.flat::<W1>();
-    let w_flat = factors_all.flat::<W1>();
-    let r_flat = recip.flat::<W1>();
-    let total = comptime!(rows * val_dim);
-    let workers = CUBE_DIM as usize;
-    let mut i = UNIT_POS as usize;
-    while i < total {
-        let r = i / val_dim;
-        let vi = i % val_dim;
-        let mut sum = 0.0f32;
-        for ti in 0..splits {
-            let sr = ti * rows + r;
-            sum += acc_flat.read(sr * val_dim + vi).extract(0) * w_flat.read(sr).extract(0);
-        }
-        out[i] = sum * r_flat.read(r).extract(0);
-        i += workers;
-    }
+    // The one-barrier merged store.
+    fold.store(&mut out, splits);
 }
 
 /// Launch the streaming fold and check against direct host math.
@@ -786,7 +733,12 @@ fn run_stream(
             v_space,
             Storage::of(2, 2),
         ),
-        out_handle.clone().binding().into_tensor_arg(),
+        StridedTileArgLaunch::strided(
+            out_handle.clone().binding().into_tensor_arg(),
+            vec,
+            Space::new(&[(G, g), (QP, 1), (V, val_dim)]),
+            Storage::of(3, 3),
+        ),
         scale,
         bound_s as u32,
         lanes,

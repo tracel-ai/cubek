@@ -174,6 +174,83 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
+    /// The one-barrier split ending: every plane parks its state (lane 0 —
+    /// the states are plane-uniform) and its owned accumulator lines in
+    /// shared memory, one `sync_cube`, then plane 0 merges the states
+    /// (`RowState`'s epilogue math across splits), folds the split weights
+    /// and the normalizer in, and stores straight to the output window —
+    /// vectorized, cast to the output element. Fully-masked rows store
+    /// exact zeros.
+    pub fn store<EI: Numeric>(&self, out: &mut Tile<EI>, #[comptime] splits: usize) {
+        let rows = comptime!(self.rows);
+        let per_lane = comptime!(self.per_lane);
+        let lanes = comptime!(self.lanes);
+        let lines = comptime!(self.lines);
+        let wo = out.vector_size();
+        comptime!(assert!(
+            wo == self.width,
+            "StreamFold::store: the output shares the fold's line width"
+        ));
+        comptime!(assert!(
+            out.space.tile_size() == rows * lines * self.width,
+            "StreamFold::store: the output window is rows x head_dim"
+        ));
+
+        let mut partials =
+            Shared::<[Vector<EA, N>]>::new_slice(comptime!(rows * splits * per_lane * lanes));
+        let mut states = Shared::<[EA]>::new_slice(comptime!(2 * rows * splits));
+        let lane = UNIT_POS_X as usize;
+        let split = UNIT_POS_Y as usize;
+        if lane == 0 {
+            #[unroll]
+            for g in 0..rows {
+                states[(g * 2) * splits + split] = self.state.m[g];
+                states[(g * 2 + 1) * splits + split] = self.state.l[g];
+            }
+        }
+        #[unroll]
+        for g in 0..rows {
+            #[unroll]
+            for i in 0..per_lane {
+                partials[((g * splits + split) * per_lane + i) * lanes + lane] =
+                    self.acc[g * per_lane + i];
+            }
+        }
+        sync_cube();
+
+        // Plane 0 owns the merge and the store; the other planes are done.
+        if split == 0 {
+            let of = out.dense_mut::<N>();
+            #[unroll]
+            for g in 0..rows {
+                let mut row_max = states[(g * 2) * splits];
+                for p in 1..splits {
+                    row_max = max(row_max, states[(g * 2) * splits + p]);
+                }
+                let mut norm = EA::from_int(0);
+                for p in 0..splits {
+                    norm += states[(g * 2 + 1) * splits + p]
+                        * (states[(g * 2) * splits + p] - row_max).exp();
+                }
+                let eps = EA::new(FULLY_MASKED_ROW_THRESHOLD);
+                let recip = EA::cast_from(norm >= eps) * clamp_min(norm, eps).recip();
+                #[unroll]
+                for i in 0..per_lane {
+                    let li = lane + i * lanes;
+                    if li < lines {
+                        let mut total = Vector::<EA, N>::cast_from(0u32);
+                        for p in 0..splits {
+                            let weight = (states[(g * 2) * splits + p] - row_max).exp();
+                            total += partials[((g * splits + p) * per_lane + i) * lanes + lane]
+                                * Vector::cast_from(weight);
+                        }
+                        of[g * lines + li] = Vector::cast_from(total * Vector::cast_from(recip));
+                    }
+                }
+            }
+        }
+    }
+
     /// The split ending: publish this plane's running state (lane 0 — the
     /// states are plane-uniform) and its owned accumulator lines into the
     /// team's windows of the split-wide buffers. The caller syncs, merges

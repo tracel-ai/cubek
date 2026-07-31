@@ -400,6 +400,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The mutable twin of [`dense`](Tile::dense).
+    pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines_mut::<W>(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::dense_mut: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::dense_mut: a tma source is not writable"),
+        }
+    }
+
     /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's
     /// transport leaf. A partition source is matched first: it needs the whole
     /// destination tile, which the pairing match below would keep borrowed.
