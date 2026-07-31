@@ -12,7 +12,7 @@ use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantS
 const M: usize = 8;
 const N: usize = 32;
 const BLOCK: usize = 32;
-const GLOBAL: f32 = 0.25;
+const GLOBAL: f32 = 1.0 / (127.0 * 448.0);
 
 fn two_level() -> QuantScheme {
     QuantScheme::default()
@@ -40,12 +40,13 @@ fn fixture(scheme: &QuantScheme) -> Fixture {
     let shape_scale = shape![M, N / BLOCK];
     let num_blocks = M * N / BLOCK;
 
-    // Every value is an exact multiple of the effective scale, so a dropped or doubled per-tensor
-    // factor moves the result by a factor of four rather than by a rounding step.
+    // Block scales spanning what a narrow param holds, under a per-tensor scale small enough that
+    // neither factor is representable in f16 on its own. Values are exact multiples of the
+    // effective scale, so a dropped factor moves the result by orders of magnitude.
+    let scales: Vec<f32> = (0..num_blocks).map(|b| 1.0 + b as f32 * 64.0).collect();
     let data: Vec<f32> = (0..M * N)
-        .map(|i| ((i % 9) as f32 - 4.0) * GLOBAL)
+        .map(|i| ((i % 9) as f32 - 4.0) * GLOBAL * scales[i / BLOCK])
         .collect();
-    let scales = vec![1.0f32; num_blocks];
 
     let input_alloc =
         client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());

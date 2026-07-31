@@ -257,14 +257,6 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
             match scheme.level {
                 QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
-                // Reads here apply one scale per value and never see a per-tensor one, and
-                // nothing upstream of this path validates the level.
-                QuantLevel::BlockTensor { .. } => {
-                    unimplemented!(
-                        "two-level quantization is not supported by the quantized matmul, got {:?}",
-                        scheme.level
-                    )
-                }
                 QuantLevel::Block(block_size) => {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.

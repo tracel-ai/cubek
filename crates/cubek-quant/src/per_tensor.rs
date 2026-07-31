@@ -25,7 +25,12 @@ pub(crate) fn apply_global<F: Float, FG: Numeric, FS: CubePrimitive>(
 ) -> F {
     #[comptime]
     match global {
-        ComptimeOption::Some(global) => F::cast_from(global) * F::cast_from(block),
+        // The product is in range even when neither factor is: the scheme puts the tensor's
+        // magnitude in one and the spread in the other. Casting them separately to a narrow `F`
+        // flushes the per-tensor scale to zero.
+        ComptimeOption::Some(global) => {
+            F::cast_from(f32::cast_from(global) * f32::cast_from(block))
+        }
         ComptimeOption::None => F::cast_from(block),
     }
 }
