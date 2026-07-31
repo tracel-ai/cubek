@@ -25,6 +25,34 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
     Vector::cast_from(scale) * value
 }
 
+/// Dequantize the value at a specified position using the provided quantization scheme.
+///
+/// Returns a vector of floating-point values. The number of values in the vector depends on the number of packed
+/// values in the stored quantization type.
+#[cube]
+pub fn dequantize_symmetric_packed_values<
+    F: Float,
+    NF: Size,
+    FS: CubePrimitive,
+    FG: Numeric,
+    QI: Int,
+    NQ: Size,
+>(
+    position: usize,
+    values: &View<Vector<QI, NQ>, usize>,
+    scales: &View<FS, usize>,
+    global: ComptimeOption<LinearView<'_, FG>>,
+    #[comptime] scheme: QuantScheme,
+) -> Array<Vector<F, NF>> {
+    dequantize_symmetric_packed_value_at::<F, NF, FS, FG, QI, NQ>(
+        position,
+        values.read(position),
+        scales,
+        global,
+        scheme,
+    )
+}
+
 /// Dequantize a single value using the scale at the specified position.
 ///
 /// Returns a vector of floating-point values. The number of values in the vector depends on the number of packed
