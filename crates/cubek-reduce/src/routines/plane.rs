@@ -119,9 +119,23 @@ fn generate_blueprint<R: Runtime>(
         VectorizationMode::Parallel => problem.reduce_len / settings.vector_size_input,
         VectorizationMode::Perpendicular => problem.reduce_len,
     };
-    let bound_checks = match unchecked && work_size.is_multiple_of(plane_size as usize) {
-        true => BoundChecks::None,
-        false => BoundChecks::Mask,
+    // Out-of-range units come from the reduce-axis tail *and* from over-launched
+    // (idle) planes; both need a bound check. When the input read has a write
+    // side effect (fuse-on-read), that check must branch rather than mask — a
+    // mask clamps the index to 0 and still performs the side-effecting read,
+    // clobbering position 0.
+    let tail_bounds = !(unchecked && work_size.is_multiple_of(plane_size as usize));
+    let idle_possible = !unchecked || plane_idle;
+    let bound_checks = if settings.fuse_on_read {
+        match tail_bounds || idle_possible {
+            true => BoundChecks::Branch,
+            false => BoundChecks::None,
+        }
+    } else {
+        match tail_bounds {
+            true => BoundChecks::Mask,
+            false => BoundChecks::None,
+        }
     };
 
     let plane_idle = match !unchecked || plane_idle {

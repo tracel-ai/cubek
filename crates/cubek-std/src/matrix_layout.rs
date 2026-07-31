@@ -54,13 +54,21 @@ impl MatrixLayout {
         // for example, with strides of [1, 1]. It is not possible to determine the packing dimension
         // accurately for this problem.
 
+        // A dimension of size 1 is only ever indexed at 0, so its stride is never
+        // added to an offset and cannot make the matrix non-contiguous. Reading it
+        // as evidence of the opposite layout would disagree with
+        // `matrix_batch_layout`, the classifier the matmul autotune key is built
+        // from: a `[1, k]` row vector carrying strides `[1, 1]` is contiguous there
+        // but would land here as col major, so a plan tuned for one layout gets
+        // replayed on the other.
+
         // Row-major: inner dimension is contiguous
-        if (stride_inner == 1) && stride_outer >= inner {
+        if (stride_inner == 1) && (outer == 1 || stride_outer >= inner) {
             return Ok(MatrixLayout::RowMajor);
         }
 
         // Col-major: outer dimension is contiguous
-        if (stride_outer == 1) && stride_inner >= outer {
+        if (stride_outer == 1) && (inner == 1 || stride_inner >= outer) {
             return Ok(MatrixLayout::ColMajor);
         }
 
@@ -129,5 +137,61 @@ pub fn from_cmma_layout(#[comptime] layout: cmma::MatrixLayout) -> comptime_type
         cmma::MatrixLayout::RowMajor => MatrixLayout::RowMajor,
         cmma::MatrixLayout::ColMajor => MatrixLayout::ColMajor,
         cmma::MatrixLayout::Undefined => MatrixLayout::RowMajor,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout(shape: &[usize], strides: &[usize]) -> Result<MatrixLayout, String> {
+        MatrixLayout::from_shape_and_strides(shape, strides, None).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn contiguous_is_row_major() {
+        assert_eq!(layout(&[4, 8], &[8, 1]).unwrap(), MatrixLayout::RowMajor);
+    }
+
+    #[test]
+    fn transposed_is_col_major() {
+        assert_eq!(layout(&[4, 8], &[1, 4]).unwrap(), MatrixLayout::ColMajor);
+    }
+
+    #[test]
+    fn pitched_rows_are_row_major() {
+        // A padded row stride is still row major: rows never overlap.
+        assert_eq!(layout(&[4, 8], &[16, 1]).unwrap(), MatrixLayout::RowMajor);
+    }
+
+    #[test]
+    fn single_row_is_row_major() {
+        // `[k, 1]` transposed: the row stride is 1 because there is only ever one
+        // row, which must not be read as col major.
+        assert_eq!(layout(&[1, 8], &[1, 1]).unwrap(), MatrixLayout::RowMajor);
+    }
+
+    #[test]
+    fn single_column_is_col_major() {
+        // A column of a col-major matrix: the inner stride is below the row count
+        // only because the single column is never advanced past.
+        assert_eq!(layout(&[8, 1], &[1, 4]).unwrap(), MatrixLayout::ColMajor);
+    }
+
+    #[test]
+    fn overlapping_strides_are_rejected() {
+        assert!(layout(&[4, 8], &[2, 1]).is_err());
+    }
+
+    #[test]
+    fn batches_do_not_change_the_matrix_layout() {
+        assert_eq!(
+            layout(&[2, 4, 8], &[32, 8, 1]).unwrap(),
+            MatrixLayout::RowMajor
+        );
+        assert_eq!(
+            layout(&[2, 4, 8], &[32, 1, 4]).unwrap(),
+            MatrixLayout::ColMajor
+        );
     }
 }
