@@ -1,13 +1,8 @@
 //! The per-tensor scale of a two-level scheme.
 //!
-//! Every helper here takes the scale as a [ComptimeOption], so a one-level scheme emits none of
-//! this: no load, no multiply, no writeback. Reading is split from applying so that a kernel
-//! scaling several blocks per unit can hoist the load out of its loop and keep the scale in a
-//! register.
-//!
-//! The scale has its own element type `FG`, taken from [`QuantLevel::BlockTensor`]'s `global`
-//! field. It is not the compute type: reading an f32 scale as f16 because that is what the kernel
-//! computes in returns garbage.
+//! Reading is split from applying so a kernel scaling several blocks per unit can hoist the load
+//! out of its loop. `FG` is the scale's own type, not the compute type: reading an f32 scale as
+//! f16 because that is what the kernel computes in returns garbage.
 
 use cubecl::std::tensor::layout::linear::LinearView;
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
@@ -24,7 +19,6 @@ pub(crate) fn read_global<FG: Numeric>(
     }
 }
 
-/// The scale to work against: the block scale, times the per-tensor scale when there is one.
 #[cube]
 pub(crate) fn apply_global<F: Float, FG: Numeric, FS: CubePrimitive>(
     block: FS,

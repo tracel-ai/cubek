@@ -306,11 +306,8 @@ fn test_quantization_symmetric_block_tensor_packed() {
     );
 }
 
-/// Two-level: per-block scales normalized by one per-tensor scale.
-///
-/// The block scales are deliberately split so that neither level alone reconstructs the data. If
-/// the kernel dropped the per-tensor scale, or applied it twice, every value would come back off
-/// by that factor and the tolerance below would not save it.
+/// The block scales are deliberately split so that neither level alone reconstructs the data, so
+/// dropping the per-tensor scale or applying it twice cannot hide inside the tolerance.
 fn test_quantization_block_tensor_symmetric(
     m: usize,
     n: usize,
@@ -337,7 +334,6 @@ fn test_quantization_block_tensor_symmetric(
     let scale_count = data.len() / block_size;
     let shape_scale = shape![m, n / block_size];
 
-    // Raw per-block scales, as a one-level scheme would use.
     let mut raw = Vec::with_capacity(scale_count);
     for block in 0..scale_count {
         let mut amax = 0.0f32;

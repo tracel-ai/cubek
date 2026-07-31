@@ -1,7 +1,4 @@
 //! The contract between a two-level scheme and the bindings that serve it.
-//!
-//! Both cases here were silently wrong before: a mismatch produced plausible numbers off by the
-//! per-tensor factor, and the scale was read as the compute type rather than its own.
 
 use cubecl::{
     ir::{ElemType, FloatKind},

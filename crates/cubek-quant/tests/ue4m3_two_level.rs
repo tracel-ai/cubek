@@ -1,8 +1,6 @@
-//! Two-level quantization with the block scales stored as ue4m3, which is the configuration the
-//! scheme exists for: a narrow block scale that only has to cover the spread between blocks,
-//! because the f32 per-tensor scale carries the tensor's magnitude.
+//! Two-level quantization with ue4m3 block scales, the configuration the scheme exists for.
 //!
-//! Needs a backend with native `i8` and e4m3, so it self-skips on wgpu.
+//! Needs native `i8` and e4m3, so it self-skips where either is missing.
 
 use cubecl::{
     features::TypeUsage,
