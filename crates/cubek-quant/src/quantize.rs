@@ -1,3 +1,4 @@
+use cubecl::std::quant::round::round_up_to_param;
 use cubecl::{
     calculate_cube_count_elemwise,
     features::TypeUsage,
@@ -17,7 +18,7 @@ use crate::{
 };
 use crate::{
     layout::{ScalesView, scales_layout},
-    scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
+    scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 
 #[cube]
@@ -88,8 +89,9 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     scale: View<F, usize>,
     mut out_scale: ViewMut<FS, usize>,
     scales_layout: ScalesLayout,
+    #[comptime] param: QuantParam,
 ) -> FS {
-    let scale = FS::cast_from(scale.read(in_pos));
+    let scale = FS::cast_from(round_up_to_param::<F>(scale.read(in_pos), param));
 
     // Write the scale into the output buffer
     if scales_layout.is_block_start(in_pos) {
@@ -110,6 +112,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     out_scale: ScalesViewMut<'_, FS>,
     out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
+    #[comptime] param: QuantParam,
     #[define(F, FS, FG, Q)] _dtypes: [StorageType; 4],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -118,7 +121,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
 
     let native_packing = Q::packing_factor();
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
-    let block = write_scale(in_pos, scale, out_scale, scales_layout);
+    let block = write_scale(in_pos, scale, out_scale, scales_layout, param);
     let global = read_global::<FG>(global);
     write_global::<FG>(global, out_global);
     let scale = apply_global::<F, FG, FS>(block, global);
@@ -155,7 +158,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
 
     let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
-    let block = write_scale(packed_pos, scale, out_scale, scales_layout);
+    let block = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
     let global = read_global::<FG>(global);
     write_global::<FG>(global, out_global);
     let scale = apply_global::<F, FG, FS>(block, global);
@@ -332,6 +335,7 @@ fn quantize_native<R: Runtime>(
                     scales_view(output, out_scale, 1, scheme),
                     out_global.map(linear_view).into(),
                     scales_layout,
+                    scheme.param,
                     [
                         input_dtype.into(),
                         scale_dtype.into(),
