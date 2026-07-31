@@ -713,6 +713,49 @@ impl<T: Numeric> MemData<T> {
         storage.as_vectorized_mut().with_vector_size_mut::<W>()
     }
 
+    /// The window as one dense run of lines: index `i` addresses line
+    /// `origin + i` — one add, no layout walk. Legal only where the window's
+    /// content is physically contiguous in row-major order: an untiled,
+    /// unmasked, unquantized store whose windowed logical axes are contiguous
+    /// in memory (the strided operands a streaming fold windows). The
+    /// comptime-checkable parts assert; the contiguity of the caller's
+    /// layout is the caller's guarantee.
+    pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
+        comptime!(assert!(
+            !self.access.overhang.masks(),
+            "MemData::dense_lines: a dense window cannot mask an overhang"
+        ));
+        comptime!(assert!(
+            self.layout.levels == 0,
+            "MemData::dense_lines: a storage-tiled window is not dense"
+        ));
+        if comptime!(self.store.quant.is_some()) {
+            panic!("MemData::dense_lines: a quantized store dequantizes under Tile::copy_from")
+        }
+        let all = self.lines::<W>();
+        let start = self.window_start.fcast::<usize>();
+        all.slice(start, all.len())
+    }
+
+    /// The mutable twin of [`dense_lines`](MemData::dense_lines).
+    pub(crate) fn dense_lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+        comptime!(assert!(
+            !self.access.overhang.masks(),
+            "MemData::dense_lines_mut: a dense window cannot mask an overhang"
+        ));
+        comptime!(assert!(
+            self.layout.levels == 0,
+            "MemData::dense_lines_mut: a storage-tiled window is not dense"
+        ));
+        if comptime!(self.store.quant.is_some()) {
+            panic!("MemData::dense_lines_mut: a quantized store cannot be written dense")
+        }
+        let start = self.window_start.fcast::<usize>();
+        let all = self.lines_mut::<W>();
+        let end = all.len();
+        all.slice_mut(start, end)
+    }
+
     /// The buffer from this window's origin on: the base a cmma load/store addresses,
     /// rows stepping by the scalar [`row_stride`](MemData::row_stride) (cmma takes a line
     /// slice with a scalar stride). Requires an unmasked store whose window doesn't split
