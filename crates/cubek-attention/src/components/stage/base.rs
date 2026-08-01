@@ -106,6 +106,22 @@ pub trait StageAttention<AP: AttentionPrecision>: 'static {
         #[comptime] config: Self::Config,
     );
 
+    /// Writes the per-row log-sum-exp (`m + ln(l)`, natural log, exactly
+    /// `-inf` for fully-masked rows) from the final running state into a
+    /// flat `[batch * heads, seq_q]` FP32 tensor. `base_row` is the global
+    /// row of this partition's first tile row; `row_bound` bounds writes to
+    /// the valid sequence length. The softmax partition supplies the tile
+    /// layout that maps unit-local rows to absolute rows.
+    fn write_lse(
+        softmax_partition: &Self::SoftmaxPartition,
+        state: &Sequence<Self::RunningState>,
+        lse: &mut Tensor<f32>,
+        batch_index: u32,
+        base_row: u32,
+        row_bound: u32,
+        #[comptime] config: Self::Config,
+    );
+
     fn write<W: WriteEventListener, G: GlobalAttentionConfig>(
         acc: &mut Self::OutputPartition,
         stage: &mut Self::OutStage,

@@ -24,6 +24,29 @@ impl<E: Float> Tile<E, Plane> {
         }
     }
 
+    /// Writes the per-row softmax log-sum-exp `m + ln(l)` for this tile's
+    /// absolute rows into `lse[batch_offset + base_row + row]`, skipping rows
+    /// at or past `row_bound`. Rows whose running sum is below the
+    /// fully-masked threshold receive exactly `-inf` (natural log
+    /// convention). Only the `Bounce` (cmma) variant carries the fragment
+    /// layout that maps unit-local rows to absolute rows.
+    pub fn store_row_lse(
+        &self,
+        state: &(RowWise<E>, RowWise<E>),
+        lse: &mut Tensor<f32>,
+        batch_offset: usize,
+        base_row: u32,
+        row_bound: u32,
+    ) {
+        match &self.kind {
+            TileKind::Unit(_t) => panic!("store_row_lse: unsupported tile variant"),
+            TileKind::WhiteboxFragment(_t) => panic!("store_row_lse: unsupported tile variant"),
+            TileKind::Bounce(b) => b.store_row_lse(state, lse, batch_offset, base_row, row_bound),
+            TileKind::Register(_t) => panic!("store_row_lse: unsupported tile variant"),
+            _ => panic!("store_row_lse: only the cmma (Bounce) softmax path emits LSE"),
+        }
+    }
+
     pub fn exp_diff(&mut self, rowwise: &RowWise<E>) {
         match &mut self.kind {
             TileKind::Unit(t) => t.exp_diff(rowwise),

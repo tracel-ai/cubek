@@ -1,17 +1,22 @@
-//! LSE oracle tier: host-only checks of the CPU reference's `lse = m + ln(l)`
-//! output against a direct (non-online) logsumexp. No kernel emits lse yet;
-//! these pin the convention the tile port's epilogue will be tested against:
-//! natural log, and exactly `-inf` on fully-masked rows (matching the
-//! backward reference).
+//! LSE checks for the CPU oracle and the accelerated forward kernel. The
+//! convention is natural log, with exactly `-inf` on fully-masked rows.
 
+use cubecl::client::ComputeClient;
 use cubecl::frontend::CubePrimitive;
 use cubecl::ir::AddressType;
 use cubecl::zspace::Shape;
+use cubecl::{Runtime, TestRuntime};
 use cubek_attention::eval::forward::cpu_reference::flash_attention_v2_reference_with_lse;
 use cubek_attention::forward::definition::{
-    AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionOptions, AttentionProblem,
+    AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionIdent, AttentionOptions,
+    AttentionProblem,
 };
-use cubek_test_utils::{HostData, HostDataVec, StridedLayout};
+use cubek_attention::forward::launch::{BlueprintStrategy, Strategy, launch_ref_with_lse};
+use cubek_attention::forward::routines::blackbox_accelerated::BlackboxAcceleratedStrategy;
+use cubek_test_utils::{
+    ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome,
+    launch_and_capture_outcome,
+};
 
 fn host_f32(shape: [usize; 4], f: impl Fn(usize) -> f32) -> HostData {
     let shape = Shape::new(shape);
@@ -171,4 +176,104 @@ fn lse_matches_direct_logsumexp_causal() {
             "lse mismatch at row {i}: online {got} vs direct {expected}"
         );
     }
+}
+
+#[test]
+fn accelerated_forward_emits_reference_lse() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
+        half::f16::as_type_native_unchecked(),
+        AttentionGlobalTypes::mask_dtype(&client),
+    );
+    let problem = problem((1, 2, 64, 64, 64, 64), true, false);
+    let problem = AttentionProblem {
+        global_dtypes,
+        ..problem
+    };
+
+    let (query, query_data) = test_input(&client, &problem, AttentionIdent::Query, 11);
+    let (key, key_data) = test_input(&client, &problem, AttentionIdent::Key, 22);
+    let (value, value_data) = test_input(&client, &problem, AttentionIdent::Value, 33);
+    let out = TestInput::builder(
+        client.clone(),
+        Shape::new(problem.shape(AttentionIdent::Out)),
+    )
+    .dtype(problem.global_dtypes.out)
+    .zeros()
+    .generate_without_host_data();
+    let lse = TestInput::builder(
+        client.clone(),
+        Shape::new([
+            problem.dims.batch * problem.dims.num_heads,
+            problem.dims.seq_q,
+        ]),
+    )
+    .dtype(f32::as_type_native_unchecked().storage_type())
+    .zeros()
+    .generate_without_host_data();
+
+    let strategy =
+        Strategy::BlackboxAccelerated(BlueprintStrategy::Inferred(BlackboxAcceleratedStrategy {
+            num_planes: 1,
+            seq_q: 1,
+            seq_kv: 1,
+        }));
+    let outcome = launch_and_capture_outcome(&client, |client| {
+        launch_ref_with_lse(
+            strategy,
+            client,
+            query.binding(),
+            key.binding(),
+            value.binding(),
+            None,
+            out.binding(),
+            lse.clone().binding(),
+            &problem.global_dtypes,
+            problem.options.clone(),
+        )
+        .into()
+    });
+
+    match outcome {
+        ExecutionOutcome::CompileError(error) => TestOutcome::CompileError(error).enforce(),
+        ExecutionOutcome::Executed => {
+            let (_, expected) = flash_attention_v2_reference_with_lse(
+                &query_data,
+                &key_data,
+                &value_data,
+                None,
+                &problem,
+                None,
+            );
+            let actual = HostData::from_tensor_handle(&client, lse, HostDataType::F32);
+            for head in 0..problem.dims.num_heads {
+                for row in 0..problem.dims.seq_q {
+                    let got = actual.get_f32(&[head, row]);
+                    let want = expected.get_f32(&[0, head, row]);
+                    assert!(
+                        (got - want).abs() <= 2e-2 * want.abs().max(1.0),
+                        "LSE mismatch at head {head}, row {row}: {got} vs {want}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn test_input(
+    client: &ComputeClient<TestRuntime>,
+    problem: &AttentionProblem,
+    ident: AttentionIdent,
+    seed: u64,
+) -> (cubecl::std::tensor::TensorHandle<TestRuntime>, HostData) {
+    let dtype = match ident {
+        AttentionIdent::Query => problem.global_dtypes.query,
+        AttentionIdent::Key => problem.global_dtypes.key,
+        AttentionIdent::Value => problem.global_dtypes.value,
+        _ => panic!("test_input only builds query, key, and value tensors"),
+    };
+    TestInput::builder(client.clone(), Shape::new(problem.shape(ident)))
+        .dtype(dtype)
+        .uniform(seed, -1.0, 1.0)
+        .generate_with_f32_host_data()
 }

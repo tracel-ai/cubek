@@ -67,4 +67,53 @@ impl<GA: GlobalAttention<AP>, AP: AttentionPrecision> BatchAttention<AP>
             config.global_config(),
         )
     }
+
+    fn execute_with_lse(
+        query: VirtualTensor<QG<AP>, QGS<AP>>,
+        key: VirtualTensor<KG<AP>, KGS<AP>>,
+        value: VirtualTensor<VG<AP>, VGS<AP>>,
+        mask: ComptimeOption<VirtualTensor<MSK<AP>, MSKS<AP>>>,
+        out: VirtualTensor<OG<AP>, OGS<AP>, ReadWrite>,
+        lse: &mut Tensor<f32>,
+        cube_mapping: CubeMapping,
+        #[comptime] config: Self::Config,
+    ) {
+        #[allow(clippy::collapsible_if)]
+        if cube_mapping.can_yield_extra_cubes {
+            if CUBE_POS >= cube_mapping.num_valid_cubes() {
+                terminate!();
+            }
+        }
+
+        let global_config = config.global_config();
+        let (q_index, batch_index) = cube_pos_to_q_batch_heads(&cube_mapping);
+
+        let stage_q_offset = q_index * global_config.stage_config().elements_in_stage_seq_q();
+
+        // Assume [batch, num_heads, seq_*, head_dim] layout
+        let seq_q = query.shape(2) as u32;
+        let seq_kv = key.shape(2) as u32;
+        let num_heads = query.shape(1) as u32;
+
+        GA::execute_with_lse(
+            GA::init_query_reader(batch_index, num_heads, stage_q_offset, query, global_config),
+            GA::init_key_reader(batch_index, num_heads, key, global_config),
+            GA::init_value_reader(batch_index, num_heads, value, global_config),
+            GA::init_mask_reader(
+                batch_index,
+                num_heads,
+                stage_q_offset,
+                mask,
+                seq_kv,
+                global_config,
+            ),
+            GA::init_writer(batch_index, num_heads, stage_q_offset, out, global_config),
+            lse,
+            batch_index,
+            stage_q_offset,
+            seq_q,
+            seq_kv,
+            config.global_config(),
+        )
+    }
 }

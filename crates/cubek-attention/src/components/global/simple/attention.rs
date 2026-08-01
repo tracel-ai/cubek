@@ -135,6 +135,91 @@ impl<
         )
     }
 
+    fn execute_with_lse(
+        query_reader: QueryReader<AP>,
+        mut key_reader: Self::KeyReader,
+        mut value_reader: Self::ValueReader,
+        mut mask_reader: Self::MaskReader,
+        mut writer: Self::Writer<'_>,
+        lse: &mut Tensor<f32>,
+        batch_index: u32,
+        stage_q_offset: u32,
+        seq_q: u32,
+        seq_kv: u32,
+        #[comptime] config: Self::Config,
+    ) {
+        let mut query_registers = SA::init_query(config.stage_config);
+        SA::read_query(&query_reader, &mut query_registers, config.stage_config);
+
+        let mut key_registers = SA::init_key(config.stage_config);
+        let mut value_registers = SA::init_value(config.stage_config);
+        let mut mask_registers = SA::init_mask(
+            ComptimeOption::new_Some((seq_q, seq_kv)),
+            config.stage_config,
+        );
+        let mut softmax_registers = SA::init_softmax(config.stage_config);
+        let mut output_registers = SA::init_output(config.stage_config);
+
+        let mut stage_state = SA::init_state(config.stage_config);
+
+        let num_stage_iterations =
+            seq_kv.div_ceil(config.stage_config.elements_in_partition_seq_kv());
+
+        let barrier = ();
+
+        for _ in 0..num_stage_iterations {
+            key_reader.load_stage(&barrier, config.key_reader_config);
+            value_reader.load_stage(&barrier, config.value_reader_config);
+
+            sync_cube();
+
+            SA::execute(
+                &query_registers,
+                &key_reader.stage(),
+                &value_reader.stage(),
+                &mut key_registers,
+                &mut value_registers,
+                &mask_reader,
+                &mut mask_registers,
+                &mut softmax_registers,
+                &mut output_registers,
+                &mut stage_state,
+                config.stage_config,
+            );
+
+            sync_cube();
+
+            key_reader.advance_view();
+            value_reader.advance_view();
+            mask_reader.advance_view();
+        }
+
+        // The final running state carries the per-row (max, sum) this
+        // partition produced; emit its log-sum-exp before the rescale
+        // consumes the state.
+        let partition_q_offset = <SA::Partitioner as AttentionPartitioner>::seq_q_index()
+            * config.stage_config.elements_in_partition_seq_q();
+        SA::write_lse(
+            &softmax_registers,
+            &stage_state,
+            lse,
+            batch_index,
+            stage_q_offset + partition_q_offset,
+            seq_q,
+            config.stage_config,
+        );
+
+        SA::rescale(&mut output_registers, stage_state, config.stage_config);
+
+        let mut out_stage = writer.stage();
+        SA::write::<Self::Writer<'_>, Self::Config>(
+            &mut output_registers,
+            &mut out_stage,
+            &mut writer,
+            config.stage_config,
+        )
+    }
+
     fn init_query_reader(
         batch_index: u32,
         num_heads: u32,

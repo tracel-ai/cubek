@@ -18,9 +18,8 @@ pub struct MatmulAutotuneKey {
     pub analysis: MatmulAutotuneAnalysis,
 }
 
-/// Maximum factor relevant for strides. Currently set to 2^10 because that's 128-byte swizzle's
-/// repeat number, so it's the largest align that can have performance impacts.
-const MAX_STRIDE_FACTOR: u32 = 10;
+/// Minimum byte-alignment factor required by async-copy and TMA readers.
+const ASYNC_COPY_STRIDE_FACTOR: u32 = 4;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize, AutotuneKey)]
 pub struct MatmulProblemDefinition {
@@ -31,10 +30,12 @@ pub struct MatmulProblemDefinition {
     #[autotune(anchor)]
     pub k: usize,
     pub lhs_pow2_factor: u8,
-    /// Power of two that lhs strides are aligned to
+    /// Async-copy alignment class for lhs strides: `4` when all relevant
+    /// strides are 16-byte aligned, `0` otherwise.
     pub lhs_stride_factor: u8,
     pub rhs_pow2_factor: u8,
-    /// Power of two that rhs strides are aligned to
+    /// Async-copy alignment class for rhs strides: `4` when all relevant
+    /// strides are 16-byte aligned, `0` otherwise.
     pub rhs_stride_factor: u8,
     pub elem_lhs: StorageType,
     pub elem_rhs: StorageType,
@@ -135,16 +136,10 @@ impl MatmulAutotuneKey {
             k: k as u32,
         });
 
-        // The alignment factors below are computed from the *anchored* dims —
-        // the same bucketing the `m`/`n`/`k` fields get — never from the raw
-        // values. A dimension carrying a runtime-dependent length (a KV-cache
-        // width, a dynamic batch) would otherwise re-split every anchored
-        // bucket into one key per pow2-alignment class of the raw value, and
-        // the tuner would keep minting "new" problems the anchor deliberately
-        // treats as equal. The trade-off matches the anchor's: the whole
-        // bucket shares the kernel choice benchmarked on one representative,
-        // and the launch still derives the legal line size from the real
-        // tensors.
+        // Vectorization factors are computed from the anchored dims so a
+        // runtime-dependent length doesn't mint a key for every raw alignment
+        // inside one shape bucket. Kernel launches still derive their legal
+        // line sizes from the real tensors.
         let m_anchored = anchor(m, None, None, None);
         let n_anchored = anchor(n, None, None, None);
         let k_anchored = anchor(k, None, None, None);
@@ -166,26 +161,32 @@ impl MatmulAutotuneKey {
             MatrixBatchLayout::HighlyPermuted => 0,
         };
 
-        // The canonical tightest non-contiguous stride of each layout: the
-        // row stride — `cols` for a contiguous `[.., rows, cols]`, `rows` for
-        // its transposed view. Batch strides are products of these, so their
-        // alignment can only be higher.
+        // Async-copy and TMA candidates require every non-contiguous stride to
+        // be 16-byte aligned. This legality bit must come from the real
+        // strides: an anchored shape bucket can contain both aligned and
+        // unaligned tensors, and sharing a cached async-copy winner across
+        // those tensors would make the latter fail at launch. Collapsing the
+        // value to two classes preserves bounded key cardinality.
         let lhs_stride_factor = match matrix_layout_lhs {
-            MatrixBatchLayout::Contiguous => stride_factor(k_anchored, elem_lhs),
+            MatrixBatchLayout::Contiguous => {
+                async_copy_stride_factor(lhs_strides, ndims - 1, elem_lhs)
+            }
             // TMA can't handle discontiguous batches because they're all combined into one dim
             MatrixBatchLayout::MildlyPermuted {
                 transposed: true,
                 batch_swap: false,
-            } => stride_factor(m_anchored, elem_lhs),
+            } => async_copy_stride_factor(lhs_strides, ndims - 2, elem_lhs),
             _ => 0,
         };
         let rhs_stride_factor = match matrix_layout_rhs {
-            MatrixBatchLayout::Contiguous => stride_factor(n_anchored, elem_rhs),
+            MatrixBatchLayout::Contiguous => {
+                async_copy_stride_factor(rhs_strides, ndims - 1, elem_rhs)
+            }
             // TMA can't handle discontiguous batches because they're all combined into one dim
             MatrixBatchLayout::MildlyPermuted {
                 transposed: true,
                 batch_swap: false,
-            } => stride_factor(k_anchored, elem_rhs),
+            } => async_copy_stride_factor(rhs_strides, ndims - 2, elem_rhs),
             _ => 0,
         };
 
@@ -212,11 +213,23 @@ impl MatmulAutotuneKey {
     }
 }
 
-/// Stride alignment (in powers of two of bytes) of the canonical row stride
-/// `cols` — the tightest non-contiguous stride of the layout.
-fn stride_factor(cols: usize, elem: StorageType) -> u8 {
-    let bytes = (cols * elem.size_bits()) / 8;
-    bytes.trailing_zeros().min(MAX_STRIDE_FACTOR) as u8
+/// Classifies whether every non-contiguous stride meets the 16-byte alignment
+/// requirement shared by async-copy and TMA readers.
+fn async_copy_stride_factor(strides: &[usize], exclude_dim: usize, elem: StorageType) -> u8 {
+    let factor = strides
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != exclude_dim)
+        .map(|(_, stride)| (*stride * elem.size_bits()) / 8)
+        .map(|bytes| bytes.trailing_zeros())
+        .min()
+        .unwrap_or(ASYNC_COPY_STRIDE_FACTOR);
+
+    if factor >= ASYNC_COPY_STRIDE_FACTOR {
+        ASYNC_COPY_STRIDE_FACTOR as u8
+    } else {
+        0
+    }
 }
 
 /// Defines the potential vectorization.
@@ -251,18 +264,24 @@ mod tests {
         )
     }
 
-    /// Every raw length inside one anchored bucket must produce the same key:
-    /// a runtime-dependent dimension (a KV-cache width) may take any integer
-    /// value, and re-splitting the bucket by the raw value's alignment retunes
-    /// endlessly for problems the anchor treats as equal.
+    /// Raw lengths in one anchored bucket share a key when their async-copy
+    /// legality is the same, but aligned and unaligned tensors never do.
     #[test]
-    fn raw_lengths_within_a_bucket_share_one_key() {
-        // 65..=128 all anchor to the 128 bucket, at every alignment class:
-        // odd, 2-, 4-, 8-, 16-aligned, and the exact power of two.
+    fn bucket_is_split_only_by_async_copy_legality() {
         let reference = key(64, 69, 64);
-        for kv in [70, 76, 88, 96, 112, 128] {
-            assert_eq!(reference, key(64, kv, 64), "kv {kv} split the bucket");
+        for kv in [70, 74, 78] {
+            assert_eq!(
+                reference,
+                key(64, kv, 64),
+                "unaligned kv {kv} split the bucket"
+            );
         }
+
+        let aligned = key(64, 68, 64);
+        for kv in [72, 76, 80, 96, 112, 128] {
+            assert_eq!(aligned, key(64, kv, 64), "aligned kv {kv} split the bucket");
+        }
+        assert_ne!(reference, aligned);
     }
 
     /// Distinct anchored buckets still get distinct keys.
@@ -272,12 +291,10 @@ mod tests {
         assert_ne!(key(64, 128, 64), key(1, 128, 64));
     }
 
-    /// The transposed (`MildlyPermuted`) arm: a column-major LHS takes its alignment
-    /// factors from `m` (the row count) rather than `k`, so raw `m` lengths inside one
-    /// anchored bucket must share a key just as the contiguous `kv` case does. The
-    /// [`key`] helper above is all-contiguous, so it never reaches this branch.
+    /// The transposed (`MildlyPermuted`) arm derives legality from the real
+    /// column-major LHS strides as well.
     #[test]
-    fn transposed_lhs_shares_bucket_key() {
+    fn transposed_lhs_is_split_only_by_async_copy_legality() {
         // Column-major lhs `[b, m, k]`: `m` has stride 1, `k` has stride `m`, so
         // `row_stride < col_stride` and the layout is `MildlyPermuted { transposed }`.
         let key_t = |m: usize| {
@@ -294,10 +311,15 @@ mod tests {
                 None,
             )
         };
-        // 65..=128 all anchor to the 128 bucket, at every alignment class.
         let reference = key_t(69);
-        for m in [70, 76, 88, 96, 112, 128] {
-            assert_eq!(reference, key_t(m), "m {m} split the transposed bucket");
+        for m in [70, 74, 78] {
+            assert_eq!(reference, key_t(m), "unaligned m {m} split the bucket");
         }
+
+        let aligned = key_t(68);
+        for m in [72, 76, 80, 96, 112, 128] {
+            assert_eq!(aligned, key_t(m), "aligned m {m} split the bucket");
+        }
+        assert_ne!(reference, aligned);
     }
 }

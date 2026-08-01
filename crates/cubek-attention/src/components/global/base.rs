@@ -59,6 +59,24 @@ pub trait GlobalAttention<AP: AttentionPrecision>: 'static {
         #[comptime] config: Self::Config,
     );
 
+    /// [`GlobalAttention::execute`] that also writes the per-row softmax
+    /// log-sum-exp into `lse` (flat `[batch * heads, seq_q]`, FP32) for a
+    /// training backward pass.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_with_lse(
+        query_reader: QueryReader<AP>,
+        key_reader: Self::KeyReader,
+        value_reader: Self::ValueReader,
+        mask_reader: Self::MaskReader,
+        writer: Self::Writer<'_>,
+        lse: &mut Tensor<f32>,
+        batch_index: u32,
+        stage_q_offset: u32,
+        seq_q: u32,
+        seq_kv: u32,
+        #[comptime] config: Self::Config,
+    );
+
     // `batch_index` flattens the query's `(batch, head)`; every reader resolves
     // it with the query's `num_heads`, never its own tensor's head extent.
 
