@@ -1,4 +1,4 @@
-use super::{ReduceFamily, ReduceInstruction};
+use super::{ReduceFamily, ReduceInstruction, plane_max_propagating_nan, select_max};
 use crate::components::{
     instructions::{
         Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
@@ -8,8 +8,8 @@ use crate::components::{
 };
 use cubecl::prelude::*;
 
-// TODO Add to test framework.
-/// Return the item with the maximum absolute value.
+/// Return the item with the maximum absolute value. NaNs take precedence over
+/// non-NaN values.
 #[derive(Debug, CubeType, Clone)]
 pub struct MaxAbs;
 
@@ -55,20 +55,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let accumulator_item = accumulator.elements.item();
         let elements = match reduce_step {
             ReduceStep::Plane => {
-                let candidate_item = Vector::cast_from(plane_max(Vector::abs(item.elements)));
-                select_many(
-                    accumulator_item.greater_than(&candidate_item),
-                    accumulator_item,
-                    candidate_item,
-                )
+                let candidate_item =
+                    Vector::cast_from(plane_max_propagating_nan(Vector::abs(item.elements)));
+                select_max(accumulator_item, candidate_item)
             }
             ReduceStep::Identity => {
                 let item_abs = Vector::cast_from(Vector::abs(item.elements));
-                select_many(
-                    accumulator_item.greater_than(&item_abs),
-                    accumulator_item,
-                    item_abs,
-                )
+                select_max(accumulator_item, item_abs)
             }
         };
 
@@ -79,21 +72,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let accumulator_item = accumulator.elements.item();
         let other_item = other.elements.item();
 
-        accumulator.elements.assign(&Value::new_single(select_many(
-            accumulator_item.greater_than(&other_item),
-            accumulator_item,
-            other_item,
-        )));
+        let selected = select_max(accumulator_item, other_item);
+        accumulator.elements.assign(&Value::new_single(selected));
     }
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
         let acc_item = accumulator.elements.item();
-        let candidate_item = Vector::cast_from(plane_max(Vector::abs(acc_item)));
-        let max = select_many(
-            acc_item.greater_than(&candidate_item),
-            acc_item,
-            candidate_item,
-        );
+        let candidate_item = Vector::cast_from(plane_max_propagating_nan(Vector::abs(acc_item)));
+        let max = select_max(acc_item, candidate_item);
         accumulator.elements.assign(&Value::new_single(max));
     }
 
@@ -111,7 +97,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         #[unroll]
         for k in 0..accumulator.size() {
             let candidate = accumulator.extract(k);
-            max = select(candidate > max, candidate, max);
+            max = select_max(
+                Vector::<P::EA, Const<1>>::new(candidate),
+                Vector::<P::EA, Const<1>>::new(max),
+            )
+            .extract(0);
         }
         (Value::new_single(Out::cast_from(max)), Value::new_None())
     }

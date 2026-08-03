@@ -27,6 +27,7 @@ pub struct TestCase {
     pub strategy: ReduceStrategy,
     pub input_dtype: StorageType,
     pub accumulation_dtype: StorageType,
+    custom_input: Option<Vec<f32>>,
 }
 
 impl core::fmt::Debug for TestCase {
@@ -60,7 +61,15 @@ impl TestCase {
             strategy,
             input_dtype: <P::EI as CubePrimitive>::as_type_native_unchecked().storage_type(),
             accumulation_dtype: <P::EA as CubePrimitive>::as_type_native_unchecked().storage_type(),
+            custom_input: None,
         }
+    }
+
+    /// Use explicit regression data. Custom cases must execute even when the default matrix-test
+    /// policy permits unsupported generated configurations to fail compilation.
+    pub fn with_data(mut self, data: Vec<f32>) -> Self {
+        self.custom_input = Some(data);
+        self
     }
 
     pub fn test_sum(&self) {
@@ -235,13 +244,16 @@ impl TestCase {
         let axis = self.axis.unwrap();
         let u32_dtype = u32::as_type_native_unchecked().storage_type();
 
-        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+        let input = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(self.input_dtype)
             .layout(StridedLayout::Explicit(
                 self.stride.iter().copied().collect(),
-            ))
-            .random(1234, Distribution::Uniform(-1., 1.))
-            .generate_with_f32_host_data();
+            ));
+        let input = match &self.custom_input {
+            Some(data) => input.custom(data.clone()),
+            None => input.random(1234, Distribution::Uniform(-1., 1.)),
+        };
+        let (input_handle, input_host) = input.generate_with_f32_host_data();
 
         let expected_values =
             cast_host_through_dtype(values_reference(&input_host, axis), self.input_dtype);
@@ -297,7 +309,7 @@ impl TestCase {
             }
             ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
         };
-        outcome.enforce();
+        self.enforce_outcome(outcome);
     }
 
     fn run_reduce_test(
@@ -327,13 +339,16 @@ impl TestCase {
         let client = TestRuntime::client(&Default::default());
         let axis = self.axis.unwrap();
 
-        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+        let input = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(self.input_dtype)
             .layout(StridedLayout::Explicit(
                 self.stride.iter().copied().collect(),
-            ))
-            .random(1234, distribution)
-            .generate_with_f32_host_data();
+            ));
+        let input = match &self.custom_input {
+            Some(data) => input.custom(data.clone()),
+            None => input.random(1234, distribution),
+        };
+        let (input_handle, input_host) = input.generate_with_f32_host_data();
 
         let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);
 
@@ -369,6 +384,20 @@ impl TestCase {
             }
             ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
         };
+        self.enforce_outcome(outcome);
+    }
+
+    fn enforce_outcome(&self, outcome: TestOutcome) {
+        if self.custom_input.is_some() {
+            assert!(
+                !matches!(
+                    &outcome,
+                    TestOutcome::CompileError(_)
+                        | TestOutcome::Validated(ValidationResult::Skipped(_))
+                ),
+                "expected custom reduction case to execute and validate, got {outcome:?}"
+            );
+        }
         outcome.enforce();
     }
 

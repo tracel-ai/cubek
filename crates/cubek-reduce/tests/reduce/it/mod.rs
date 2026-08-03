@@ -2,6 +2,7 @@ mod test_case;
 
 mod argtopk_shared_memory;
 mod logical;
+mod nan_extrema;
 mod topk_with_indices_cube;
 mod with_indices_validation;
 
