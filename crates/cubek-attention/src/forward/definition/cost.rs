@@ -205,4 +205,3 @@ mod tests {
         assert_eq!(causal.work().bytes, cost().work().bytes);
     }
 }
-

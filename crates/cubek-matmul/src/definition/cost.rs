@@ -31,7 +31,7 @@ impl MatmulCost {
         let elements = |rows: usize, cols: usize| self.batches * rows * cols;
 
         Work {
-            compute_ops: elements(self.m, self.n) * (2 * self.k - 1),
+            compute_ops: elements(self.m, self.n) * (2 * self.k).saturating_sub(1),
             bytes: elements(self.m, self.k) * self.elems.lhs.size()
                 + elements(self.k, self.n) * self.elems.rhs.size()
                 + elements(self.m, self.n) * self.elems.out.size(),
@@ -141,4 +141,3 @@ mod tests {
         assert_eq!(batched.work().bytes, 8 * cost().work().bytes);
     }
 }
-
