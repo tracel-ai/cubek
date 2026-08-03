@@ -14,13 +14,12 @@ use crate::*;
 #[cube]
 impl<EA: Float> Tile<EA> {
     /// One online-softmax fold step on this final score tile, in place:
-    /// scale + mask, row-max against the running max, exponentiate, row-sum,
-    /// cast-write the (unnormalized) P tile, state update. Returns
+    /// scale and mask, row-max against the running max, exponentiate,
+    /// row-sum, cast-write the unnormalized P tile, state update. Returns
     /// `corr = exp(m_old - m_new)` per owned row, the caller's accumulator
-    /// rescale factor (1 for unowned slots). The caller owns the walk and the
-    /// epilogue ([`RowState::recip_l`], [`RowState::lse`]).
-    ///
-    /// The reduced axis is the score axis absent from `state`'s space.
+    /// rescale factor (1 for unowned slots). The caller owns the walk and
+    /// the epilogue ([`RowState::recip_l`], [`RowState::lse`]). The reduced
+    /// axis is the score axis absent from `state`'s space.
     pub fn softmax<EP: Float>(
         &mut self,
         p: &mut Tile<EP>,
