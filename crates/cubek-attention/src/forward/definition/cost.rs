@@ -16,7 +16,7 @@ pub struct AttentionCost {
     pub dims: AttentionDims,
     /// Whether a mask tensor is read.
     pub masked: bool,
-    /// Whether a causal mask skips half the score matrix calculations.
+    /// Whether a causal mask skips the score matrix above its bottom-right diagonal.
     pub causal: bool,
     /// Global element types of the operands.
     pub types: AttentionGlobalTypes,
@@ -36,17 +36,34 @@ impl AttentionCost {
             val_dim,
         } = self.dims;
 
-        let scores = batch * num_heads * seq_q;
+        let batch_heads = batch * num_heads;
 
-        // Causal masking skips roughly half of the score matrix and associated matmuls.
-        let causal_div = if self.causal { 2 } else { 1 };
+        // Causal masking drops a score when `j + seq_q > i + seq_kv`, which aligns the
+        // diagonal on the bottom right: query `i` visits `i + seq_kv - seq_q + 1` keys,
+        // the full rectangle minus the triangle above the diagonal. This is not a flat
+        // halving: a decode step (`seq_q = 1`) still visits the whole cache.
+        let diagonal = seq_q.min(seq_kv);
+        let visited = match self.causal {
+            true => diagonal * seq_kv - diagonal * diagonal.saturating_sub(1) / 2,
+            false => seq_q * seq_kv,
+        };
+        // Rows above the diagonal visit nothing, so they contract over nothing either.
+        let rows = match self.causal {
+            true => diagonal,
+            false => seq_q,
+        };
 
-        let qk_ops = scores * seq_kv * (2 * head_dim - 1) / causal_div;
-        let sv_ops = scores * val_dim * (2 * seq_kv - 1) / causal_div;
+        // `2n - 1` ops per output element: n multiplies and n - 1 adds. Saturating so a
+        // degenerate extent (an empty KV cache) yields zero instead of underflowing.
+        let qk_ops = batch_heads * visited * (2 * head_dim).saturating_sub(1);
+        // Every row contracts over the keys it visited, so summing `2 * visited_i - 1`
+        // over the rows that visited any gives the adds and multiplies per output column.
+        let sv_ops = batch_heads * val_dim * (2 * visited).saturating_sub(rows);
 
-        let elements = |seq: usize, dim: usize| batch * num_heads * seq * dim;
+        let elements = |seq: usize, dim: usize| batch_heads * seq * dim;
+        // Only the mask entries the kernel actually visits are read.
         let mask_bytes = match self.masked {
-            true => elements(seq_q, seq_kv) * self.types.mask.size() / causal_div,
+            true => batch_heads * visited * self.types.mask.size(),
             false => 0,
         };
 
@@ -135,28 +152,55 @@ mod tests {
     }
 
     #[test]
-    fn a_causal_mask_halves_the_op_count() {
+    fn a_causal_mask_skips_the_scores_above_the_diagonal() {
+        // 8 queries over 16 keys, bottom-right aligned: 8 * 16 minus the 8 * 7 / 2
+        // triangle the mask drops, so 100 of the 128 score entries are visited.
         let causal = AttentionCost {
             causal: true,
             ..cost()
         };
 
-        assert_eq!(causal.work().compute_ops, cost().work().compute_ops / 2);
+        let qk = 2 * 100 * 7;
+        // 8 rows contract over what they visited: 2 * 100 - 8 ops per val_dim column.
+        let sv = 2 * 4 * (2 * 100 - 8);
+
+        assert_eq!(causal.work().compute_ops, qk + sv);
     }
 
     #[test]
-    fn a_decode_step_costs_one_pass_over_the_cache() {
-        // seq_q = 1 represents decode; causal division must not result in zero compute ops.
-        let decode = AttentionCost {
+    fn a_decode_step_costs_a_full_pass_over_the_cache() {
+        // seq_q = 1 is decode: the single query sits on the diagonal and attends the
+        // whole cache, so a causal mask discounts nothing.
+        let decode = |causal| AttentionCost {
             dims: AttentionDims {
                 seq_q: 1,
                 ..cost().dims
             },
-            causal: true,
+            causal,
             ..cost()
         };
 
-        assert!(decode.work().compute_ops > 0);
+        assert_eq!(
+            decode(true).work().compute_ops,
+            decode(false).work().compute_ops
+        );
+    }
+
+    #[test]
+    fn an_empty_kv_cache_costs_nothing() {
+        // Degenerate extents must saturate rather than underflow the op counts.
+        let empty = |causal| AttentionCost {
+            dims: AttentionDims {
+                seq_kv: 0,
+                ..cost().dims
+            },
+            causal,
+            masked: true,
+            ..cost()
+        };
+
+        assert_eq!(empty(false).work().compute_ops, 0);
+        assert_eq!(empty(true).work().compute_ops, 0);
     }
 
     #[test]
@@ -177,7 +221,7 @@ mod tests {
 
     #[test]
     fn a_causal_run_only_reads_the_mask_it_visits() {
-        // Causal mask bytes are halved along with the visited score blocks.
+        // Only the 100 visited score entries of the 8 x 16 mask are read.
         let masked = AttentionCost {
             masked: true,
             causal: true,
@@ -188,10 +232,7 @@ mod tests {
             ..cost()
         };
 
-        assert_eq!(
-            masked.work().bytes,
-            causal.work().bytes + 2 * 8 * 16 * 4 / 2
-        );
+        assert_eq!(masked.work().bytes, causal.work().bytes + 2 * 100 * 4);
     }
 
     #[test]
