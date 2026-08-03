@@ -1,6 +1,6 @@
 use super::{ReduceFamily, ReduceInstruction, ReduceRequirements, Sum};
 use crate::components::{
-    instructions::{Accumulator, AccumulatorFormat, Item, ReduceStep, Value},
+    instructions::{Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceStep, Value},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -62,35 +62,39 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Mean {
         <Sum as ReduceInstruction<P>>::fuse_accumulators(&this.sum, accumulator, other)
     }
 
-    fn to_output_parallel<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        shape_axis_reduce: VectorSize,
-    ) -> Value<Out> {
-        let sum = <Sum as ReduceInstruction<P>>::to_output_parallel::<P::EA>(
-            &this.sum,
-            accumulator,
-            shape_axis_reduce,
-        )
-        .item();
-
-        let value = Out::cast_from(sum / P::EA::cast_from(shape_axis_reduce));
-        Value::new_single(value)
+    fn output_mode(_this: &Self) -> comptime_type!(ReduceOutputMode) {
+        ReduceOutputMode::Values
     }
 
-    fn to_output_perpendicular<Out: Numeric>(
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         shape_axis_reduce: VectorSize,
-    ) -> Value<Vector<Out, P::SI>> {
-        let sum = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<P::EA>(
+    ) -> (Value<Out>, Value<Idx>) {
+        let (sum, _indices) = <Sum as ReduceInstruction<P>>::to_output_parallel::<P::EA, Idx>(
             &this.sum,
             accumulator,
             shape_axis_reduce,
-        )
-        .item();
+        );
+        let sum = sum.item();
+
+        let value = Out::cast_from(sum / P::EA::cast_from(shape_axis_reduce));
+        (Value::new_single(value), Value::new_None())
+    }
+
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
+        this: &Self,
+        accumulator: Accumulator<P>,
+        shape_axis_reduce: VectorSize,
+    ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
+        let (sum, _indices) = <Sum as ReduceInstruction<P>>::to_output_perpendicular::<P::EA, Idx>(
+            &this.sum,
+            accumulator,
+            shape_axis_reduce,
+        );
+        let sum = sum.item();
 
         let vector = Vector::cast_from(sum / Vector::cast_from(shape_axis_reduce));
-        Value::new_single(vector)
+        (Value::new_single(vector), Value::new_None())
     }
 }

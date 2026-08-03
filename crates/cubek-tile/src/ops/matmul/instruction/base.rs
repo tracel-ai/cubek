@@ -49,6 +49,7 @@ impl<E: Numeric> PlaneTile<E> {
         match self {
             PlaneTile::Cmma(d) => d.mma(lhs, rhs),
             PlaneTile::Mma(d) => d.mma(lhs, rhs),
+            PlaneTile::Register(d) => d.mma(lhs, rhs),
         }
     }
 }

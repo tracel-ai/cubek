@@ -3,7 +3,7 @@ use cubecl::std::tensor::layout::{
     linear::{LinearViewMut, linear_view},
 };
 use cubecl::{prelude::*, std::tensor::ViewMut};
-use cubecl_common::{rand::get_seeded_rng, stub::Mutex};
+use cubecl_environment::{rand::get_seeded_rng, sync::Mutex};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 pub(crate) const N_VALUES_PER_THREAD: usize = 128;
@@ -17,7 +17,7 @@ static SEED_GUARD: Mutex<()> = Mutex::new(());
 
 pub fn seed(seed: u64) {
     let rng = StdRng::seed_from_u64(seed);
-    let mut seed = SEED.lock().unwrap();
+    let mut seed = SEED.lock();
     *seed = Some(rng);
 }
 
@@ -27,7 +27,7 @@ pub fn seed(seed: u64) {
 /// critical section, so parallel callers don't stomp on each other's seeds
 /// between the two steps.
 pub fn with_seed<R>(seed_value: u64, f: impl FnOnce() -> R) -> R {
-    let _guard = SEED_GUARD.lock().unwrap();
+    let _guard = SEED_GUARD.lock();
     seed(seed_value);
     f()
 }
@@ -87,7 +87,7 @@ fn prng_cube_count(num_elems: usize, cube_dim: CubeDim, n_values_per_thread: usi
 }
 
 pub(crate) fn get_seeds() -> [u32; 4] {
-    let mut seed = SEED.lock().unwrap();
+    let mut seed = SEED.lock();
     let mut rng: StdRng = match seed.take() {
         Some(rng_seeded) => rng_seeded,
         None => get_seeded_rng(),

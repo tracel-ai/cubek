@@ -228,6 +228,7 @@ fn general_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -236,7 +237,7 @@ fn general_unit_selector(
 fn matvec_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -264,6 +265,7 @@ fn matvec_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -272,7 +274,7 @@ fn matvec_unit_selector(
 fn vecmat_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -297,6 +299,7 @@ fn vecmat_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -305,7 +308,7 @@ fn vecmat_unit_selector(
 fn scalarvec_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -336,6 +339,7 @@ fn scalarvec_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -344,7 +348,7 @@ fn scalarvec_unit_selector(
 fn vecscalar_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -369,6 +373,7 @@ fn vecscalar_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -377,7 +382,7 @@ fn vecscalar_unit_selector(
 fn inner_product_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -405,6 +410,7 @@ fn inner_product_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -413,7 +419,7 @@ fn inner_product_unit_selector(
 fn outer_product_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -435,6 +441,7 @@ fn outer_product_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -443,7 +450,7 @@ fn outer_product_unit_selector(
 fn scalar_product_unit_selector(
     problem: &MatmulProblem,
     plane_dim: u32,
-    _double_buffering: bool,
+    double_buffering: bool,
     _tile_size: u32,
     num_sms: Option<u32>,
     options: UnitTilingBlueprintOptions,
@@ -468,6 +475,7 @@ fn scalar_product_unit_selector(
         problem,
         dtypes,
         vector_sizes,
+        double_buffering,
     )
 }
 
@@ -505,6 +513,7 @@ fn selection(
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
+    double_buffering: bool,
 ) -> BatchMatmulBlueprint {
     let (stage_size_m, stage_size_n) = stage.into_stages();
 
@@ -539,9 +548,11 @@ fn selection(
         .cube_count_strategy(cube_count_strategy)
         .build();
 
+    let stage_buffering = if double_buffering { 2 } else { 1 };
     let mut builder =
         BatchMatmulBlueprint::builder(TileMatmulKind::Register, tiling_scheme, plane_dim, problem)
             .partition_buffering(buffering)
+            .stage_buffering(stage_buffering)
             .hypercube_blueprint(hypercube);
 
     if swizzle {

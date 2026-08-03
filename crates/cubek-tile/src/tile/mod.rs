@@ -7,6 +7,7 @@ mod cmma;
 mod mem;
 mod mma;
 mod plane;
+mod register;
 mod tma;
 mod view;
 
@@ -14,6 +15,7 @@ pub use cmma::*;
 pub use mem::*;
 pub use mma::*;
 pub use plane::*;
+pub use register::*;
 pub use tma::*;
 pub use view::*;
 
@@ -217,6 +219,18 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// What this tile's cells are to the plane's lanes: whole, or a partial only true once
+    /// combined across the plane. A resident form inherits it from the memory it was promoted
+    /// from — the split is the space's, not the storage's.
+    pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(LaneShare::Whole)
+            }
+        }
+    }
+
     /// Comptime quant dispatch for a leaf read (`0` = plain, `1` = native i8, `>1` = packed u32);
     /// see [`MemData::quant_pack`]. A resident fragment and a tma source are never quantized.
     pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
@@ -335,7 +349,16 @@ impl<T: Numeric> Tile<T> {
         if comptime!(!space.is_static()) {
             #[unroll]
             for p in 0..comptime!(space.rank()) {
-                sizes.push(self.runtime_extent(space.axis_at(p)));
+                let axis = comptime!(space.axis_at(p));
+                // `sizes` is positional, so every axis pushes — but only a `Dynamic` one is
+                // ever read back ([`Extents::count`] folds a `Static` axis to its comptime
+                // extent). Fold it here too rather than asking the tile: a plane tile has no
+                // buffer bound to answer with, and one `Dynamic` axis elsewhere in the space
+                // must not make its `Static` axes unreadable.
+                sizes.push(match comptime!(space.extent_raw(axis)) {
+                    Extent::Static(n) => comptime!(n).runtime(),
+                    Extent::Dynamic => self.runtime_extent(axis),
+                });
             }
         }
         Space::with_sizes(space, sizes)
@@ -360,6 +383,31 @@ impl<T: Numeric> Tile<T> {
                     sub.zero();
                 }
             }
+        }
+    }
+
+    /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
+    /// own width): index `i` reads line `origin + i` — one add, no layout
+    /// walk. See [`MemData::dense_lines`] for the (caller-owned) contiguity
+    /// contract; the streaming fold's operands satisfy it by construction.
+    pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines::<W>(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::dense: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::dense: a tma source has no element view"),
+        }
+    }
+
+    /// The mutable twin of [`dense`](Tile::dense).
+    pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines_mut::<W>(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::dense_mut: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::dense_mut: a tma source is not writable"),
         }
     }
 

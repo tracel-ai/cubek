@@ -3,8 +3,10 @@
 //! shared machinery they compose lives in [`crate::staging`]. Dequantization is not a verb: a
 //! quantized store dequantizes under the plain [`Tile::copy_from`](crate::Tile::copy_from).
 
+mod attention;
 mod matmul;
 mod softmax;
 
+pub use attention::*;
 pub use softmax::*;
-// matmul adds `Tile::mma` impls only; nothing to re-export.
+// matmul adds `Tile` impls only; nothing to re-export.

@@ -1162,6 +1162,148 @@ fn launch_cpu_matmul<E: Numeric>(
     c.mma(&a, &b);
 }
 
+/// The promoted twin of [`launch_cpu_matmul`]: the register leaf's accumulator lifted out of
+/// memory into its own block, contracted, and cast back down on drain.
+#[cube(launch)]
+fn launch_promoted_matmul<E: Numeric, EA: Numeric>(
+    a: &StridedTileArg<'_, E>,
+    b: &StridedTileArg<'_, E>,
+    c: &StridedTileArg<'_, E>,
+    #[define(E)] _dtype: StorageType,
+    #[define(EA)] _acc_dtype: StorageType,
+) {
+    let a = a.tile();
+    let b = b.tile();
+    let mut c = c.tile();
+    let mut acc = c.promote::<EA>();
+    acc.zero();
+    acc.mma(&a, &b);
+    acc.drain_cast_into(&mut c);
+}
+
+/// The register leaf contracts through a promoted block rather than through the output, so a
+/// deep `K` keeps its partials in the accumulate element instead of round-tripping them
+/// through the sink's on every visit.
+#[test]
+fn register_matmul_promoted_accumulator() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // One block per instance (a 1x1 partition at the leaf), K walked in four steps — every
+    // step returns to the same promoted accumulator, which is the round trip this removes.
+    let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .direct();
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    launch_promoted_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 1, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        dtype,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The promoted register accumulator under the two-level cube/plane space a real gemm composes,
+/// with **vectorized** operands (rhs and output in 2-wide lines). This is the case that once
+/// failed to compile on the CPU backend, when the block was allocated scalar and re-viewed as
+/// lines; the block is now allocated at its vector element (`Array<Vector<T, RA>>`), so the
+/// store is a real vector write and the numbers are right on every runtime.
+#[test]
+fn register_matmul_promoted_cube_plane() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 16usize);
+    let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, m))
+                .axis(N, Cut::cube(CubeAxis::Y, n))
+                .axis(K, seq(k))
+        })
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::plane(leaf_m))
+                .axis(N, Cut::plane(leaf_n))
+                .axis(K, seq(leaf_k))
+        })
+        .leaf(Leaf::Register);
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_promoted_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
+        // Vectorized along N, as a real launch does for the rhs and the output: the tensor arg
+        // stays scalar (`tensor_arg(1)`) and the launch vectorizes it to `2` (the second arg).
+        StridedTileArgLaunch::strided(b.tensor_arg(1), 2, b.space(), b.storage()),
+        StridedTileArgLaunch::strided(c.tensor_arg(1), 2, c.space(), c.storage()),
+        dtype,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 // ---- cmma fragment transit (tensor-core) -------------------------------------
 
 /// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no

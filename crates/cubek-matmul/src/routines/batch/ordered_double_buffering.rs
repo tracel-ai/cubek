@@ -186,6 +186,8 @@ where
                             minimum_stage_count: 8,
                         }),
                     swizzled: tile_matmul.should_swizzle(&device_settings.client),
+                    stage_buffering: OrderedDoubleBufferingBatch::<RC>::num_stages()
+                        .stage_buffering(),
                     ..Default::default()
                 },
             )?,

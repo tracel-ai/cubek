@@ -26,7 +26,7 @@ impl<EA: Float> Tile<EA> {
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
-                let q = probe.origin_q + r;
+                let q = probe.row_q(r);
                 for c in 0..cols {
                     let masked = probe.masked(q, probe.origin_s + c, mask);
                     let val = select(
@@ -95,6 +95,106 @@ impl<EA: Float> Tile<EA> {
                     acc[ri] += view.read(r * cols + c).extract(0);
                 }
             }
+        }
+    }
+
+    /// Merge a split fold's per-team running states into cross-split weights:
+    /// per row, `self[t] = exp(m_t - max_t m_t)` and
+    /// `recip[r] = 1 / Σ_t l_t · self[t]`.
+    ///
+    /// `self`, `m`, and `l` are `{splits · rows}` tiles; `recip` is `{rows}`.
+    /// A fully-masked row gets `recip` exactly zero, and a split that folded
+    /// nothing published `(min, 0)` so it weighs zero on its own. One unit
+    /// per row, cyclic over the cube; the caller syncs on both sides.
+    /// `splits == 1` degenerates to the plain epilogue.
+    pub fn merge_splits(
+        &mut self,
+        recip: &mut Tile<EA>,
+        m: &Tile<EA>,
+        l: &Tile<EA>,
+        #[comptime] splits: usize,
+    ) {
+        let total = comptime!(self.space.extent_at(0));
+        let rows = comptime!(total / splits);
+        comptime!(assert!(
+            self.space.rank() == 1 && total.is_multiple_of(splits),
+            "merge_splits: a rank-1 {{splits · rows}} weight tile"
+        ));
+        let size!(W) = self.vector_size();
+        let size!(WR) = recip.vector_size();
+        let size!(WM) = m.vector_size();
+        let size!(WL) = l.vector_size();
+        let mf = m.flat::<WM>();
+        let lf = l.flat::<WL>();
+        let mut rf = recip.flat_mut::<WR>();
+        let mut wf = self.flat_mut::<W>();
+
+        let workers = CUBE_DIM as usize;
+        let mut r = UNIT_POS as usize;
+        while r < rows {
+            let mut mstar = EA::min_value();
+            for t in 0..splits {
+                mstar = max(mstar, mf.read(t * rows + r).extract(0));
+            }
+            let mut lstar = EA::from_int(0);
+            for t in 0..splits {
+                let w = (mf.read(t * rows + r).extract(0) - mstar).exp();
+                lstar += lf.read(t * rows + r).extract(0) * w;
+                wf.write(t * rows + r, Vector::cast_from(w));
+            }
+            rf.write(r, Vector::cast_from(masked_recip::<EA>(lstar)));
+            r += workers;
+        }
+    }
+
+    /// Publish per-owned-row `values` into this rank-1 factors tile, one
+    /// cell per score row. The caller syncs before any cross-unit read.
+    pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] rpu: usize) {
+        let rows = comptime!(self.space.extent_at(0));
+        comptime!(assert!(
+            self.space.rank() == 1,
+            "store_rows: a rank-1 factors tile, one cell per score row"
+        ));
+        let size!(W) = self.vector_size();
+        let mut view = self.flat_mut::<W>();
+
+        for ri in 0..rpu {
+            let r = UNIT_POS_X as usize * rpu + ri;
+            if r < rows {
+                view.write(r, Vector::cast_from(values[ri]));
+            }
+        }
+    }
+
+    /// Multiply each row by its factor: `self[r, c] *= factors[r]`.
+    ///
+    /// The accumulator rescale between fold steps, and the epilogue
+    /// normalize when the factors are `recip_l`. Cyclic over the whole cube
+    /// so each cell is touched exactly once, whatever ownership the
+    /// interleaved matmuls use; the caller syncs on both sides.
+    pub fn scale_rows(&mut self, factors: &Tile<EA>) {
+        let cols = comptime!(self.space.extent_at(1));
+        comptime!(assert!(
+            self.space.rank() == 2,
+            "scale_rows: a rank-2 accumulator tile"
+        ));
+        let w = self.vector_size();
+        let wf = factors.vector_size();
+        comptime!(assert!(
+            w == 1 && wf == 1,
+            "scale_rows: vectorized tiles not supported yet"
+        ));
+        let total = comptime!(self.space.tile_size());
+        let size!(W) = w;
+        let size!(WF) = wf;
+        let f = factors.flat::<WF>();
+        let mut view = self.flat_mut::<W>();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            let v = view.read(i).extract(0) * f.read(i / cols).extract(0);
+            view.write(i, Vector::cast_from(v));
+            i += workers;
         }
     }
 

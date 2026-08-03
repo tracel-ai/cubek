@@ -6,41 +6,15 @@ use serde::{Deserialize, Serialize};
 use crate::components::instructions::AccumulatorFormat;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
-use crate::components::instructions::{Accumulator, Item, Value};
+use crate::components::instructions::{Accumulator, Item, Value, ValueExpand};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
     components::instructions::{
-        ReduceRequirements, ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily,
-        SharedAccumulator,
+        ReduceOutputMode, ReduceRequirements, ReduceStep, ReduceWithIndices,
+        ReduceWithIndicesFamily, SharedAccumulator,
     },
 };
 use cubecl::frontend::Numeric;
-
-/// Which of a top-k's two results the single-output path writes.
-///
-/// The reduction is identical either way: the accumulator always holds candidate
-/// values, and when indices are wanted their coordinates too. Only
-/// [`ReduceInstruction::requirements`] and the `to_output_*` conversions differ,
-/// which is why one instruction serves both the `TopK` and `ArgTopK` configs.
-///
-/// The fused path (values *and* indices) is not a third variant here: it goes
-/// through [`ReduceWithIndices`] and its `to_output_both_*` conversions, sizing
-/// the accumulator with [`Self::Indices`] so coordinates are tracked.
-#[derive_cube_comptime]
-#[derive(Serialize, Deserialize)]
-pub enum ReduceOutputMode {
-    /// Write only the top values.
-    Values,
-    /// Write only the coordinates of the top values.
-    Indices,
-}
-
-impl ReduceOutputMode {
-    /// Whether coordinates must be tracked through the reduction.
-    pub fn has_indices(&self) -> bool {
-        matches!(self, ReduceOutputMode::Indices)
-    }
-}
 
 #[derive_cube_comptime]
 #[derive(Serialize, Deserialize)]
@@ -67,49 +41,51 @@ impl ReduceWithIndicesFamily for TopK {
     type Config = TopKConfig;
 }
 
-/// Insert `(insert_val, insert_coord)` into the descending-sorted `elements`
-/// (and `coordinates`, when tracked), pushing the smallest slot out.
+/// Insert `insert_val` into the descending-sorted `elements` (and its
+/// coordinate, when it carries one), pushing the smallest slot out.
 ///
-/// Ties break towards the lower coordinate, matching the CPU reference. When
-/// `has_coords` is false `coordinates` and `insert_coord` are untouched, so the
-/// values-only path emits no index arithmetic at all.
+/// Ties break towards the lower coordinate, matching the CPU reference. A
+/// coordinate-less candidate emits no index arithmetic at all.
 #[cube]
 pub(crate) fn topk_insert<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
     coordinates: &mut Value<Vector<u32, S>>,
     insert_val: Vector<N, S>,
-    insert_coord: Vector<u32, S>,
+    insert_coord: &Value<Vector<u32, S>>,
     #[comptime] k: usize,
-    #[comptime] has_coords: bool,
 ) {
     let mut insert_val = insert_val;
 
-    if has_coords {
-        let mut insert_coord = insert_coord;
-        let coords = coordinates.multiple_mut();
-
-        for j in 0..k {
-            let to_keep = select_many(
-                elements[j].equal(&insert_val),
-                coords[j].less_than(&insert_coord),
-                elements[j].greater_than(&insert_val),
-            );
-
-            let next_val = select_many(to_keep, insert_val, elements[j]);
-            elements[j] = select_many(to_keep, elements[j], insert_val);
-            insert_val = next_val;
-
-            let next_coord = select_many(to_keep, insert_coord, coords[j]);
-            coords[j] = select_many(to_keep, coords[j], insert_coord);
-            insert_coord = next_coord;
+    match insert_coord {
+        Value::None => {
+            for j in 0..k {
+                let to_keep = elements[j].greater_than(&insert_val);
+                let next_val = select_many(to_keep, insert_val, elements[j]);
+                elements[j] = select_many(to_keep, elements[j], insert_val);
+                insert_val = next_val;
+            }
         }
-    } else {
-        for j in 0..k {
-            let to_keep = elements[j].greater_than(&insert_val);
-            let next_val = select_many(to_keep, insert_val, elements[j]);
-            elements[j] = select_many(to_keep, elements[j], insert_val);
-            insert_val = next_val;
+        Value::Single(coord) => {
+            let mut insert_coord = coord.unwrap();
+            let coords = coordinates.multiple_mut();
+
+            for j in 0..k {
+                let to_keep = select_many(
+                    elements[j].equal(&insert_val),
+                    coords[j].less_than(&insert_coord),
+                    elements[j].greater_than(&insert_val),
+                );
+
+                let next_val = select_many(to_keep, insert_val, elements[j]);
+                elements[j] = select_many(to_keep, elements[j], insert_val);
+                insert_val = next_val;
+
+                let next_coord = select_many(to_keep, insert_coord, coords[j]);
+                coords[j] = select_many(to_keep, coords[j], insert_coord);
+                insert_coord = next_coord;
+            }
         }
+        Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
     }
 }
 
@@ -255,7 +231,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let has_coords = comptime!(this.output.has_indices());
         let elements = accumulator.elements.multiple_mut();
 
         match reduce_step {
@@ -266,23 +241,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
                     Vector::cast_from(item.elements),
                     &item.args,
                     this.k,
-                    has_coords,
                 );
             }
             ReduceStep::Identity => {
-                let insert_coord = if has_coords {
-                    item.args.item()
-                } else {
-                    Vector::new(u32::MAX)
-                };
-
                 topk_insert::<P::EA, P::SI>(
                     elements,
                     &mut accumulator.args,
                     Vector::cast_from(item.elements),
-                    insert_coord,
+                    &item.args,
                     this.k,
-                    has_coords,
                 );
             }
         }
@@ -293,133 +260,88 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             accumulator.elements.multiple_mut(),
             &mut accumulator.args,
             this.k,
-            comptime!(this.output.has_indices()),
         );
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let has_coords = comptime!(this.output.has_indices());
         let elements = accumulator.elements.multiple_mut();
         let other_elements = other.elements.multiple();
 
         for i in 0..this.k {
-            let insert_coord = if has_coords {
-                other.args.multiple()[i]
-            } else {
-                Vector::new(u32::MAX)
-            };
-
             topk_insert::<P::EA, P::SI>(
                 elements,
                 &mut accumulator.args,
                 other_elements[i],
-                insert_coord,
+                &other.args.slot(i),
                 this.k,
-                has_coords,
             );
         }
     }
 
-    fn to_output_parallel<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        _shape_axis_reduce: usize,
-    ) -> Value<Out> {
-        let mut out = Array::new(this.k);
-
-        match comptime!(this.output) {
-            ReduceOutputMode::Values => {
-                let values = topk_finalize_values::<P, Out>(&accumulator, this.k);
-                #[unroll]
-                for i in 0..this.k {
-                    out[i] = values[i];
-                }
-            }
-            ReduceOutputMode::Indices => {
-                let (_values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
-                #[unroll]
-                for i in 0..this.k {
-                    out[i] = Out::cast_from(coords[i]);
-                }
-            }
-        }
-
-        Value::new_Multiple(out)
+    fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode) {
+        comptime!(this.output)
     }
 
-    fn to_output_perpendicular<Out: Numeric>(
-        this: &Self,
-        accumulator: Accumulator<P>,
-        _shape_axis_reduce: usize,
-    ) -> Value<Vector<Out, P::SI>> {
-        let mut output = Array::new(this.k);
-
-        match comptime!(this.output) {
-            ReduceOutputMode::Values => {
-                let acc_values = accumulator.elements.multiple();
-                #[unroll]
-                for i in 0..this.k {
-                    output[i] = Vector::cast_from(acc_values[i]);
-                }
-            }
-            ReduceOutputMode::Indices => {
-                let acc_args = accumulator.args.multiple();
-                #[unroll]
-                for i in 0..this.k {
-                    output[i] = Vector::cast_from(acc_args[i]);
-                }
-            }
-        }
-
-        Value::new_Multiple(output)
-    }
-}
-
-#[cube]
-impl<P: ReducePrecision> ReduceWithIndices<P> for TopK {
-    fn to_output_both_parallel<Out: Numeric, Idx: Numeric>(
+    fn to_output_parallel<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        let (values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
+        match accumulator.args {
+            Value::None => {
+                let values = topk_finalize_values::<P, Out>(&accumulator, this.k);
+                (Value::new_Multiple(values), Value::new_None())
+            }
+            Value::Multiple(_) => {
+                let (values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
 
-        let mut out_values = Array::new(this.k);
-        let mut out_indices = Array::new(this.k);
-        #[unroll]
-        for i in 0..this.k {
-            out_values[i] = Out::cast_from(values[i]);
-            out_indices[i] = Idx::cast_from(coords[i]);
+                let mut out_values = Array::new(this.k);
+                let mut out_indices = Array::new(this.k);
+                #[unroll]
+                for i in 0..this.k {
+                    out_values[i] = Out::cast_from(values[i]);
+                    out_indices[i] = Idx::cast_from(coords[i]);
+                }
+
+                (
+                    Value::new_Multiple(out_values),
+                    Value::new_Multiple(out_indices),
+                )
+            }
+            Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
         }
-
-        (
-            Value::new_Multiple(out_values),
-            Value::new_Multiple(out_indices),
-        )
     }
 
-    fn to_output_both_perpendicular<Out: Numeric, Idx: Numeric>(
+    fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
         this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         let acc_values = accumulator.elements.multiple();
-        let acc_args = accumulator.args.multiple();
-
         let mut out_values = Array::new(this.k);
-        let mut out_indices = Array::new(this.k);
         #[unroll]
         for i in 0..this.k {
             out_values[i] = Vector::cast_from(acc_values[i]);
-            out_indices[i] = Vector::cast_from(acc_args[i]);
         }
 
-        (
-            Value::new_Multiple(out_values),
-            Value::new_Multiple(out_indices),
-        )
+        let indices = match &accumulator.args {
+            Value::None => Value::new_None(),
+            Value::Multiple(acc_args) => {
+                let mut out_indices = Array::new(this.k);
+                #[unroll]
+                for i in 0..this.k {
+                    out_indices[i] = Vector::cast_from(acc_args[i]);
+                }
+                Value::new_Multiple(out_indices)
+            }
+            Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
+        };
+
+        (Value::new_Multiple(out_values), indices)
     }
 }
+
+impl<P: ReducePrecision> ReduceWithIndices<P> for TopK {}
 
 /// Collapse the `k * vector_size` accumulator candidates down to the final `k`
 /// values, for the parallel (reduce axis is the vectorized axis) layout.
