@@ -57,6 +57,9 @@ cubek-fft = { path = "../crates/cubek-fft", version = "=0.3.0-pre.1", features =
 cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.3.0-pre.1", features = [
     "benchmarks",
 ] }
+cubek-linalg = { path = "../crates/cubek-linalg", version = "=0.3.0-pre.1", features = [
+    "benchmarks",
+] }
 cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.1", features = [
     "benchmarks",
 ] }
@@ -139,3 +142,7 @@ name = "fft"
 [[bench]]
 harness = false
 name = "quantized_matmul"
+
+[[bench]]
+harness = false
+name = "qr"

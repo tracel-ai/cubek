@@ -1,0 +1,36 @@
+[package]
+authors = [
+    "Jorge Perez Burgos <vaijira@gmail.com>",
+]
+categories = ["science", "mathematics", "algorithms"]
+description = "CubeK: Linear Algebra Kernels"
+edition.workspace = true
+keywords = []
+license.workspace = true
+name = "cubek-linalg"
+readme.workspace = true
+repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-linalg"
+version.workspace = true
+
+[features]
+default = ["std", "cubecl/default"]
+std = ["cubecl/std", "thiserror/std"]
+# Enables `pub mod eval::benchmarks` — catalogue of QR benchmark problems /
+# strategies consumed by the benchmark registry.
+benchmarks = ["dep:cubek-test-utils", "cubecl/test-runtime"]
+
+[dependencies]
+cubecl = { workspace = true, features = ["stdlib"] }
+cubecl-common = { workspace = true }
+cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.1", default-features = false }
+cubek-matmul = { path = "../cubek-matmul", version = "=0.3.0-pre.1", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
+
+thiserror = { workspace = true }
+
+[dev-dependencies]
+cubecl = { workspace = true, features = ["test-runtime"] }
+cubecl-common = { workspace = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
+num-traits = { workspace = true }
+paste = "1.0"
