@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder, bare_surface};
 
 use crate::{
     definition::{
@@ -10,7 +10,10 @@ use crate::{
     },
     routines::{
         BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
-        cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
+        cpu_gemm::{
+            base::CpuGemmRoutine,
+            kernel::{cpu_gemm_bare_kernel, cpu_gemm_kernel},
+        },
     },
 };
 
@@ -189,6 +192,46 @@ pub fn launch_ref<R: Runtime>(
     // batches). All operands get the full output batch-axis list; the builder right-aligns it to
     // each operand's leading dims (numpy broadcast, size-1 dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
+    if bare_surface() {
+        let a = launch
+            .bare_arg(lhs.into_data())
+            .subspace(&[M, K])
+            .batches(&out_batch_axes)
+            .levels(lhs_levels)
+            .build_bare();
+        let b = launch
+            .bare_arg(rhs)
+            .subspace(&[K, N])
+            .batches(&out_batch_axes)
+            .levels(rhs_levels)
+            .vectorize(v)
+            .build_bare();
+        let c = launch
+            .bare_arg(out)
+            .subspace(&[M, N])
+            .batches(&out_batch_axes)
+            .levels(out_levels)
+            .vectorize(v)
+            .build_bare();
+        cpu_gemm_bare_kernel::launch::<R>(
+            client,
+            launch.cube_count(),
+            launch.cube_dim(),
+            a.vector_size,
+            b.vector_size,
+            c.vector_size,
+            a.tensor,
+            b.tensor,
+            c.tensor,
+            a.spec,
+            b.spec,
+            c.spec,
+            dtypes.lhs_global,
+            dtypes.rhs_global,
+            dtypes.acc_global,
+        );
+        return Ok(());
+    }
     cpu_gemm_kernel::launch::<R>(
         client,
         launch.cube_count(),

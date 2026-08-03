@@ -10,6 +10,7 @@ use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
     Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, StridedTileArgLaunch,
+    TileSpec,
 };
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
@@ -157,11 +158,84 @@ impl<'a, Sp, Sub, E, R: Runtime> StridedTileSource<'a, Sp, Sub, E, R> {
     }
 }
 
+/// A built bare-surface operand: the plain tensor argument, the comptime [`TileSpec`]
+/// its kernel feeds `Tile::of`/`of_dequant`, the served width, and the quant side-channel
+/// as an ordinary (scales, scheme) pair. The wrapper-free twin of [`StridedTileArgLaunch`].
+pub struct BareStridedSource<R: Runtime> {
+    pub tensor: TensorArg<R>,
+    /// Served width: the launch value for the kernel's `Size` generic.
+    pub vector_size: usize,
+    pub spec: TileSpec,
+    pub quant: Option<(TensorArg<R>, QuantScheme)>,
+}
+
+/// The shared output of the builder's layout/broadcast/check derivation, consumed by
+/// [`build`](StridedTileSource::build) (wrapper surface) and
+/// [`build_bare`](StridedTileSource::build_bare) (bare surface).
+struct Realized<R: Runtime> {
+    binding: TensorBinding<R>,
+    layout: ConcreteLayout,
+    space: Space,
+    v: usize,
+    check: bool,
+    stage: Option<StageStorage>,
+    units: usize,
+    quant: Option<(TensorArg<R>, QuantScheme)>,
+}
+
 impl<'a, E: Numeric, R: Runtime> StridedTileSource<'a, Set, Set, E, R> {
     /// Build the operand's [`ConcreteLayout`] from its labeled dims and load it via
     /// [`from_concrete`](StridedTileArgLaunch::from_concrete). Available only once space and subspace are
     /// both set, so the `unwrap` below cannot fire.
     pub fn build(self) -> StridedTileArgLaunch<'static, E, R> {
+        let Realized {
+            binding,
+            layout,
+            space,
+            v,
+            check,
+            stage,
+            units,
+            quant,
+        } = self.realize();
+        let mut arg =
+            StridedTileArgLaunch::from_concrete(binding, &layout, &space, v, check, units);
+        if let Some(stage) = stage {
+            arg = arg.stage(stage);
+        }
+        if let Some((scales, scheme)) = quant {
+            arg = arg.quantized(scales, scheme);
+        }
+        arg
+    }
+
+    /// [`build`](Self::build)'s bare-tensor twin: identical layout, broadcast, projection,
+    /// and check derivation, but the operand ships as a plain `TensorArg` plus the comptime
+    /// [`TileSpec`] — no `StridedTileArg` wrapper.
+    pub fn build_bare(self) -> BareStridedSource<R> {
+        let Realized {
+            binding,
+            layout,
+            space,
+            v,
+            check,
+            stage,
+            units,
+            quant,
+        } = self.realize();
+        let mut spec = TileSpec::from_concrete(&layout, &space, check, units);
+        if let Some(stage) = stage {
+            spec.storage.stage.layout = stage;
+        }
+        BareStridedSource {
+            tensor: binding.into_tensor_arg(),
+            vector_size: v,
+            spec,
+            quant,
+        }
+    }
+
+    fn realize(self) -> Realized<R> {
         let TileSourceData {
             mut binding,
             space,
@@ -238,20 +312,15 @@ impl<'a, E: Numeric, R: Runtime> StridedTileSource<'a, Set, Set, E, R> {
 
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        let mut arg = StridedTileArgLaunch::from_concrete(
+        Realized {
             binding,
-            &ConcreteLayout::new(&phys),
-            space,
+            layout: ConcreteLayout::new(&phys),
+            space: space.clone(),
             v,
             check,
+            stage,
             units,
-        );
-        if let Some(stage) = stage {
-            arg = arg.stage(stage);
+            quant,
         }
-        if let Some((scales, scheme)) = quant {
-            arg = arg.quantized(scales, scheme);
-        }
-        arg
     }
 }

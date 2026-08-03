@@ -65,6 +65,32 @@ impl Storage {
     }
 }
 
+/// The comptime half of a bare-surface operand: which logical [`Space`] the tensor's
+/// buffer maps to and how ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of);
+/// the launch-side builder derives it ([`build_bare`](crate::StridedTileSource::build_bare)).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct TileSpec {
+    pub space: Space,
+    pub storage: Storage,
+}
+
+impl TileSpec {
+    /// Derive an operand's spec from its realized [`ConcreteLayout`]: project `space` onto
+    /// the spanned axes, read the tiling [`Storage`] off the layout. The one derivation both
+    /// launch surfaces share.
+    pub fn from_concrete(
+        layout: &ConcreteLayout,
+        space: &Space,
+        check: bool,
+        units: usize,
+    ) -> Self {
+        TileSpec {
+            space: space.project(&layout.distinct_axes()),
+            storage: Storage::from(layout).checked(check).units(units),
+        }
+    }
+}
+
 /// The strided [`Delivery`]'s argument: a [`VecTensor`] plus its comptime line
 /// [`vector_size`](Self::vector_size), [`Space`], [`Storage`] and load knobs;
 /// [`tile`](StridedTileArg::tile) turns it into a `Tile` in-kernel. For a quantized operand,
@@ -185,12 +211,8 @@ impl<E: Numeric, R: Runtime> StridedTileArgLaunch<'static, E, R> {
         check: bool,
         units: usize,
     ) -> Self {
-        Self::strided(
-            binding.into_tensor_arg(),
-            v,
-            space.project(&layout.distinct_axes()),
-            Storage::from(layout).checked(check).units(units),
-        )
+        let spec = TileSpec::from_concrete(layout, space, check, units);
+        Self::strided(binding.into_tensor_arg(), v, spec.space, spec.storage)
     }
 
     /// Load a strided global tensor as a tile served in `vector_size`-wide lines (the binding is

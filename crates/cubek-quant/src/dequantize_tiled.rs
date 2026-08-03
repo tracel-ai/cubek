@@ -6,6 +6,7 @@ use cubecl::{
 };
 use cubek_tile::{
     Axis, ByAxis, Distribution, Partitioner, Space, Storage, StridedTileArg, StridedTileArgLaunch,
+    Tile, TileSpec, bare_surface,
 };
 
 // Input axes
@@ -39,6 +40,33 @@ pub fn launch_ref<R: Runtime>(
 
     let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
+    if bare_surface() {
+        let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
+        let output_storage = Storage::of(output.shape.len(), output_space.rank());
+        let cube_count = input_space.cube_count();
+        let cube_dim = input_space.cube_dim(client);
+        let input_dtype = ElemType::from_quant_value(scheme.value).into();
+        dequantize_bare::launch(
+            client,
+            cube_count,
+            cube_dim,
+            input.into_tensor_arg(),
+            scales.into_tensor_arg(),
+            output.into_tensor_arg(),
+            *scheme,
+            TileSpec {
+                space: input_space,
+                storage: input_storage,
+            },
+            TileSpec {
+                space: output_space,
+                storage: output_storage,
+            },
+            input_dtype,
+            output_dtype,
+        );
+        return Ok(());
+    }
     // The quantized operand: the storage-typed tensor plus its scale + scheme, attached at the
     // payload so the kernel's reads dequantize transparently.
     let input_tilearg = StridedTileArgLaunch::strided(
@@ -118,5 +146,23 @@ pub fn dequantize<I: Numeric, O: Numeric>(
 ) {
     let input = input.tile_dequant::<O>();
     let mut output = output.tile();
+    output.copy_from(&input);
+}
+
+/// [`dequantize`]'s bare-tensor twin: the identical copy, operands as plain tensors
+/// plus their comptime [`TileSpec`]s, scales as an ordinary second tensor.
+#[cube(launch)]
+pub fn dequantize_bare<I: Numeric, O: Numeric>(
+    input: &Tensor<I>,
+    scales: &Tensor<f32>,
+    output: &Tensor<O>,
+    #[comptime] scheme: QuantScheme,
+    #[comptime] spec_in: TileSpec,
+    #[comptime] spec_out: TileSpec,
+    #[define(I)] _input_dtype: StorageType,
+    #[define(O)] _output_dtype: StorageType,
+) {
+    let input = Tile::<O>::of_dequant(input, scales, scheme, spec_in);
+    let mut output = Tile::<O>::of(output, spec_out);
     output.copy_from(&input);
 }

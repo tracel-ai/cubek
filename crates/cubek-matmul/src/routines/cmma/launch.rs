@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Delivery, DeliveryFamily, Launcher, Leaf, Schedule, Space, Strided,
-    StridedTileArgLaunch, Tiling, Tma, TmaTileArgLaunch, WalkOrder,
+    Axis, BareStrided, CubeAxis, Cut, Delivery, DeliveryFamily, Launcher, Leaf, Schedule, Space,
+    Strided, StridedTileArgLaunch, Tiling, Tma, TmaTileArgLaunch, WalkOrder, bare_surface,
 };
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
         BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
         cmma::{
             base::{CmmaBlueprint, CmmaRoutine},
-            kernel::cmma_kernel,
+            kernel::{cmma_bare_kernel, cmma_kernel},
         },
     },
 };
@@ -215,6 +215,17 @@ pub fn launch_ref<R: Runtime>(
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
     // `launch_kernel` runs once for either and never branches on the delivery again.
     match blueprint.delivery {
+        Delivery::Strided if bare_surface() => launch_kernel_bare_strided::<R>(
+            client,
+            &launch,
+            cube_count,
+            cube_dim,
+            lhs,
+            rhs,
+            out,
+            &out_batch_axes,
+            dtypes,
+        ),
         Delivery::Strided => launch_kernel::<Strided, R>(
             client,
             &launch,
@@ -257,6 +268,60 @@ struct Operand {
 
 /// Host-side counterpart to [`DeliveryFamily`]: how a delivery builds one operand's launch
 /// arg. Implemented for the tile crate's family markers. Lives here rather than on
+/// [`launch_kernel`]'s bare-surface twin, strided only (TMA keeps the wrapper path):
+/// the same operand geometry through `build_bare`, dispatching [`cmma_bare_kernel`]
+/// over [`BareStrided`].
+#[allow(clippy::too_many_arguments)]
+fn launch_kernel_bare_strided<R: Runtime>(
+    client: &ComputeClient<R>,
+    launch: &Launcher<'_, R>,
+    cube_count: CubeCount,
+    cube_dim: CubeDim,
+    lhs: TensorBinding<R>,
+    rhs: TensorBinding<R>,
+    out: TensorBinding<R>,
+    out_batch_axes: &[Axis],
+    dtypes: &MatmulElems,
+) {
+    let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: StorageType| {
+        let [outer, inner] = axes;
+        let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
+        launch
+            .bare_arg(binding)
+            .subspace(&[outer, inner])
+            .batches(out_batch_axes)
+            .vectorize(v)
+            .build_bare()
+    };
+    let a = operand(lhs, [M, K], dtypes.lhs_global);
+    let b = operand(rhs, [K, N], dtypes.rhs_global);
+    let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
+    let c = launch
+        .bare_arg(out)
+        .subspace(&[M, N])
+        .batches(out_batch_axes)
+        .vectorize(v_out)
+        .build_bare();
+    cmma_bare_kernel::launch::<BareStrided, R>(
+        client,
+        cube_count,
+        cube_dim,
+        a.vector_size,
+        b.vector_size,
+        c.vector_size,
+        a.tensor,
+        b.tensor,
+        c.tensor,
+        a.spec,
+        b.spec,
+        c.spec,
+        dtypes.lhs_global,
+        dtypes.rhs_global,
+        dtypes.acc_global,
+        mandated_acc(dtypes),
+    );
+}
+
 /// `cubek_tile`'s `Delivery` because building the arg reaches `cubek_std`'s [`tma_operand`]
 /// and the routine's own axes.
 trait OperandLaunch: DeliveryFamily {

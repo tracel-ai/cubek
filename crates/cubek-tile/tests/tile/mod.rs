@@ -1,5 +1,6 @@
 mod addressing;
 mod attention;
+mod bare;
 mod launcher;
 mod matmul;
 mod quant;

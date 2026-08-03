@@ -64,6 +64,13 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
+    /// [`arg`](Self::arg) for a bare-surface operand, which never names an element type
+    /// ([`build_bare`](StridedTileSource::build_bare) ships a plain `TensorArg`; the kernel's
+    /// element generic is resolved at launch).
+    pub fn bare_arg(&self, binding: TensorBinding<R>) -> StridedTileSource<'_, Set, Unset, f32, R> {
+        self.arg(binding)
+    }
+
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width
     /// for all of them, since a kernel reading one operand's lines writes the other's. Each
     /// `(binding, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
