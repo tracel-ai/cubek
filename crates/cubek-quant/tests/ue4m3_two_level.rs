@@ -31,6 +31,9 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion)
         || !e4m3::supported_uses(&client).contains(TypeUsage::Conversion)
     {
+        // Said out loud: this is the only test covering the configuration the scheme exists for,
+        // and on a backend without e4m3 it passes without asserting anything.
+        println!("i8 or e4m3 unsupported on this runtime, nothing checked");
         return;
     }
 
