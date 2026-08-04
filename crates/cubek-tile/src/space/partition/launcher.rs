@@ -54,7 +54,7 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// Start a tile operand over the kernel space: [`StridedOperand::source`] with
     /// [`space`](StridedTileSource::space) pre-set and the bounds-check derived from the concrete
     /// space's overhang (an explicit [`checked`](StridedTileSource::checked) still wins).
-    pub fn arg(&self, binding: TensorBinding<R>) -> StridedTileSource<'_, Set, Unset, R> {
+    pub fn arg(&self, binding: TensorBinding<R>) -> StridedTileSource<'_, Set, Unset, Unset, R> {
         StridedOperand::source(binding)
             .space(&self.kernel)
             .concrete(&self.concrete)

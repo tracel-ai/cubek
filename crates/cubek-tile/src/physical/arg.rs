@@ -122,20 +122,32 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
         Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
     }
+}
 
-    /// [`tile`](Self::tile) from a quantized operand: `E` is the *stored* scalar (`u32`
-    /// words packed, `i8` native); the scales ride as a plain second tensor and `scheme`
-    /// says how reads fold them back into the served `O`.
-    pub fn tile_dequant<O: Numeric>(
-        &self,
-        scales: &Tensor<f32>,
-        #[comptime] scheme: QuantScheme,
-        #[comptime] space: Space,
-    ) -> Tile<O> {
+/// One quantized operand as a single launch argument: the storage-typed values tensor
+/// (`E` is the *stored* scalar: `u32` words packed, `i8` native), its scales, and the
+/// comptime spec + scheme. A quantized tensor is one thing, so its pieces travel as one
+/// argument; [`TileArg`] is its plain twin. Only per-operand facts live here; the
+/// kernel's one [`Space`] arrives separately and [`tile`](QuantTileArg::tile) projects it.
+#[derive(CubeType, CubeLaunch)]
+pub struct QuantTileArg<'a, E: Numeric, V: Size> {
+    pub values: &'a Tensor<Vector<E, V>>,
+    pub scales: &'a Tensor<f32>,
+    #[cube(comptime)]
+    pub spec: TileSpec,
+    #[cube(comptime)]
+    pub scheme: QuantScheme,
+}
+
+#[cube]
+impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
+    /// Serve the operand as a [`Tile`] of the served type `O`: the kernel's one `space`
+    /// projected onto this operand's `spec.axes`, reads dequantizing per the scheme.
+    pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
         Tile::<O>::of_dequant(
-            self.tensor,
-            scales,
-            scheme,
+            self.values,
+            self.scales,
+            comptime!(self.scheme),
             space,
             comptime!(self.spec.clone()),
         )

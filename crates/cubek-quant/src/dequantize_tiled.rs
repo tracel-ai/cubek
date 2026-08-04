@@ -5,7 +5,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArg, TileArgLaunch, TileSpec,
+    Axis, ByAxis, Distribution, Partitioner, QuantTileArg, QuantTileArgLaunch, Space, Storage,
+    TileArg, TileArgLaunch, TileSpec,
 };
 
 // Input axes
@@ -50,17 +51,17 @@ pub fn launch_ref<R: Runtime>(
         client,
         cube_count,
         cube_dim,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             input.into_tensor_arg(),
+            scales.into_tensor_arg(),
             TileSpec::new(&[M, N], input_storage),
+            *scheme,
         ),
-        scales.into_tensor_arg(),
         TileArgLaunch::new(
             output.into_tensor_arg(),
             TileSpec::new(&[M, N], output_storage),
         ),
         space.all_dynamic(),
-        *scheme,
         input_dtype,
         output_dtype,
     );
@@ -105,15 +106,13 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 /// storage element) only names the binding's element, the scheme recovers the served value.
 /// Scales ride as an ordinary second tensor.
 pub fn dequantize<I: Numeric, O: Numeric>(
-    input: &TileArg<'_, I, Const<1>>,
-    scales: &Tensor<f32>,
+    input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] scheme: QuantScheme,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = input.tile_dequant::<O>(scales, scheme, comptime!(space.clone()));
+    let input = input.tile::<O>(comptime!(space.clone()));
     let mut output = output.tile(space);
     output.copy_from(&input);
 }

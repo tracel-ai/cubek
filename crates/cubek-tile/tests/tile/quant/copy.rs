@@ -5,7 +5,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, Leaf, Schedule, Space, Storage, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
+    Axis, Cut, Leaf, QuantTileArg, QuantTileArgLaunch, Schedule, Space, Storage, TileArg,
+    TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -82,13 +83,13 @@ fn copy_quantized_per_tensor_matches_reference() {
         CubeCount::new_single(),
         CubeDim::new_single(),
         1,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, N], storage),
+            scheme,
         ),
-        scales.binding().into_tensor_arg(),
         output.arg(),
-        scheme,
         space,
         input_dtype,
         out_dtype,
@@ -184,10 +185,8 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         CubeCount::new_single(),
         CubeDim::new_single(),
         pack,
-        input.tile.arg(),
-        input.scales_arg(),
+        input.arg(),
         output.arg(),
-        scheme,
         space,
         input_dtype,
         out_dtype,
@@ -227,18 +226,16 @@ pub fn plain_copy<E: Numeric>(
 }
 
 #[cube(launch)]
-/// `I` names the binding's element only: the scheme recovers the served value, so a quantized
-/// input dequantizes with nothing threaded through the body. Scales ride as a plain tensor.
+/// `I` names the binding's element only: the arg's scheme recovers the served value, so a
+/// quantized input dequantizes with nothing threaded through the body.
 pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
-    input: &TileArg<'_, I, Const<1>>,
-    scales: &Tensor<f32>,
+    input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, V>,
-    #[comptime] scheme: QuantScheme,
     #[comptime] space: Space,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = input.tile_dequant::<O>(scales, scheme, comptime!(space.clone()));
+    let input = input.tile::<O>(comptime!(space.clone()));
     let mut output = output.tile(space);
     output.copy_from(&input);
 }
@@ -295,16 +292,16 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         CubeCount::new_single(),
         CubeDim::new_single(),
         1,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, N], storage),
+            scheme,
         ),
-        scales.binding().into_tensor_arg(),
         TileArgLaunch::new(
             output.tensor_arg(1),
             TileSpec::new(&[M, N], output.storage().checked(check)),
         ),
-        scheme,
         space,
         input_dtype,
         out_dtype,

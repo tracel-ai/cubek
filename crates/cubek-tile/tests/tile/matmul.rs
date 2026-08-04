@@ -1133,23 +1133,20 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     c.copy_from(&acc);
 }
 
-/// Quantized `A` through the resident K walk: `A` is served via `tile_dequant`, so `acc.mma`
+/// Quantized `A` through the resident K walk: `A` is served via its quant arg, so `acc.mma`
 /// dequantizes each K-stage's smem fill on its own — the fill recovers the storage element from
 /// the scheme, so the kernel threads no `I` into the walk and the body is [`launch_resident_matmul`]
 /// verbatim but for `A`'s served type. Tensor-core only.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
-    a: &TileArg<'_, I, V>,
+    a: &QuantTileArg<'_, I, V>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    a_scales: &Tensor<f32>,
     #[comptime] space: Space,
-    #[comptime] scheme: QuantScheme,
     #[define(I)] _idtype: StorageType,
     #[define(E)] _edtype: StorageType,
 ) {
-    let a = a.tile_dequant::<E>(a_scales, scheme, comptime!(space.clone()));
+    let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     let mut acc = c.promote();
@@ -1507,15 +1504,15 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -1926,18 +1923,15 @@ fn cmma_matmul<E: Numeric>(
 /// the storage element from the scheme on its own; `B`/`C` plain `E`. The cmma path then runs
 /// entirely in `E`. Mirrors [`cmma_matmul`] otherwise.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 fn cmma_matmul_quant<I: Numeric, E: Numeric>(
-    a: &TileArg<'_, I, Const<1>>,
+    a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    a_scales: &Tensor<f32>,
     #[comptime] space: Space,
-    #[comptime] scheme: QuantScheme,
     #[define(I)] _idtype: StorageType,
     #[define(E)] _edtype: StorageType,
 ) {
-    let a = a.tile_dequant::<E>(a_scales, scheme, comptime!(space.clone()));
+    let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
 
@@ -2053,15 +2047,15 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2138,15 +2132,15 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2242,15 +2236,15 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         space.cube_count(),
         space.cube_dim(&client),
         1,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2336,15 +2330,15 @@ fn cmma_matmul_quant_block_m_k_walk() {
         space.cube_count(),
         space.cube_dim(&client),
         1,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2430,15 +2424,15 @@ fn cmma_matmul_quant_block_k_k_walk() {
         space.cube_count(),
         space.cube_dim(&client),
         1,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2524,15 +2518,15 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         space.cube_count(),
         space.cube_dim(&client),
         v,
-        TileArgLaunch::new(
+        QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, K], a_storage),
+            scheme,
         ),
         b.arg(),
         c.arg(),
-        scales.binding().into_tensor_arg(),
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2642,21 +2636,18 @@ fn cmma_matmul_staged_k_walk_vectorized() {
 // f32 inflation of the stage, no promotion, no cmma, no i8 needed for the packed cases (the
 // binding is a `u32`).
 
-/// The kernel: identical to [`launch_staged_matmul`] except `A` arrives storage-typed and is
-/// served via `tile_dequant`, so the same lowering runs quantized or not.
+/// The kernel: identical to [`launch_staged_matmul`] except `A` arrives storage-typed on its
+/// quant arg, so the same lowering runs quantized or not.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
-    a: &TileArg<'_, I, Const<1>>,
+    a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    a_scales: &Tensor<f32>,
     #[comptime] space: Space,
-    #[comptime] scheme: QuantScheme,
     #[define(I)] _a_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
-    let a = a.tile_dequant::<E>(a_scales, scheme, comptime!(space.clone()));
+    let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.mma(&a, &b);
@@ -2880,12 +2871,15 @@ fn run_register_matmul_quant(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        TileArgLaunch::new(a_arg, TileSpec::new(&[M, K], Storage::of(2, 2))),
+        QuantTileArgLaunch::new(
+            a_arg,
+            scales_arg,
+            TileSpec::new(&[M, K], Storage::of(2, 2)),
+            scheme,
+        ),
         b.arg(),
         c.arg(),
-        scales_arg,
         space,
-        scheme,
         a_dtype,
         e_dtype,
     );
@@ -2916,19 +2910,16 @@ fn run_register_matmul_quant(
 
 /// [`launch_staged_matmul_quant`]'s mirror: `B` arrives storage-typed.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     a: &TileArg<'_, E, Const<1>>,
-    b: &TileArg<'_, I, Const<1>>,
+    b: &QuantTileArg<'_, I, Const<1>>,
     c: &TileArg<'_, E, V>,
-    b_scales: &Tensor<f32>,
     #[comptime] space: Space,
-    #[comptime] scheme: QuantScheme,
     #[define(I)] _b_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
     let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_dequant::<E>(b_scales, scheme, comptime!(space.clone()));
+    let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.mma(&a, &b);
 }
@@ -3080,7 +3071,7 @@ fn run_register_matmul_quant_rhs(
     // quantized RHS goes through the source builder, which binds it at the storage width.
     let launcher = space.launcher(&client);
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
-    let mut b_op = launcher
+    let b_op = launcher
         .arg(b.tile.handle().binding())
         .subspace(&[K, N])
         .vectorize(pack)
@@ -3092,18 +3083,16 @@ fn run_register_matmul_quant_rhs(
         .subspace(&[M, N])
         .vectorize(pack)
         .build();
-    let (b_scales, scheme) = b_op.quant.take().unwrap();
+    let b_arg = b_op.arg();
     launch_staged_matmul_quant_rhs::launch::<TestRuntime>(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
         c_op.vector_size,
         a_op.arg(),
-        b_op.arg(),
+        b_arg,
         c_op.arg(),
-        b_scales,
         launcher.space().clone(),
-        scheme,
         b_dtype,
         e_dtype,
     );

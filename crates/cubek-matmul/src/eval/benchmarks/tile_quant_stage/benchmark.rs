@@ -23,16 +23,14 @@ const K: Axis = Axis(2);
 #[allow(clippy::too_many_arguments)]
 fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
     a: &TileArg<'_, E, VA>,
-    b: &TileArg<'_, I, VB>,
-    b_scales: &Tensor<f32>,
+    b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
     #[comptime] space: Space,
-    #[comptime] scheme: QuantScheme,
     #[define(I)] _b_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
     let a = a.tile(comptime!(space.clone()));
-    let b = b.tile_dequant::<E>(b_scales, scheme, comptime!(space.clone()));
+    let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.mma(&a, &b);
 }
@@ -144,7 +142,7 @@ impl Benchmark for TileQuantStageBench {
         let space = self.space();
         let launcher = space.launcher(&self.client);
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
-        let mut b = launcher
+        let b = launcher
             .arg(b.tile.handle().binding())
             .subspace(&[K, N])
             .vectorize(self.pack)
@@ -157,7 +155,6 @@ impl Benchmark for TileQuantStageBench {
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
-        let (b_scales, scheme) = b.quant.take().unwrap();
         staged_matmul_quant_rhs::launch::<TestRuntime>(
             &self.client,
             launcher.cube_count(),
@@ -167,10 +164,8 @@ impl Benchmark for TileQuantStageBench {
             c.vector_size,
             a.arg(),
             b.arg(),
-            b_scales,
             c.arg(),
             launcher.space().clone(),
-            scheme,
             u32::as_type_native_unchecked().storage_type(),
             f32::as_type_native_unchecked().storage_type(),
         );

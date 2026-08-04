@@ -9,8 +9,8 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, TileArgLaunch, TileSpec,
-    validate_scheme,
+    Axis, ConcreteLayout, PhysicalAxis, QuantTileArgLaunch, Space, StageStorage, Storage,
+    TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
@@ -48,13 +48,16 @@ struct TileSourceData<'a, R: Runtime> {
 
 /// Typestate builder for a strided tile kernel operand, started with
 /// [`Launcher::arg`](crate::Launcher::arg) or [`StridedOperand::source`]. The `Sp`/`Sub`
-/// markers make [`build`](Self::build) exist only once both required setters are [`Set`].
-pub struct StridedTileSource<'a, Sp, Sub, R: Runtime> {
+/// markers make [`build`](Self::build) exist only once both required setters are [`Set`];
+/// the `Q` marker records whether [`quantized`](Self::quantized) was called, so `build`
+/// returns a [`StridedOperand`] (plain) or a [`QuantOperand`] (quantized) and no call
+/// site ever probes an option.
+pub struct StridedTileSource<'a, Sp, Sub, Q, R: Runtime> {
     data: TileSourceData<'a, R>,
-    _state: PhantomData<(Sp, Sub)>,
+    _state: PhantomData<(Sp, Sub, Q)>,
 }
 
-impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, R> {
+impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
     pub(crate) fn new(binding: TensorBinding<R>) -> Self {
         StridedTileSource {
             data: TileSourceData {
@@ -75,9 +78,9 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, R> {
     }
 }
 
-impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, R> {
+impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// The global iteration space this operand projects from (required).
-    pub fn space(mut self, space: &'a Space) -> StridedTileSource<'a, Set, Sub, R> {
+    pub fn space(mut self, space: &'a Space) -> StridedTileSource<'a, Set, Sub, Q, R> {
         self.data.space = Some(space);
         StridedTileSource {
             data: self.data,
@@ -87,7 +90,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, R> {
 
     /// The inner block of axes the operand iterates, its `[row, col]` for a matmul (required,
     /// non-empty). Complementary to [`batches`](Self::batches), the outer dims.
-    pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, R> {
+    pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, Q, R> {
         self.data.subspace = axes;
         StridedTileSource {
             data: self.data,
@@ -132,15 +135,6 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, R> {
         self
     }
 
-    /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
-    /// **in values**; a packed store's buffer is narrower than its shape by the packing
-    /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
-    /// [`vectorize`](Self::vectorize) still names the *served* width. Default not quantized.
-    pub fn quantized(mut self, scales: TensorArg<R>, scheme: QuantScheme) -> Self {
-        self.data.quant = Some((scales, scheme));
-        self
-    }
-
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
     pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
@@ -155,38 +149,64 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, R> {
     }
 }
 
-/// A built operand: the plain tensor argument, the comptime [`TileSpec`] its kernel feeds
-/// [`Tile::of`](crate::Tile::of)/[`of_dequant`](crate::Tile::of_dequant), the served
-/// width, and the quant side-channel as an ordinary (scales, scheme) pair.
+impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
+    /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
+    /// **in values**; a packed store's buffer is narrower than its shape by the packing
+    /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
+    /// [`vectorize`](Self::vectorize) still names the *served* width. Flips the typestate:
+    /// [`build`](Self::build) now yields a [`QuantOperand`].
+    pub fn quantized(
+        mut self,
+        scales: TensorArg<R>,
+        scheme: QuantScheme,
+    ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
+        self.data.quant = Some((scales, scheme));
+        StridedTileSource {
+            data: self.data,
+            _state: PhantomData,
+        }
+    }
+}
+
+/// A built plain operand: the tensor argument, its comptime [`TileSpec`], and the served
+/// width (also the binding width: the launch value for its `Size` generic).
 pub struct StridedOperand<R: Runtime> {
     pub tensor: TensorArg<R>,
-    /// Served width: the launch value for a plain operand's `Size` generic.
     pub vector_size: usize,
     pub spec: TileSpec,
-    pub quant: Option<(TensorArg<R>, QuantScheme)>,
 }
 
 impl<R: Runtime> StridedOperand<R> {
-    /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument. Panics on
-    /// a quantized operand: its scales and scheme must be destructured out of
-    /// [`quant`](Self::quant) first (they ride separately).
+    /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
     pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V, R> {
-        assert!(
-            self.quant.is_none(),
-            "StridedOperand::arg: destructure the quant side-channel first; scales launch as their own tensor"
-        );
         TileArgLaunch::new(self.tensor, self.spec)
     }
+}
 
-    /// The width the binding is typed at: the launch value for the kernel's `Size` generic.
-    /// A packed store's buffer is narrower than the served width by the packing factor
-    /// ([`Tile::of_dequant`](crate::Tile::of_dequant) serves binding width × pack); a plain
-    /// operand's binding width is the served width itself.
+/// A built quantized operand: the storage-typed tensor and its spec, plus the scales and
+/// the comptime scheme as first-class fields; nothing to probe or drain at the call site.
+pub struct QuantOperand<R: Runtime> {
+    pub tensor: TensorArg<R>,
+    /// Served width (values per line); the binding is narrower by the packing factor.
+    pub vector_size: usize,
+    pub spec: TileSpec,
+    pub scales: TensorArg<R>,
+    pub scheme: QuantScheme,
+}
+
+impl<R: Runtime> QuantOperand<R> {
+    /// The width the binding is typed at: the launch value for the kernel's `Size`
+    /// generic. A packed store's buffer is narrower than the served width by the packing
+    /// factor ([`tile_dequant`](crate::TileArg::tile_dequant) serves binding width × pack).
     pub fn bound_width(&self) -> usize {
-        match &self.quant {
-            Some((_, scheme)) => self.vector_size / scheme.num_quants(),
-            None => self.vector_size,
-        }
+        self.vector_size / self.scheme.num_quants()
+    }
+
+    /// The operand as the kernel's [`QuantTileArg`](crate::QuantTileArg) launch argument:
+    /// values, scales, spec and scheme as one thing. Read
+    /// [`bound_width`](Self::bound_width) before consuming.
+    pub fn arg<E: Numeric, V: Size>(self) -> QuantTileArgLaunch<'static, E, V, R> {
+        QuantTileArgLaunch::new(self.tensor, self.scales, self.spec, self.scheme)
     }
 }
 
@@ -198,16 +218,24 @@ impl<R: Runtime> StridedOperand<R> {
     /// [`levels`](StridedTileSource::levels), [`vectorize`](StridedTileSource::vectorize),
     /// or [`checked`](StridedTileSource::checked). Optional defaults are the safe ones, so
     /// a forgotten optional setter degrades performance, never correctness.
-    pub fn source<'a>(binding: TensorBinding<R>) -> StridedTileSource<'a, Unset, Unset, R> {
+    pub fn source<'a>(binding: TensorBinding<R>) -> StridedTileSource<'a, Unset, Unset, Unset, R> {
         StridedTileSource::new(binding)
     }
 }
 
-impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, R> {
-    /// Build the operand: derive its [`ConcreteLayout`] from the labeled dims, the
-    /// bounds-check from overhang, and the comptime [`TileSpec`] via
-    /// [`TileSpec::from_concrete`]; the operand ships as a plain `TensorArg`.
-    pub fn build(self) -> StridedOperand<R> {
+/// [`realize`](StridedTileSource::realize)'s product, consumed by the two typed builds.
+struct Realized<R: Runtime> {
+    tensor: TensorArg<R>,
+    vector_size: usize,
+    spec: TileSpec,
+    quant: Option<(TensorArg<R>, QuantScheme)>,
+}
+
+impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
+    /// The derivation both builds share: fold the labeled dims into a [`ConcreteLayout`],
+    /// derive the bounds-check from overhang, and mint the comptime [`TileSpec`] via
+    /// [`TileSpec::from_concrete`].
+    fn realize(self) -> Realized<R> {
         let TileSourceData {
             mut binding,
             space,
@@ -290,11 +318,50 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, R> {
         if let Some((_, scheme)) = &quant {
             validate_scheme(&space.project(&spec.axes), v, *scheme);
         }
-        StridedOperand {
+        Realized {
             tensor: binding.into_tensor_arg(),
             vector_size: v,
             spec,
             quant,
+        }
+    }
+}
+
+impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
+    /// Build the plain operand; the operand ships as a plain `TensorArg` plus its
+    /// comptime [`TileSpec`].
+    pub fn build(self) -> StridedOperand<R> {
+        let Realized {
+            tensor,
+            vector_size,
+            spec,
+            ..
+        } = self.realize();
+        StridedOperand {
+            tensor,
+            vector_size,
+            spec,
+        }
+    }
+}
+
+impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
+    /// Build the quantized operand: the same derivation plus the validated scheme, with
+    /// the scales and scheme as first-class fields.
+    pub fn build(self) -> QuantOperand<R> {
+        let Realized {
+            tensor,
+            vector_size,
+            spec,
+            quant,
+        } = self.realize();
+        let (scales, scheme) = quant.unwrap();
+        QuantOperand {
+            tensor,
+            vector_size,
+            spec,
+            scales,
+            scheme,
         }
     }
 }

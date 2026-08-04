@@ -266,6 +266,31 @@ regresses any gate does not merge.**
   permutation. The CubeLaunch derive handles the `V: Size` generic
   (default type params don't work -- the derive appends its own generics).
 
+## QuantOperand typestate (2026-08-04)
+
+- Review follow-up: the quant destructuring dance (`mut` + `bound_width()`
+  before `quant.take().unwrap()` before `.arg()`, guarded by a runtime
+  panic) existed because quant-ness was an `Option` on one product type.
+  The builder now carries a third typestate marker `Q`: `.quantized()`
+  flips it, and `build()` returns `StridedOperand` (plain; no quant field,
+  no assert) or `QuantOperand` (tensor + spec + scales + scheme as
+  first-class fields, `bound_width()`, `arg()` yielding the TileArg plus
+  the loose scales). Mispairing and silent scale-dropping are now
+  unrepresentable; the ordering is enforced by the borrow checker, not a
+  panic.
+
+## QuantTileArg carrier (2026-08-04)
+
+- Review follow-up: the residual two-line quant destructure existed only
+  because scales/scheme lived outside the arg. A quantized operand now
+  rides its own carrier, `QuantTileArg<'a, E, V: Size>{values, scales,
+  comptime spec, comptime scheme}`, served by `tile::<O>(space)` -- a
+  distinct total type (name-the-states), NOT the old ComptimeOption inside
+  one arg type. `TileArg::tile_dequant` deleted; quant kernels lost their
+  loose scales + scheme params; `QuantOperand::arg()` returns the one
+  carrier, so a quant launch site is `let vb = b.bound_width();` +
+  `b.arg()`. `QuantizedTileInput::arg()` mirrors it in test-utils.
+
 ## Remaining
 
 1. metabolic-George: repin cubek, flip its gemv/gemm launches onto the

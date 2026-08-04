@@ -14,7 +14,7 @@ use cubecl::{
     TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
     quant::scheme::QuantScheme, zspace::Shape,
 };
-use cubek_tile::{Space, Storage, TileArgLaunch, TileSpec as CubekTileSpec};
+use cubek_tile::{QuantTileArgLaunch, Space, Storage, TileArgLaunch, TileSpec as CubekTileSpec};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -347,6 +347,7 @@ impl QuantizedTileInputBuilder {
                 levels: 0,
             },
             scales,
+            scheme: self.scheme,
             q,
             scale_values,
         }
@@ -359,6 +360,7 @@ impl QuantizedTileInputBuilder {
 pub struct QuantizedTileInput {
     pub tile: TileInput,
     scales: TensorHandle<TestRuntime>,
+    scheme: QuantScheme,
     /// The quant values, row-major in the logical shape.
     pub q: Vec<i32>,
     /// One scale per block, row-major over the scheme's block grid.
@@ -369,5 +371,15 @@ impl QuantizedTileInput {
     /// Launch arg for the scales tensor.
     pub fn scales_arg(&self) -> TensorArg<TestRuntime> {
         self.scales.clone().binding().into_tensor_arg()
+    }
+
+    /// The quantized tile as one launch argument: values, scales, spec and scheme.
+    pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V, TestRuntime> {
+        QuantTileArgLaunch::new(
+            self.tile.tensor_arg(1),
+            self.scales_arg(),
+            self.tile.spec(),
+            self.scheme,
+        )
     }
 }
