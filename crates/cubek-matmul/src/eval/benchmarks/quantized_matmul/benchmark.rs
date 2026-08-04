@@ -131,10 +131,6 @@ fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
                 .map(|(d, b)| d / (*b as usize))
                 .collect()
         }
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
     }
 }
 

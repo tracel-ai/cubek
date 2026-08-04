@@ -162,10 +162,6 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
             }
             scales
         }
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
     };
 
     (scales_shape, scales, block_dims)
