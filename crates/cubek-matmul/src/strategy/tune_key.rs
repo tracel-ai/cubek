@@ -204,7 +204,12 @@ impl MatmulAutotuneKey {
             matrix_layout_rhs,
         );
         let analysis = MatmulAutotuneAnalysis {
-            scale_global: MatmulGlobalScale::from_size(m, n, k),
+            // From the anchored dims, like every derived field above: the raw
+            // thresholds (512/2048) otherwise split an anchored bucket at its
+            // maximum — raw 257..511 keyed `Small` while exactly 512 keyed
+            // `Medium` — so a runtime-dependent dim landing on the bucket
+            // ceiling minted a "new" problem and re-tuned mid-run.
+            scale_global: MatmulGlobalScale::from_size(m_anchored, n_anchored, k_anchored),
             kind,
         };
 
@@ -265,9 +270,23 @@ mod tests {
         }
     }
 
+    /// The bucket maximum shares its bucket's key. The scale thresholds sit
+    /// exactly on the pow2 bucket ceilings (512, 2048), so deriving the scale
+    /// from the raw dims used to split the (256, 512] bucket into
+    /// 257..511 = `Small` and 512 = `Medium` — and a KV cache landing on
+    /// exactly 512 positions re-tuned mid-conversation.
+    #[test]
+    fn bucket_maxima_share_the_bucket_key() {
+        let reference = key(64, 460, 64);
+        assert_eq!(reference, key(64, 512, 64), "512 split its bucket");
+        let reference = key(64, 1500, 64);
+        assert_eq!(reference, key(64, 2048, 64), "2048 split its bucket");
+    }
+
     /// Distinct anchored buckets still get distinct keys.
     #[test]
     fn buckets_stay_distinct() {
+        assert_ne!(key(64, 512, 64), key(64, 513, 64));
         assert_ne!(key(64, 128, 64), key(64, 200, 64));
         assert_ne!(key(64, 128, 64), key(1, 128, 64));
     }

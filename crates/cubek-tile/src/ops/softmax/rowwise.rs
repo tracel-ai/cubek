@@ -99,14 +99,14 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Merge a split fold's per-team running states into cross-split weights:
-    /// `self` is the `{splits · rows}` weight tile, `m`/`l` the published
-    /// per-split running max/sum (same shape), `recip` the `{rows}`
-    /// inverse-sum tile. Per row: `m* = max_t m_t`, each split's weight is
-    /// `exp(m_t − m*)`, `l* = Σ_t l_t · exp(m_t − m*)`, and `recip = 1/l*`
-    /// (exactly zero for a fully-masked row, so its output stays zero). A
-    /// split that folded nothing publishes `(min, 0)` and gets weight zero on
-    /// its own. One unit per row, cyclic across the whole cube; the caller
-    /// syncs on both sides. `splits == 1` degenerates to the plain epilogue.
+    /// per row, `self[t] = exp(m_t - max_t m_t)` and
+    /// `recip[r] = 1 / Σ_t l_t · self[t]`.
+    ///
+    /// `self`, `m`, and `l` are `{splits · rows}` tiles; `recip` is `{rows}`.
+    /// A fully-masked row gets `recip` exactly zero, and a split that folded
+    /// nothing published `(min, 0)` so it weighs zero on its own. One unit
+    /// per row, cyclic over the cube; the caller syncs on both sides.
+    /// `splits == 1` degenerates to the plain epilogue.
     pub fn merge_splits(
         &mut self,
         recip: &mut Tile<EA>,
@@ -142,16 +142,13 @@ impl<EA: Float> Tile<EA> {
                 lstar += lf.read(t * rows + r).extract(0) * w;
                 wf.write(t * rows + r, Vector::cast_from(w));
             }
-            let eps = EA::new(FULLY_MASKED_ROW_THRESHOLD);
-            let rv = EA::cast_from(lstar >= eps) * clamp_min(lstar, eps).recip();
-            rf.write(r, Vector::cast_from(rv));
+            rf.write(r, Vector::cast_from(masked_recip::<EA>(lstar)));
             r += workers;
         }
     }
 
-    /// Publish per-owned-row `values` into this rank-1 factors tile, one cell
-    /// per row of the score space. Owners write their own rows only; the caller
-    /// syncs before any cross-unit read.
+    /// Publish per-owned-row `values` into this rank-1 factors tile, one
+    /// cell per score row. The caller syncs before any cross-unit read.
     pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.extent_at(0));
         comptime!(assert!(
@@ -169,11 +166,12 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// `self[r, c] *= factors[r]` over the whole rank-2 tile: the accumulator
-    /// rescale between fold steps (and the epilogue normalize, with `recip_l`
-    /// factors). Cyclic across the cube so each cell is touched exactly once,
-    /// whatever ownership the interleaved matmuls use; the caller syncs on both
-    /// sides.
+    /// Multiply each row by its factor: `self[r, c] *= factors[r]`.
+    ///
+    /// The accumulator rescale between fold steps, and the epilogue
+    /// normalize when the factors are `recip_l`. Cyclic over the whole cube
+    /// so each cell is touched exactly once, whatever ownership the
+    /// interleaved matmuls use; the caller syncs on both sides.
     pub fn scale_rows(&mut self, factors: &Tile<EA>) {
         let cols = comptime!(self.space.extent_at(1));
         comptime!(assert!(
