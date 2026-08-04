@@ -558,17 +558,9 @@ fn selection(
     let stage_buffering = if double_buffering { 2 } else { 1 };
 
     // Shrink the register partition until the stage footprint fits the per-cube
-    // shared-memory budget. `MaxTileSize` can scale the partition up enough that
-    // the accumulator stage alone (`elements_per_stage_m × elements_per_stage_n`)
-    // blows a small budget (e.g. 48 KB on wgpu). An over-budget blueprint is
-    // rejected by `validate_blueprint` at launch, so if autotune benchmarked it
-    // on a shape where it fit, cached it, then reused it on a larger shape in the
-    // same key bucket, the launch would fail the `SharedMemoryTooBig` check and
-    // panic ("Should run when selected by autotune"). Partition is the safe knob:
-    // fewer register tiles per unit (more cubes), while the tile (vectorization)
-    // and stage (unit mapping) are left intact. The estimate mirrors
-    // `requested_smem_bytes` in the batch setup so a capped blueprint is never
-    // then rejected as unavailable.
+    // shared-memory budget, else launch fails the `SharedMemoryTooBig` check on
+    // shapes sharing an autotune bucket with the benchmarked one. Partition is
+    // the safe knob: tile (vectorization) and stage (unit mapping) stay intact.
     let mut p = p;
     let tiling_scheme = loop {
         let tiling_scheme = TilingScheme::builder()
@@ -647,10 +639,12 @@ fn select_swizzle(swizzle_dim: usize, elem: StorageType, vector_size: VectorSize
 /// Shared-memory bytes one cube allocates for a unit blueprint with this tiling.
 ///
 /// Mirrors `requested_smem_bytes` in the batch setup: the lhs and rhs operand
-/// stages (each `num_stages = stage_buffering`) plus the accumulator/output
-/// stage, which `expand_config` builds once and is therefore counted once.
+/// stages (each `num_stages = stage_buffering`) plus the output stage at the
+/// writer's allocation — each writer stages one tile per partition, so the out
+/// term is one tile per stage partition, independent of the partition size.
 /// Keeping this in step with the launch-time check is what lets [`selection`]
-/// cap the tiling to a blueprint the check will accept.
+/// cap the tiling to a blueprint the check will accept, without capping harder
+/// than the check requires.
 fn unit_stage_smem_bytes(
     tiling_scheme: &TilingScheme,
     dtypes: &MatmulElems,
@@ -660,10 +654,14 @@ fn unit_stage_smem_bytes(
     let ek = tiling_scheme.elements_per_stage_along_k() as usize;
     let en = tiling_scheme.elements_per_stage_along_n() as usize;
     let buf = stage_buffering as usize;
+    let out_writer = (tiling_scheme.partitions_per_stage_along_m()
+        * tiling_scheme.partitions_per_stage_along_n()
+        * tiling_scheme.tile_size.m
+        * tiling_scheme.tile_size.n) as usize;
 
     em * ek * buf * dtypes.lhs_stage.size()
         + ek * en * buf * dtypes.rhs_stage.size()
-        + em * en * dtypes.acc_stage.size()
+        + out_writer * dtypes.acc_stage.size()
 }
 
 /// Halve the largest partition dimension greater than 1, returning whether a
@@ -681,6 +679,29 @@ fn halve_largest_partition(p: &mut (u32, u32, u32)) -> bool {
         p.2 /= 2;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The out stage is charged at the writer's allocation (one tile per stage
+    /// partition), like `requested_smem_bytes`; charging the full stage would
+    /// shrink partitions the launch-time check accepts.
+    #[test]
+    fn out_stage_charged_at_writers_allocation() {
+        let scheme = TilingScheme::builder()
+            .with_tile_size((4, 4, 4).into())
+            .with_partition_size((4, 4, 2).into())
+            .with_stage_size((4, 4, 1).into())
+            .build()
+            .unwrap();
+        let dtypes = MatmulElems::new_deprecated::<f32>();
+
+        // lhs 64x8 + rhs 8x64 f32 stages, out = 4x4 partitions of one 4x4 tile.
+        let expected = 64 * 8 * 4 + 8 * 64 * 4 + 16 * 16 * 4;
+        assert_eq!(unit_stage_smem_bytes(&scheme, &dtypes, 1), expected);
+    }
 }
 
 /// Returns the factor pair `(a, b)` of `n` minimizing their difference,
