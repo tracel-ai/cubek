@@ -231,6 +231,23 @@ regresses any gate does not merge.**
   (`TileInput::spec()`); the bare-vs-arg parity tests died with their
   comparison target.
 
+## One-space review fix (2026-08-04)
+
+- Review: per-operand specs each carried their own pre-projected `Space` --
+  three copies of the space in the JIT key, projections done host-side, and
+  the copies able to drift or mismatch. Reworked to the one-space model:
+  the kernel takes ONE comptime `Space` (extents + partitioning, single
+  source of truth) and `TileSpec` shrank to `{ axes, storage, stage:
+  Option<StageStorage> }` -- only what is per-operand. `Tile::of(tensor,
+  space, spec)` does `space.project(&spec.axes)` in-kernel; the stage
+  layout derives from the one space's leaf there too (the `TileSpec::new`
+  stamping is gone; `staged()` is the explicit override). `Storage.stage`
+  collapsed to `units`; `TmaTileArg` lost its own comptime space (the seam
+  provides it).
+- Proven codegen-neutral against the pre-change build: dequantize
+  byte-identical, cmma identical modulo the benign equal-size smem
+  allocation permutation.
+
 ## Remaining
 
 1. metabolic-George: repin cubek, flip its gemv/gemm launches onto the

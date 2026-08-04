@@ -19,7 +19,7 @@ fn copy_non_quantized_matches_reference() {
     let input = TileInput::builder(&client, space.clone())
         .untiled()
         .arange();
-    let output = TileInput::builder(&client, space).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     plain_copy::launch::<TestRuntime>(
@@ -28,6 +28,7 @@ fn copy_non_quantized_matches_reference() {
         CubeDim::new_single(),
         input.tensor_arg(1),
         output.tensor_arg(1),
+        space,
         input.spec(),
         output.spec(),
         dtype,
@@ -85,7 +86,8 @@ fn copy_quantized_per_tensor_matches_reference() {
         scales.binding().into_tensor_arg(),
         output.tensor_arg(1),
         scheme,
-        TileSpec::new(space, storage),
+        space,
+        TileSpec::new(&[M, N], storage),
         output.spec(),
         input_dtype,
         out_dtype,
@@ -170,7 +172,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         .untiled()
         .packed(&scheme)
         .arange();
-    let output = TileInput::builder(&client, space).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     let input_dtype = u32::as_type_native_unchecked().storage_type();
     let out_dtype = f32::as_type_native_unchecked().storage_type();
@@ -185,6 +187,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         input.scales_arg(),
         output.tensor_arg(1),
         scheme,
+        space,
         input.tile.spec(),
         output.spec(),
         input_dtype,
@@ -216,12 +219,13 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
 pub fn plain_copy<E: Numeric>(
     input: &Tensor<E>,
     output: &Tensor<E>,
+    #[comptime] space: Space,
     #[comptime] spec_in: TileSpec,
     #[comptime] spec_out: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let input = Tile::<E>::of(input, spec_in);
-    let mut output = Tile::<E>::of(output, spec_out);
+    let input = Tile::<E>::of(input, comptime!(space.clone()), spec_in);
+    let mut output = Tile::<E>::of(output, space, spec_out);
     output.copy_from(&input);
 }
 
@@ -234,13 +238,14 @@ pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
     scales: &Tensor<f32>,
     output: &Tensor<Vector<O, V>>,
     #[comptime] scheme: QuantScheme,
+    #[comptime] space: Space,
     #[comptime] spec_in: TileSpec,
     #[comptime] spec_out: TileSpec,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = Tile::<O>::of_dequant(input, scales, scheme, spec_in);
-    let mut output = Tile::<O>::of(output, spec_out);
+    let input = Tile::<O>::of_dequant(input, scales, scheme, comptime!(space.clone()), spec_in);
+    let mut output = Tile::<O>::of(output, space, spec_out);
     output.copy_from(&input);
 }
 
@@ -300,8 +305,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         scales.binding().into_tensor_arg(),
         output.tensor_arg(1),
         scheme,
-        TileSpec::new(space, storage),
-        TileSpec::new(output.space(), output.storage().checked(check)),
+        space,
+        TileSpec::new(&[M, N], storage),
+        TileSpec::new(&[M, N], output.storage().checked(check)),
         input_dtype,
         out_dtype,
     );

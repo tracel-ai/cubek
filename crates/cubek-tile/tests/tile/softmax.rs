@@ -25,6 +25,7 @@ fn softmax_walk_kernel(
     lse: &mut Tensor<f32>,  // [rows]
     scale: f32,
     bound_s: u32,
+    #[comptime] space: Space,
     #[comptime] spec_score: TileSpec,
     #[comptime] spec_mask: TileSpec,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
@@ -33,8 +34,8 @@ fn softmax_walk_kernel(
     #[comptime] materialized: bool,
     #[comptime] num_blocks: usize,
 ) {
-    let score_gmem = Tile::<f32>::of(score_in, spec_score);
-    let mask_tile = Tile::<u32>::of(mask, spec_mask);
+    let score_gmem = Tile::<f32>::of(score_in, comptime!(space.clone()), spec_score);
+    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
     let mut score =
         MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
@@ -172,8 +173,9 @@ fn run(
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        TileSpec::new(gmem_space.clone(), Storage::of(2, 2)),
-        TileSpec::new(gmem_space, Storage::of(2, 2)),
+        gmem_space,
+        TileSpec::new(&[Q, S], Storage::of(2, 2)),
+        TileSpec::new(&[Q, S], Storage::of(2, 2)),
         block_space,
         units,
         causal,
@@ -268,6 +270,7 @@ fn softmax_smem_acc_kernel(
     lse: &mut Tensor<f32>,  // [rows]
     scale: f32,
     bound_s: u32,
+    #[comptime] space: Space,
     #[comptime] spec_score: TileSpec,
     #[comptime] spec_mask: TileSpec,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
@@ -276,8 +279,8 @@ fn softmax_smem_acc_kernel(
     #[comptime] num_blocks: usize,
     #[comptime] val_dim: usize,
 ) {
-    let score_gmem = Tile::<f32>::of(score_in, spec_score);
-    let mask_tile = Tile::<u32>::of(mask, spec_mask);
+    let score_gmem = Tile::<f32>::of(score_in, comptime!(space.clone()), spec_score);
+    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
     let mut score =
         MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
@@ -441,8 +444,9 @@ fn run_smem_acc(
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        TileSpec::new(gmem_space.clone(), Storage::of(2, 2)),
-        TileSpec::new(gmem_space, Storage::of(2, 2)),
+        gmem_space,
+        TileSpec::new(&[Q, S], Storage::of(2, 2)),
+        TileSpec::new(&[Q, S], Storage::of(2, 2)),
         block_space,
         units,
         causal,

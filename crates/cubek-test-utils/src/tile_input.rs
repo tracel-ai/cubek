@@ -128,10 +128,13 @@ impl TileInput {
         Storage::of(self.handle.shape().len(), self.space.rank())
     }
 
-    /// The comptime [`CubekTileSpec`] a kernel feeds `Tile::of`: this tile's space paired
-    /// with its derived storage.
+    /// The comptime [`CubekTileSpec`] a kernel feeds `Tile::of`: the axes this tile spans
+    /// (its own space's, in buffer order) paired with its derived storage.
     pub fn spec(&self) -> CubekTileSpec {
-        CubekTileSpec::new(self.space(), self.storage())
+        let axes: Vec<_> = (0..self.space.rank())
+            .map(|i| self.space.axis_at(i))
+            .collect();
+        CubekTileSpec::new(&axes, self.storage())
     }
 
     /// The semantic space the tile lives in.

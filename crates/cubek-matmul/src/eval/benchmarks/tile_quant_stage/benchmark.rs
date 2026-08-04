@@ -27,15 +27,16 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     b_scales: &Tensor<f32>,
     c: &Tensor<Vector<E, VC>>,
     #[comptime] scheme: QuantScheme,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
     #[define(I)] _b_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of_dequant(b, b_scales, scheme, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of_dequant(b, b_scales, scheme, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     c.mma(&a, &b);
 }
 
@@ -172,6 +173,7 @@ impl Benchmark for TileQuantStageBench {
             b_scales,
             c.tensor,
             scheme,
+            launcher.space().clone(),
             a.spec,
             b.spec,
             c.spec,

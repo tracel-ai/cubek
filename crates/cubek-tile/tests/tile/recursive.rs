@@ -17,15 +17,14 @@ fn recursive_two_level_tiled_view() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n) = (8usize, 8usize);
 
-    let input = TileInput::builder(&client, Space::new(&[(M, m), (N, n)]))
+    let space = Space::new(&[(M, m), (N, n)]);
+    let input = TileInput::builder(&client, space.clone())
         .split(&[2, 2])
         .split(&[2, 2])
         .arange();
     // Untiled output: its buffer is the logical shape itself, so `output[i * n + j]`
     // is the value read at logical `(i, j)`.
-    let output = TileInput::builder(&client, Space::new(&[(M, m), (N, n)]))
-        .untiled()
-        .zeros();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     // The copy kernel only reads/writes through the views — no partitioning, so the
     // spaces carry no partitioner.
@@ -35,6 +34,7 @@ fn recursive_two_level_tiled_view() {
         CubeDim::new_single(),
         input.tensor_arg(1),
         output.tensor_arg(1),
+        space,
         input.spec(),
         output.spec(),
         f32::as_type_native_unchecked().storage_type(),
@@ -62,12 +62,13 @@ fn recursive_two_level_tiled_view() {
 fn copy_logical<E: Numeric>(
     input: &Tensor<E>,
     output: &Tensor<E>,
+    #[comptime] space: Space,
     #[comptime] spec_in: TileSpec,
     #[comptime] spec_out: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let input = Tile::<E>::of(input, spec_in);
-    let mut output = Tile::<E>::of(output, spec_out);
+    let input = Tile::<E>::of(input, comptime!(space.clone()), spec_in);
+    let mut output = Tile::<E>::of(output, space, spec_out);
     let r = input.view::<Const<1>>();
     let mut w = output.view_mut::<Const<1>>();
     let shape = r.shape();

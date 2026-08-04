@@ -22,8 +22,9 @@ pub struct Storage {
     /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
     /// keeps the unchecked (divisible) fast path.
     pub check_bounds: bool,
-    /// How stages derived from this operand are laid out and cooperatively filled.
-    pub stage: StagePlan,
+    /// The launch's cube size (units per cube), `0` when unknown; carried into the
+    /// [`StagePlan`] of every stage derived from this operand.
+    pub units: usize,
 }
 
 impl Storage {
@@ -33,7 +34,7 @@ impl Storage {
             start_axis: 0,
             levels: physical_rank / logical_rank - 1,
             check_bounds: false,
-            stage: StagePlan::default(),
+            units: 0,
         }
     }
 
@@ -42,7 +43,7 @@ impl Storage {
             start_axis,
             levels,
             check_bounds: false,
-            stage: StagePlan::default(),
+            units: 0,
         }
     }
 
@@ -52,47 +53,45 @@ impl Storage {
         self
     }
 
-    /// Set the stage layout the derived stages take.
-    pub fn staged(mut self, layout: StageStorage) -> Self {
-        self.stage.layout = layout;
-        self
-    }
-
     /// Set the launch's cube size (units per cube).
     pub fn units(mut self, units: usize) -> Self {
-        self.stage.units = units;
+        self.units = units;
         self
     }
 }
 
-/// The comptime half of an operand: which logical [`Space`] the tensor's buffer maps to
-/// and how ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of); the
-/// launch-side builder derives it ([`build`](crate::StridedTileSource::build)).
+/// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer
+/// spans, and how ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of)
+/// alongside that space; `of` projects the space onto `axes`, so no operand ever carries
+/// its own copy of the space. The launch-side builder derives it
+/// ([`build`](crate::StridedTileSource::build)).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileSpec {
-    pub space: Space,
+    /// The axes this operand spans, in its buffer's dim order.
+    pub axes: Vec<Axis>,
     pub storage: Storage,
+    /// Explicit stage-layout override; `None` derives from the space's leaf in
+    /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
+    pub stage: Option<StageStorage>,
 }
 
 impl TileSpec {
-    /// Pair an already-projected space with its storage. The stage layout defaults from
-    /// the space (tiled for a cmma leaf); [`staged`](Self::staged) overrides it.
-    pub fn new(space: Space, mut storage: Storage) -> Self {
-        storage.stage.layout = StageStorage::for_space(&space);
-        TileSpec { space, storage }
+    /// Pair an operand's spanned axes with its storage; the stage layout stays derived
+    /// ([`staged`](Self::staged) overrides it).
+    pub fn new(axes: &[Axis], storage: Storage) -> Self {
+        TileSpec {
+            axes: axes.to_vec(),
+            storage,
+            stage: None,
+        }
     }
 
-    /// Derive an operand's spec from its realized [`ConcreteLayout`]: project `space` onto
-    /// the spanned axes, read the tiling [`Storage`] off the layout. The one derivation
-    /// every launch site shares.
-    pub fn from_concrete(
-        layout: &ConcreteLayout,
-        space: &Space,
-        check: bool,
-        units: usize,
-    ) -> Self {
+    /// Derive an operand's spec from its realized [`ConcreteLayout`]: the spanned axes
+    /// and the tiling [`Storage`] both read off the layout. The one derivation every
+    /// launch site shares.
+    pub fn from_concrete(layout: &ConcreteLayout, check: bool, units: usize) -> Self {
         TileSpec::new(
-            space.project(&layout.distinct_axes()),
+            &layout.distinct_axes(),
             Storage::from(layout).checked(check).units(units),
         )
     }
@@ -100,20 +99,19 @@ impl TileSpec {
     /// Override the derived stages' [`StageStorage`] layout (default
     /// [`StageStorage::for_space`]).
     pub fn staged(mut self, layout: StageStorage) -> Self {
-        self.storage.stage.layout = layout;
+        self.stage = Some(layout);
         self
     }
 }
 
 /// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor
-/// owns the box, the [`TmaDynLayout`] the coordinate rules) plus the comptime [`Space`].
-/// A tensor map cannot ride a plain tensor binding, so TMA keeps its own carrier. Built
-/// by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
+/// owns the box, the [`TmaDynLayout`] the coordinate rules). A tensor map cannot ride a
+/// plain tensor binding, so TMA keeps its own carrier; its space arrives through the
+/// [`DeliveryFamily`](crate::DeliveryFamily) seam like every operand's. Built by
+/// [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaTileArg<E: Numeric> {
     pub view: ViewMut<'static, E, CoordsDyn>,
-    #[cube(comptime)]
-    pub space: Space,
 }
 
 /// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread. Every
@@ -189,24 +187,24 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
 impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
     /// Load a TMA tensor-map as a tile argument. `dims` is the operand's logical runtime
     /// `(batch, rows, cols)`; `transposed` flags a col-major operand whose descriptor
-    /// swapped its inner pair (the layout swaps coords back). `space` is the operand's
-    /// already-projected tile space: rank 3 with a leading batch axis, rank 2 without.
+    /// swapped its inner pair (the layout swaps coords back). `rank` is the operand's
+    /// spanned-axes count: 3 with a leading batch axis, 2 without.
     pub fn tensor_map(
         tensor_map: TensorMapArg<R, Tiled>,
-        space: Space,
+        rank: usize,
         dims: (u32, u32, u32),
         transposed: bool,
     ) -> Self {
-        let batched = match space.rank() {
+        let batched = match rank {
             2 => false,
             3 => true,
             r => panic!(
-                "TmaTileArg: the descriptor is (batch, row, col); rank {r} space unsupported"
+                "TmaTileArg: the descriptor is (batch, row, col); rank {r} operand unsupported"
             ),
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, space)
+        Self::new(view)
     }
 }
 

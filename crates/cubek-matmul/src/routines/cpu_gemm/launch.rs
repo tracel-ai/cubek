@@ -219,6 +219,7 @@ pub fn launch_ref<R: Runtime>(
         a.tensor,
         b.tensor,
         c.tensor,
+        launch.space().clone(),
         a.spec,
         b.spec,
         c.spec,

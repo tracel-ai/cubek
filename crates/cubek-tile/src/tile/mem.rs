@@ -93,15 +93,18 @@ impl Overhang {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Construct a whole `Gmem` tile straight from a launched tensor. The element type
-    /// carries the line width — `Vector<T, W>` for a lined operand, `T` itself for scalar —
-    /// so the served width *is* the binding's width by construction and is never re-lined
-    /// in-kernel. Shape/strides come in scalar-unit and convert to line-unit here.
+    /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one
+    /// `space` projected onto the operand's `spec.axes`, so no operand carries its own
+    /// copy of the space. The element type carries the line width — `Vector<T, W>` for a
+    /// lined operand, `T` itself for scalar — so the served width *is* the binding's
+    /// width by construction and is never re-lined in-kernel. Shape/strides come in
+    /// scalar-unit and convert to line-unit here.
     pub fn of<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
+        #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
-        Tile::<T>::of_impl::<E>(tensor, spec, ComptimeOption::new_None())
+        Tile::<T>::of_impl::<E>(tensor, space, spec, ComptimeOption::new_None())
     }
 
     /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (its
@@ -112,9 +115,10 @@ impl<T: Numeric> Tile<T> {
         values: &Tensor<E>,
         scales: &Tensor<f32>,
         #[comptime] scheme: QuantScheme,
+        #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
-        let rank = comptime!(spec.space.rank());
+        let rank = comptime!(spec.axes.len());
         let block = comptime!(block_edges(scheme, rank));
         let mut strides = Coords::<u32>::new();
         #[unroll]
@@ -134,7 +138,7 @@ impl<T: Numeric> Tile<T> {
             scale_shape: comptime!(Vec::new()),
             scheme: comptime!(scheme),
         };
-        Tile::<T>::of_impl::<E>(values, spec, ComptimeOption::new_Some(info))
+        Tile::<T>::of_impl::<E>(values, space, spec, ComptimeOption::new_Some(info))
     }
 
     /// Shared body of [`of`](Tile::of)/[`of_dequant`](Tile::of_dequant): `E` is the *binding*
@@ -142,11 +146,18 @@ impl<T: Numeric> Tile<T> {
     /// quantized operand, whose served width is the binding's width × the packing factor.
     fn of_impl<E: CubePrimitive>(
         tensor: &Tensor<E>,
+        #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
-        let space = comptime!(spec.space.clone());
+        // The one projection: the kernel's space narrowed to this operand's axes.
+        let space = comptime!(space.project(&spec.axes));
         let storage = comptime!(spec.storage);
+        // Stage layout: the explicit override, else derived from the space's leaf.
+        let stage = comptime!(StagePlan {
+            layout: spec.stage.unwrap_or_else(|| StageStorage::for_space(&space)),
+            units: storage.units,
+        });
         // The binding type's own width, comptime; a packed store serves `pack` values per
         // stored element.
         let bound_width = tensor.vector_size();
@@ -217,7 +228,7 @@ impl<T: Numeric> Tile<T> {
                     } else {
                         Overhang::Fits
                     },
-                    stage: storage.stage,
+                    stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
             }),

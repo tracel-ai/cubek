@@ -122,8 +122,13 @@ pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// `Tensor` is a slice-backed unsized type; kernels take it by reference.
     type Arg<E: Numeric, V: Size>: LaunchArg + CubeType + ?Sized;
 
-    /// Serve the argument as a [`Tile`] over `spec`.
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] spec: TileSpec) -> Tile<E>;
+    /// Serve the argument as a [`Tile`]: the kernel's one `space` projected onto the
+    /// operand's `spec.axes`.
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<E>;
 }
 
 /// [`Delivery::Strided`]'s family: a plain `Tensor<Vector<E, V>>`, tiled in-kernel by
@@ -137,8 +142,12 @@ pub struct Tma;
 impl DeliveryFamily for Strided {
     type Arg<E: Numeric, V: Size> = Tensor<Vector<E, V>>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] spec: TileSpec) -> Tile<E> {
-        Tile::of(arg, spec)
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<E> {
+        Tile::of(arg, space, spec)
     }
 }
 
@@ -146,9 +155,12 @@ impl DeliveryFamily for Strided {
 impl DeliveryFamily for Tma {
     type Arg<E: Numeric, V: Size> = TmaTileArg<E>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] spec: TileSpec) -> Tile<E> {
-        // The spec's space is the same projection the arg was built with; the width and
-        // storage don't apply to a tensor-map operand.
-        TmaData::from_tensor_map(arg.view.clone(), comptime!(spec.space.clone()))
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<E> {
+        // The width and storage don't apply to a tensor-map operand; only the projection.
+        TmaData::from_tensor_map(arg.view.clone(), comptime!(space.project(&spec.axes)))
     }
 }

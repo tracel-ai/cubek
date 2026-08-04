@@ -271,12 +271,12 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, R> {
 
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        let mut spec = TileSpec::from_concrete(&ConcreteLayout::new(&phys), space, check, units);
+        let mut spec = TileSpec::from_concrete(&ConcreteLayout::new(&phys), check, units);
         if let Some(stage) = stage {
             spec = spec.staged(stage);
         }
         if let Some((_, scheme)) = &quant {
-            validate_scheme(&spec.space, v, *scheme);
+            validate_scheme(&space.project(&spec.axes), v, *scheme);
         }
         StridedOperand {
             tensor: binding.into_tensor_arg(),

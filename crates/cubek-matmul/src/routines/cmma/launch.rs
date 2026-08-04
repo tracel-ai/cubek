@@ -281,6 +281,7 @@ fn launch_strided<R: Runtime>(
         a.tensor,
         b.tensor,
         c.tensor,
+        launch.space().clone(),
         a.spec,
         b.spec,
         c.spec,
@@ -312,7 +313,6 @@ fn launch_tma<R: Runtime>(
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
     fn operand<E: Numeric, R: Runtime>(
-        launch: &Launcher<'_, R>,
         binding: TensorBinding<R>,
         axes: [Axis; 2],
         box_dims: (usize, usize),
@@ -327,28 +327,13 @@ fn launch_tma<R: Runtime>(
             dtype,
             TensorMapSwizzle::None,
         );
-        let space = launch.space().project(&axes);
-        let arg = TmaTileArgLaunch::tensor_map(map, space.clone(), (1, rows, cols), transposed);
+        let arg = TmaTileArgLaunch::tensor_map(map, axes.len(), (1, rows, cols), transposed);
         // The kernel's width and storage don't apply to a tensor-map operand; only the
-        // spec's space is read.
-        (arg, TileSpec::new(space, Storage::of(2, 2)))
+        // spec's axes are read.
+        (arg, TileSpec::new(&axes, Storage::of(2, 2)))
     }
-    let (a, spec_a) = operand(
-        launch,
-        lhs,
-        [M, K],
-        (stage_m, stage_k),
-        (m as u32, k as u32),
-        dtypes.lhs_global,
-    );
-    let (b, spec_b) = operand(
-        launch,
-        rhs,
-        [K, N],
-        (stage_k, stage_n),
-        (k as u32, n as u32),
-        dtypes.rhs_global,
-    );
+    let (a, spec_a) = operand(lhs, [M, K], (stage_m, stage_k), (m as u32, k as u32), dtypes.lhs_global);
+    let (b, spec_b) = operand(rhs, [K, N], (stage_k, stage_n), (k as u32, n as u32), dtypes.rhs_global);
     let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
     let c = launch
         .arg(out)
@@ -366,6 +351,7 @@ fn launch_tma<R: Runtime>(
         a,
         b,
         c.tensor,
+        launch.space().clone(),
         spec_a,
         spec_b,
         c.spec,

@@ -237,8 +237,9 @@ fn matmul_cpu_dynamic_k() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
-        TileSpec::new(a.space().with_dynamic(&[K]), a.storage()),
-        TileSpec::new(b.space().with_dynamic(&[K]), b.storage()),
+        space.with_dynamic(&[K]),
+        TileSpec::new(&[M, K], a.storage()),
+        TileSpec::new(&[K, N], b.storage()),
         c.spec(),
         dtype,
     );
@@ -476,6 +477,7 @@ fn check_matmul_batched(
         a.tensor_arg(1),
         rhs.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         rhs.spec(),
         c.spec(),
@@ -548,6 +550,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
         lhs.tensor_arg(1),
         rhs.tensor_arg(1),
         acc.tensor_arg(1),
+        space,
         lhs.spec(),
         rhs.spec(),
         acc.spec(),
@@ -593,6 +596,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -757,6 +761,7 @@ fn matmul_staged_invariant_lhs() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -822,6 +827,7 @@ fn register_matmul_unit_spread_n() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -887,6 +893,7 @@ fn register_matmul_unit_split_k() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -974,6 +981,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1050,6 +1058,7 @@ fn check_matmul_multilevel(
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec().staged(stage),
         b.spec().staged(stage),
         c.spec(),
@@ -1096,6 +1105,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1124,14 +1134,15 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
     a: &Tensor<Vector<E, V>>,
     b: &Tensor<Vector<E, V>>,
     c: &Tensor<Vector<E, V>>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     c.mma(&a, &b);
 }
 
@@ -1143,14 +1154,15 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     a: &Tensor<Vector<E, V>>,
     b: &Tensor<Vector<E, V>>,
     c: &Tensor<Vector<E, V>>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     let mut acc = c.promote();
     acc.zero();
     acc.mma(&a, &b);
@@ -1168,6 +1180,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     b: &Tensor<E>,
     c: &Tensor<E>,
     a_scales: &Tensor<f32>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
@@ -1175,9 +1188,9 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     #[define(I)] _idtype: StorageType,
     #[define(E)] _edtype: StorageType,
 ) {
-    let a = Tile::<E>::of_dequant(a, a_scales, scheme, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of_dequant(a, a_scales, scheme, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     let mut acc = c.promote();
     acc.zero();
     acc.mma(&a, &b);
@@ -1193,14 +1206,15 @@ fn launch_cpu_matmul<E: Numeric>(
     a: &Tensor<E>,
     b: &Tensor<E>,
     c: &Tensor<E>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     c.zero();
     c.mma(&a, &b);
 }
@@ -1213,15 +1227,16 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     a: &Tensor<E>,
     b: &Tensor<Vector<E, V>>,
     c: &Tensor<Vector<E, V>>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
     #[define(EA)] _acc_dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     let mut acc = c.promote::<EA>();
     acc.zero();
     acc.mma(&a, &b);
@@ -1268,6 +1283,7 @@ fn register_matmul_promoted_accumulator() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1337,6 +1353,7 @@ fn register_matmul_promoted_cube_plane() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1391,6 +1408,7 @@ fn cmma_fragment_roundtrip() {
         CubeDim::new_3d(32, 1, 1),
         input.tensor_arg(1),
         output.tensor_arg(1),
+        space,
         input.spec(),
         output.spec(),
         dtype,
@@ -1408,11 +1426,12 @@ fn cmma_fragment_roundtrip() {
 fn cmma_roundtrip<E: Numeric>(
     input: &Tensor<E>,
     output: &Tensor<E>,
+    #[comptime] space: Space,
     #[comptime] spec_in: TileSpec,
     #[comptime] spec_out: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(input, spec_in);
+    let a = Tile::<E>::of(input, comptime!(space.clone()), spec_in);
     let space = comptime!(a.space.clone());
 
     let mut a_smem = MemData::smem(
@@ -1441,7 +1460,7 @@ fn cmma_roundtrip<E: Numeric>(
     c_smem.copy_from(&frag);
     sync_cube();
 
-    let mut c = Tile::<E>::of(output, spec_out);
+    let mut c = Tile::<E>::of(output, space, spec_out);
     c.copy_from(&c_smem);
 }
 
@@ -1460,13 +1479,14 @@ fn cmma_matmul_8x8x8() {
     }
 
     let dtype = f32::as_type_native_unchecked().storage_type();
-    let a = TileInput::builder(&client, Space::new(&[(M, 8), (K, 8)]))
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+    let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
+    let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
+    let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
 
@@ -1477,6 +1497,7 @@ fn cmma_matmul_8x8x8() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1537,8 +1558,8 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         .untiled()
         .zeros();
 
-    let a_space = Space::new(&[(M, 8), (K, 8)]);
-    let a_storage = Storage::of(2, a_space.rank());
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+    let a_storage = Storage::of(2, 2);
     let e_dtype = f32::as_type_native_unchecked().storage_type();
 
     cmma_matmul_quant::launch::<TestRuntime>(
@@ -1549,7 +1570,8 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -1648,6 +1670,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec().staged(stage),
         b.spec().staged(stage),
         c.spec(),
@@ -1720,6 +1743,7 @@ fn mma_matmul_8x8x8() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1794,6 +1818,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1872,6 +1897,7 @@ fn cmma_matmul_multi_fragment_partition() {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -1901,14 +1927,15 @@ fn cmma_matmul<E: Numeric>(
     a: &Tensor<E>,
     b: &Tensor<E>,
     c: &Tensor<E>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
 
     let mut a_smem_tile = MemData::smem(
         comptime!(a.space.clone()),
@@ -1979,6 +2006,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     b: &Tensor<E>,
     c: &Tensor<E>,
     a_scales: &Tensor<f32>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
@@ -1986,9 +2014,9 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     #[define(I)] _idtype: StorageType,
     #[define(E)] _edtype: StorageType,
 ) {
-    let a = Tile::<E>::of_dequant(a, a_scales, scheme, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of_dequant(a, a_scales, scheme, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
 
     let mut a_smem = MemData::smem(
         comptime!(a.space.clone()),
@@ -2087,8 +2115,8 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    let a_space = Space::new(&[(M, 8), (K, 8)]);
-    let a_storage = Storage::of(2, a_space.rank());
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+    let a_storage = Storage::of(2, 2);
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
         .untiled()
@@ -2106,7 +2134,8 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -2171,8 +2200,8 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    let a_space = Space::new(&[(M, 8), (K, 8)]);
-    let a_storage = Storage::of(2, a_space.rank());
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+    let a_storage = Storage::of(2, 2);
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
         .untiled()
@@ -2190,7 +2219,8 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -2293,7 +2323,8 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -2386,7 +2417,8 @@ fn cmma_matmul_quant_block_m_k_walk() {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -2479,7 +2511,8 @@ fn cmma_matmul_quant_block_k_k_walk() {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -2572,7 +2605,8 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales.binding().into_tensor_arg(),
-        TileSpec::new(a_space, a_storage),
+        space,
+        TileSpec::new(&[M, K], a_storage),
         b.spec(),
         c.spec(),
         scheme,
@@ -2649,6 +2683,7 @@ fn check_matmul_vectorized(schedule: Schedule) {
         a.tensor_arg(1),
         b.tensor_arg(1),
         c.tensor_arg(1),
+        space,
         a.spec(),
         b.spec(),
         c.spec(),
@@ -2696,6 +2731,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     b: &Tensor<E>,
     c: &Tensor<E>,
     a_scales: &Tensor<f32>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
@@ -2703,9 +2739,9 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     #[define(I)] _a_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
-    let a = Tile::<E>::of_dequant(a, a_scales, scheme, spec_a);
-    let b = Tile::<E>::of(b, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of_dequant(a, a_scales, scheme, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     c.mma(&a, &b);
 }
 
@@ -2931,7 +2967,8 @@ fn run_register_matmul_quant(
         b.tensor_arg(1),
         c.tensor_arg(1),
         scales_arg,
-        TileSpec::new(space.project(&[M, K]), Storage::of(2, 2)),
+        space,
+        TileSpec::new(&[M, K], Storage::of(2, 2)),
         b.spec(),
         c.spec(),
         scheme,
@@ -2971,6 +3008,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     b: &Tensor<I>,
     c: &Tensor<Vector<E, V>>,
     b_scales: &Tensor<f32>,
+    #[comptime] space: Space,
     #[comptime] spec_a: TileSpec,
     #[comptime] spec_b: TileSpec,
     #[comptime] spec_c: TileSpec,
@@ -2978,9 +3016,9 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     #[define(I)] _b_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, spec_a);
-    let b = Tile::<E>::of_dequant(b, b_scales, scheme, spec_b);
-    let mut c = Tile::<E>::of(c, spec_c);
+    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
+    let b = Tile::<E>::of_dequant(b, b_scales, scheme, comptime!(space.clone()), spec_b);
+    let mut c = Tile::<E>::of(c, space, spec_c);
     c.mma(&a, &b);
 }
 
@@ -3153,6 +3191,7 @@ fn run_register_matmul_quant_rhs(
         b_op.tensor,
         c_op.tensor,
         b_scales,
+        launcher.space().clone(),
         a_op.spec,
         b_op.spec,
         c_op.spec,

@@ -31,6 +31,7 @@ fn attention_fold_kernel<W: Size>(
     out: &mut Tensor<f32>,      // [G·QP·V] flat
     scale: f32,
     bound: u32,
+    #[comptime] space: Space,
     #[comptime] spec_q: TileSpec,
     #[comptime] spec_k: TileSpec,
     #[comptime] spec_v: TileSpec,
@@ -39,10 +40,10 @@ fn attention_fold_kernel<W: Size>(
     #[comptime] causal: bool,
     #[comptime] block: usize,
 ) {
-    let q = Tile::<f32>::of(q, spec_q);
-    let k = Tile::<f32>::of(k, spec_k);
-    let v = Tile::<f32>::of(v, spec_v);
-    let mask_tile = Tile::<u32>::of(mask, spec_mask);
+    let q = Tile::<f32>::of(q, comptime!(space.clone()), spec_q);
+    let k = Tile::<f32>::of(k, comptime!(space.clone()), spec_k);
+    let v = Tile::<f32>::of(v, comptime!(space.clone()), spec_v);
+    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -160,23 +161,28 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    // q is final (no walk of its own); k/v walk S in blocks.
-    let q_space = Space::new(&[(G, g), (QP, qp), (D, d)]);
-    let k_space = Tiling::new()
-        .extents(&[(S, s_total), (D, d)])
+    // The one attention space: every operand projects its axes out of it. The
+    // walk cuts S into blocks; every other axis rides whole.
+    let space = Tiling::new()
+        .extents(&[
+            (G, g),
+            (QP, qp),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ])
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
+            l.axis(G, Cut::sequential(g))
+                .axis(QP, Cut::sequential(qp))
+                .axis(S, Cut::sequential(block))
                 .axis(D, Cut::sequential(d))
-        })
-        .leaf(Leaf::Register);
-    let v_space = Tiling::new()
-        .extents(&[(S, s_total), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
                 .axis(V, Cut::sequential(val_dim))
+                .axis(R, Cut::sequential(1))
+                .axis(C, Cut::sequential(1))
         })
         .leaf(Leaf::Register);
-    let mask_space = Space::new(&[(R, 1), (C, 1)]);
 
     attention_fold_kernel::launch::<TestRuntime>(
         &client,
@@ -190,10 +196,11 @@ fn run(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        TileSpec::new(q_space, Storage::of(3, 3)),
-        TileSpec::new(k_space, Storage::of(2, 2)),
-        TileSpec::new(v_space, Storage::of(2, 2)),
-        TileSpec::new(mask_space, Storage::of(2, 2)),
+        space,
+        TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+        TileSpec::new(&[S, D], Storage::of(2, 2)),
+        TileSpec::new(&[S, V], Storage::of(2, 2)),
+        TileSpec::new(&[R, C], Storage::of(2, 2)),
         units,
         causal,
         block,
@@ -275,6 +282,7 @@ fn attention_fold_split_kernel<W: Size>(
     out: &mut Tensor<f32>,      // [G·QP·V] flat
     scale: f32,
     bound: u32,
+    #[comptime] space: Space,
     #[comptime] spec_q: TileSpec,
     #[comptime] spec_k: TileSpec,
     #[comptime] spec_v: TileSpec,
@@ -284,10 +292,10 @@ fn attention_fold_split_kernel<W: Size>(
     #[comptime] causal: bool,
     #[comptime] block: usize,
 ) {
-    let q = Tile::<f32>::of(q, spec_q);
-    let k = Tile::<f32>::of(k, spec_k);
-    let v = Tile::<f32>::of(v, spec_v);
-    let mask_tile = Tile::<u32>::of(mask, spec_mask);
+    let q = Tile::<f32>::of(q, comptime!(space.clone()), spec_q);
+    let k = Tile::<f32>::of(k, comptime!(space.clone()), spec_k);
+    let v = Tile::<f32>::of(v, comptime!(space.clone()), spec_v);
+    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -480,22 +488,27 @@ fn run_split(
         .zeros()
         .generate_without_host_data();
 
-    let q_space = Space::new(&[(G, g), (QP, qp), (D, d)]);
-    let k_space = Tiling::new()
-        .extents(&[(S, s_total), (D, d)])
+    // The one attention space, as in [`run`].
+    let space = Tiling::new()
+        .extents(&[
+            (G, g),
+            (QP, qp),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ])
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
+            l.axis(G, Cut::sequential(g))
+                .axis(QP, Cut::sequential(qp))
+                .axis(S, Cut::sequential(block))
                 .axis(D, Cut::sequential(d))
-        })
-        .leaf(Leaf::Register);
-    let v_space = Tiling::new()
-        .extents(&[(S, s_total), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
                 .axis(V, Cut::sequential(val_dim))
+                .axis(R, Cut::sequential(1))
+                .axis(C, Cut::sequential(1))
         })
         .leaf(Leaf::Register);
-    let mask_space = Space::new(&[(R, 1), (C, 1)]);
 
     attention_fold_split_kernel::launch::<TestRuntime>(
         &client,
@@ -509,10 +522,11 @@ fn run_split(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        TileSpec::new(q_space, Storage::of(3, 3)),
-        TileSpec::new(k_space, Storage::of(2, 2)),
-        TileSpec::new(v_space, Storage::of(2, 2)),
-        TileSpec::new(mask_space, Storage::of(2, 2)),
+        space,
+        TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+        TileSpec::new(&[S, D], Storage::of(2, 2)),
+        TileSpec::new(&[S, V], Storage::of(2, 2)),
+        TileSpec::new(&[R, C], Storage::of(2, 2)),
         team,
         splits,
         causal,
@@ -600,6 +614,7 @@ fn attention_stream_test_kernel<W: Size>(
     out: &Tensor<Vector<f32, W>>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
+    #[comptime] space: Space,
     #[comptime] spec_q: TileSpec,
     #[comptime] spec_k: TileSpec,
     #[comptime] spec_v: TileSpec,
@@ -608,10 +623,10 @@ fn attention_stream_test_kernel<W: Size>(
     #[comptime] splits: usize,
     #[comptime] block: usize,
 ) {
-    let q = Tile::<f32>::of(q, spec_q);
-    let k = Tile::<f32>::of(k, spec_k);
-    let v = Tile::<f32>::of(v, spec_v);
-    let mut out = Tile::<f32>::of(out, spec_out);
+    let q = Tile::<f32>::of(q, comptime!(space.clone()), spec_q);
+    let k = Tile::<f32>::of(k, comptime!(space.clone()), spec_k);
+    let v = Tile::<f32>::of(v, comptime!(space.clone()), spec_v);
+    let mut out = Tile::<f32>::of(out, space, spec_out);
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
@@ -677,18 +692,14 @@ fn run_stream(
         .zeros()
         .generate_without_host_data();
 
-    let q_space = Space::new(&[(G, g), (QP, 1), (D, d)]);
-    let k_space = Tiling::new()
-        .extents(&[(S, s_total), (D, d)])
+    // The one attention space: q/k/v/out project their axes out of it.
+    let space = Tiling::new()
+        .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
+            l.axis(G, Cut::sequential(g))
+                .axis(QP, Cut::sequential(1))
+                .axis(S, Cut::sequential(block))
                 .axis(D, Cut::sequential(d))
-        })
-        .leaf(Leaf::Register);
-    let v_space = Tiling::new()
-        .extents(&[(S, s_total), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
                 .axis(V, Cut::sequential(val_dim))
         })
         .leaf(Leaf::Register);
@@ -704,13 +715,11 @@ fn run_stream(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        TileSpec::new(q_space, Storage::of(3, 3)),
-        TileSpec::new(k_space, Storage::of(2, 2)),
-        TileSpec::new(v_space, Storage::of(2, 2)),
-        TileSpec::new(
-            Space::new(&[(G, g), (QP, 1), (V, val_dim)]),
-            Storage::of(3, 3),
-        ),
+        space,
+        TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+        TileSpec::new(&[S, D], Storage::of(2, 2)),
+        TileSpec::new(&[S, V], Storage::of(2, 2)),
+        TileSpec::new(&[G, QP, V], Storage::of(3, 3)),
         lanes,
         splits,
         block,

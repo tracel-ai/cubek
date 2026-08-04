@@ -35,12 +35,12 @@ pub fn launch_ref<R: Runtime>(
     );
     check_i8_supported(client, scheme);
 
-    let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
-    let input_storage = Storage::of(input.shape.len(), input_space.rank());
-    let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
-    let output_storage = Storage::of(output.shape.len(), output_space.rank());
-    let cube_count = input_space.cube_count();
-    let cube_dim = input_space.cube_dim(client);
+    // One space for the whole kernel; both operands span all of it.
+    let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
+    let input_storage = Storage::of(input.shape.len(), space.rank());
+    let output_storage = Storage::of(output.shape.len(), space.rank());
+    let cube_count = space.cube_count();
+    let cube_dim = space.cube_dim(client);
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
     dequantize::launch(
         client,
@@ -50,8 +50,9 @@ pub fn launch_ref<R: Runtime>(
         scales.into_tensor_arg(),
         output.into_tensor_arg(),
         *scheme,
-        TileSpec::new(input_space, input_storage),
-        TileSpec::new(output_space, output_storage),
+        space,
+        TileSpec::new(&[M, N], input_storage),
+        TileSpec::new(&[M, N], output_storage),
         input_dtype,
         output_dtype,
     );
@@ -95,17 +96,19 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 /// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
 /// storage element) only names the binding's element, the scheme recovers the served value.
 /// Scales ride as an ordinary second tensor.
+#[allow(clippy::too_many_arguments)]
 pub fn dequantize<I: Numeric, O: Numeric>(
     input: &Tensor<I>,
     scales: &Tensor<f32>,
     output: &Tensor<O>,
     #[comptime] scheme: QuantScheme,
+    #[comptime] space: Space,
     #[comptime] spec_in: TileSpec,
     #[comptime] spec_out: TileSpec,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = Tile::<O>::of_dequant(input, scales, scheme, spec_in);
-    let mut output = Tile::<O>::of(output, spec_out);
+    let input = Tile::<O>::of_dequant(input, scales, scheme, comptime!(space.clone()), spec_in);
+    let mut output = Tile::<O>::of(output, space, spec_out);
     output.copy_from(&input);
 }
