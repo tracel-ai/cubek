@@ -4,7 +4,7 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
-use cubek_tile::{Axis, Space, Tile, TileSpec};
+use cubek_tile::{Axis, Space, TileArg};
 
 use super::references;
 
@@ -32,11 +32,9 @@ fn recursive_two_level_tiled_view() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        input.tensor_arg(1),
-        output.tensor_arg(1),
+        input.arg(),
+        output.arg(),
         space,
-        input.spec(),
-        output.spec(),
         f32::as_type_native_unchecked().storage_type(),
     );
 
@@ -60,15 +58,13 @@ fn recursive_two_level_tiled_view() {
 /// Copy every logical element of `input` into `output` through their views.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    input: &Tensor<E>,
-    output: &Tensor<E>,
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] spec_in: TileSpec,
-    #[comptime] spec_out: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let input = Tile::<E>::of(input, comptime!(space.clone()), spec_in);
-    let mut output = Tile::<E>::of(output, space, spec_out);
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(space);
     let r = input.view::<Const<1>>();
     let mut w = output.view_mut::<Const<1>>();
     let shape = r.shape();

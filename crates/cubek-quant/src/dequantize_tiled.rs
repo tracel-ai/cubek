@@ -4,7 +4,9 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, Tile, TileSpec};
+use cubek_tile::{
+    Axis, ByAxis, Distribution, Partitioner, Space, Storage, TileArg, TileArgLaunch, TileSpec,
+};
 
 // Input axes
 const M: Axis = Axis(0);
@@ -48,13 +50,17 @@ pub fn launch_ref<R: Runtime>(
         client,
         cube_count,
         cube_dim,
-        input.into_tensor_arg(),
+        TileArgLaunch::new(
+            input.into_tensor_arg(),
+            TileSpec::new(&[M, N], input_storage),
+        ),
         scales.into_tensor_arg(),
-        output.into_tensor_arg(),
-        *scheme,
+        TileArgLaunch::new(
+            output.into_tensor_arg(),
+            TileSpec::new(&[M, N], output_storage),
+        ),
         space.all_dynamic(),
-        TileSpec::new(&[M, N], input_storage),
-        TileSpec::new(&[M, N], output_storage),
+        *scheme,
         input_dtype,
         output_dtype,
     );
@@ -98,19 +104,16 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 /// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
 /// storage element) only names the binding's element, the scheme recovers the served value.
 /// Scales ride as an ordinary second tensor.
-#[allow(clippy::too_many_arguments)]
 pub fn dequantize<I: Numeric, O: Numeric>(
-    input: &Tensor<I>,
+    input: &TileArg<'_, I, Const<1>>,
     scales: &Tensor<f32>,
-    output: &Tensor<O>,
-    #[comptime] scheme: QuantScheme,
+    output: &TileArg<'_, O, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] spec_in: TileSpec,
-    #[comptime] spec_out: TileSpec,
+    #[comptime] scheme: QuantScheme,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = Tile::<O>::of_dequant(input, scales, scheme, comptime!(space.clone()), spec_in);
-    let mut output = Tile::<O>::of(output, space, spec_out);
+    let input = input.tile_dequant::<O>(scales, scheme, comptime!(space.clone()));
+    let mut output = output.tile(space);
     output.copy_from(&input);
 }

@@ -248,6 +248,24 @@ regresses any gate does not merge.**
   byte-identical, cmma identical modulo the benign equal-size smem
   allocation permutation.
 
+## TileArg carrier (2026-08-04)
+
+- Review follow-up: reintroduced a per-operand carrier, `TileArg<'a, E, V:
+  Size> { tensor: &Tensor<Vector<E, V>>, #[comptime] spec: TileSpec }`,
+  with `tile(space)` / `tile_dequant(scales, scheme, space)` methods --
+  the tensor and its spec ship as one launch argument, so a tensor can
+  never pair with another operand's spec and kernel signatures shrink
+  (cmma: 13 params -> 9). NOT the old wrapper: no space copy, no
+  VecTensor, no quant payload (scales stay a loose tensor; the discipline
+  is tensor + spec, nothing else, ever). `TmaTileArg` symmetrically
+  absorbed its spec; the `DeliveryFamily` seam is `tile(arg, space)`.
+  `StridedOperand::arg()` produces the launch value (panics if the quant
+  side-channel wasn't destructured first).
+- Codegen-neutrality proven again by kernel diff: dequantize
+  byte-identical, cmma identical modulo the equal-size smem allocation
+  permutation. The CubeLaunch derive handles the `V: Size` generic
+  (default type params don't work -- the derive appends its own generics).
+
 ## Remaining
 
 1. metabolic-George: repin cubek, flip its gemv/gemm launches onto the

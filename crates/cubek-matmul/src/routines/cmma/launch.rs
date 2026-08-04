@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Delivery, Launcher, Leaf, Schedule, Space, Storage, Strided, TileSpec,
-    Tiling, Tma, TmaTileArgLaunch, WalkOrder,
+    Axis, CubeAxis, Cut, Delivery, Launcher, Leaf, Schedule, Space, Strided, Tiling, Tma,
+    TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -278,13 +278,10 @@ fn launch_strided<R: Runtime>(
         a.vector_size,
         b.vector_size,
         c.vector_size,
-        a.tensor,
-        b.tensor,
-        c.tensor,
+        a.arg(),
+        b.arg(),
+        c.arg(),
         launch.space().clone(),
-        a.spec,
-        b.spec,
-        c.spec,
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
@@ -318,7 +315,7 @@ fn launch_tma<R: Runtime>(
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
         dtype: StorageType,
-    ) -> (TmaTileArgLaunch<E, R>, TileSpec) {
+    ) -> TmaTileArgLaunch<E, R> {
         let (map, transposed) = tma_operand(
             binding,
             1,
@@ -327,19 +324,16 @@ fn launch_tma<R: Runtime>(
             dtype,
             TensorMapSwizzle::None,
         );
-        let arg = TmaTileArgLaunch::tensor_map(map, axes.len(), (1, rows, cols), transposed);
-        // The kernel's width and storage don't apply to a tensor-map operand; only the
-        // spec's axes are read.
-        (arg, TileSpec::new(&axes, Storage::of(2, 2)))
+        TmaTileArgLaunch::tensor_map(map, &axes, (1, rows, cols), transposed)
     }
-    let (a, spec_a) = operand(
+    let a = operand(
         lhs,
         [M, K],
         (stage_m, stage_k),
         (m as u32, k as u32),
         dtypes.lhs_global,
     );
-    let (b, spec_b) = operand(
+    let b = operand(
         rhs,
         [K, N],
         (stage_k, stage_n),
@@ -362,11 +356,8 @@ fn launch_tma<R: Runtime>(
         c.vector_size,
         a,
         b,
-        c.tensor,
+        c.arg(),
         launch.space().clone(),
-        spec_a,
-        spec_b,
-        c.spec,
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,

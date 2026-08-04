@@ -9,7 +9,8 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, TileSpec, validate_scheme,
+    Axis, ConcreteLayout, PhysicalAxis, Space, StageStorage, Storage, TileArgLaunch, TileSpec,
+    validate_scheme,
 };
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
@@ -166,6 +167,17 @@ pub struct StridedOperand<R: Runtime> {
 }
 
 impl<R: Runtime> StridedOperand<R> {
+    /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument. Panics on
+    /// a quantized operand: its scales and scheme must be destructured out of
+    /// [`quant`](Self::quant) first (they ride separately).
+    pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V, R> {
+        assert!(
+            self.quant.is_none(),
+            "StridedOperand::arg: destructure the quant side-channel first; scales launch as their own tensor"
+        );
+        TileArgLaunch::new(self.tensor, self.spec)
+    }
+
     /// The width the binding is typed at: the launch value for the kernel's `Size` generic.
     /// A packed store's buffer is narrower than the served width by the packing factor
     /// ([`Tile::of_dequant`](crate::Tile::of_dequant) serves binding width × pack); a plain

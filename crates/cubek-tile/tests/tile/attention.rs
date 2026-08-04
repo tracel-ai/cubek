@@ -9,7 +9,7 @@ use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Sh
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, Storage, StreamFold,
-    Tile, TileSpec, Tiling, Walk, WalkOrder,
+    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -24,26 +24,22 @@ const C: Axis = Axis(6); // score cols = one S block
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_kernel<W: Size>(
-    q: &Tensor<Vector<f32, W>>, // {G, QP, D}
-    k: &Tensor<Vector<f32, W>>, // {S, D} — omits the group axis
-    v: &Tensor<Vector<f32, W>>, // {S, V}
-    mask: &Tensor<u32>,         // 1-cell dummy (materialized = false)
-    out: &mut Tensor<f32>,      // [G·QP·V] flat
+    q: &TileArg<'_, f32, W>,           // {G, QP, D}
+    k: &TileArg<'_, f32, W>,           // {S, D} — omits the group axis
+    v: &TileArg<'_, f32, W>,           // {S, V}
+    mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
+    out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
     #[comptime] space: Space,
-    #[comptime] spec_q: TileSpec,
-    #[comptime] spec_k: TileSpec,
-    #[comptime] spec_v: TileSpec,
-    #[comptime] spec_mask: TileSpec,
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
 ) {
-    let q = Tile::<f32>::of(q, comptime!(space.clone()), spec_q);
-    let k = Tile::<f32>::of(k, comptime!(space.clone()), spec_k);
-    let v = Tile::<f32>::of(v, comptime!(space.clone()), spec_v);
-    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -189,18 +185,26 @@ fn run(
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),
         vec,
-        q_handle.clone().binding().into_tensor_arg(),
-        k_handle.clone().binding().into_tensor_arg(),
-        v_handle.clone().binding().into_tensor_arg(),
-        mask_handle.clone().binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            q_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+        ),
+        TileArgLaunch::new(
+            k_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[S, D], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            v_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[S, V], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            mask_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[R, C], Storage::of(2, 2)),
+        ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
         space,
-        TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
-        TileSpec::new(&[S, D], Storage::of(2, 2)),
-        TileSpec::new(&[S, V], Storage::of(2, 2)),
-        TileSpec::new(&[R, C], Storage::of(2, 2)),
         units,
         causal,
         block,
@@ -275,27 +279,23 @@ fn fold_scalar_odd_bound() {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_split_kernel<W: Size>(
-    q: &Tensor<Vector<f32, W>>, // {G, QP, D}
-    k: &Tensor<Vector<f32, W>>, // {S, D} — omits the group axis
-    v: &Tensor<Vector<f32, W>>, // {S, V}
-    mask: &Tensor<u32>,         // 1-cell dummy (materialized = false)
-    out: &mut Tensor<f32>,      // [G·QP·V] flat
+    q: &TileArg<'_, f32, W>,           // {G, QP, D}
+    k: &TileArg<'_, f32, W>,           // {S, D} — omits the group axis
+    v: &TileArg<'_, f32, W>,           // {S, V}
+    mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
+    out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
     #[comptime] space: Space,
-    #[comptime] spec_q: TileSpec,
-    #[comptime] spec_k: TileSpec,
-    #[comptime] spec_v: TileSpec,
-    #[comptime] spec_mask: TileSpec,
     #[comptime] team: usize,
     #[comptime] splits: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
 ) {
-    let q = Tile::<f32>::of(q, comptime!(space.clone()), spec_q);
-    let k = Tile::<f32>::of(k, comptime!(space.clone()), spec_k);
-    let v = Tile::<f32>::of(v, comptime!(space.clone()), spec_v);
-    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -515,18 +515,26 @@ fn run_split(
         CubeCount::new_single(),
         CubeDim::new_2d(team as u32, splits as u32),
         vec,
-        q_handle.clone().binding().into_tensor_arg(),
-        k_handle.clone().binding().into_tensor_arg(),
-        v_handle.clone().binding().into_tensor_arg(),
-        mask_handle.clone().binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            q_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+        ),
+        TileArgLaunch::new(
+            k_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[S, D], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            v_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[S, V], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            mask_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[R, C], Storage::of(2, 2)),
+        ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
         space,
-        TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
-        TileSpec::new(&[S, D], Storage::of(2, 2)),
-        TileSpec::new(&[S, V], Storage::of(2, 2)),
-        TileSpec::new(&[R, C], Storage::of(2, 2)),
         team,
         splits,
         causal,
@@ -608,25 +616,21 @@ fn split_fold_idle_teams() {
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_stream_test_kernel<W: Size>(
-    q: &Tensor<Vector<f32, W>>,   // {G, QP(=1), D}
-    k: &Tensor<Vector<f32, W>>,   // {S, D}
-    v: &Tensor<Vector<f32, W>>,   // {S, V}
-    out: &Tensor<Vector<f32, W>>, // {G, QP(=1), V}
+    q: &TileArg<'_, f32, W>,   // {G, QP(=1), D}
+    k: &TileArg<'_, f32, W>,   // {S, D}
+    v: &TileArg<'_, f32, W>,   // {S, V}
+    out: &TileArg<'_, f32, W>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
     #[comptime] space: Space,
-    #[comptime] spec_q: TileSpec,
-    #[comptime] spec_k: TileSpec,
-    #[comptime] spec_v: TileSpec,
-    #[comptime] spec_out: TileSpec,
     #[comptime] lanes: usize,
     #[comptime] splits: usize,
     #[comptime] block: usize,
 ) {
-    let q = Tile::<f32>::of(q, comptime!(space.clone()), spec_q);
-    let k = Tile::<f32>::of(k, comptime!(space.clone()), spec_k);
-    let v = Tile::<f32>::of(v, comptime!(space.clone()), spec_v);
-    let mut out = Tile::<f32>::of(out, space, spec_out);
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
@@ -709,17 +713,25 @@ fn run_stream(
         CubeCount::new_single(),
         CubeDim::new_2d(lanes as u32, splits as u32),
         vec,
-        q_handle.clone().binding().into_tensor_arg(),
-        k_handle.clone().binding().into_tensor_arg(),
-        v_handle.clone().binding().into_tensor_arg(),
-        out_handle.clone().binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            q_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+        ),
+        TileArgLaunch::new(
+            k_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[S, D], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            v_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[S, V], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[G, QP, V], Storage::of(3, 3)),
+        ),
         scale,
         bound_s as u32,
         space,
-        TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
-        TileSpec::new(&[S, D], Storage::of(2, 2)),
-        TileSpec::new(&[S, V], Storage::of(2, 2)),
-        TileSpec::new(&[G, QP, V], Storage::of(3, 3)),
         lanes,
         splits,
         block,

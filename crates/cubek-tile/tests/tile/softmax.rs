@@ -10,7 +10,9 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{Axis, MaskProbe, MemData, RowState, Space, StagePlan, Storage, Tile, TileSpec};
+use cubek_tile::{
+    Axis, MaskProbe, MemData, RowState, Space, StagePlan, Storage, TileArg, TileArgLaunch, TileSpec,
+};
 
 const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
@@ -18,24 +20,22 @@ const S: Axis = Axis(1);
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn softmax_walk_kernel(
-    score_in: &Tensor<f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &Tensor<u32>,     // {Q, S} boolean, nonzero = masked
-    values: &Tensor<f32>,   // [total_cols]
-    out: &mut Tensor<f32>,  // [rows]
-    lse: &mut Tensor<f32>,  // [rows]
+    score_in: &TileArg<'_, f32, Const<1>>, // {Q: rows, S: total_cols} raw scores
+    mask: &TileArg<'_, u32, Const<1>>,     // {Q, S} boolean, nonzero = masked
+    values: &Tensor<f32>,                  // [total_cols]
+    out: &mut Tensor<f32>,                 // [rows]
+    lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
     #[comptime] space: Space,
-    #[comptime] spec_score: TileSpec,
-    #[comptime] spec_mask: TileSpec,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] materialized: bool,
     #[comptime] num_blocks: usize,
 ) {
-    let score_gmem = Tile::<f32>::of(score_in, comptime!(space.clone()), spec_score);
-    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
+    let score_gmem = score_in.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
     let mut score =
         MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
@@ -166,16 +166,20 @@ fn run(
         // Explicit x = units so UNIT_POS_X is the owner index on every
         // backend (CubeDim::new packs by plane size: y-major on CPU).
         CubeDim::new_2d(units as u32, 1),
-        score_handle.clone().binding().into_tensor_arg(),
-        mask_handle.clone().binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            score_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            mask_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+        ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
         gmem_space,
-        TileSpec::new(&[Q, S], Storage::of(2, 2)),
-        TileSpec::new(&[Q, S], Storage::of(2, 2)),
         block_space,
         units,
         causal,
@@ -263,24 +267,22 @@ const V: Axis = Axis(2);
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn softmax_smem_acc_kernel(
-    score_in: &Tensor<f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &Tensor<u32>,     // unused (materialized = false)
-    values: &Tensor<f32>,   // [total_cols, val_dim] row-major
-    out: &mut Tensor<f32>,  // [rows, val_dim] row-major
-    lse: &mut Tensor<f32>,  // [rows]
+    score_in: &TileArg<'_, f32, Const<1>>, // {Q: rows, S: total_cols} raw scores
+    mask: &TileArg<'_, u32, Const<1>>,     // unused (materialized = false)
+    values: &Tensor<f32>,                  // [total_cols, val_dim] row-major
+    out: &mut Tensor<f32>,                 // [rows, val_dim] row-major
+    lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
     #[comptime] space: Space,
-    #[comptime] spec_score: TileSpec,
-    #[comptime] spec_mask: TileSpec,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] num_blocks: usize,
     #[comptime] val_dim: usize,
 ) {
-    let score_gmem = Tile::<f32>::of(score_in, comptime!(space.clone()), spec_score);
-    let mask_tile = Tile::<u32>::of(mask, space, spec_mask);
+    let score_gmem = score_in.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
     let mut score =
         MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
@@ -437,16 +439,20 @@ fn run_smem_acc(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),
-        score_handle.clone().binding().into_tensor_arg(),
-        mask_handle.clone().binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            score_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+        ),
+        TileArgLaunch::new(
+            mask_handle.clone().binding().into_tensor_arg(),
+            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+        ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
         gmem_space,
-        TileSpec::new(&[Q, S], Storage::of(2, 2)),
-        TileSpec::new(&[Q, S], Storage::of(2, 2)),
         block_space,
         units,
         causal,

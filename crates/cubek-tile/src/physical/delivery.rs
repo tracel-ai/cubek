@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Space, Tile, TileSpec, TmaData, TmaTileArg};
+use crate::{Space, Tile, TileArg, TmaTileArg};
 
 /// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
 /// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
@@ -110,29 +110,24 @@ impl Default for StagePlan {
 }
 
 /// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a
-/// kernel serves that argument as a [`Tile`]. The operand is a plain tensor whose element
-/// type carries the served width (`Vector<E, V>`, `V` a launch-fed [`Size`]), and the
-/// comptime [`TileSpec`] arrives through the seam. A kernel body written over
-/// `D: DeliveryFamily` runs strided or TMA unchanged; the launch entry picks the family.
-/// One family covers both operands, since [`Sync::of`](crate::Sync::of) rejects a mixed
-/// pair anyway.
+/// kernel serves that argument as a [`Tile`]. Each argument bundles its own comptime
+/// [`TileSpec`] ([`TileArg`] strided, [`TmaTileArg`] tensor map), so a tensor can never
+/// pair with another operand's spec; only the kernel's one [`Space`] crosses the seam. A
+/// kernel body written over `D: DeliveryFamily` runs strided or TMA unchanged; the launch
+/// entry picks the family. One family covers both operands, since
+/// [`Sync::of`](crate::Sync::of) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
-    /// The launchable argument carrying one operand. `?Sized` because a plain
-    /// `Tensor` is a slice-backed unsized type; kernels take it by reference.
-    type Arg<E: Numeric, V: Size>: LaunchArg + CubeType + ?Sized;
+    /// The launchable argument carrying one operand and its spec.
+    type Arg<E: Numeric, V: Size>: LaunchArg + CubeType;
 
     /// Serve the argument as a [`Tile`]: the kernel's one `space` projected onto the
-    /// operand's `spec.axes`.
-    fn tile<E: Numeric, V: Size>(
-        arg: &Self::Arg<E, V>,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-    ) -> Tile<E>;
+    /// argument's own spec axes.
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E>;
 }
 
-/// [`Delivery::Strided`]'s family: a plain `Tensor<Vector<E, V>>`, tiled in-kernel by
-/// [`Tile::of`].
+/// [`Delivery::Strided`]'s family: a plain tensor + spec ([`TileArg`]), tiled in-kernel
+/// by [`Tile::of`].
 pub struct Strided;
 
 /// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
@@ -140,14 +135,10 @@ pub struct Tma;
 
 #[cube]
 impl DeliveryFamily for Strided {
-    type Arg<E: Numeric, V: Size> = Tensor<Vector<E, V>>;
+    type Arg<E: Numeric, V: Size> = TileArg<'static, E, V>;
 
-    fn tile<E: Numeric, V: Size>(
-        arg: &Self::Arg<E, V>,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-    ) -> Tile<E> {
-        Tile::of(arg, space, spec)
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
+        arg.tile(space)
     }
 }
 
@@ -155,12 +146,7 @@ impl DeliveryFamily for Strided {
 impl DeliveryFamily for Tma {
     type Arg<E: Numeric, V: Size> = TmaTileArg<E>;
 
-    fn tile<E: Numeric, V: Size>(
-        arg: &Self::Arg<E, V>,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-    ) -> Tile<E> {
-        // The width and storage don't apply to a tensor-map operand; only the projection.
-        TmaData::from_tensor_map(arg.view.clone(), comptime!(space.project(&spec.axes)))
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
+        arg.tile(space)
     }
 }

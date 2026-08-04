@@ -5,6 +5,7 @@
 //! `tiled_view`. No `Tiler`, no semantic-view juggling.
 #![allow(dead_code)]
 
+use cubecl::prelude::{Numeric, Size};
 use cubecl::std::tensor::{
     TensorHandle,
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
@@ -13,7 +14,7 @@ use cubecl::{
     TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
     quant::scheme::QuantScheme, zspace::Shape,
 };
-use cubek_tile::{Space, Storage, TileSpec as CubekTileSpec};
+use cubek_tile::{Space, Storage, TileArgLaunch, TileSpec as CubekTileSpec};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -126,6 +127,12 @@ impl TileInput {
     /// logical space's rank, so the launch never hand-writes tile levels.
     pub fn storage(&self) -> Storage {
         Storage::of(self.handle.shape().len(), self.space.rank())
+    }
+
+    /// The tile as one launch argument: its scalar-unit tensor paired with its
+    /// [`spec`](Self::spec). The kernel's element type carries the width.
+    pub fn arg<E: Numeric, V: Size>(&self) -> TileArgLaunch<'static, E, V, TestRuntime> {
+        TileArgLaunch::new(self.tensor_arg(1), self.spec())
     }
 
     /// The comptime [`CubekTileSpec`] a kernel feeds `Tile::of`: the axes this tile spans

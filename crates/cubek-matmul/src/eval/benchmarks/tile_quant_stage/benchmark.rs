@@ -22,21 +22,18 @@ const K: Axis = Axis(2);
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
-    a: &Tensor<Vector<E, VA>>,
-    b: &Tensor<Vector<I, VB>>,
+    a: &TileArg<'_, E, VA>,
+    b: &TileArg<'_, I, VB>,
     b_scales: &Tensor<f32>,
-    c: &Tensor<Vector<E, VC>>,
-    #[comptime] scheme: QuantScheme,
+    c: &TileArg<'_, E, VC>,
     #[comptime] space: Space,
-    #[comptime] spec_a: TileSpec,
-    #[comptime] spec_b: TileSpec,
-    #[comptime] spec_c: TileSpec,
+    #[comptime] scheme: QuantScheme,
     #[define(I)] _b_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
-    let b = Tile::<E>::of_dequant(b, b_scales, scheme, comptime!(space.clone()), spec_b);
-    let mut c = Tile::<E>::of(c, space, spec_c);
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile_dequant::<E>(b_scales, scheme, comptime!(space.clone()));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -147,7 +144,7 @@ impl Benchmark for TileQuantStageBench {
         let space = self.space();
         let launcher = space.launcher(&self.client);
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
-        let b = launcher
+        let mut b = launcher
             .arg(b.tile.handle().binding())
             .subspace(&[K, N])
             .vectorize(self.pack)
@@ -160,7 +157,7 @@ impl Benchmark for TileQuantStageBench {
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
-        let (b_scales, scheme) = b.quant.unwrap();
+        let (b_scales, scheme) = b.quant.take().unwrap();
         staged_matmul_quant_rhs::launch::<TestRuntime>(
             &self.client,
             launcher.cube_count(),
@@ -168,15 +165,12 @@ impl Benchmark for TileQuantStageBench {
             a.vector_size,
             vb,
             c.vector_size,
-            a.tensor,
-            b.tensor,
+            a.arg(),
+            b.arg(),
             b_scales,
-            c.tensor,
-            scheme,
+            c.arg(),
             launcher.space().clone(),
-            a.spec,
-            b.spec,
-            c.spec,
+            scheme,
             u32::as_type_native_unchecked().storage_type(),
             f32::as_type_native_unchecked().storage_type(),
         );

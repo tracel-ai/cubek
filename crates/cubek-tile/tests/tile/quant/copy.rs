@@ -4,7 +4,9 @@ use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
     ValidationResult, assert_equals_approx,
 };
-use cubek_tile::{Axis, Cut, Leaf, Schedule, Space, Storage, Tile, TileSpec, Tiling, WalkOrder};
+use cubek_tile::{
+    Axis, Cut, Leaf, Schedule, Space, Storage, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -26,11 +28,9 @@ fn copy_non_quantized_matches_reference() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        input.tensor_arg(1),
-        output.tensor_arg(1),
+        input.arg(),
+        output.arg(),
         space,
-        input.spec(),
-        output.spec(),
         dtype,
     );
 
@@ -82,13 +82,14 @@ fn copy_quantized_per_tensor_matches_reference() {
         CubeCount::new_single(),
         CubeDim::new_single(),
         1,
-        input.binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            TileSpec::new(&[M, N], storage),
+        ),
         scales.binding().into_tensor_arg(),
-        output.tensor_arg(1),
+        output.arg(),
         scheme,
         space,
-        TileSpec::new(&[M, N], storage),
-        output.spec(),
         input_dtype,
         out_dtype,
     );
@@ -183,13 +184,11 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         CubeCount::new_single(),
         CubeDim::new_single(),
         pack,
-        input.tile.tensor_arg(1),
+        input.tile.arg(),
         input.scales_arg(),
-        output.tensor_arg(1),
+        output.arg(),
         scheme,
         space,
-        input.tile.spec(),
-        output.spec(),
         input_dtype,
         out_dtype,
     );
@@ -217,35 +216,30 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
 #[cube(launch)]
 /// A plain (non-quantized) copy: both tiles serve `E` straight from their tensors.
 pub fn plain_copy<E: Numeric>(
-    input: &Tensor<E>,
-    output: &Tensor<E>,
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] spec_in: TileSpec,
-    #[comptime] spec_out: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let input = Tile::<E>::of(input, comptime!(space.clone()), spec_in);
-    let mut output = Tile::<E>::of(output, space, spec_out);
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(space);
     output.copy_from(&input);
 }
 
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 /// `I` names the binding's element only: the scheme recovers the served value, so a quantized
 /// input dequantizes with nothing threaded through the body. Scales ride as a plain tensor.
 pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
-    input: &Tensor<I>,
+    input: &TileArg<'_, I, Const<1>>,
     scales: &Tensor<f32>,
-    output: &Tensor<Vector<O, V>>,
+    output: &TileArg<'_, O, V>,
     #[comptime] scheme: QuantScheme,
     #[comptime] space: Space,
-    #[comptime] spec_in: TileSpec,
-    #[comptime] spec_out: TileSpec,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = Tile::<O>::of_dequant(input, scales, scheme, comptime!(space.clone()), spec_in);
-    let mut output = Tile::<O>::of(output, space, spec_out);
+    let input = input.tile_dequant::<O>(scales, scheme, comptime!(space.clone()));
+    let mut output = output.tile(space);
     output.copy_from(&input);
 }
 
@@ -301,13 +295,17 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         CubeCount::new_single(),
         CubeDim::new_single(),
         1,
-        input.binding().into_tensor_arg(),
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            TileSpec::new(&[M, N], storage),
+        ),
         scales.binding().into_tensor_arg(),
-        output.tensor_arg(1),
+        TileArgLaunch::new(
+            output.tensor_arg(1),
+            TileSpec::new(&[M, N], output.storage().checked(check)),
+        ),
         scheme,
         space,
-        TileSpec::new(&[M, N], storage),
-        TileSpec::new(&[M, N], output.storage().checked(check)),
         input_dtype,
         out_dtype,
     );

@@ -46,7 +46,9 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Space, Tile, TileSpec, Tiling, WalkOrder};
+use cubek_tile::{
+    Axis, CubeAxis, Cut, Leaf, Schedule, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -55,20 +57,16 @@ const K: Axis = Axis(2);
 /// The kernel under test: the whole contraction is the space's, so the mapping is the only
 /// variable. Mirrors the tile suite's `launch_staged_matmul`.
 #[cube(launch)]
-#[allow(clippy::too_many_arguments)]
 fn launch_split_k_matmul<E: Numeric>(
-    a: &Tensor<E>,
-    b: &Tensor<E>,
-    c: &Tensor<E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] spec_a: TileSpec,
-    #[comptime] spec_b: TileSpec,
-    #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
-    let b = Tile::<E>::of(b, comptime!(space.clone()), spec_b);
-    let mut c = Tile::<E>::of(c, space, spec_c);
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -251,13 +249,10 @@ fn run(
         client,
         space.cube_count(),
         mapping.cube_dim(&space, client),
-        a.tensor_arg(1),
-        rhs_arg(&b, mapping),
-        c.tensor_arg(1),
+        TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
+        TileArgLaunch::new(rhs_arg(&b, mapping), TileSpec::new(&[K, N], b.storage())),
+        TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
         space,
-        TileSpec::new(&[M, K], a.storage()),
-        TileSpec::new(&[K, N], b.storage()),
-        TileSpec::new(&[M, N], c.storage()),
         dtype,
     );
     c
@@ -293,13 +288,13 @@ impl Benchmark for SplitKBench {
             &self.client,
             self.cube_count.clone(),
             self.cube_dim,
-            a.tensor_arg(1),
-            rhs_arg(b, self.mapping),
-            c.tensor_arg(1),
+            TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
+            TileArgLaunch::new(
+                rhs_arg(b, self.mapping),
+                TileSpec::new(&[K, N], b.storage()),
+            ),
+            TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
             self.space.clone(),
-            TileSpec::new(&[M, K], a.storage()),
-            TileSpec::new(&[K, N], b.storage()),
-            TileSpec::new(&[M, N], c.storage()),
             dtype,
         );
         Ok(())

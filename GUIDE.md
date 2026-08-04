@@ -101,23 +101,21 @@ Tile-DSL kernels are the concrete embodiment of the rules above, with one canoni
 ```rust
 #[cube(launch)]
 pub fn my_tile_kernel<E: Numeric, VA: Size, VB: Size>(
-    a: &Tensor<Vector<E, VA>>,
-    out: &Tensor<Vector<E, VB>>,
+    a: &TileArg<'_, E, VA>,
+    out: &TileArg<'_, E, VB>,
     #[comptime] space: Space,
-    #[comptime] spec_a: TileSpec,
-    #[comptime] spec_out: TileSpec,
 ) {
-    let a = Tile::<E>::of(a, comptime!(space.clone()), spec_a);
-    let mut out = Tile::<E>::of(out, space, spec_out);
+    let a = a.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
     // ...
 }
 ```
 
 - **One `Space` per kernel.** The whole iteration space, with its partitioning, passed once.
-  Each operand's `TileSpec` carries only what is per-operand: the axes it spans and its `Storage`.
-  `Tile::of` projects the space onto those axes in-kernel, so operands cannot disagree about extents or partitioning.
+  Each operand is a [`TileArg`]: its tensor bundled with the comptime `TileSpec` naming only what is per-operand, the axes it spans and its `Storage`.
+  `tile(space)` projects the one space onto those axes in-kernel, so operands cannot disagree about extents or partitioning, and a tensor can never pair with another operand's spec.
 - **Problem sizes stay runtime.** The `Launcher` ships the space with `Extent::Dynamic` top-level extents, resolved in-kernel from the tensor's own shape.
   What forks the compiled kernel is structure only: the partitioner's cuts, each spec's axes, the widths.
-- **Width rides the element type.** `Vector<E, V>` with `V: Size` fed a launch value, exactly the vectorization rule above; never a blueprint field.
-- **The launch side ships plain tensors.** `launcher.arg(binding).subspace(..).batches(..).vectorize(v).build()` yields a `TensorArg` plus the comptime `TileSpec`; no wrapper struct rides the dispatch, so the tile surface launches at raw-tensor cost.
-- **Quantized operands are ordinary tensors too.** The storage-typed values tensor, the scales as a plain second tensor, and the comptime `QuantScheme` (`Tile::of_dequant`); the `Size` launch value for a packed operand is `StridedOperand::bound_width()`.
+- **Width rides the element type.** The arg's tensor is `Tensor<Vector<E, V>>` with `V: Size` fed a launch value, exactly the vectorization rule above; never a blueprint field.
+- **The wrapper is comptime-thin.** `launcher.arg(binding).subspace(..).batches(..).vectorize(v).build().arg()` yields a `TileArgLaunch`: one ordinary tensor binding plus hashed comptime data, so it launches at raw-tensor cost (proven by compiled-kernel diff).
+- **Quantized scales stay loose.** A quantized operand is its storage-typed `TileArg` plus the scales as a plain second tensor and the comptime `QuantScheme` (`tile_dequant`); the `Size` launch value for a packed operand is `StridedOperand::bound_width()`. Nothing else ever joins the arg: tensor + spec, exactly.

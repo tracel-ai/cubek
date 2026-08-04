@@ -104,14 +104,62 @@ impl TileSpec {
     }
 }
 
+/// One strided operand as a single launch argument: the plain tensor (whose element type
+/// carries the served width) paired with its comptime [`TileSpec`], so a tensor can never
+/// be launched against another operand's spec. Only per-operand facts live here; the
+/// kernel's one [`Space`] arrives separately and [`tile`](TileArg::tile) projects it.
+#[derive(CubeType, CubeLaunch)]
+pub struct TileArg<'a, E: Numeric, V: Size> {
+    pub tensor: &'a Tensor<Vector<E, V>>,
+    #[cube(comptime)]
+    pub spec: TileSpec,
+}
+
+#[cube]
+impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
+    /// Serve the operand as a [`Tile`]: the kernel's one `space` projected onto this
+    /// operand's `spec.axes`.
+    pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
+        Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
+    }
+
+    /// [`tile`](Self::tile) from a quantized operand: `E` is the *stored* scalar (`u32`
+    /// words packed, `i8` native); the scales ride as a plain second tensor and `scheme`
+    /// says how reads fold them back into the served `O`.
+    pub fn tile_dequant<O: Numeric>(
+        &self,
+        scales: &Tensor<f32>,
+        #[comptime] scheme: QuantScheme,
+        #[comptime] space: Space,
+    ) -> Tile<O> {
+        Tile::<O>::of_dequant(
+            self.tensor,
+            scales,
+            scheme,
+            space,
+            comptime!(self.spec.clone()),
+        )
+    }
+}
+
 /// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor
-/// owns the box, the [`TmaDynLayout`] the coordinate rules). A tensor map cannot ride a
-/// plain tensor binding, so TMA keeps its own carrier; its space arrives through the
-/// [`DeliveryFamily`](crate::DeliveryFamily) seam like every operand's. Built by
-/// [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
+/// owns the box, the [`TmaDynLayout`] the coordinate rules) paired with its comptime
+/// [`TileSpec`], [`TileArg`]'s twin (a tensor map cannot ride a plain tensor binding).
+/// Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaTileArg<E: Numeric> {
     pub view: ViewMut<'static, E, CoordsDyn>,
+    #[cube(comptime)]
+    pub spec: TileSpec,
+}
+
+#[cube]
+impl<E: Numeric> TmaTileArg<E> {
+    /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
+    /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
+    pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
+        TmaData::from_tensor_map(self.view.clone(), comptime!(space.project(&self.spec.axes)))
+    }
 }
 
 /// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread. Every
@@ -187,15 +235,16 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
 impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
     /// Load a TMA tensor-map as a tile argument. `dims` is the operand's logical runtime
     /// `(batch, rows, cols)`; `transposed` flags a col-major operand whose descriptor
-    /// swapped its inner pair (the layout swaps coords back). `rank` is the operand's
-    /// spanned-axes count: 3 with a leading batch axis, 2 without.
+    /// swapped its inner pair (the layout swaps coords back). `axes` are the operand's
+    /// spanned axes: 3 with a leading batch axis, 2 without. The spec's width and storage
+    /// don't apply to a tensor map, so the spec is built here, not by the caller.
     pub fn tensor_map(
         tensor_map: TensorMapArg<R, Tiled>,
-        rank: usize,
+        axes: &[Axis],
         dims: (u32, u32, u32),
         transposed: bool,
     ) -> Self {
-        let batched = match rank {
+        let batched = match axes.len() {
             2 => false,
             3 => true,
             r => panic!(
@@ -204,7 +253,10 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view)
+        Self::new(
+            view,
+            TileSpec::new(axes, Storage::of(axes.len(), axes.len())),
+        )
     }
 }
 

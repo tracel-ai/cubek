@@ -155,8 +155,8 @@ impl InnerLayout {
     }
 
     /// The raw [`TensorArg`] (strides preserved) plus the physical [`Storage`] a launch pairs
-    /// with the operand's axes into a `TileSpec`. `vector_size > 1` lines the innermost (`cols`) axis
-    /// (only valid for a row-major operand; tiled passes `1`).
+    /// with the operand's axes into the `TileSpec` of its `TileArg`. `vector_size > 1` lines the
+    /// innermost (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
     pub fn tensor_arg<R: Runtime>(
         &self,
         mut binding: TensorBinding<R>,
