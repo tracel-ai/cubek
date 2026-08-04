@@ -35,7 +35,9 @@ pub fn launch_ref<R: Runtime>(
     );
     check_i8_supported(client, scheme);
 
-    // One space for the whole kernel; both operands span all of it.
+    // One space for the whole kernel; both operands span all of it. Geometry reads the
+    // concrete extents; the kernel gets the dynamic form, so m and n resolve in-kernel
+    // from the tensor's own shape and never fork the compiled kernel.
     let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), space.rank());
     let output_storage = Storage::of(output.shape.len(), space.rank());
@@ -50,7 +52,7 @@ pub fn launch_ref<R: Runtime>(
         scales.into_tensor_arg(),
         output.into_tensor_arg(),
         *scheme,
-        space,
+        space.all_dynamic(),
         TileSpec::new(&[M, N], input_storage),
         TileSpec::new(&[M, N], output_storage),
         input_dtype,

@@ -155,7 +155,9 @@ impl<T: Numeric> Tile<T> {
         let storage = comptime!(spec.storage);
         // Stage layout: the explicit override, else derived from the space's leaf.
         let stage = comptime!(StagePlan {
-            layout: spec.stage.unwrap_or_else(|| StageStorage::for_space(&space)),
+            layout: spec
+                .stage
+                .unwrap_or_else(|| StageStorage::for_space(&space)),
             units: storage.units,
         });
         // The binding type's own width, comptime; a packed store serves `pack` values per

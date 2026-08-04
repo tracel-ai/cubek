@@ -332,8 +332,20 @@ fn launch_tma<R: Runtime>(
         // spec's axes are read.
         (arg, TileSpec::new(&axes, Storage::of(2, 2)))
     }
-    let (a, spec_a) = operand(lhs, [M, K], (stage_m, stage_k), (m as u32, k as u32), dtypes.lhs_global);
-    let (b, spec_b) = operand(rhs, [K, N], (stage_k, stage_n), (k as u32, n as u32), dtypes.rhs_global);
+    let (a, spec_a) = operand(
+        lhs,
+        [M, K],
+        (stage_m, stage_k),
+        (m as u32, k as u32),
+        dtypes.lhs_global,
+    );
+    let (b, spec_b) = operand(
+        rhs,
+        [K, N],
+        (stage_k, stage_n),
+        (k as u32, n as u32),
+        dtypes.rhs_global,
+    );
     let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
     let c = launch
         .arg(out)

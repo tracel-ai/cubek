@@ -46,9 +46,7 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, Storage, Tile, TileSpec, Tiling, WalkOrder,
-};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Space, Tile, TileSpec, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
