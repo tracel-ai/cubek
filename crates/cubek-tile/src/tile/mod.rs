@@ -111,7 +111,10 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
         QuantLevel::Tensor => vec![1; rank],
         QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
         QuantLevel::BlockTensor { .. } => {
-            unimplemented!("two-level quantization is not supported here, got {:?}", scheme.level)
+            unimplemented!(
+                "two-level quantization is not supported here, got {:?}",
+                scheme.level
+            )
         }
     }
 }
