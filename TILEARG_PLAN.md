@@ -198,18 +198,47 @@ regresses any gate does not merge.**
 - `of_impl` transiently duplicates `from_tensor_quant` — the copy dies
   with `VecTensor` at the deletion step, like the twin kernels.
 
-## Remaining before the default flips
+## Proof + deletion (2026-08-04)
 
-1. **Perf gates not yet run** (machine kept getting interrupted — two
-   long bench runs stopped externally): cubek `cargo bench -p benchmarks
-   --bench gemm`/`gemv` arms alternated by `TILEARG_BARE`, and the
-   model-level A/B (`cargo bb run -D metal -b model`, 3 pairs,
-   BENCH_MODELS=llama-3.2-1b BENCH_MODES=decode). Run on a quiet machine.
-2. **Flip the default + delete** `StridedTileArg`, `StridedTileArgLaunch`,
-   `VecTensor`/`VecTensorArg`, `QuantArg`, the old `DeliveryFamily`, and
-   the env switch — only after (1) passes.
-3. Restore metabolic-George's cubek **git pins** (the DO-NOT-COMMIT path
-   override) once cubek-George's changes are pushed/merged.
+- **Kernel-identity proof (Metal, `CUBECL_DEBUG_LOG`)**: the same cmma matmul
+  compiled through both surfaces produced **instruction-identical kernels**
+  (identical modulo SSA numbering and the declaration order of four
+  equal-size smem buffers). The diff first caught a real divergence: the
+  bare arm compiled with `stage.layout: Strided` where the wrapper had
+  `Tiled` -- `strided()` owned the `StageStorage::for_space` default and
+  `TileSpec::from_concrete` didn't. Fixed by moving the default into
+  `TileSpec::new`, the one derivation every path shares. `dequantize`
+  likewise identical modulo names; the CPU runtime doesn't dump source
+  (bare arm verified running `CpuGemmBareKernel`, suites green).
+- **Perf gates (M2 Pro, paired alternating processes + in-process
+  interleaved A/B)**: Metal gemm cmma at 4096-cube/skinny/512-cube shapes:
+  pair-ratio medians 1.0002 / 1.0001 / 1.0023 -- parity (in-process runs
+  show a ~1% arm-order thermal skew; kernels are proven identical, so it is
+  the protocol, not the surface). CPU cpu_gemm: process-pair median 1.021
+  forward vs 1.006 reversed (order bias); in-process interleaved median
+  **0.9825 -- bare faster**; invariant-strategy control confirms a ~1%
+  noise floor. Gate: pass.
+- **Deletion done**: `StridedTileArg`, `StridedTileArgLaunch`, `QuantArg`,
+  `VecTensor`/`VecTensorArg`, the old `DeliveryFamily`, the twin
+  `*_bare_kernel`s, `bare_surface()`/`TILEARG_BARE`, `Launcher::bare_arg`
+  (and its phantom `f32`), and `MemData::from_tensor`/`from_tensor_quant`
+  are gone. `BareDelivery` is now `DeliveryFamily` (V-typed `Arg`,
+  seam-passed `TileSpec`); `BareStrided` is `Strided`; `build_bare` is
+  `build`, yielding `StridedOperand` (with `bound_width()` owning the
+  packed-width rule); cmma TMA rides the same kernel via the `Tma` family.
+  Scheme validation moved into `build()` so the bare path gates quant at
+  launch like the wrapper did. Tests migrated to `Tile::of` + `TileSpec`
+  (`TileInput::spec()`); the bare-vs-arg parity tests died with their
+  comparison target.
+
+## Remaining
+
+1. metabolic-George: repin cubek, flip its gemv/gemm launches onto the
+   deleted-wrapper surface (its bare kernels already exist behind
+   `GEMV_TILEARG_BARE`/`TILEARG_BARE`), drop the twin kernels, restore the
+   git pins (the DO-NOT-COMMIT path override).
+2. metabolic model-level A/B (3 pairs, llama-3.2-1b decode) on a quiet
+   machine, as a belt-and-braces check on top of the kernel-identity proof.
 
 ## Dangers
 

@@ -20,16 +20,22 @@ const K: Axis = Axis(2);
 
 /// `C = A · dequant(B)`, `B` the packed weight — the staged lowering picks the stage form.
 #[cube(launch)]
-fn staged_matmul_quant_rhs<I: Numeric, E: Numeric>(
-    a: &StridedTileArg<'_, E>,
-    b: &StridedTileArg<'_, I>,
-    c: &StridedTileArg<'_, E>,
+#[allow(clippy::too_many_arguments)]
+fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
+    a: &Tensor<Vector<E, VA>>,
+    b: &Tensor<Vector<I, VB>>,
+    b_scales: &Tensor<f32>,
+    c: &Tensor<Vector<E, VC>>,
+    #[comptime] scheme: QuantScheme,
+    #[comptime] spec_a: TileSpec,
+    #[comptime] spec_b: TileSpec,
+    #[comptime] spec_c: TileSpec,
     #[define(I)] _b_dtype: StorageType,
     #[define(E)] _e_dtype: StorageType,
 ) {
-    let a = a.tile();
-    let b = b.tile_dequant::<E>();
-    let mut c = c.tile();
+    let a = Tile::<E>::of(a, spec_a);
+    let b = Tile::<E>::of_dequant(b, b_scales, scheme, spec_b);
+    let mut c = Tile::<E>::of(c, spec_c);
     c.mma(&a, &b);
 }
 
@@ -139,23 +145,36 @@ impl Benchmark for TileQuantStageBench {
         let (a, b, c) = &*args;
         let space = self.space();
         let launcher = space.launcher(&self.client);
+        let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
+        let b = launcher
+            .arg(b.tile.handle().binding())
+            .subspace(&[K, N])
+            .vectorize(self.pack)
+            .quantized(b.scales_arg(), self.scheme)
+            .build();
+        // The register microkernel lines the accumulator at the RHS's served width.
+        let c = launcher
+            .arg(c.handle().binding())
+            .subspace(&[M, N])
+            .vectorize(self.pack)
+            .build();
+        let vb = b.bound_width();
+        let (b_scales, scheme) = b.quant.unwrap();
         staged_matmul_quant_rhs::launch::<TestRuntime>(
             &self.client,
             launcher.cube_count(),
             launcher.cube_dim(),
-            launcher.arg(a.handle().binding()).subspace(&[M, K]).build(),
-            launcher
-                .arg(b.tile.handle().binding())
-                .subspace(&[K, N])
-                .vectorize(self.pack)
-                .quantized(b.scales_arg(), self.scheme)
-                .build(),
-            // The register microkernel lines the accumulator at the RHS's served width.
-            launcher
-                .arg(c.handle().binding())
-                .subspace(&[M, N])
-                .vectorize(self.pack)
-                .build(),
+            a.vector_size,
+            vb,
+            c.vector_size,
+            a.tensor,
+            b.tensor,
+            b_scales,
+            c.tensor,
+            scheme,
+            a.spec,
+            b.spec,
+            c.spec,
             u32::as_type_native_unchecked().storage_type(),
             f32::as_type_native_unchecked().storage_type(),
         );

@@ -1,7 +1,7 @@
 //! The [`Tile`]: one operand's data as a [`TileKind`] backing store, plus the comptime
 //! [`Space`] it projects. Structure only; each store's own data and leaves live in its file
-//! ([`mem`], [`cmma`], [`tma`]). The launch surface (args, deliveries, builder) rides on
-//! [`StridedTileArg`](crate::StridedTileArg) and its twin [`TmaTileArg`](crate::TmaTileArg).
+//! ([`mem`], [`cmma`], [`tma`]). The launch surface (specs, deliveries, builder) lives in
+//! `physical/`; a kernel's first line is [`Tile::of`] on a plain tensor.
 
 mod cmma;
 mod mem;
@@ -40,7 +40,7 @@ pub enum TileKind<T: Numeric> {
     /// static walk's regions (constant coordinates) can select through it.
     PlanePartition(PlanePartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
-    /// copy into shared memory. Launched via [`TmaTileArg`], the twin of [`StridedTileArg`].
+    /// copy into shared memory. Launched via [`TmaTileArg`](crate::TmaTileArg).
     TmaGmem(TmaData<T>),
 }
 
@@ -104,7 +104,7 @@ pub struct QuantInfo {
 }
 
 /// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
-/// tensor, so its edges are an unused placeholder ([`QuantInfo::native`] pairs them with `0`
+/// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
 /// strides); a block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     match scheme.level {
@@ -115,32 +115,6 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
 
 #[cube]
 impl QuantInfo {
-    /// Build the native (unpacked) quant side-channel from a launched [`QuantArg`]: the whole scales
-    /// buffer, plus per axis the block size and the stride that steps one scale per block. A block
-    /// scheme reads those strides off the scales tensor; per-tensor has a single scale (every stride
-    /// `0`, window stays put).
-    pub(crate) fn native(q: &QuantArg, #[comptime] rank: usize) -> QuantInfo {
-        let block = comptime!(block_edges(q.scheme, rank));
-        let mut strides = Coords::<u32>::new();
-        #[unroll]
-        for p in 0..rank {
-            if comptime!(q.scheme.level == QuantLevel::Tensor) {
-                strides.push(0u32);
-            } else {
-                strides.push(q.scales.stride(p) as u32);
-            }
-        }
-        QuantInfo {
-            buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
-            strides,
-            window_start: 0u32,
-            block: comptime!(block),
-            // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
-            scale_shape: comptime!(Vec::new()),
-            scheme: comptime!(q.scheme),
-        }
-    }
-
     /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
     /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
     /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding

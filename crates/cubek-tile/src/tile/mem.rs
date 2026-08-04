@@ -47,8 +47,7 @@ pub struct MemData<T: Numeric> {
 #[expand(derive(Clone))]
 pub struct Store<T: Numeric> {
     /// Backing store, scalar-typed by Rust-side erasure only: the real binding/alloc element is
-    /// `Vector<T, vector_size>` (see [`VecTensor`](crate::VecTensor)), so re-grouping to lines
-    /// at that width is a no-op.
+    /// `Vector<T, vector_size>`, so re-grouping to lines at that width is a no-op.
     pub(crate) buffer: Box<[T]>,
     /// Physical line size (`Vector<T, vector_size>`) of the backing store, `1` when
     /// unvectorized; held comptime so `size!` can read it.
@@ -94,12 +93,10 @@ impl Overhang {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Construct a whole `Gmem` tile straight from a launched tensor: the bare-tensor launch
-    /// surface (no [`StridedTileArg`] wrapper). The element type carries the line width —
-    /// `Vector<T, W>` for a lined operand, `T` itself for scalar — so the served width *is* the
-    /// binding's width by construction and is never re-lined in-kernel. Shape/strides come in
-    /// scalar-unit and convert to line-unit here, exactly as
-    /// [`from_tensor`](MemData::from_tensor) does for a [`VecTensor`].
+    /// Construct a whole `Gmem` tile straight from a launched tensor. The element type
+    /// carries the line width — `Vector<T, W>` for a lined operand, `T` itself for scalar —
+    /// so the served width *is* the binding's width by construction and is never re-lined
+    /// in-kernel. Shape/strides come in scalar-unit and convert to line-unit here.
     pub fn of<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] spec: TileSpec,
@@ -111,7 +108,6 @@ impl<T: Numeric> Tile<T> {
     /// element's scalar is the *stored* type — `u32` words for a packed scheme, `i8` native),
     /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
     /// them back in. The served width is the binding's width × the scheme's packing factor.
-    /// The bare-surface twin of [`StridedTileArg::tile_dequant`].
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
@@ -232,116 +228,6 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// Wrap a launched [`VecTensor`] into a whole `Gmem` tile. Shape and strides come in
-    /// scalar-unit and convert here to *line-unit* (the buffer indexes in lines): the contiguous
-    /// innermost axis counts lines, coarser strides divide by `w`; the launcher gates `w > 1`
-    /// on divisibility.
-    pub fn from_tensor(
-        tensor: &VecTensor<T>,
-        #[comptime] vector_size: usize,
-        #[comptime] space: Space,
-        #[comptime] storage: Storage,
-    ) -> Tile<T> {
-        MemData::<T>::from_tensor_quant::<T>(
-            tensor,
-            vector_size,
-            space,
-            storage,
-            ComptimeOption::new_None(),
-        )
-    }
-
-    /// [`from_tensor`](MemData::from_tensor) from a storage-typed tensor: the buffer physically
-    /// holds `I` while the tile serves `T`, dequantizing on read per `quant`. The plain path is
-    /// `I == T` with `quant == None`; [`StridedTileArg::tile_dequant`] is the kernel-side constructor.
-    pub fn from_tensor_quant<I: Numeric>(
-        tensor: &VecTensor<I>,
-        #[comptime] vector_size: usize,
-        #[comptime] space: Space,
-        #[comptime] storage: Storage,
-        quant: ComptimeOption<QuantInfo>,
-    ) -> Tile<T> {
-        // `vector_size` counts *served values*; the binding is grouped at the storage width, which
-        // a packed store narrows by its packing factor. The two coincide on every plain operand.
-        let bound_width = tensor.vector_size();
-        let pack = #[comptime]
-        match &quant {
-            ComptimeOption::Some(info) => comptime!(info.scheme.num_quants()),
-            ComptimeOption::None => 1usize,
-        };
-        comptime!(assert!(
-            bound_width * pack == vector_size,
-            "MemData::from_tensor: comptime vector_size ({vector_size}) is not the binding's \
-             width ({bound_width}) times the packing factor ({pack})"
-        ));
-        let start_axis = comptime!(storage.start_axis);
-        let num_tiled = comptime!(space.rank() - storage.start_axis);
-        let levels = comptime!(storage.levels);
-        let rank = comptime!(start_axis + (levels + 1) * num_tiled);
-        let last = comptime!(rank - 1);
-        let w = comptime!(vector_size as u32);
-        let mut physical_shape = Coords::<u32>::new();
-        let mut physical_strides = Coords::<u32>::new();
-        #[unroll]
-        for i in 0..rank {
-            let extent = tensor.shape(i) as u32;
-            let stride = tensor.stride(i) as u32;
-            if comptime!(i == last) {
-                // Innermost (contiguous, scalar stride 1): count lines; consecutive lines
-                // are one line apart.
-                physical_shape.push(extent / w);
-                physical_strides.push(stride);
-            } else {
-                // Coarser axes re-express their scalar strides in lines.
-                physical_shape.push(extent);
-                physical_strides.push(stride / w);
-            }
-        }
-        // Re-typing the buffer to the served `T` is only a static coercion; a quantized
-        // store truly holds `I` and the read view downcasts back (`flat_storage`).
-        let buffer = unsafe {
-            tensor
-                .as_slice()
-                .downcast_unchecked::<T>()
-                .as_boxed_unchecked()
-        };
-        // Logical bound folded from the physical shape, so it's correct for tiled
-        // operands too (the physical buffer is padded; the logical extent is not).
-        let bound = logical_bound(&physical_shape, start_axis, num_tiled, levels);
-        // The whole-tile window. A `Dynamic` axis takes its runtime size from `bound`, so the
-        // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
-        let (origin, extent) = top_window(comptime!(space.clone()), &bound, vector_size);
-        Tile::<T> {
-            tile_kind: TileKind::new_Gmem(MemData::<T> {
-                store: Store::<T> {
-                    buffer,
-                    vector_size: comptime!(vector_size),
-                    quant,
-                },
-                layout: GmemLayout {
-                    physical_shape,
-                    physical_strides,
-                    start_axis,
-                    num_tiled,
-                    levels,
-                },
-                window: Window::new(origin, extent, bound),
-                window_start: 0u32,
-                access: comptime!(Access {
-                    whole: true,
-                    overhang: if storage.check_bounds {
-                        Overhang::Masked
-                    } else {
-                        Overhang::Fits
-                    },
-                    stage: storage.stage,
-                }),
-                lane_share: comptime!(LaneShare::Whole),
-            }),
-            space: comptime!(space),
-        }
-    }
-
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
     /// the element the operand *serves*: a quantized operand dequantizes at the fill, so the stage
     /// holds `T`. The twin is [`smem_like_stored`](MemData::smem_like_stored), which keeps the
@@ -399,7 +285,7 @@ impl<T: Numeric> MemData<T> {
                 }
             }
             // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
-            // [`StridedTileArg`] builder, and a tma tile is scalar), so served == stored. Giving it
+            // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
             // one must not reuse this arm; see `Staging::new`, which refuses that combination.
             TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -445,7 +331,7 @@ impl<T: Numeric> MemData<T> {
 
     /// The body both smem constructors share: everything but the allocation's element, which is why
     /// `smem` takes the allocated slice rather than making it. Scalar-erases it to the served `T`
-    /// (as [`from_tensor_quant`](MemData::from_tensor_quant) does; the views recover the stored
+    /// (the views recover the stored
     /// element through [`lines_storage`](MemData::lines_storage)) and wraps it in the whole-buffer
     /// window.
     fn smem_over<S: CubePrimitive>(
@@ -1367,7 +1253,7 @@ fn smem_scale_grid(
     (nb, strides)
 }
 
-/// The smem physical shape/strides over `space`, line-unit like [`Tile::from_tensor`].
+/// The smem physical shape/strides over `space`, line-unit like [`Tile::of`].
 /// `levels == 0` is a plain row-major buffer; `levels == 1` is the `[grid…, tile…]` storage
 /// tiling at the space's final tile, each tile a contiguous block.
 #[cube]

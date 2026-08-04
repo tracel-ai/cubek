@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Space, StridedTileArg, Tile, TileSpec, TmaData, TmaTileArg};
+use crate::{Space, Tile, TileSpec, TmaData, TmaTileArg};
 
 /// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
 /// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
@@ -73,7 +73,8 @@ impl StageStorage {
 
 /// How an operand's shared-memory stages are laid out and cooperatively filled: the tile
 /// `layout` and the launch's `units` (cube size). One comptime value threaded from the
-/// operand's [`Storage`] to every stage derived from it, so a fill never re-derives either.
+/// operand's [`Storage`](crate::Storage) to every stage derived from it, so a fill never
+/// re-derives either.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StagePlan {
     pub layout: StageStorage,
@@ -109,50 +110,14 @@ impl Default for StagePlan {
 }
 
 /// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a
-/// kernel serves that argument as a [`Tile`]. A kernel body written over
+/// kernel serves that argument as a [`Tile`]. The operand is a plain tensor whose element
+/// type carries the served width (`Vector<E, V>`, `V` a launch-fed [`Size`]), and the
+/// comptime [`TileSpec`] arrives through the seam. A kernel body written over
 /// `D: DeliveryFamily` runs strided or TMA unchanged; the launch entry picks the family.
 /// One family covers both operands, since [`Sync::of`](crate::Sync::of) rejects a mixed
 /// pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
-    /// The launchable argument carrying one operand.
-    type Arg<E: Numeric>: LaunchArg + CubeType;
-
-    /// Serve the argument as a [`Tile`].
-    fn tile<E: Numeric>(arg: &Self::Arg<E>) -> Tile<E>;
-}
-
-/// [`Delivery::Strided`]'s family: a plain tensor ([`StridedTileArg`]), cooperatively copied.
-pub struct Strided;
-
-/// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
-pub struct Tma;
-
-#[cube]
-impl DeliveryFamily for Strided {
-    type Arg<E: Numeric> = StridedTileArg<'static, E>;
-
-    fn tile<E: Numeric>(arg: &Self::Arg<E>) -> Tile<E> {
-        arg.tile()
-    }
-}
-
-#[cube]
-impl DeliveryFamily for Tma {
-    type Arg<E: Numeric> = TmaTileArg<E>;
-
-    fn tile<E: Numeric>(arg: &Self::Arg<E>) -> Tile<E> {
-        arg.tile()
-    }
-}
-
-/// [`DeliveryFamily`]'s bare-surface successor: the operand is a plain tensor whose
-/// element type carries the served width (`Vector<E, V>`, `V` a launch-fed [`Size`]),
-/// and the comptime [`TileSpec`] arrives through the seam instead of riding inside a
-/// wrapper arg. A kernel body written over `D: BareDelivery` runs strided or TMA
-/// unchanged.
-#[cube]
-pub trait BareDelivery: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand. `?Sized` because a plain
     /// `Tensor` is a slice-backed unsized type; kernels take it by reference.
     type Arg<E: Numeric, V: Size>: LaunchArg + CubeType + ?Sized;
@@ -161,12 +126,15 @@ pub trait BareDelivery: Send + core::marker::Sync + 'static {
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] spec: TileSpec) -> Tile<E>;
 }
 
-/// [`Delivery::Strided`]'s bare family: a plain `Tensor<Vector<E, V>>`, tiled in-kernel by
+/// [`Delivery::Strided`]'s family: a plain `Tensor<Vector<E, V>>`, tiled in-kernel by
 /// [`Tile::of`].
-pub struct BareStrided;
+pub struct Strided;
+
+/// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
+pub struct Tma;
 
 #[cube]
-impl BareDelivery for BareStrided {
+impl DeliveryFamily for Strided {
     type Arg<E: Numeric, V: Size> = Tensor<Vector<E, V>>;
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] spec: TileSpec) -> Tile<E> {
@@ -175,7 +143,7 @@ impl BareDelivery for BareStrided {
 }
 
 #[cube]
-impl BareDelivery for Tma {
+impl DeliveryFamily for Tma {
     type Arg<E: Numeric, V: Size> = TmaTileArg<E>;
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] spec: TileSpec) -> Tile<E> {
@@ -183,11 +151,4 @@ impl BareDelivery for Tma {
         // storage don't apply to a tensor-map operand.
         TmaData::from_tensor_map(arg.view.clone(), comptime!(spec.space.clone()))
     }
-}
-
-/// Whether tile kernels launch through the bare-tensor surface (`TILEARG_BARE=1`)
-/// instead of the [`StridedTileArg`] wrapper. One flag for every migrated routine;
-/// the wrapper path stays the default until its perf gate passes.
-pub fn bare_surface() -> bool {
-    std::env::var("TILEARG_BARE").is_ok_and(|v| v != "0")
 }

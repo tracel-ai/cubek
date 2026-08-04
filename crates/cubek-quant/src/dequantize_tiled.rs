@@ -4,10 +4,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{
-    Axis, ByAxis, Distribution, Partitioner, Space, Storage, StridedTileArg, StridedTileArgLaunch,
-    Tile, TileSpec, bare_surface,
-};
+use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space, Storage, Tile, TileSpec};
 
 // Input axes
 const M: Axis = Axis(0);
@@ -40,59 +37,21 @@ pub fn launch_ref<R: Runtime>(
 
     let input_space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let input_storage = Storage::of(input.shape.len(), input_space.rank());
-    if bare_surface() {
-        let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
-        let output_storage = Storage::of(output.shape.len(), output_space.rank());
-        let cube_count = input_space.cube_count();
-        let cube_dim = input_space.cube_dim(client);
-        let input_dtype = ElemType::from_quant_value(scheme.value).into();
-        dequantize_bare::launch(
-            client,
-            cube_count,
-            cube_dim,
-            input.into_tensor_arg(),
-            scales.into_tensor_arg(),
-            output.into_tensor_arg(),
-            *scheme,
-            TileSpec {
-                space: input_space,
-                storage: input_storage,
-            },
-            TileSpec {
-                space: output_space,
-                storage: output_storage,
-            },
-            input_dtype,
-            output_dtype,
-        );
-        return Ok(());
-    }
-    // The quantized operand: the storage-typed tensor plus its scale + scheme, attached at the
-    // payload so the kernel's reads dequantize transparently.
-    let input_tilearg = StridedTileArgLaunch::strided(
-        input.into_tensor_arg(),
-        1,
-        input_space.clone(),
-        input_storage,
-    )
-    .quantized(scales.into_tensor_arg(), *scheme);
-
     let output_space = sequential_space(&[(M, output.shape[0]), (N, output.shape[1])]);
     let output_storage = Storage::of(output.shape.len(), output_space.rank());
-    let output_tilearg =
-        StridedTileArgLaunch::strided(output.into_tensor_arg(), 1, output_space, output_storage);
-
     let cube_count = input_space.cube_count();
     let cube_dim = input_space.cube_dim(client);
-
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
-
     dequantize::launch(
         client,
         cube_count,
         cube_dim,
-        input_tilearg,
-        output_tilearg,
+        input.into_tensor_arg(),
+        scales.into_tensor_arg(),
+        output.into_tensor_arg(),
+        *scheme,
+        TileSpec::new(input_space, input_storage),
+        TileSpec::new(output_space, output_storage),
         input_dtype,
         output_dtype,
     );
@@ -133,26 +92,10 @@ fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantSchem
 }
 
 #[cube(launch)]
-/// input: the quantized input tensor (scale + scheme riding on its payload)
-/// output: the dequantized output tensor
-///
 /// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
-/// storage element) only names the binding's element, the copy recovers it from the scheme.
+/// storage element) only names the binding's element, the scheme recovers the served value.
+/// Scales ride as an ordinary second tensor.
 pub fn dequantize<I: Numeric, O: Numeric>(
-    input: &StridedTileArg<'_, I>,
-    output: &StridedTileArg<'_, O>,
-    #[define(I)] _input_dtype: StorageType,
-    #[define(O)] _output_dtype: StorageType,
-) {
-    let input = input.tile_dequant::<O>();
-    let mut output = output.tile();
-    output.copy_from(&input);
-}
-
-/// [`dequantize`]'s bare-tensor twin: the identical copy, operands as plain tensors
-/// plus their comptime [`TileSpec`]s, scales as an ordinary second tensor.
-#[cube(launch)]
-pub fn dequantize_bare<I: Numeric, O: Numeric>(
     input: &Tensor<I>,
     scales: &Tensor<f32>,
     output: &Tensor<O>,

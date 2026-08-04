@@ -46,10 +46,7 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, StridedTileArg, StridedTileArgLaunch, Tiling,
-    WalkOrder,
-};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Space, Tile, TileSpec, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -59,14 +56,17 @@ const K: Axis = Axis(2);
 /// variable. Mirrors the tile suite's `launch_staged_matmul`.
 #[cube(launch)]
 fn launch_split_k_matmul<E: Numeric>(
-    a: &StridedTileArg<'_, E>,
-    b: &StridedTileArg<'_, E>,
-    c: &StridedTileArg<'_, E>,
+    a: &Tensor<E>,
+    b: &Tensor<E>,
+    c: &Tensor<E>,
+    #[comptime] spec_a: TileSpec,
+    #[comptime] spec_b: TileSpec,
+    #[comptime] spec_c: TileSpec,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = a.tile();
-    let b = b.tile();
-    let mut c = c.tile();
+    let a = Tile::<E>::of(a, spec_a);
+    let b = Tile::<E>::of(b, spec_b);
+    let mut c = Tile::<E>::of(c, spec_c);
     c.mma(&a, &b);
 }
 
@@ -249,9 +249,12 @@ fn run(
         client,
         space.cube_count(),
         mapping.cube_dim(&space, client),
-        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        StridedTileArgLaunch::strided(rhs_arg(&b, mapping), 1, space.project(&[K, N]), b.storage()),
-        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        a.tensor_arg(1),
+        rhs_arg(&b, mapping),
+        c.tensor_arg(1),
+        TileSpec::new(a.space(), a.storage()),
+        TileSpec::new(space.project(&[K, N]), b.storage()),
+        TileSpec::new(c.space(), c.storage()),
         dtype,
     );
     c
@@ -287,14 +290,12 @@ impl Benchmark for SplitKBench {
             &self.client,
             self.cube_count.clone(),
             self.cube_dim,
-            StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-            StridedTileArgLaunch::strided(
-                rhs_arg(b, self.mapping),
-                1,
-                self.rhs_space.clone(),
-                b.storage(),
-            ),
-            StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+            a.tensor_arg(1),
+            rhs_arg(b, self.mapping),
+            c.tensor_arg(1),
+            TileSpec::new(a.space(), a.storage()),
+            TileSpec::new(self.rhs_space.clone(), b.storage()),
+            TileSpec::new(c.space(), c.storage()),
             dtype,
         );
         Ok(())

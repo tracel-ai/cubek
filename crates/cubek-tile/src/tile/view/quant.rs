@@ -55,7 +55,7 @@ impl<'a, I: Numeric, WP: Size, C: cubecl::std::tensor::layout::Coordinates + 'a>
     /// scheme's packing factor (the launch narrowed the binding by exactly that).
     ///
     /// One scale per line, broadcast across it: a line never straddles a block
-    /// ([`quantized`](crate::StridedTileArgLaunch::quantized) rejects that at launch), so the
+    /// ([`quantized`](crate::StridedTileSource::quantized) rejects that at launch), so the
     /// [`ScaleLayout`] resolves the whole line's block in one read.
     pub fn read<O: Numeric, W: Size>(&self, pos: C) -> Vector<O, W> {
         let scale = O::cast_from(self.scales.read(pos.clone()));
@@ -112,7 +112,7 @@ fn unpack_lane<I: Numeric, WP: Size>(
 /// of each axis's block index with its scale stride. `window_start` carries the window origin's own
 /// block (folded in at descent by [`QuantInfo`]), so this only adds the offset within the window,
 /// sound because no window straddles a block, which
-/// [`quantized`](crate::StridedTileArgLaunch::quantized) rejects at launch.
+/// [`quantized`](crate::StridedTileSource::quantized) rejects at launch.
 ///
 /// Per-tensor never leaves index `0`: its strides are `0`, so every term folds away
 /// ([`fmul`](crate::Fold::fmul) annihilates) and a read is a constant-index broadcast.
