@@ -1,6 +1,8 @@
 use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::{QuantLevel, QuantParam};
 mod tiled;
+mod two_level_contract;
+mod ue4m3_two_level;
 
 #[macro_export]
 macro_rules! testgen_quant {
