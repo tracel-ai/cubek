@@ -5,8 +5,8 @@ use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
+    global_scale::{dequantize_symmetric_scaled, read_global},
     layout::{ScalesView, scales_view},
-    per_tensor::{dequantize_symmetric_scaled, read_global},
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::{check_global_bindings, global_dtype, packed_storage_elem, scale_dtype},
 };

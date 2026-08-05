@@ -15,7 +15,7 @@ pub mod quantize;
 pub mod layout;
 
 #[cfg(feature = "kernels")]
-pub(crate) mod per_tensor;
+pub(crate) mod global_scale;
 
 pub use cubecl_common::quant::scheme;
 

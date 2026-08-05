@@ -12,8 +12,8 @@ use cubecl::{
 };
 
 use crate::{
+    global_scale::{quantize_symmetric_scaled, read_global},
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    per_tensor::{quantize_symmetric_scaled, read_global},
     utils::{
         check_block_size_compat, check_global_bindings, check_param_supported, global_dtype,
         packed_storage_elem, scale_dtype,

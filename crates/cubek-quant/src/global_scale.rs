@@ -1,4 +1,8 @@
-//! The per-tensor scale of a two-level scheme.
+//! The global scale of a two-level scheme, the one factor normalizing every block scale.
+//!
+//! Called global rather than per-tensor throughout, matching `QuantLevel::global_param` and the
+//! `global` binding: per-tensor is already taken by [`QuantLevel::Tensor`](crate::scheme::QuantLevel),
+//! a one-level scheme with a single scale and no block scales under it.
 //!
 //! Reading is split from applying so a kernel scaling several blocks per unit can hoist the load
 //! out of its loop. `FG` is the scale's own type, not the compute type: reading an f32 scale as
@@ -18,6 +22,8 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::linear::LinearView;
 
+use crate::dequantize::dequantize_symmetric;
+
 #[cube]
 pub(crate) fn read_global<FG: Numeric>(
     global: ComptimeOption<LinearView<'_, FG>>,
@@ -29,8 +35,10 @@ pub(crate) fn read_global<FG: Numeric>(
     }
 }
 
-/// Multiply dequantized values by their block scale, folding in the per-tensor scale if there is
-/// one.
+/// Multiply dequantized values by their block scale, folding in the global scale if there is one.
+///
+/// Both arms are [`dequantize_symmetric`]; what the global buys is only the type the multiply
+/// happens in.
 #[cube]
 pub(crate) fn dequantize_symmetric_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Size>(
     values: Vector<F, N>,
@@ -41,15 +49,20 @@ pub(crate) fn dequantize_symmetric_scaled<F: Float, FG: Numeric, FS: CubePrimiti
     match global {
         ComptimeOption::Some(global) => {
             let scale = f32::cast_from(global) * f32::cast_from(block);
-            Vector::cast_from(Vector::<f32, N>::cast_from(values) * Vector::new(scale))
+            Vector::cast_from(dequantize_symmetric::<f32, f32, N>(
+                Vector::<f32, N>::cast_from(values),
+                scale,
+            ))
         }
-        ComptimeOption::None => Vector::cast_from(block) * values,
+        ComptimeOption::None => dequantize_symmetric::<F, FS, N>(values, block),
     }
 }
 
 /// Divide values by the same effective scale, the quantize direction of
 /// [`dequantize_symmetric_scaled`]. The quotient is within the quantization range, so narrowing it
-/// back to `F` is safe.
+/// back to `F` is safe. There is no divide counterpart to [`dequantize_symmetric`] to call: the
+/// crate's `quantize_symmetric` is this plus the round and clamp, so this is where the divide is
+/// defined.
 #[cube]
 pub(crate) fn quantize_symmetric_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Size>(
     values: Vector<F, N>,
