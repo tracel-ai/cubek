@@ -21,8 +21,9 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
     value: Vector<F, N>,
     scale: FS,
 ) -> Vector<F, N> {
-    // x = scale * x_q
-    Vector::cast_from(scale) * value
+    // x = scale * x_q, formed in f32 so that a scale which is subnormal in `F` still scales the
+    // values it is representable against, instead of flushing the whole block to zero.
+    Vector::cast_from(Vector::<f32, N>::cast_from(value) * Vector::<f32, N>::cast_from(scale))
 }
 
 /// Dequantize the value at a specified position using the provided quantization scheme.
@@ -106,8 +107,8 @@ pub fn dequantize_symmetric_packed_value<
     for i in 0..vector_size_values {
         let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
         let block = scales.read((position * vector_size_values) + i * num_quants);
-        let scale = apply_global::<F, FG, FS>(block, global);
-        let values = dequantize_symmetric::<F, F, NF>(floats, scale);
+        let scale = apply_global::<FG, FS>(block, global);
+        let values = dequantize_symmetric::<F, f32, NF>(floats, scale);
         tmp[i] = values;
     }
 
@@ -206,11 +207,11 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeri
     let native_packing = Q::packing_factor();
     // Absolute pos represents the logical block (scale) used to dequantize, not layout
     let block = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
-    let scale = apply_global::<F, FG, FS>(block, read_global::<FG>(global));
+    let scale = apply_global::<FG, FS>(block, read_global::<FG>(global));
 
     output.write(
         ABSOLUTE_POS,
-        dequantize_symmetric::<F, F, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
+        dequantize_symmetric::<F, f32, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
     );
 }
 

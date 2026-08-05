@@ -28,8 +28,13 @@ fn quantize_symmetric<F: Float, N: Size, FS: CubePrimitive>(
     range_min: F,
     range_max: F,
 ) -> Vector<F, N> {
+    // The division is done in f32: a scale that is subnormal in `F` would otherwise round to zero
+    // and send every value in the block to an infinity that clamps onto the range bounds. The
+    // quotient is within the quantization range, so narrowing it back to `F` is safe.
+    let scaled = Vector::<f32, N>::cast_from(value) / Vector::<f32, N>::cast_from(scale);
+
     clamp(
-        Vector::round(value / Vector::cast_from(scale)),
+        Vector::cast_from(Vector::round(scaled)),
         Vector::new(range_min),
         Vector::new(range_max),
     )
@@ -122,11 +127,11 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let block = write_scale(in_pos, scale, out_scale, scales_layout, param);
     let global = read_global::<FG>(global);
-    let scale = apply_global::<F, FG, FS>(block, global);
+    let scale = apply_global::<FG, FS>(block, global);
 
     output.write(
         ABSOLUTE_POS,
-        quantize_symmetric_q::<F, N, F, Q>(
+        quantize_symmetric_q::<F, N, f32, Q>(
             input.read(ABSOLUTE_POS),
             scale,
             range_min.get::<F>(),
@@ -157,12 +162,12 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let packed_pos = ABSOLUTE_POS * num_quants;
     let block = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
     let global = read_global::<FG>(global);
-    let scale = apply_global::<F, FG, FS>(block, global);
+    let scale = apply_global::<FG, FS>(block, global);
 
     if input.vector_size().comptime() == num_quants {
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, N, F, QS>(
+            quantize_packed_value::<F, N, f32, QS>(
                 input.read(ABSOLUTE_POS),
                 scale,
                 range_min.get::<F>(),
@@ -180,7 +185,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
         }
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, NQ, F, QS>(
+            quantize_packed_value::<F, NQ, f32, QS>(
                 values,
                 scale,
                 range_min.get::<F>(),
