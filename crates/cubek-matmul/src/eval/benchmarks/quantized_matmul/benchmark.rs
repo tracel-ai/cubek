@@ -15,7 +15,7 @@ use cubek_quant::{
     scheme::{QuantScheme, QuantStore},
 };
 use cubek_std::InputBinding;
-use cubek_test_utils::{RunSamples, TestInput};
+use cubek_test_utils::{RunSamples, TestInput, quant_layout};
 
 use crate::definition::{MatmulElems, MatmulGlobalElems};
 use crate::eval::benchmarks::quantized_matmul::problem::{
@@ -119,28 +119,13 @@ struct QuantMatmulInputs {
     out: TensorHandle<TestRuntime>,
 }
 
-fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match scheme.level.block_size() {
-        Some(block) => {
-            let rank = shape.len();
-            let block_dims = block.to_dim_vec(rank);
-            shape
-                .iter()
-                .zip(block_dims.iter())
-                .map(|(d, b)| d / (*b as usize))
-                .collect()
-        }
-        None => vec![1; shape.len()],
-    }
-}
-
 fn quantize_operand(
     client: &ComputeClient<TestRuntime>,
     input: TensorHandle<TestRuntime>,
     scheme: &QuantScheme,
 ) -> QuantOperand {
     let shape: Shape = input.shape().clone();
-    let scale_shape_vec = scales_shape(scheme, &shape);
+    let scale_shape_vec = quant_layout::scales_shape(scheme, &shape);
 
     let f32_dtype = f32::as_type_native_unchecked().storage_type();
     let (q_min, q_max) = scheme.value.range();
@@ -347,7 +332,7 @@ fn validate_spec(problem: &QuantizedMatmulProblem) -> Result<(), String> {
             ));
         }
         if scheme.level.block_size().is_some() {
-            let scales = scales_shape(&scheme, shape);
+            let scales = quant_layout::scales_shape(&scheme, shape);
             if scales.contains(&0) {
                 return Err(format!("{label} block size exceeds a dim in {shape:?}"));
             }

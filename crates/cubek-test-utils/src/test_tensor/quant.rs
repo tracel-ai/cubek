@@ -1,15 +1,11 @@
 use cubecl::{
-    TestRuntime,
-    client::ComputeClient,
-    ir::{ElemType, StorageType},
-    quant::scheme::{QuantLevel, QuantStore},
-    std::tensor::TensorHandle,
+    TestRuntime, client::ComputeClient, quant::scheme::QuantLevel, std::tensor::TensorHandle,
     zspace::Shape,
 };
 use cubecl_common::quant::scheme::QuantScheme;
 
 use crate::{
-    HostData, QuantizationInfo, TestTensor, stubs::quant::quantize,
+    HostData, QuantizationInfo, TestTensor, quant_layout, stubs::quant::quantize,
     test_tensor::custom::cast_f32_to_dtype,
 };
 
@@ -31,40 +27,23 @@ pub(crate) fn apply_quantization(
     // the quant range without clipping.
     let (scales_shape, scales_data, block_dims) = compute_input_scales(&tensor.host, &scheme);
 
-    // Determine the correct storage type for the quantized output buffer.
-    let output_storage_type = match &scheme.store {
-        QuantStore::PackedU32(_) => StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)),
-        QuantStore::PackedNative(_) | QuantStore::Native => {
-            StorageType::Scalar(ElemType::from_quant_value(scheme.value))
-        }
-    };
-
-    let mut quant_shape = original_shape.clone();
-    let num_quants = scheme.num_quants();
-    // Only divide last dim for PackedU32/PackedNative; Native stores 1:1.
-    match &scheme.store {
-        QuantStore::PackedU32(_) | QuantStore::PackedNative(_) => {
-            if num_quants > 1 {
-                let last_dim = quant_shape.len() - 1;
-                quant_shape[last_dim] /= num_quants;
-            }
-        }
-        QuantStore::Native => {}
-    }
-
-    // Quantize on the host (see `crate::stubs::quant`). The kernel's `out_scale`
-    // is simply the input scales cast to the param precision, so we build it
-    // directly from `scales_data` instead of having the stub recompute it.
     let shape: Vec<usize> = original_shape.iter().copied().collect();
+    let quant_shape: Shape = quant_layout::values_shape(&scheme, &shape)
+        .into_iter()
+        .collect();
+
+    // Quantize on the host (see `crate::stubs::quant`). `out_scale` is built from `scales_data`
+    // rather than having the stub recompute it. That casts to the param's precision, where the
+    // kernel rounds up, so the two agree only at `QuantParam::F32`.
     let values = logical_values_f32(&tensor.host);
     let output_bytes = quantize(&values, &shape, &scales_data, &block_dims, &scheme);
     let output_handle = TensorHandle::new_contiguous(
         quant_shape,
         client.create_from_slice(&output_bytes),
-        output_storage_type,
+        quant_layout::values_dtype(&scheme),
     );
 
-    let scale_dtype = StorageType::Scalar(ElemType::from_quant_param(scheme.param));
+    let scale_dtype = quant_layout::scales_dtype(&scheme);
     let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
     let out_scale_handle = TensorHandle::new_contiguous(
         scales_shape,
@@ -115,7 +94,7 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
 
     let shape: Vec<usize> = host.shape.iter().copied().collect();
     let block_dims = crate::stubs::quant::block_dims(scheme, &shape);
-    let scales_shape: Shape = crate::stubs::quant::scales_shape(&shape, &block_dims)
+    let scales_shape: Shape = quant_layout::scales_shape(scheme, &shape)
         .into_iter()
         .collect();
 

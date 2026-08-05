@@ -11,7 +11,7 @@ pub fn quantize(
     block_dims: &[usize],
     scheme: &QuantScheme,
 ) -> Vec<u8> {
-    let scales_shape = scales_shape(shape, block_dims);
+    let scales_shape = crate::quant_layout::scales_shape(scheme, shape);
     let quantized = quantized_values(values, shape, scales, block_dims, &scales_shape, scheme);
 
     match scheme.store {
@@ -29,7 +29,7 @@ pub fn dequantize(
     block_dims: &[usize],
     scheme: &QuantScheme,
 ) -> Vec<f32> {
-    let scales_shape = scales_shape(shape, block_dims);
+    let scales_shape = crate::quant_layout::scales_shape(scheme, shape);
 
     let quants = match scheme.store {
         QuantStore::Native => decode_native(bytes, scheme.value),
@@ -179,46 +179,24 @@ fn quant_mask(size_quant: usize) -> u32 {
     }
 }
 
-/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
-pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    // The reference quantizes and dequantizes with one scale per value, so a two-level scheme
-    // would give a reference that ignores the per-tensor factor. A kernel that drops it too would
-    // then agree with the reference and the test would pass while both are wrong.
+/// Refuse a scheme this reference cannot stand in for.
+///
+/// It quantizes with one scale per value, so a two-level scheme would give a reference that
+/// ignores the global factor. A kernel that drops it too would then agree with the reference, and
+/// the test would pass with both of them wrong.
+pub(crate) fn assert_supported(scheme: &QuantScheme) {
     assert!(
         scheme.level.global_param().is_none(),
         "two-level quantization is not supported by the reference quantizer, got {:?}",
         scheme.level
     );
-
-    match scheme.level.block_size() {
-        Some(bs) => bs
-            .to_dim_vec(shape.len())
-            .iter()
-            .map(|&b| b as usize)
-            .collect(),
-        None => shape.to_vec(),
-    }
 }
 
-/// Shape of the per-block scale grid: each dimension divided by its block
-/// extent.
-pub(crate) fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
-    assert_eq!(
-        shape.len(),
-        block_dims.len(),
-        "shape/block_dims rank mismatch"
-    );
-    shape
-        .iter()
-        .zip(block_dims)
-        .map(|(&d, &b)| {
-            assert!(
-                d.is_multiple_of(b),
-                "block dim {b} must divide dimension {d}"
-            );
-            d / b
-        })
-        .collect()
+/// The scheme's per-axis block edges over `shape`.
+pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+    assert_supported(scheme);
+
+    crate::quant_layout::block_dims(scheme, shape)
 }
 
 /// Map a logical (row-major) element index to the index of its block in the

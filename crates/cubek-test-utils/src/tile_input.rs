@@ -327,8 +327,8 @@ impl QuantizedTileInputBuilder {
         let words = crate::stubs::quant::pack_q_values(&q, &self.scheme);
         let handle = self.client.create(Bytes::from_elems(words));
 
-        let block = crate::stubs::quant::block_dims(&self.scheme, &shape);
-        let grid = crate::stubs::quant::scales_shape(&shape, &block);
+        crate::stubs::quant::assert_supported(&self.scheme);
+        let grid = crate::quant_layout::scales_shape(&self.scheme, &shape);
         let scale_values: Vec<f32> = (0..grid.iter().product())
             .map(|g| 0.05 * (g + 1) as f32)
             .collect();
