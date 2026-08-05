@@ -21,7 +21,7 @@ pub use cubecl_common::quant::scheme;
 
 #[cfg(feature = "kernels")]
 pub(crate) mod utils {
-    use crate::scheme::{QuantScheme, QuantStore};
+    use crate::scheme::{QuantParam, QuantScheme, QuantStore};
     use cubecl::ir::{ElemType, UIntKind};
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
@@ -60,6 +60,18 @@ pub(crate) mod utils {
             } else {
                 "does not take"
             }
+        );
+    }
+
+    /// Quantize rounds each scale up to what its storage precision holds, which cubecl leaves
+    /// unimplemented for `UE8M0`. Without this the scheme reaches that hole during kernel
+    /// expansion and panics from inside cubecl, past the point where the caller can read the
+    /// scheme off the error.
+    pub(crate) fn check_param_supported(scheme: &QuantScheme) {
+        assert!(
+            scheme.param != QuantParam::UE8M0,
+            "UE8M0 scales are not supported, got {:?}",
+            scheme.param
         );
     }
 

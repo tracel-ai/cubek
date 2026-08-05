@@ -14,7 +14,10 @@ use cubecl::{
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
     per_tensor::{apply_global, read_global},
-    utils::{check_block_size_compat, check_global_bindings, global_dtype, packed_storage_elem},
+    utils::{
+        check_block_size_compat, check_global_bindings, check_param_supported, global_dtype,
+        packed_storage_elem,
+    },
 };
 use crate::{
     layout::{ScalesView, scales_layout},
@@ -210,6 +213,7 @@ pub fn launch_ref<R: Runtime>(
     let global_dtype = global_dtype(scheme);
 
     check_global_bindings(scheme, global.is_some());
+    check_param_supported(scheme);
 
     match scheme {
         QuantScheme {
