@@ -8,7 +8,6 @@ use cubecl::{
     features::TypeUsage,
     ir::{ElemType, FloatKind, StorageType},
     prelude::*,
-    server::CopyDescriptor,
     std::tensor::TensorHandle,
     {TestRuntime, zspace::shape},
 };
@@ -101,12 +100,7 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
     )
     .unwrap();
 
-    let stored = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_scale.handle.clone().binding(),
-        output_scale.shape().clone(),
-        output_scale.strides().clone(),
-        core::mem::size_of::<half::f16>(),
-    ));
+    let stored = client.read_one_unchecked_tensor(output_scale.clone().into_copy_descriptor());
     let stored = half::f16::from_bytes(&stored);
 
     assert_eq!(stored.len(), num_blocks);

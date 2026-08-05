@@ -6,7 +6,6 @@ use cubecl::{
     features::TypeUsage,
     ir::{ElemType, FloatKind, StorageType},
     prelude::*,
-    server::CopyDescriptor,
     std::tensor::TensorHandle,
     {TestRuntime, zspace::shape},
 };
@@ -124,12 +123,7 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
 
     // The block scales have to survive the trip through e4m3 storage. Reading the bytes back
     // catches a wrong element type, which would otherwise only show as a scaling error.
-    let stored = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_scale.handle.clone().binding(),
-        output_scale.shape().clone(),
-        output_scale.strides().clone(),
-        1,
-    ));
+    let stored = client.read_one_unchecked_tensor(output_scale.clone().into_copy_descriptor());
     for (block, &expected) in scales.iter().enumerate() {
         let got = e4m3::from_bits(stored[block]).to_f32();
         assert_eq!(
@@ -138,20 +132,10 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
         );
     }
 
-    let written = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        global.handle.clone().binding(),
-        global.shape().clone(),
-        global.strides().clone(),
-        core::mem::size_of::<f32>(),
-    ));
+    let written = client.read_one_unchecked_tensor(global.clone().into_copy_descriptor());
     assert_eq!(f32::from_bytes(&written)[0], GLOBAL);
 
-    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_f.handle.clone().binding(),
-        output_f.shape().clone(),
-        output_f.strides().clone(),
-        core::mem::size_of::<f32>(),
-    ));
+    let computed = client.read_one_unchecked_tensor(output_f.clone().into_copy_descriptor());
     let restored = f32::from_bytes(&computed);
 
     assert_eq!(restored.len(), data.len());

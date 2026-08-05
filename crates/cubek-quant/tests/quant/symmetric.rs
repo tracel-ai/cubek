@@ -2,7 +2,6 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     ir::FloatKind,
-    server::CopyDescriptor,
     std::tensor::TensorHandle,
     {TestRuntime, zspace::shape},
 };
@@ -117,12 +116,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     )
     .unwrap();
 
-    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_f.handle.clone().binding(),
-        output_f.shape().clone(),
-        output_f.strides().clone(),
-        core::mem::size_of::<f32>(),
-    ));
+    let computed = client.read_one_unchecked_tensor(output_f.clone().into_copy_descriptor());
     let data_restored = f32::from_bytes(&computed);
 
     // Max quantization error = step size / 2
@@ -260,12 +254,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     )
     .unwrap();
 
-    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_f.handle.clone().binding(),
-        output_f.shape().clone(),
-        output_f.strides().clone(),
-        core::mem::size_of::<f32>(),
-    ));
+    let computed = client.read_one_unchecked_tensor(output_f.clone().into_copy_descriptor());
     let data_restored = f32::from_bytes(&computed);
 
     assert_eq!(data_restored.len(), data.len());
@@ -423,20 +412,10 @@ fn test_quantization_block_tensor_symmetric(
     )
     .unwrap();
 
-    let written = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        global.handle.clone().binding(),
-        global.shape().clone(),
-        global.strides().clone(),
-        core::mem::size_of::<f32>(),
-    ));
+    let written = client.read_one_unchecked_tensor(global.clone().into_copy_descriptor());
     assert_eq!(f32::from_bytes(&written)[0], global_f32);
 
-    let computed = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_f.handle.clone().binding(),
-        output_f.shape().clone(),
-        output_f.strides().clone(),
-        core::mem::size_of::<f32>(),
-    ));
+    let computed = client.read_one_unchecked_tensor(output_f.clone().into_copy_descriptor());
     let data_restored = f32::from_bytes(&computed);
 
     assert_eq!(data_restored.len(), data.len());

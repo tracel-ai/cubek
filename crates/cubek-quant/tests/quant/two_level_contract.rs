@@ -3,7 +3,6 @@
 use cubecl::{
     ir::{ElemType, FloatKind},
     prelude::*,
-    server::CopyDescriptor,
     std::tensor::TensorHandle,
     {TestRuntime, zspace::shape},
 };
@@ -189,12 +188,9 @@ fn the_per_tensor_scale_is_read_as_f32_not_as_the_compute_type() {
     )
     .unwrap();
 
-    let computed = f.client.read_one_unchecked_tensor(CopyDescriptor::new(
-        out_f16.handle.clone().binding(),
-        out_f16.shape().clone(),
-        out_f16.strides().clone(),
-        core::mem::size_of::<half::f16>(),
-    ));
+    let computed = f
+        .client
+        .read_one_unchecked_tensor(out_f16.clone().into_copy_descriptor());
     let restored = half::f16::from_bytes(&computed);
 
     assert_eq!(restored.len(), f.data.len());
@@ -252,12 +248,9 @@ fn an_effective_scale_below_f16_still_scales_an_f16_output() {
     )
     .unwrap();
 
-    let computed = f.client.read_one_unchecked_tensor(CopyDescriptor::new(
-        out_f16.handle.clone().binding(),
-        out_f16.shape().clone(),
-        out_f16.strides().clone(),
-        core::mem::size_of::<half::f16>(),
-    ));
+    let computed = f
+        .client
+        .read_one_unchecked_tensor(out_f16.clone().into_copy_descriptor());
     let restored = half::f16::from_bytes(&computed);
 
     // One f16 subnormal step, which is all the room the output type leaves at this magnitude.
