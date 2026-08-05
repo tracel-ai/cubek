@@ -11,6 +11,9 @@
 //! A one-level scheme has nothing to fold in, so it multiplies in the compute type as before.
 //! Widening there would cost the packed two-lane multiply a narrow type gets for free, which
 //! measures as a few percent on f16 output.
+//!
+//! Both directions are the symmetric reconstruction, `x = s * x_q`, which is why applying the
+//! scale is all there is to them. A mode carrying a zero point would have to offset around them.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::linear::LinearView;
@@ -29,7 +32,7 @@ pub(crate) fn read_global<FG: Numeric>(
 /// Multiply dequantized values by their block scale, folding in the per-tensor scale if there is
 /// one.
 #[cube]
-pub(crate) fn dequantize_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Size>(
+pub(crate) fn dequantize_symmetric_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Size>(
     values: Vector<F, N>,
     block: FS,
     global: ComptimeOption<FG>,
@@ -44,10 +47,11 @@ pub(crate) fn dequantize_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Siz
     }
 }
 
-/// Divide values by the same effective scale, the quantize direction of [`dequantize_scaled`]. The
-/// quotient is within the quantization range, so narrowing it back to `F` is safe.
+/// Divide values by the same effective scale, the quantize direction of
+/// [`dequantize_symmetric_scaled`]. The quotient is within the quantization range, so narrowing it
+/// back to `F` is safe.
 #[cube]
-pub(crate) fn quantize_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Size>(
+pub(crate) fn quantize_symmetric_scaled<F: Float, FG: Numeric, FS: CubePrimitive, N: Size>(
     values: Vector<F, N>,
     block: FS,
     global: ComptimeOption<FG>,

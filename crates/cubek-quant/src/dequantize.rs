@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
-    per_tensor::{dequantize_scaled, read_global},
+    per_tensor::{dequantize_symmetric_scaled, read_global},
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::{check_global_bindings, global_dtype, packed_storage_elem, scale_dtype},
 };
@@ -106,7 +106,7 @@ pub fn dequantize_symmetric_packed_value<
     for i in 0..vector_size_values {
         let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
         let block = scales.read((position * vector_size_values) + i * num_quants);
-        let values = dequantize_scaled::<F, FG, FS, NF>(floats, block, global);
+        let values = dequantize_symmetric_scaled::<F, FG, FS, NF>(floats, block, global);
         tmp[i] = values;
     }
 
@@ -208,7 +208,7 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeri
 
     output.write(
         ABSOLUTE_POS,
-        dequantize_scaled::<F, FG, FS, N>(
+        dequantize_symmetric_scaled::<F, FG, FS, N>(
             Vector::cast_from(input.read(ABSOLUTE_POS)),
             block,
             read_global::<FG>(global),

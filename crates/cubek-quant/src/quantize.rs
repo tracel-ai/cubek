@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    per_tensor::{quantize_scaled, read_global},
+    per_tensor::{quantize_symmetric_scaled, read_global},
     utils::{
         check_block_size_compat, check_global_bindings, check_param_supported, global_dtype,
         packed_storage_elem, scale_dtype,
@@ -33,7 +33,9 @@ fn quantize_symmetric<F: Float, N: Size, FG: Numeric, FS: CubePrimitive>(
     range_max: F,
 ) -> Vector<F, N> {
     clamp(
-        Vector::round(quantize_scaled::<F, FG, FS, N>(value, block, global)),
+        Vector::round(quantize_symmetric_scaled::<F, FG, FS, N>(
+            value, block, global,
+        )),
         Vector::new(range_min),
         Vector::new(range_max),
     )
