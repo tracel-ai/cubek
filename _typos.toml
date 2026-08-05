@@ -1,3 +1,5 @@
 [default.extend-words]
 arange = "arange"
 Cpy = "Cpy"
+# The unsigned-exponent prefix of the minifloat scale params, ue4m3 and ue8m0.
+ue = "ue"
