@@ -19,10 +19,7 @@ pub use register::*;
 pub use tma::*;
 pub use view::*;
 
-use cubecl::{
-    prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme},
-};
+use cubecl::{prelude::*, quant::scheme::QuantScheme};
 
 use crate::*;
 
@@ -107,11 +104,20 @@ pub struct QuantInfo {
 /// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
 /// strides); a block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => vec![1; rank],
-        QuantLevel::Block(bs) | QuantLevel::BlockTensor { block: bs, .. } => {
-            bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
-        }
+    // No tile path applies a per-tensor scale and `QuantTileArg` has no binding to carry one, so a
+    // two-level scheme would dequantize with the block scales alone and come out wrong by the
+    // per-tensor factor. `validate_scheme` rejects it earlier for sources that go through it, but
+    // the launch types are public and get constructed directly, so the funnel every path crosses
+    // has to refuse it too.
+    assert!(
+        scheme.level.global_param().is_none(),
+        "two-level quantization is not supported in the tile path, got {:?}",
+        scheme.level
+    );
+
+    match scheme.level.block_size() {
+        Some(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
+        None => vec![1; rank],
     }
 }
 

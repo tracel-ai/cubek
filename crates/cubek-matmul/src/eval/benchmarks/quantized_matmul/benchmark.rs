@@ -12,7 +12,7 @@ use cubecl::{
 };
 use cubek_quant::{
     quantize,
-    scheme::{QuantLevel, QuantScheme, QuantStore},
+    scheme::{QuantScheme, QuantStore},
 };
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
@@ -120,9 +120,8 @@ struct QuantMatmulInputs {
 }
 
 fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match &scheme.level {
-        QuantLevel::Tensor => vec![1; shape.len()],
-        QuantLevel::Block(block) | QuantLevel::BlockTensor { block, .. } => {
+    match scheme.level.block_size() {
+        Some(block) => {
             let rank = shape.len();
             let block_dims = block.to_dim_vec(rank);
             shape
@@ -131,6 +130,7 @@ fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
                 .map(|(d, b)| d / (*b as usize))
                 .collect()
         }
+        None => vec![1; shape.len()],
     }
 }
 
@@ -338,7 +338,15 @@ fn validate_spec(problem: &QuantizedMatmulProblem) -> Result<(), String> {
                 "{label} pack axis={last} incompatible with num_quants={nq}"
             ));
         }
-        if let QuantLevel::Block(_) = &scheme.level {
+        // Each operand gets one scale tensor here, so a scheme wanting a per-tensor scale on top
+        // cannot be served; saying so is this function's job, and leaves the alternative as an
+        // assert raised from inside the quant kernels.
+        if scheme.level.global_param().is_some() {
+            return Err(format!(
+                "{label} two-level quantization is not supported by this benchmark"
+            ));
+        }
+        if scheme.level.block_size().is_some() {
             let scales = scales_shape(&scheme, shape);
             if scales.contains(&0) {
                 return Err(format!("{label} block size exceeds a dim in {shape:?}"));

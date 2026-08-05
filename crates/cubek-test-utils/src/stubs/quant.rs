@@ -1,7 +1,7 @@
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
     e4m3, e5m2,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue},
 };
 
 pub fn quantize(
@@ -181,13 +181,22 @@ fn quant_mask(size_quant: usize) -> u32 {
 
 /// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
 pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => shape.to_vec(),
-        QuantLevel::Block(bs) | QuantLevel::BlockTensor { block: bs, .. } => bs
+    // The reference quantizes and dequantizes with one scale per value, so a two-level scheme
+    // would give a reference that ignores the per-tensor factor. A kernel that drops it too would
+    // then agree with the reference and the test would pass while both are wrong.
+    assert!(
+        scheme.level.global_param().is_none(),
+        "two-level quantization is not supported by the reference quantizer, got {:?}",
+        scheme.level
+    );
+
+    match scheme.level.block_size() {
+        Some(bs) => bs
             .to_dim_vec(shape.len())
             .iter()
             .map(|&b| b as usize)
             .collect(),
+        None => shape.to_vec(),
     }
 }
 

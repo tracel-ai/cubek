@@ -109,6 +109,16 @@ impl<R: Runtime> InputBinding<R> {
         data_dtype: StorageType,
         scale_dtype: StorageType,
     ) -> Self {
+        // The variant carries one scale binding, so it cannot hand a consumer the per-tensor scale
+        // a two-level scheme needs. Accepting the scheme here would produce a binding that looks
+        // well formed and reaches the kernels missing a factor.
+        assert!(
+            scheme.level.global_param().is_none(),
+            "InputBinding::quantized: two-level quantization needs a per-tensor scale binding, \
+             which this binding does not carry, got {:?}",
+            scheme.level
+        );
+
         Self::Quantized {
             data,
             scale,
