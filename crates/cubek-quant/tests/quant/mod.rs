@@ -1,25 +1,19 @@
-use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, prelude::*, std::tensor::TensorHandle,
-    zspace::Shape,
-};
+//! The quant kernels, by topic: the round trip over every value type and shape, what only a
+//! two-level scheme can get wrong, how a scale is stored, and the tiled dequantize.
+//!
+//! The imports below are the ones `round_trip.rs` needs. It is `include!`d once per generated
+//! module rather than declared, so it has no import list of its own and reaches these through
+//! `use super::*`.
+
+use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::{QuantLevel, QuantParam};
-use cubek_test_utils::TestInput;
+
+use harness::{dequantize, f32_tensor, quantize, scale_shape};
+
+mod harness;
 mod scale_rounding;
 mod tiled;
-mod two_level_contract;
-mod ue4m3_two_level;
-
-/// `data` on the device as an f32 tensor: what these tests hand the kernels for an input, a block
-/// scale grid, or a one-element per-tensor scale.
-pub(crate) fn f32_tensor(
-    client: &ComputeClient<TestRuntime>,
-    data: &[f32],
-    shape: Shape,
-) -> TensorHandle<TestRuntime> {
-    TestInput::builder(client.clone(), shape)
-        .custom(data.to_vec())
-        .generate_without_host_data()
-}
+mod two_level;
 
 #[macro_export]
 macro_rules! testgen_quant {
@@ -28,7 +22,7 @@ macro_rules! testgen_quant {
         static SHAPE_Y: usize = $shape_y;
         static VALUE: QuantValue = $value;
 
-        include!("symmetric.rs");
+        include!("round_trip.rs");
     };
 
     ($shape_x: expr, $shape_y: expr) => {

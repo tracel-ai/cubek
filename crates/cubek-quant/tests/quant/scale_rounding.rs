@@ -6,14 +6,12 @@
 
 use cubecl::{
     features::TypeUsage,
-    ir::{ElemType, FloatKind, StorageType},
     prelude::*,
-    std::tensor::TensorHandle,
     {TestRuntime, zspace::shape},
 };
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 
-use super::f32_tensor;
+use super::harness::{f32_tensor, quantize, scale_shape};
 
 const M: usize = 8;
 const N: usize = 32;
@@ -41,7 +39,6 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
     }
 
     let shape = shape![M, N];
-    let shape_scale = shape![M, N / BLOCK];
     let num_blocks = M * N / BLOCK;
 
     let requested: Vec<f32> = (0..num_blocks)
@@ -51,9 +48,6 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
         .map(|i| ((i % 9) as f32 - 4.0) * requested[i / BLOCK])
         .collect();
 
-    let input = f32_tensor(&client, &data, shape.clone());
-    let scale = f32_tensor(&client, &requested, shape_scale.clone());
-
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::block([BLOCK as u8]))
         .with_value(QuantValue::Q8S)
@@ -61,30 +55,14 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
         .with_param(QuantParam::F16)
         .with_mode(QuantMode::Symmetric);
 
-    let output = TensorHandle::zeros(
-        &client,
-        shape![M, N / scheme.num_quants()],
-        u32::as_type_native_unchecked(),
-    );
-    let output_scale = TensorHandle::zeros(
-        &client,
-        shape_scale,
-        StorageType::Scalar(ElemType::Float(FloatKind::F16)),
-    );
+    let input = f32_tensor(&client, &data, shape.clone());
+    let scale = f32_tensor(&client, &requested, scale_shape(&scheme, &shape));
 
-    cubek_quant::quantize::launch_ref(
-        &client,
-        input.binding(),
-        output.binding(),
-        scale.binding(),
-        None,
-        output_scale.clone().binding(),
-        &scheme,
-        ElemType::Float(FloatKind::F32),
-    )
-    .unwrap();
+    // Only the quantize direction matters here: what is under test is the scale the kernel stored,
+    // not what reading it back reconstructs.
+    let (_, stored) = quantize(&client, &scheme, &input, &scale, None, &shape);
 
-    let stored = client.read_one_unchecked_tensor(output_scale.clone().into_copy_descriptor());
+    let stored = client.read_one_unchecked_tensor(stored.into_copy_descriptor());
     let stored = half::f16::from_bytes(&stored);
 
     assert_eq!(stored.len(), num_blocks);
