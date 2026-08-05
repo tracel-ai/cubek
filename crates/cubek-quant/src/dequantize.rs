@@ -227,7 +227,7 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     output_dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    check_global_bindings(scheme, global.is_some());
+    check_global_bindings(scheme, global.is_some(), "global");
 
     match scheme {
         QuantScheme {

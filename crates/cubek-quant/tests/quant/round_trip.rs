@@ -74,7 +74,7 @@ fn tensor_round_trip(m: usize, n: usize, value: QuantValue) {
     let input = f32_tensor(&client, &data, shape.clone());
     let scale = f32_tensor(&client, &[scale_f32], scale_shape(&scheme, &shape));
 
-    let (values, scales) = quantize(&client, &scheme, &input, &scale, None, &shape);
+    let (values, scales, _) = quantize(&client, &scheme, &input, &scale, None, &shape);
     let out = dequantize(
         &client,
         &scheme,
@@ -159,19 +159,21 @@ fn block_round_trip(
     let scale = f32_tensor(&client, &scales, scale_shape(&scheme, &shape));
     let global = global_f32.map(|global| f32_tensor(&client, &[global], shape![1]));
 
-    let (values, stored) = quantize(&client, &scheme, &input, &scale, global.as_ref(), &shape);
+    let (values, stored, out_global) =
+        quantize(&client, &scheme, &input, &scale, global.as_ref(), &shape);
     let out = dequantize(
         &client,
         &scheme,
         &values,
         &stored,
-        global.as_ref(),
+        out_global.as_ref(),
         &shape,
         f32::as_type_native_unchecked().storage_type(),
     );
 
-    if let (Some(handle), Some(expected)) = (&global, global_f32) {
-        // Quantization reads the global scale and leaves it where it found it.
+    if let (Some(handle), Some(expected)) = (&out_global, global_f32) {
+        // Quantize copies the global scale into the quantized tensor's own region, which is where
+        // the dequantize above read it from.
         let written = client.read_one_unchecked_tensor(handle.clone().into_copy_descriptor());
         assert_eq!(f32::from_bytes(&written)[0], expected);
     }

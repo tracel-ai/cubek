@@ -87,7 +87,7 @@ fn fixture_with(
 /// Round trip the fixture into an f16 output, the type narrow enough that a scale formed anywhere
 /// but in f32 flushes to zero on the way.
 fn round_trip_to_f16(f: &Fixture, scheme: &QuantScheme) -> Vec<half::f16> {
-    let (values, scales) = quantize(
+    let (values, scales, out_global) = quantize(
         &f.client,
         scheme,
         &f.input,
@@ -100,7 +100,7 @@ fn round_trip_to_f16(f: &Fixture, scheme: &QuantScheme) -> Vec<half::f16> {
         scheme,
         &values,
         &scales,
-        Some(&f.global),
+        out_global.as_ref(),
         &f.shape,
         half::f16::as_type_native_unchecked().storage_type(),
     );
@@ -234,7 +234,7 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
     let scales: Vec<f32> = (0..num_blocks).map(|b| EXACT[b % EXACT.len()]).collect();
     let f = fixture_with(&scheme, 0.01, scales.clone(), |i| (i % BLOCK) as f32 - 15.0);
 
-    let (values, stored) = quantize(
+    let (values, stored, out_global) = quantize(
         &f.client,
         &scheme,
         &f.input,
@@ -247,7 +247,7 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
         &scheme,
         &values,
         &stored,
-        Some(&f.global),
+        out_global.as_ref(),
         &f.shape,
         f32::as_type_native_unchecked().storage_type(),
     );

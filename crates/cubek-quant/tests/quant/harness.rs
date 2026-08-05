@@ -9,7 +9,7 @@ use cubecl::{
     client::ComputeClient,
     ir::{ElemType, FloatKind, StorageType},
     std::tensor::TensorHandle,
-    {TestRuntime, zspace::Shape},
+    {TestRuntime, zspace::Shape, zspace::shape},
 };
 use cubek_quant::scheme::QuantScheme;
 use cubek_test_utils::{TestInput, quant_layout};
@@ -57,6 +57,10 @@ pub(crate) fn quant_outputs(
 
 /// Quantize `input`, calibrated to the block scales in `scale`, into fresh handles.
 ///
+/// The third handle is the quantized tensor's own global scale, which a two-level scheme carries
+/// and the kernel fills. Dequantize reads it back from there, so tests that hand this one along
+/// exercise the same path a quantized tensor takes rather than reusing the input handle.
+///
 /// The input is always f32 here, which is what [`f32_tensor`] builds.
 pub(crate) fn quantize(
     client: &ComputeClient<TestRuntime>,
@@ -65,8 +69,19 @@ pub(crate) fn quantize(
     scale: &TensorHandle<TestRuntime>,
     global: Option<&TensorHandle<TestRuntime>>,
     shape: &Shape,
-) -> (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>) {
+) -> (
+    TensorHandle<TestRuntime>,
+    TensorHandle<TestRuntime>,
+    Option<TensorHandle<TestRuntime>>,
+) {
     let (values, scales) = quant_outputs(client, scheme, shape);
+    let out_global = scheme.level.global_param().map(|param| {
+        TensorHandle::zeros(
+            client,
+            shape![1],
+            StorageType::Scalar(ElemType::from_quant_param(param)),
+        )
+    });
 
     cubek_quant::quantize::launch_ref(
         client,
@@ -75,12 +90,13 @@ pub(crate) fn quantize(
         scale.clone().binding(),
         global.map(|global| global.clone().binding()),
         scales.clone().binding(),
+        out_global.clone().map(|g| g.binding()),
         scheme,
         ElemType::Float(FloatKind::F32),
     )
     .unwrap();
 
-    (values, scales)
+    (values, scales, out_global)
 }
 
 /// Reconstruct `values` into a fresh `out_dtype` tensor, a buffer of its own so an element the

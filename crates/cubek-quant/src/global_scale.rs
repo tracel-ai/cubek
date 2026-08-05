@@ -20,7 +20,7 @@
 //! scale is all there is to them. A mode carrying a zero point would have to offset around them.
 
 use cubecl::prelude::*;
-use cubecl::std::tensor::layout::linear::LinearView;
+use cubecl::std::tensor::layout::linear::{LinearView, LinearViewMut};
 
 use crate::dequantize::dequantize_symmetric;
 
@@ -76,5 +76,34 @@ pub(crate) fn quantize_symmetric_scaled<F: Float, FG: Numeric, FS: CubePrimitive
             Vector::cast_from(Vector::<f32, N>::cast_from(values) / Vector::new(scale))
         }
         ComptimeOption::None => values / Vector::cast_from(block),
+    }
+}
+
+/// Copy the global scale into the quantized tensor's own scale region, where dequantize reads it
+/// back from.
+///
+/// The caller cannot hand its input buffer through instead: a quantized tensor's scales live in
+/// one allocation the tensor owns, so the scale has to land inside that allocation, and only the
+/// kernel writing it gets there without a second copy.
+#[cube]
+pub(crate) fn write_global<FG: Numeric>(
+    global: ComptimeOption<FG>,
+    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
+) {
+    #[comptime]
+    match out_global {
+        ComptimeOption::Some(mut out) =>
+        {
+            #[comptime]
+            match global {
+                ComptimeOption::Some(global) => {
+                    if ABSOLUTE_POS == 0 {
+                        out.write(0, global);
+                    }
+                }
+                ComptimeOption::None => {}
+            }
+        }
+        ComptimeOption::None => {}
     }
 }

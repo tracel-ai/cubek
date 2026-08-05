@@ -12,7 +12,7 @@ use cubecl::{
 };
 
 use crate::{
-    global_scale::{quantize_symmetric_scaled, read_global},
+    global_scale::{quantize_symmetric_scaled, read_global, write_global},
     layout::{ScalesLayout, ScalesViewMut, scales_view},
     utils::{
         check_block_size_compat, check_global_bindings, check_param_supported, global_dtype,
@@ -118,6 +118,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
+    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
     #[comptime] param: QuantParam,
     #[define(F, FS, FG, Q)] _dtypes: [StorageType; 4],
@@ -130,6 +131,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let block = write_scale(in_pos, scale, out_scale, scales_layout, param);
     let global = read_global::<FG>(global);
+    write_global::<FG>(global, out_global);
 
     output.write(
         ABSOLUTE_POS,
@@ -152,6 +154,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, QS>,
     out_scale: ScalesViewMut<'_, FS>,
+    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, FG, QS)] _dtypes: [StorageType; 4],
@@ -164,6 +167,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let packed_pos = ABSOLUTE_POS * num_quants;
     let block = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
     let global = read_global::<FG>(global);
+    write_global::<FG>(global, out_global);
 
     if input.vector_size().comptime() == num_quants {
         output.write(
@@ -207,10 +211,12 @@ pub fn launch_ref<R: Runtime>(
     scale: TensorBinding<R>,
     global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
-    check_global_bindings(scheme, global.is_some());
+    check_global_bindings(scheme, global.is_some(), "global");
+    check_global_bindings(scheme, out_global.is_some(), "out_global");
     check_param_supported(scheme);
 
     match scheme {
@@ -218,7 +224,7 @@ pub fn launch_ref<R: Runtime>(
             store: QuantStore::PackedU32(_),
             ..
         } => quantize_packed(
-            client, input, scheme, scale, global, out_scale, output, input_elem,
+            client, input, scheme, scale, global, out_scale, out_global, output, input_elem,
         ),
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
@@ -238,7 +244,7 @@ pub fn launch_ref<R: Runtime>(
             }
 
             quantize_native(
-                client, input, scheme, scale, global, out_scale, output, input_elem,
+                client, input, scheme, scale, global, out_scale, out_global, output, input_elem,
             )
         }
         QuantScheme {
@@ -259,6 +265,7 @@ fn quantize_native<R: Runtime>(
     scale: TensorBinding<R>,
     global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
 ) -> Result<(), LaunchError> {
@@ -313,6 +320,7 @@ fn quantize_native<R: Runtime>(
                     InputScalar::new(range_max, input_dtype),
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
+                    out_global.map(linear_view).into(),
                     scales_layout,
                     scheme.param,
                     [
@@ -338,6 +346,7 @@ fn quantize_packed<R: Runtime>(
     scale: TensorBinding<R>,
     global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
 ) -> Result<(), LaunchError> {
@@ -403,6 +412,7 @@ fn quantize_packed<R: Runtime>(
             InputScalar::new(range_max, input_dtype),
             linear_view(output.clone()),
             scales_view(output, out_scale, 1, scheme),
+            out_global.map(linear_view).into(),
             scales_layout,
             *scheme,
             [

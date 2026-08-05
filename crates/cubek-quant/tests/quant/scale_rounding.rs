@@ -60,7 +60,7 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
 
     // Only the quantize direction matters here: what is under test is the scale the kernel stored,
     // not what reading it back reconstructs.
-    let (_, stored) = quantize(&client, &scheme, &input, &scale, None, &shape);
+    let (_, stored, _) = quantize(&client, &scheme, &input, &scale, None, &shape);
 
     let stored = client.read_one_unchecked_tensor(stored.into_copy_descriptor());
     let stored = half::f16::from_bytes(&stored);

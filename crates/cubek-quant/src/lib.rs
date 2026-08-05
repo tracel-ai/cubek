@@ -52,12 +52,12 @@ pub(crate) mod utils {
 
     /// The scheme is what decides whether a per-tensor scale exists; a binding that disagrees with
     /// it silently drops the scale or applies one that should not be there.
-    pub(crate) fn check_global_bindings(scheme: &QuantScheme, provided: bool) {
+    pub(crate) fn check_global_bindings(scheme: &QuantScheme, provided: bool, name: &str) {
         let expected = scheme.level.global_param().is_some();
         assert_eq!(
             provided,
             expected,
-            "global binding was {}, but {:?} {} a per-tensor scale",
+            "{name} was {}, but {:?} {} a per-tensor scale",
             if provided { "provided" } else { "omitted" },
             scheme.level,
             if expected {
