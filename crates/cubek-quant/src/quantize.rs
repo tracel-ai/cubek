@@ -138,7 +138,6 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
             range_max.get::<F>(),
         ),
     );
-    sync_cube();
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
