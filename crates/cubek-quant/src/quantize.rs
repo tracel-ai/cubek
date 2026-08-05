@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    per_tensor::{apply_global, read_global},
+    per_tensor::{quantize_scaled, read_global},
     utils::{
         check_block_size_compat, check_global_bindings, check_param_supported, global_dtype,
         packed_storage_elem, scale_dtype,
@@ -24,48 +24,44 @@ use crate::{
     scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 
-/// `scale` is the effective scale, which [`apply_global`] holds in f32 because a two-level product
-/// reaches below what a narrow `F` represents.
 #[cube]
-fn quantize_symmetric<F: Float, N: Size>(
+fn quantize_symmetric<F: Float, N: Size, FG: Numeric, FS: CubePrimitive>(
     value: Vector<F, N>,
-    scale: f32,
+    block: FS,
+    global: ComptimeOption<FG>,
     range_min: F,
     range_max: F,
 ) -> Vector<F, N> {
-    // Dividing in f32 for the same reason: a scale that is subnormal in `F` would round to zero
-    // and send every value in the block to an infinity that clamps onto the range bounds. The
-    // quotient is within the quantization range, so narrowing it back to `F` is safe.
-    let scaled = Vector::<f32, N>::cast_from(value) / Vector::new(scale);
-
     clamp(
-        Vector::cast_from(Vector::round(scaled)),
+        Vector::round(quantize_scaled::<F, FG, FS, N>(value, block, global)),
         Vector::new(range_min),
         Vector::new(range_max),
     )
 }
 
 #[cube]
-fn quantize_symmetric_q<F: Float, N: Size, Q: Scalar>(
+fn quantize_symmetric_q<F: Float, N: Size, FG: Numeric, FS: CubePrimitive, Q: Scalar>(
     value: Vector<F, N>,
-    scale: f32,
+    block: FS,
+    global: ComptimeOption<FG>,
     range_min: F,
     range_max: F,
 ) -> Vector<Q, N> {
-    Vector::cast_from(quantize_symmetric::<F, N>(
-        value, scale, range_min, range_max,
+    Vector::cast_from(quantize_symmetric::<F, N, FG, FS>(
+        value, block, global, range_min, range_max,
     ))
 }
 
 #[cube]
-fn quantize_packed_value<F: Float, N: Size, QS: Int>(
+fn quantize_packed_value<F: Float, N: Size, FG: Numeric, FS: CubePrimitive, QS: Int>(
     value: Vector<F, N>,
-    scale: f32,
+    block: FS,
+    global: ComptimeOption<FG>,
     range_min: F,
     range_max: F,
     #[comptime] scheme: QuantScheme,
 ) -> QS {
-    let value = quantize_symmetric::<F, N>(value, scale, range_min, range_max);
+    let value = quantize_symmetric::<F, N, FG, FS>(value, block, global, range_min, range_max);
     pack_q::<F, N, QS>(value, scheme.value)
 }
 
@@ -132,13 +128,13 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let block = write_scale(in_pos, scale, out_scale, scales_layout, param);
     let global = read_global::<FG>(global);
-    let scale = apply_global::<FG, FS>(block, global);
 
     output.write(
         ABSOLUTE_POS,
-        quantize_symmetric_q::<F, N, Q>(
+        quantize_symmetric_q::<F, N, FG, FS, Q>(
             input.read(ABSOLUTE_POS),
-            scale,
+            block,
+            global,
             range_min.get::<F>(),
             range_max.get::<F>(),
         ),
@@ -166,14 +162,14 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let packed_pos = ABSOLUTE_POS * num_quants;
     let block = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
     let global = read_global::<FG>(global);
-    let scale = apply_global::<FG, FS>(block, global);
 
     if input.vector_size().comptime() == num_quants {
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, N, QS>(
+            quantize_packed_value::<F, N, FG, FS, QS>(
                 input.read(ABSOLUTE_POS),
-                scale,
+                block,
+                global,
                 range_min.get::<F>(),
                 range_max.get::<F>(),
                 scheme,
@@ -189,9 +185,10 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
         }
         output.write(
             ABSOLUTE_POS,
-            quantize_packed_value::<F, NQ, QS>(
+            quantize_packed_value::<F, NQ, FG, FS, QS>(
                 values,
-                scale,
+                block,
+                global,
                 range_min.get::<F>(),
                 range_max.get::<F>(),
                 scheme,

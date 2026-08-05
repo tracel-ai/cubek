@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
-    per_tensor::{apply_global, read_global},
+    per_tensor::{dequantize_scaled, read_global},
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::{check_global_bindings, global_dtype, packed_storage_elem, scale_dtype},
 };
@@ -21,9 +21,8 @@ pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
     value: Vector<F, N>,
     scale: FS,
 ) -> Vector<F, N> {
-    // x = scale * x_q, formed in f32 so that a scale which is subnormal in `F` still scales the
-    // values it is representable against, instead of flushing the whole block to zero.
-    Vector::cast_from(Vector::<f32, N>::cast_from(value) * Vector::<f32, N>::cast_from(scale))
+    // x = scale * x_q
+    Vector::cast_from(scale) * value
 }
 
 /// Dequantize the value at a specified position using the provided quantization scheme.
@@ -107,8 +106,7 @@ pub fn dequantize_symmetric_packed_value<
     for i in 0..vector_size_values {
         let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
         let block = scales.read((position * vector_size_values) + i * num_quants);
-        let scale = apply_global::<FG, FS>(block, global);
-        let values = dequantize_symmetric::<F, f32, NF>(floats, scale);
+        let values = dequantize_scaled::<F, FG, FS, NF>(floats, block, global);
         tmp[i] = values;
     }
 
@@ -207,11 +205,14 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeri
     let native_packing = Q::packing_factor();
     // Absolute pos represents the logical block (scale) used to dequantize, not layout
     let block = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
-    let scale = apply_global::<FG, FS>(block, read_global::<FG>(global));
 
     output.write(
         ABSOLUTE_POS,
-        dequantize_symmetric::<F, f32, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
+        dequantize_scaled::<F, FG, FS, N>(
+            Vector::cast_from(input.read(ABSOLUTE_POS)),
+            block,
+            read_global::<FG>(global),
+        ),
     );
 }
 
