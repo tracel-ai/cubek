@@ -106,9 +106,8 @@ pub struct QuantInfo {
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     // No tile path applies a per-tensor scale and `QuantTileArg` has no binding to carry one, so a
     // two-level scheme would dequantize with the block scales alone and come out wrong by the
-    // per-tensor factor. `validate_scheme` rejects it earlier for sources that go through it, but
-    // the launch types are public and get constructed directly, so the funnel every path crosses
-    // has to refuse it too.
+    // per-tensor factor. The launch types are public and get constructed directly, bypassing
+    // `validate_scheme`, so the rejection belongs here, in the funnel every path crosses.
     assert!(
         scheme.level.global_param().is_none(),
         "two-level quantization is not supported in the tile path, got {:?}",
