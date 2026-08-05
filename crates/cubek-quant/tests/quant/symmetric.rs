@@ -47,33 +47,8 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     // The shape is from the POV of packed u32s.
     let shape_out = shape![m, n / scheme.num_quants()];
 
-    let [output_alloc, output_scale_alloc] = client
-        .empty_tensors(vec![
-            cubecl::server::MemoryLayoutDescriptor {
-                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
-                shape: shape_out.clone(),
-                elem_size: u32::type_size(),
-            },
-            cubecl::server::MemoryLayoutDescriptor {
-                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
-                shape: shape![1],
-                elem_size: f32::type_size(),
-            },
-        ])
-        .try_into()
-        .unwrap();
-    let output = TensorHandle::new(
-        output_alloc.memory,
-        shape_out,
-        output_alloc.strides,
-        u32::as_type_native_unchecked(),
-    );
-    let output_scale = TensorHandle::new(
-        output_scale_alloc.memory,
-        shape![1],
-        output_scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let output = TensorHandle::zeros(&client, shape_out, u32::as_type_native_unchecked());
+    let output_scale = TensorHandle::zeros(&client, shape![1], f32::as_type_native_unchecked());
 
     cubek_quant::quantize::launch_ref(
         &client,
@@ -166,33 +141,8 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     // The shape is from the POV of packed u32s.
     let shape_out = shape![m, n / scheme.num_quants()];
 
-    let [output_alloc, output_scale_alloc] = client
-        .empty_tensors(vec![
-            cubecl::server::MemoryLayoutDescriptor {
-                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
-                shape: shape_out.clone(),
-                elem_size: u32::type_size(),
-            },
-            cubecl::server::MemoryLayoutDescriptor {
-                strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
-                shape: shape_scale.clone(),
-                elem_size: f32::type_size(),
-            },
-        ])
-        .try_into()
-        .unwrap();
-    let output = TensorHandle::new(
-        output_alloc.memory,
-        shape_out,
-        output_alloc.strides,
-        u32::as_type_native_unchecked(),
-    );
-    let output_scale = TensorHandle::new(
-        output_scale_alloc.memory,
-        shape_scale.clone(),
-        output_scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let output = TensorHandle::zeros(&client, shape_out, u32::as_type_native_unchecked());
+    let output_scale = TensorHandle::zeros(&client, shape_scale, f32::as_type_native_unchecked());
 
     cubek_quant::quantize::launch_ref(
         &client,
