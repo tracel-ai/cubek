@@ -35,6 +35,11 @@ pub(crate) mod utils {
         }
     }
 
+    /// The element type the block scales are stored at.
+    pub(crate) fn scale_dtype(scheme: &QuantScheme) -> ElemType {
+        ElemType::from_quant_param(scheme.param)
+    }
+
     /// The element type of the per-tensor scale, defaulting to `f32` for the levels that have
     /// none, where the kernel never builds the view and the type goes unused.
     pub(crate) fn global_dtype(scheme: &QuantScheme) -> ElemType {

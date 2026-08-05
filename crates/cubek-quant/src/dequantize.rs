@@ -8,7 +8,7 @@ use crate::{
     layout::{ScalesView, scales_view},
     per_tensor::{apply_global, read_global},
     scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
-    utils::{check_global_bindings, global_dtype, packed_storage_elem},
+    utils::{check_global_bindings, global_dtype, packed_storage_elem, scale_dtype},
 };
 use cubecl::std::tensor::{
     View,
@@ -226,26 +226,13 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     output_dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let scale_dtype: StorageType = ElemType::from_quant_param(scheme.param).into();
-    let global_dtype: StorageType = global_dtype(scheme).into();
-
     check_global_bindings(scheme, global.is_some());
 
     match scheme {
         QuantScheme {
             store: QuantStore::PackedU32(_),
             ..
-        } => dequantize_packed(
-            client,
-            input,
-            *scheme,
-            scale,
-            global,
-            output,
-            output_dtype,
-            scale_dtype,
-            global_dtype,
-        ),
+        } => dequantize_packed(client, input, *scheme, scale, global, output, output_dtype),
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
             store: QuantStore::Native,
@@ -263,17 +250,7 @@ pub fn launch_ref<R: Runtime>(
                 );
             }
 
-            dequantize_native(
-                client,
-                input,
-                *scheme,
-                scale,
-                global,
-                output,
-                output_dtype,
-                scale_dtype,
-                global_dtype,
-            )
+            dequantize_native(client, input, *scheme, scale, global, output, output_dtype)
         }
         QuantScheme {
             store: QuantStore::Native | QuantStore::PackedNative(_),
@@ -285,7 +262,6 @@ pub fn launch_ref<R: Runtime>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn dequantize_packed<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -294,9 +270,10 @@ fn dequantize_packed<R: Runtime>(
     global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     output_dtype: StorageType,
-    scale_dtype: StorageType,
-    global_dtype: StorageType,
 ) -> Result<(), LaunchError> {
+    let scale_dtype: StorageType = scale_dtype(&scheme).into();
+    let global_dtype: StorageType = global_dtype(&scheme).into();
+
     let num_elems_input: usize = input.shape.iter().product();
     let input_dtype = packed_storage_elem(&scheme);
 
@@ -350,7 +327,6 @@ fn dequantize_packed<R: Runtime>(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn dequantize_native<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -359,9 +335,10 @@ fn dequantize_native<R: Runtime>(
     global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     output_dtype: StorageType,
-    scale_dtype: StorageType,
-    global_dtype: StorageType,
 ) -> Result<(), LaunchError> {
+    let scale_dtype: StorageType = scale_dtype(&scheme).into();
+    let global_dtype: StorageType = global_dtype(&scheme).into();
+
     let num_elems: usize = input.shape.iter().product();
     let input_dtype = ElemType::from_quant_value(scheme.value);
 

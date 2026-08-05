@@ -16,7 +16,7 @@ use crate::{
     per_tensor::{apply_global, read_global},
     utils::{
         check_block_size_compat, check_global_bindings, check_param_supported, global_dtype,
-        packed_storage_elem,
+        packed_storage_elem, scale_dtype,
     },
 };
 use crate::{
@@ -211,9 +211,6 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
-    let scale_dtype = ElemType::from_quant_param(scheme.param);
-    let global_dtype = global_dtype(scheme);
-
     check_global_bindings(scheme, global.is_some());
     check_param_supported(scheme);
 
@@ -222,16 +219,7 @@ pub fn launch_ref<R: Runtime>(
             store: QuantStore::PackedU32(_),
             ..
         } => quantize_packed(
-            client,
-            input,
-            scheme,
-            scale,
-            global,
-            out_scale,
-            output,
-            input_elem,
-            scale_dtype,
-            global_dtype,
+            client, input, scheme, scale, global, out_scale, output, input_elem,
         ),
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
@@ -251,16 +239,7 @@ pub fn launch_ref<R: Runtime>(
             }
 
             quantize_native(
-                client,
-                input,
-                scheme,
-                scale,
-                global,
-                out_scale,
-                output,
-                input_elem,
-                scale_dtype,
-                global_dtype,
+                client, input, scheme, scale, global, out_scale, output, input_elem,
             )
         }
         QuantScheme {
@@ -283,9 +262,10 @@ fn quantize_native<R: Runtime>(
     out_scale: TensorBinding<R>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
-    scale_dtype: ElemType,
-    global_dtype: ElemType,
 ) -> Result<(), LaunchError> {
+    let scale_dtype = scale_dtype(scheme);
+    let global_dtype = global_dtype(scheme);
+
     let num_elems: usize = input.shape.iter().product();
     let output_dtype = ElemType::from_quant_value(scheme.value);
 
@@ -361,9 +341,10 @@ fn quantize_packed<R: Runtime>(
     out_scale: TensorBinding<R>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
-    scale_dtype: ElemType,
-    global_dtype: ElemType,
 ) -> Result<(), LaunchError> {
+    let scale_dtype = scale_dtype(scheme);
+    let global_dtype = global_dtype(scheme);
+
     let num_elems: usize = input.shape.iter().product();
 
     // Determine if we can use vectorized packing
