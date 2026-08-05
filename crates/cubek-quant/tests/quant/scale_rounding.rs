@@ -13,6 +13,8 @@ use cubecl::{
 };
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 
+use super::f32_tensor;
+
 const M: usize = 8;
 const N: usize = 32;
 const BLOCK: usize = 32;
@@ -49,26 +51,8 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
         .map(|i| ((i % 9) as f32 - 4.0) * requested[i / BLOCK])
         .collect();
 
-    let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
-    let scale_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&requested),
-        shape_scale.clone(),
-        f32::type_size(),
-    );
-
-    let input = TensorHandle::new(
-        input_alloc.memory,
-        shape.clone(),
-        input_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let scale = TensorHandle::new(
-        scale_alloc.memory,
-        shape_scale.clone(),
-        scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let input = f32_tensor(&client, &data, shape.clone());
+    let scale = f32_tensor(&client, &requested, shape_scale.clone());
 
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::block([BLOCK as u8]))

@@ -27,29 +27,13 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let num_elems: usize = m * n;
     let half = num_elems as f32 / 2.0;
     let data: Vec<_> = (0..num_elems).map(|v| v as f32 - half).collect();
-    let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
 
     let (q_min, q_max) = value.range();
     // input data range is not affected by quant range symmetry
     let scale_f32 = (2.0 * half) / (q_max - q_min);
-    let data_scale = vec![scale_f32];
 
-    let scale_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data_scale), shape![1], f32::type_size());
-
-    let input = TensorHandle::new(
-        input_alloc.memory,
-        shape.clone(),
-        input_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let scale = TensorHandle::new(
-        scale_alloc.memory,
-        shape![1],
-        scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let input = f32_tensor(&client, &data, shape.clone());
+    let scale = f32_tensor(&client, &[scale_f32], shape![1]);
     let output_f = TensorHandle::zeros(&client, shape, f32::as_type_native_unchecked());
 
     let scheme = QuantScheme::default()
@@ -142,9 +126,6 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     let data: Vec<_> = (0..num_elems)
         .map(|v| (v as f32 - half) / num_elems as f32)
         .collect();
-    let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
-
     let (q_min, q_max) = value.range();
 
     let scale_count = data.len() / block_size;
@@ -170,24 +151,8 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         scales.push(scale);
     }
 
-    let scale_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&scales),
-        shape_scale.clone(),
-        f32::type_size(),
-    );
-
-    let input = TensorHandle::new(
-        input_alloc.memory,
-        shape.clone(),
-        input_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let scale = TensorHandle::new(
-        scale_alloc.memory,
-        shape_scale.clone(),
-        scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let input = f32_tensor(&client, &data, shape.clone());
+    let scale = f32_tensor(&client, &scales, shape_scale.clone());
     let output_f = TensorHandle::zeros(&client, shape, f32::as_type_native_unchecked());
 
     let scheme = QuantScheme::default()
@@ -314,9 +279,6 @@ fn test_quantization_block_tensor_symmetric(
     let data: Vec<_> = (0..num_elems)
         .map(|v| (v as f32 - half) / num_elems as f32)
         .collect();
-    let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
-
     let (q_min, q_max) = value.range();
     let scale_count = data.len() / block_size;
     let shape_scale = shape![m, n / block_size];
@@ -334,32 +296,9 @@ fn test_quantization_block_tensor_symmetric(
     let global_f32 = peak / 4.0;
     let scales: Vec<f32> = raw.iter().map(|s| s / global_f32).collect();
 
-    let scale_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&scales),
-        shape_scale.clone(),
-        f32::type_size(),
-    );
-    let global_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&[global_f32]), shape![1], f32::type_size());
-
-    let input = TensorHandle::new(
-        input_alloc.memory,
-        shape.clone(),
-        input_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let scale = TensorHandle::new(
-        scale_alloc.memory,
-        shape_scale.clone(),
-        scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let global = TensorHandle::new(
-        global_alloc.memory,
-        shape![1],
-        global_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let input = f32_tensor(&client, &data, shape.clone());
+    let scale = f32_tensor(&client, &scales, shape_scale.clone());
+    let global = f32_tensor(&client, &[global_f32], shape![1]);
     let output_f = TensorHandle::zeros(&client, shape.clone(), f32::as_type_native_unchecked());
 
     let scheme = QuantScheme::default()

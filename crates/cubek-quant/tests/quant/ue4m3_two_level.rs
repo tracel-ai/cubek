@@ -12,6 +12,8 @@ use cubecl::{
 use cubecl_common::e4m3;
 use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
 
+use super::f32_tensor;
+
 const M: usize = 32;
 const N: usize = 32;
 const BLOCK: usize = 32;
@@ -54,34 +56,9 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
         }
     }
 
-    let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
-    let scale_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&scales),
-        shape_scale.clone(),
-        f32::type_size(),
-    );
-    let global_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&[GLOBAL]), shape![1], f32::type_size());
-
-    let input = TensorHandle::new(
-        input_alloc.memory,
-        shape.clone(),
-        input_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let scale = TensorHandle::new(
-        scale_alloc.memory,
-        shape_scale.clone(),
-        scale_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
-    let global = TensorHandle::new(
-        global_alloc.memory,
-        shape![1],
-        global_alloc.strides,
-        f32::as_type_native_unchecked(),
-    );
+    let input = f32_tensor(&client, &data, shape.clone());
+    let scale = f32_tensor(&client, &scales, shape_scale.clone());
+    let global = f32_tensor(&client, &[GLOBAL], shape![1]);
 
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::block_tensor([BLOCK as u8], QuantParam::F32))

@@ -1,9 +1,30 @@
-use cubecl::{Runtime, prelude::*};
+use cubecl::{
+    Runtime, TestRuntime, client::ComputeClient, prelude::*, std::tensor::TensorHandle,
+    zspace::Shape,
+};
 use cubek_quant::scheme::{QuantLevel, QuantParam};
 mod scale_rounding;
 mod tiled;
 mod two_level_contract;
 mod ue4m3_two_level;
+
+/// `data` on the device as an f32 tensor: what these tests hand the kernels for an input, a block
+/// scale grid, or a one-element per-tensor scale.
+pub(crate) fn f32_tensor(
+    client: &ComputeClient<TestRuntime>,
+    data: &[f32],
+    shape: Shape,
+) -> TensorHandle<TestRuntime> {
+    let alloc =
+        client.create_tensor_from_slice(f32::as_bytes(data), shape.clone(), f32::type_size());
+
+    TensorHandle::new(
+        alloc.memory,
+        shape,
+        alloc.strides,
+        f32::as_type_native_unchecked(),
+    )
+}
 
 #[macro_export]
 macro_rules! testgen_quant {
