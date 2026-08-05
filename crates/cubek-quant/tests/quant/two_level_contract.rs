@@ -75,6 +75,45 @@ fn fixture_with(
     }
 }
 
+/// Round trip the fixture through both kernels into an f16 output, the type narrow enough that a
+/// scale formed anywhere but in f32 flushes to zero on the way.
+fn round_trip_to_f16(f: &Fixture, scheme: &QuantScheme) -> Vec<half::f16> {
+    let out_f16 = TensorHandle::zeros(
+        &f.client,
+        shape![M, N],
+        half::f16::as_type_native_unchecked(),
+    );
+
+    cubek_quant::quantize::launch_ref(
+        &f.client,
+        f.input.clone().binding(),
+        f.output.clone().binding(),
+        f.scale.clone().binding(),
+        Some(f.global.clone().binding()),
+        f.output_scale.clone().binding(),
+        scheme,
+        ElemType::Float(FloatKind::F32),
+    )
+    .unwrap();
+
+    cubek_quant::dequantize::launch_ref(
+        &f.client,
+        f.output.clone().binding(),
+        out_f16.clone().binding(),
+        f.output_scale.clone().binding(),
+        Some(f.global.clone().binding()),
+        scheme,
+        half::f16::as_type_native_unchecked().storage_type(),
+    )
+    .unwrap();
+
+    let computed = f
+        .client
+        .read_one_unchecked_tensor(out_f16.into_copy_descriptor());
+
+    half::f16::from_bytes(&computed).to_vec()
+}
+
 #[test]
 #[should_panic(expected = "requires a per-tensor scale")]
 fn quantize_rejects_a_missing_per_tensor_scale() {
@@ -136,39 +175,7 @@ fn dequantize_rejects_a_missing_per_tensor_scale() {
 fn the_per_tensor_scale_is_read_as_f32_not_as_the_compute_type() {
     let scheme = two_level();
     let f = fixture(&scheme);
-    let out_f16 = TensorHandle::zeros(
-        &f.client,
-        shape![M, N],
-        half::f16::as_type_native_unchecked(),
-    );
-
-    cubek_quant::quantize::launch_ref(
-        &f.client,
-        f.input.binding(),
-        f.output.clone().binding(),
-        f.scale.binding(),
-        Some(f.global.clone().binding()),
-        f.output_scale.clone().binding(),
-        &scheme,
-        ElemType::Float(FloatKind::F32),
-    )
-    .unwrap();
-
-    cubek_quant::dequantize::launch_ref(
-        &f.client,
-        f.output.binding(),
-        out_f16.clone().binding(),
-        f.output_scale.binding(),
-        Some(f.global.binding()),
-        &scheme,
-        half::f16::as_type_native_unchecked().storage_type(),
-    )
-    .unwrap();
-
-    let computed = f
-        .client
-        .read_one_unchecked_tensor(out_f16.clone().into_copy_descriptor());
-    let restored = half::f16::from_bytes(&computed);
+    let restored = round_trip_to_f16(&f, &scheme);
 
     assert_eq!(restored.len(), f.data.len());
     for (i, (&actual, &expected)) in restored.iter().zip(f.data.iter()).enumerate() {
@@ -196,39 +203,7 @@ fn an_effective_scale_below_f16_still_scales_an_f16_output() {
     let f = fixture_with(&scheme, global, vec![block; num_blocks], |i| {
         (i % 255) as f32 - 127.0
     });
-    let out_f16 = TensorHandle::zeros(
-        &f.client,
-        shape![M, N],
-        half::f16::as_type_native_unchecked(),
-    );
-
-    cubek_quant::quantize::launch_ref(
-        &f.client,
-        f.input.binding(),
-        f.output.clone().binding(),
-        f.scale.binding(),
-        Some(f.global.clone().binding()),
-        f.output_scale.clone().binding(),
-        &scheme,
-        ElemType::Float(FloatKind::F32),
-    )
-    .unwrap();
-
-    cubek_quant::dequantize::launch_ref(
-        &f.client,
-        f.output.binding(),
-        out_f16.clone().binding(),
-        f.output_scale.binding(),
-        Some(f.global.binding()),
-        &scheme,
-        half::f16::as_type_native_unchecked().storage_type(),
-    )
-    .unwrap();
-
-    let computed = f
-        .client
-        .read_one_unchecked_tensor(out_f16.clone().into_copy_descriptor());
-    let restored = half::f16::from_bytes(&computed);
+    let restored = round_trip_to_f16(&f, &scheme);
 
     // One f16 subnormal step, which is all the room the output type leaves at this magnitude.
     let ulp = half::f16::from_bits(1).to_f32();
