@@ -228,7 +228,7 @@ pub fn launch_ref<R: Runtime>(
     let scale_dtype: StorageType = ElemType::from_quant_param(scheme.param).into();
     let global_dtype: StorageType = global_dtype(scheme).into();
 
-    check_global_bindings(scheme, global.is_some(), "global");
+    check_global_bindings(scheme, global.is_some());
 
     match scheme {
         QuantScheme {

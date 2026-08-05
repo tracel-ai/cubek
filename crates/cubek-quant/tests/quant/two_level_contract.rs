@@ -30,7 +30,6 @@ struct Fixture {
     global: TensorHandle<TestRuntime>,
     output: TensorHandle<TestRuntime>,
     output_scale: TensorHandle<TestRuntime>,
-    output_global: TensorHandle<TestRuntime>,
     data: Vec<f32>,
 }
 
@@ -83,7 +82,6 @@ fn fixture(scheme: &QuantScheme) -> Fixture {
             u32::as_type_native_unchecked(),
         ),
         output_scale: TensorHandle::zeros(&client, shape_scale, f32::as_type_native_unchecked()),
-        output_global: TensorHandle::zeros(&client, shape![1], f32::as_type_native_unchecked()),
         data,
         client,
     }
@@ -102,7 +100,6 @@ fn quantize_rejects_a_missing_per_tensor_scale() {
         f.scale.binding(),
         None,
         f.output_scale.binding(),
-        None,
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -122,7 +119,6 @@ fn quantize_rejects_an_unexpected_per_tensor_scale() {
         f.scale.binding(),
         Some(f.global.binding()),
         f.output_scale.binding(),
-        Some(f.output_global.binding()),
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -163,9 +159,8 @@ fn the_per_tensor_scale_is_read_as_f32_not_as_the_compute_type() {
         f.input.binding(),
         f.output.clone().binding(),
         f.scale.binding(),
-        Some(f.global.binding()),
+        Some(f.global.clone().binding()),
         f.output_scale.clone().binding(),
-        Some(f.output_global.clone().binding()),
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -176,7 +171,7 @@ fn the_per_tensor_scale_is_read_as_f32_not_as_the_compute_type() {
         f.output.binding(),
         out_f16.clone().binding(),
         f.output_scale.binding(),
-        Some(f.output_global.binding()),
+        Some(f.global.binding()),
         &scheme,
         half::f16::as_type_native_unchecked().storage_type(),
     )

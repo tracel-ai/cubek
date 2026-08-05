@@ -99,7 +99,6 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         scale.binding(),
         None,
         output_scale.clone().binding(),
-        None,
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -243,7 +242,6 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         scale.binding(),
         None,
         output_scale.clone().binding(),
-        None,
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -352,11 +350,8 @@ fn test_quantization_block_tensor_symmetric(
         shape_scale.clone(),
         f32::type_size(),
     );
-    let global_alloc = client.create_tensor_from_slice(
-        f32::as_bytes(&[global_f32]),
-        shape![1],
-        f32::type_size(),
-    );
+    let global_alloc =
+        client.create_tensor_from_slice(f32::as_bytes(&[global_f32]), shape![1], f32::type_size());
 
     let input = TensorHandle::new(
         input_alloc.memory,
@@ -399,9 +394,11 @@ fn test_quantization_block_tensor_symmetric(
             u32::as_type_native_unchecked(),
         ),
     };
-    let output_scale =
-        TensorHandle::zeros(&client, shape_scale.clone(), f32::as_type_native_unchecked());
-    let output_global = TensorHandle::zeros(&client, shape![1], f32::as_type_native_unchecked());
+    let output_scale = TensorHandle::zeros(
+        &client,
+        shape_scale.clone(),
+        f32::as_type_native_unchecked(),
+    );
 
     cubek_quant::quantize::launch_ref(
         &client,
@@ -410,7 +407,6 @@ fn test_quantization_block_tensor_symmetric(
         scale.binding(),
         Some(global.clone().binding()),
         output_scale.clone().binding(),
-        Some(output_global.clone().binding()),
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -421,17 +417,16 @@ fn test_quantization_block_tensor_symmetric(
         output.binding(),
         output_f.clone().binding(),
         output_scale.binding(),
-        Some(output_global.clone().binding()),
+        Some(global.clone().binding()),
         &scheme,
         f32::as_type_native_unchecked().storage_type(),
     )
     .unwrap();
 
-    // Dequantize reads the per-tensor scale from the output's own region, not from the input.
     let written = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_global.handle.clone().binding(),
-        output_global.shape().clone(),
-        output_global.strides().clone(),
+        global.handle.clone().binding(),
+        global.shape().clone(),
+        global.strides().clone(),
         core::mem::size_of::<f32>(),
     ));
     assert_eq!(f32::from_bytes(&written)[0], global_f32);

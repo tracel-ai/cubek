@@ -178,7 +178,6 @@ fn quantize_operand(
         scale_in.binding(),
         None,
         scale_out.clone().binding(),
-        None,
         scheme,
         input_elem,
     )

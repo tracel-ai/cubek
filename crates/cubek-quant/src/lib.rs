@@ -21,20 +21,12 @@ pub use cubecl_common::quant::scheme;
 
 #[cfg(feature = "kernels")]
 pub(crate) mod utils {
-    use crate::scheme::{QuantLevel, QuantScheme, QuantStore};
+    use crate::scheme::{QuantScheme, QuantStore};
     use cubecl::ir::{ElemType, UIntKind};
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
-        if let QuantScheme {
-            level:
-                QuantLevel::Block(block_size)
-                | QuantLevel::BlockTensor {
-                    block: block_size, ..
-                },
-            ..
-        } = scheme
-        {
+        if let Some(block_size) = scheme.level.block_size() {
             let block_size = *block_size.as_slice().last().unwrap() as usize;
             assert!(
                 block_size.is_multiple_of(div),
@@ -55,12 +47,12 @@ pub(crate) mod utils {
 
     /// The scheme is what decides whether a per-tensor scale exists; a binding that disagrees with
     /// it silently drops the scale or applies one that should not be there.
-    pub(crate) fn check_global_bindings(scheme: &QuantScheme, provided: bool, name: &str) {
+    pub(crate) fn check_global_bindings(scheme: &QuantScheme, provided: bool) {
         let expected = scheme.level.global_param().is_some();
         assert_eq!(
             provided,
             expected,
-            "{name} was {}, but {:?} {} a per-tensor scale",
+            "global binding was {}, but {:?} {} a per-tensor scale",
             if provided { "provided" } else { "omitted" },
             scheme.level,
             if expected {

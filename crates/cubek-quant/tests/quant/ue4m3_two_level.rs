@@ -97,7 +97,6 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
         shape_scale.clone(),
         StorageType::Scalar(ElemType::Float(FloatKind::E4M3)),
     );
-    let output_global = TensorHandle::zeros(&client, shape![1], f32::as_type_native_unchecked());
     let output_f = TensorHandle::zeros(&client, shape.clone(), f32::as_type_native_unchecked());
 
     cubek_quant::quantize::launch_ref(
@@ -105,9 +104,8 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
         input.binding(),
         output.clone().binding(),
         scale.binding(),
-        Some(global.binding()),
+        Some(global.clone().binding()),
         output_scale.clone().binding(),
-        Some(output_global.clone().binding()),
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
@@ -118,7 +116,7 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
         output.binding(),
         output_f.clone().binding(),
         output_scale.clone().binding(),
-        Some(output_global.clone().binding()),
+        Some(global.clone().binding()),
         &scheme,
         f32::as_type_native_unchecked().storage_type(),
     )
@@ -141,9 +139,9 @@ fn ue4m3_block_scales_with_an_f32_global_round_trip() {
     }
 
     let written = client.read_one_unchecked_tensor(CopyDescriptor::new(
-        output_global.handle.clone().binding(),
-        output_global.shape().clone(),
-        output_global.strides().clone(),
+        global.handle.clone().binding(),
+        global.shape().clone(),
+        global.strides().clone(),
         core::mem::size_of::<f32>(),
     ));
     assert_eq!(f32::from_bytes(&written)[0], GLOBAL);

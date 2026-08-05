@@ -4,8 +4,8 @@
 //! out of its loop. `FG` is the scale's own type, not the compute type: reading an f32 scale as
 //! f16 because that is what the kernel computes in returns garbage.
 
+use cubecl::prelude::*;
 use cubecl::std::tensor::layout::linear::LinearView;
-use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 #[cube]
 pub(crate) fn read_global<FG: Numeric>(
@@ -32,30 +32,5 @@ pub(crate) fn apply_global<F: Float, FG: Numeric, FS: CubePrimitive>(
             F::cast_from(f32::cast_from(global) * f32::cast_from(block))
         }
         ComptimeOption::None => F::cast_from(block),
-    }
-}
-
-/// Copy the per-tensor scale into the quantized tensor's own scale region, where dequantize reads
-/// it back from.
-#[cube]
-pub(crate) fn write_global<FG: Numeric>(
-    global: ComptimeOption<FG>,
-    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
-) {
-    #[comptime]
-    match out_global {
-        ComptimeOption::Some(mut out) =>
-        {
-            #[comptime]
-            match global {
-                ComptimeOption::Some(global) => {
-                    if ABSOLUTE_POS == 0 {
-                        out.write(0, global);
-                    }
-                }
-                ComptimeOption::None => {}
-            }
-        }
-        ComptimeOption::None => {}
     }
 }

@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    per_tensor::{apply_global, read_global, write_global},
+    per_tensor::{apply_global, read_global},
     utils::{check_block_size_compat, check_global_bindings, global_dtype, packed_storage_elem},
 };
 use crate::{
@@ -110,7 +110,6 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
-    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
     #[comptime] param: QuantParam,
     #[define(F, FS, FG, Q)] _dtypes: [StorageType; 4],
@@ -123,7 +122,6 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let block = write_scale(in_pos, scale, out_scale, scales_layout, param);
     let global = read_global::<FG>(global);
-    write_global::<FG>(global, out_global);
     let scale = apply_global::<F, FG, FS>(block, global);
 
     output.write(
@@ -147,7 +145,6 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, QS>,
     out_scale: ScalesViewMut<'_, FS>,
-    out_global: ComptimeOption<LinearViewMut<'_, FG>>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, FG, QS)] _dtypes: [StorageType; 4],
@@ -160,7 +157,6 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, FG: Numeric,
     let packed_pos = ABSOLUTE_POS * num_quants;
     let block = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
     let global = read_global::<FG>(global);
-    write_global::<FG>(global, out_global);
     let scale = apply_global::<F, FG, FS>(block, global);
 
     if input.vector_size().comptime() == num_quants {
@@ -203,15 +199,13 @@ pub fn launch_ref<R: Runtime>(
     scale: TensorBinding<R>,
     global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
-    out_global: Option<TensorBinding<R>>,
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
     let scale_dtype = ElemType::from_quant_param(scheme.param);
     let global_dtype = global_dtype(scheme);
 
-    check_global_bindings(scheme, global.is_some(), "global");
-    check_global_bindings(scheme, out_global.is_some(), "out_global");
+    check_global_bindings(scheme, global.is_some());
 
     match scheme {
         QuantScheme {
@@ -224,7 +218,6 @@ pub fn launch_ref<R: Runtime>(
             scale,
             global,
             out_scale,
-            out_global,
             output,
             input_elem,
             scale_dtype,
@@ -254,7 +247,6 @@ pub fn launch_ref<R: Runtime>(
                 scale,
                 global,
                 out_scale,
-                out_global,
                 output,
                 input_elem,
                 scale_dtype,
@@ -279,7 +271,6 @@ fn quantize_native<R: Runtime>(
     scale: TensorBinding<R>,
     global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
-    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
@@ -333,7 +324,6 @@ fn quantize_native<R: Runtime>(
                     InputScalar::new(range_max, input_dtype),
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
-                    out_global.map(linear_view).into(),
                     scales_layout,
                     scheme.param,
                     [
@@ -359,7 +349,6 @@ fn quantize_packed<R: Runtime>(
     scale: TensorBinding<R>,
     global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
-    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
@@ -424,7 +413,6 @@ fn quantize_packed<R: Runtime>(
             InputScalar::new(range_max, input_dtype),
             linear_view(output.clone()),
             scales_view(output, out_scale, 1, scheme),
-            out_global.map(linear_view).into(),
             scales_layout,
             *scheme,
             [
