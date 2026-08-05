@@ -3,6 +3,7 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_quant::scheme::{QuantLevel, QuantParam};
+use cubek_test_utils::TestInput;
 mod scale_rounding;
 mod tiled;
 mod two_level_contract;
@@ -15,15 +16,9 @@ pub(crate) fn f32_tensor(
     data: &[f32],
     shape: Shape,
 ) -> TensorHandle<TestRuntime> {
-    let alloc =
-        client.create_tensor_from_slice(f32::as_bytes(data), shape.clone(), f32::type_size());
-
-    TensorHandle::new(
-        alloc.memory,
-        shape,
-        alloc.strides,
-        f32::as_type_native_unchecked(),
-    )
+    TestInput::builder(client.clone(), shape)
+        .custom(data.to_vec())
+        .generate_without_host_data()
 }
 
 #[macro_export]
