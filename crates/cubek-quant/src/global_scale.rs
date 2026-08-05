@@ -92,16 +92,11 @@ pub(crate) fn write_global<FG: Numeric>(
 ) {
     #[comptime]
     match out_global {
-        ComptimeOption::Some(mut out) =>
-        {
-            #[comptime]
-            match global {
-                ComptimeOption::Some(global) => {
-                    if ABSOLUTE_POS == 0 {
-                        out.write(0, global);
-                    }
-                }
-                ComptimeOption::None => {}
+        // Both bindings are checked against the same scheme at launch, so somewhere to write the
+        // scale means there is one to read.
+        ComptimeOption::Some(mut out) => {
+            if ABSOLUTE_POS == 0 {
+                out.write(0, global.unwrap());
             }
         }
         ComptimeOption::None => {}
