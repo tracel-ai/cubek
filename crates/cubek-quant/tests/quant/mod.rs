@@ -1,5 +1,6 @@
 use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::{QuantLevel, QuantParam};
+mod scale_rounding;
 mod tiled;
 mod two_level_contract;
 mod ue4m3_two_level;
