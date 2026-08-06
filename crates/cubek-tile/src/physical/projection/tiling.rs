@@ -62,8 +62,10 @@ impl StorageTiling {
         self.fragments[i]
     }
 
-    /// How many levels the physical order runs over: the deepest axis's fragment count.
-    pub fn depth(&self) -> usize {
+    /// The deepest axis's fragment count, which is how many levels the physical order runs over.
+    /// A *count*, not a depth: an untiled axis carries one fragment, so this is the `levels + 1`
+    /// the rest of the crate spells out, never `levels` itself.
+    pub fn max_fragments(&self) -> usize {
         self.fragments.iter().copied().max().unwrap_or(0)
     }
 
@@ -90,7 +92,7 @@ impl StorageTiling {
             axes.len()
         );
         let mut order = Vec::with_capacity(self.physical_rank());
-        for level in 0..self.depth() {
+        for level in 0..self.max_fragments() {
             for (i, &axis) in axes.iter().enumerate() {
                 if level < self.fragments(i) {
                     order.push(axis);
@@ -158,7 +160,7 @@ mod tests {
         let t = StorageTiling::per_axis(&[3, 1, 2]);
         assert_eq!(t.rank(), 3);
         assert_eq!(t.physical_rank(), 6);
-        assert_eq!(t.depth(), 3);
+        assert_eq!(t.max_fragments(), 3);
         assert_eq!(t.fragments(1), 1);
         assert!(t.is_tiled());
         assert!(!StorageTiling::uniform(4, 0).is_tiled());

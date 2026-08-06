@@ -435,6 +435,16 @@ fn assert_operand_shapes(
         !reduce.is_empty(),
         "gather leaf: the operands contract no axis against the accumulator"
     );
+    // `Space::contracted` merges lhs-first, so an axis only the rhs spans lands past every lhs
+    // one and would take the `fastest` slot below. That reads as the lhs being lined wrong, which
+    // it is not, so the real constraint is named here instead.
+    for &axis in reduce {
+        assert!(
+            lhs.contains(axis),
+            "gather leaf: the lhs must span every contracted axis, but {axis:?} is contracted by \
+             the rhs alone"
+        );
+    }
     let fastest = reduce[reduce.len() - 1];
     assert!(
         lhs.axis_at(lhs.rank() - 1) == fastest,

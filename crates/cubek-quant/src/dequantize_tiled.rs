@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, ByAxis, Distribution, Partitioner, Projection, QuantTileArg, QuantTileArgLaunch, Space,
-    StorageTiling, TileArg, TileArgLaunch, TileSpec,
+    Axis, ByAxis, Distribution, Partitioner, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 // Input axes
@@ -41,10 +41,16 @@ pub fn launch_ref<R: Runtime>(
     // One space for the whole kernel; both operands span all of it. Geometry reads the
     // concrete extents; the kernel gets the dynamic form, so m and n resolve in-kernel
     // from the tensor's own shape and never fork the compiled kernel.
+    // The space is read off the first two dims, so a deeper buffer would be described by its grid
+    // dims rather than its extents. Both operands are plain 2-D tensors, hence `direct` below:
+    // every axis untiled, one physical axis apiece.
+    assert!(
+        input.shape.len() == 2 && output.shape.len() == 2,
+        "dequantize_tiled: both operands must be plain 2-D tensors, got {:?} and {:?}",
+        input.shape,
+        output.shape
+    );
     let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
-    // Both operands are plain 2-D tensors: every axis untiled, one physical axis apiece.
-    let input_tiling = StorageTiling::uniform(space.rank(), input.shape.len() / space.rank() - 1);
-    let output_tiling = StorageTiling::uniform(space.rank(), output.shape.len() / space.rank() - 1);
     let cube_count = space.cube_count();
     let cube_dim = space.cube_dim(client);
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
@@ -55,13 +61,10 @@ pub fn launch_ref<R: Runtime>(
         QuantTileArgLaunch::new(
             input.into_tensor_arg(),
             scales.into_tensor_arg(),
-            TileSpec::new(Projection::tiled(&[M, N], input_tiling)),
+            TileSpec::direct(&[M, N]),
             *scheme,
         ),
-        TileArgLaunch::new(
-            output.into_tensor_arg(),
-            TileSpec::new(Projection::tiled(&[M, N], output_tiling)),
-        ),
+        TileArgLaunch::new(output.into_tensor_arg(), TileSpec::direct(&[M, N])),
         space.all_dynamic(),
         input_dtype,
         output_dtype,
