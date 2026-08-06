@@ -13,34 +13,20 @@ pub enum Schedule {
     DoubleBuffered,
 }
 
-/// The instruction that contracts a final tile. Declared in the plan because pre-leaf
-/// code (residency, staging-store deduction, cmma smem tiling) reads it before the leaf
-/// runs. `Cmma` carries the contraction depth `k`, which an accumulator's axes never give.
+/// What an operand *is* at the instruction: a memory window, or a plane fragment in one of the two
+/// encodings. Pure format, no shape — `m`/`n`/`k` belong to the contraction, not to any one operand,
+/// so every allocation site is handed them by whoever holds enough spaces to know them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Leaf {
+    /// A memory window contracted by the software microkernel.
     #[default]
-    Register,
-    Cmma {
-        k: usize,
-    },
+    Memory,
+    Cmma,
     /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
     /// leaf because it comes from a device query, which cannot run in-kernel.
     Mma {
-        k: usize,
         io: MmaIOConfig,
     },
-}
-
-impl Leaf {
-    pub fn is_cmma(&self) -> bool {
-        matches!(self, Leaf::Cmma { .. })
-    }
-
-    /// Whether the leaf contracts a plane-level tile (either encoding), so operands and the
-    /// accumulator are plane-resident rather than memory.
-    pub fn is_plane(&self) -> bool {
-        matches!(self, Leaf::Cmma { .. } | Leaf::Mma { .. })
-    }
 }
 
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
@@ -48,7 +34,7 @@ impl Leaf {
 /// ([`Schedule`]); `Final` carries how to contract the terminal tile ([`Leaf`]).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
-    Final(Leaf),
+    Final,
     Level(Box<Level>),
 }
 
@@ -85,27 +71,7 @@ impl Level {
 
 impl Partitioner {
     pub fn is_final(&self) -> bool {
-        matches!(self, Partitioner::Final(_))
-    }
-
-    /// The [`Leaf`] instruction at the end of the chain.
-    pub fn leaf(&self) -> Leaf {
-        match self {
-            Partitioner::Final(leaf) => *leaf,
-            Partitioner::Level(level) => level.next.leaf(),
-        }
-    }
-
-    /// Set the chain-end [`Leaf`], after all levels are stacked (appending a level
-    /// resets it to the tail's).
-    pub(crate) fn with_leaf(self, leaf: Leaf) -> Partitioner {
-        match self {
-            Partitioner::Final(_) => Partitioner::Final(leaf),
-            Partitioner::Level(mut level) => {
-                level.next = level.next.with_leaf(leaf);
-                Partitioner::Level(level)
-            }
-        }
+        matches!(self, Partitioner::Final)
     }
 
     pub fn next(&self) -> &Partitioner {
@@ -146,7 +112,7 @@ impl Partitioner {
     /// only ever see concrete instance counts.
     pub(crate) fn resolve_lanes(self, plane_size: usize) -> Partitioner {
         match self {
-            Partitioner::Final(leaf) => Partitioner::Final(leaf),
+            Partitioner::Final => Partitioner::Final,
             Partitioner::Level(level) => {
                 let Level {
                     edges,
@@ -171,7 +137,7 @@ impl Partitioner {
 
     pub(crate) fn append(self, tail: Partitioner) -> Partitioner {
         match self {
-            Partitioner::Final(_) => tail,
+            Partitioner::Final => tail,
             Partitioner::Level(level) => {
                 let Level {
                     edges: sub_tile,
@@ -197,7 +163,7 @@ impl Partitioner {
     fn level(&self) -> &Level {
         match self {
             Partitioner::Level(level) => level,
-            Partitioner::Final(_) => {
+            Partitioner::Final => {
                 panic!(
                     "Partitioner: the final partitioner carries no level (check `is_final` first)"
                 )
@@ -244,7 +210,7 @@ impl PartitionerBuilder {
             role,
             order: self.order,
             schedule,
-            next: Partitioner::Final(Leaf::Register),
+            next: Partitioner::Final,
         }))
     }
 

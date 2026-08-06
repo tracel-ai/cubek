@@ -178,7 +178,7 @@ fn tile_space(
                 .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .leaf(Leaf::Cmma { k: i.k })
+        .build()
 }
 
 /// The one entry for both deliveries: the shared geometry (space, launcher, out arg) is
@@ -204,6 +204,8 @@ pub fn launch_ref<R: Runtime>(
         .map(|p| (batch_axis(p), out_batches[p]))
         .collect();
     let space = tile_space(&blueprint, (m, n, k), &batch);
+    // What every operand of this routine is at the instruction; the plan says only how it is cut.
+    let leaf = Leaf::Cmma;
 
     let launch = space.launcher(client);
     let lhs = lhs.into_data();
@@ -225,6 +227,7 @@ pub fn launch_ref<R: Runtime>(
             out,
             &out_batch_axes,
             dtypes,
+            leaf,
         ),
         Delivery::Tma => launch_tma::<R>(
             client,
@@ -238,6 +241,7 @@ pub fn launch_ref<R: Runtime>(
             &blueprint,
             dtypes,
             (m, n, k),
+            leaf,
         ),
     }
 
@@ -257,6 +261,7 @@ fn launch_strided<R: Runtime>(
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
     dtypes: &MatmulElems,
+    leaf: Leaf,
 ) {
     let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: StorageType| {
         let [outer, inner] = axes;
@@ -266,6 +271,7 @@ fn launch_strided<R: Runtime>(
             .subspace(&[outer, inner])
             .batches(out_batch_axes)
             .vectorize(v)
+            .leaf(leaf)
             .build()
     };
     let a = operand(lhs, [M, K], dtypes.lhs_global);
@@ -305,11 +311,13 @@ fn launch_tma<R: Runtime>(
     blueprint: &CmmaBlueprint,
     dtypes: &MatmulElems,
     (m, n, k): (usize, usize, usize),
+    leaf: Leaf,
 ) {
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
     fn operand<E: Numeric, R: Runtime>(
+        leaf: Leaf,
         binding: TensorBinding<R>,
         axes: [Axis; 2],
         box_dims: (usize, usize),
@@ -324,9 +332,10 @@ fn launch_tma<R: Runtime>(
             dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(map, &axes, (1, rows, cols), transposed)
+        TmaTileArgLaunch::tensor_map(map, &axes, (1, rows, cols), transposed, leaf)
     }
     let a = operand(
+        leaf,
         lhs,
         [M, K],
         (stage_m, stage_k),
@@ -334,6 +343,7 @@ fn launch_tma<R: Runtime>(
         dtypes.lhs_global,
     );
     let b = operand(
+        leaf,
         rhs,
         [K, N],
         (stage_k, stage_n),
@@ -346,6 +356,7 @@ fn launch_tma<R: Runtime>(
         .subspace(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
+        .leaf(leaf)
         .build();
     cmma_kernel::launch::<Tma, R>(
         client,

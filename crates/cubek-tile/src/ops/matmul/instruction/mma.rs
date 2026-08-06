@@ -31,11 +31,11 @@ impl<A: Numeric> MmaData<A> {
                     },
                     _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
-                (TileKind::Smem(a), TileKind::Smem(b)) => {
+                (TileKind::Smem(_), TileKind::Smem(_)) => {
                     let mut la = MmaData::<L>::lhs(m, n, k, layout, io);
-                    la.load_window(a);
+                    la.load_window(lhs);
                     let mut rb = MmaData::<R>::rhs(m, n, k, layout, io);
-                    rb.load_window(b);
+                    rb.load_window(rhs);
                     match (&la.fragment, &rb.fragment) {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
                             mma_execute::<L, R, A>(af, bf, acc, m, n, k)

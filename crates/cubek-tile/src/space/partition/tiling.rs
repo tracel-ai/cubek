@@ -7,7 +7,7 @@
 
 use crate::{Axis, ByAxis, Space};
 
-use super::{CubeAxis, Distribution, Leaf, Partitioner, Schedule, WalkOrder};
+use super::{CubeAxis, Distribution, Partitioner, Schedule, WalkOrder};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
 /// tiles out. Constructors name the common distributions; [`Cut::new`] takes any.
@@ -121,9 +121,9 @@ impl LeveledTiling {
         });
     }
 
-    /// The terminal level: the [`Leaf`] instruction the innermost tile contracts with.
-    /// Builds the [`Space`], so no level can stack after the leaf.
-    pub fn leaf(self, leaf: Leaf) -> Space {
+    /// Build the [`Space`]: the extents plus the stack of levels, and nothing about what the
+    /// pieces become. Formats are the operands' ([`TileSpec::leaf`](crate::TileSpec::leaf)).
+    pub fn build(self) -> Space {
         let mut space = Space::new(&self.extents);
         for level in &self.levels {
             let cut = |axis| {
@@ -160,7 +160,7 @@ impl LeveledTiling {
             };
             space = space.with_partitioner(partitioner);
         }
-        space.with_leaf(leaf)
+        space
     }
 }
 

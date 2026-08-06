@@ -22,7 +22,6 @@ use crate::{
     components::global::{GlobalWriterFamily, multi_stage::specialized::SpecializedMatmul},
     components::global::{InputLoadFlow, LoadFlows},
 };
-use crate::components::global::read::LoadingValidation as _;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
 use std::marker::PhantomData;

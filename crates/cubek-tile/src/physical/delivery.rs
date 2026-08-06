@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Space, Tile, TileArg, TmaTileArg};
+use crate::{Leaf, Space, Tile, TileArg, TmaTileArg};
 
 /// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
 /// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
@@ -59,14 +59,13 @@ pub enum StageStorage {
 }
 
 impl StageStorage {
-    /// The safe default: a cmma leaf reads a whole fragment per transaction, so tile its stages.
-    /// Anything else keeps plain strided rows, the manual-mma leaf included: it addresses each
-    /// element by computed offset, so contiguity buys it nothing.
-    pub fn for_space(space: &Space) -> Self {
-        if space.partitioner().leaf().is_cmma() {
-            StageStorage::Tiled
-        } else {
-            StageStorage::Strided
+    /// The safe default for an operand that becomes `leaf`: a cmma fragment load reads a whole
+    /// transaction, so tile its stages. Anything else keeps plain strided rows, the manual-mma leaf
+    /// included: it addresses each element by computed offset, so contiguity buys it nothing.
+    pub fn for_leaf(leaf: Leaf) -> Self {
+        match leaf {
+            Leaf::Cmma => StageStorage::Tiled,
+            Leaf::Memory | Leaf::Mma { .. } => StageStorage::Strided,
         }
     }
 }
@@ -85,11 +84,11 @@ pub struct StagePlan {
 }
 
 impl StagePlan {
-    /// The default layout for `space` (tiled for a cmma leaf, else strided) with an unknown
-    /// worker count. A [`Launcher`](crate::Launcher) stamps `units` on top.
-    pub fn for_space(space: &Space) -> Self {
+    /// The default layout for an operand that becomes `leaf` (tiled for cmma, else strided) with
+    /// an unknown worker count. A [`Launcher`](crate::Launcher) stamps `units` on top.
+    pub fn for_leaf(leaf: Leaf) -> Self {
         StagePlan {
-            layout: StageStorage::for_space(space),
+            layout: StageStorage::for_leaf(leaf),
             units: 0,
         }
     }

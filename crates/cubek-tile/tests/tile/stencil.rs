@@ -189,7 +189,7 @@ impl Conv1d {
                     .axis(RH, Cut::sequential(self.rh))
                     .axis(CI, Cut::sequential(self.ci))
             })
-            .leaf(Leaf::Register);
+            .build();
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
@@ -443,7 +443,7 @@ impl Conv2d {
                     .axis(RW, Cut::sequential(self.rw))
                     .axis(CI, Cut::sequential(self.ci))
             })
-            .leaf(Leaf::Register);
+            .build();
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
         let in_spec = TileSpec::new(Projection::new(

@@ -116,15 +116,15 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The `i`-th batch matrix as a quantization-transparent view: a plain tile serves a bare
-    /// `Direct` read, a quantized one dequantizes each `(row, col)` per its scheme (`I`/`WP` the
+    /// The `i`-th batch matrix as a quantization-transparent view: a plain tile is read as it
+    /// stands, a quantized one dequantizes each `(row, col)` per its scheme (`I`/`WP` the
     /// storage element and physical line, as [`copy_from`](Tile::copy_from) recovers them). The
     /// dequant-at-read twin of [`matrix`](Tile::matrix); a leaf reads a quantized operand with no
     /// dequantize-into-`f32` fill.
     pub fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         i: usize,
-    ) -> TileView<'_, T, I, WP, W, Coords2d> {
+    ) -> MatrixView<'_, Vector<T, W>> {
         let layout = self.batch_matrix(i);
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.matrix_transparent::<I, WP, W>(layout),

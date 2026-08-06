@@ -13,7 +13,7 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
-            Partitioner::Final(_) => mma_leaf(self, lhs, rhs),
+            Partitioner::Final => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 // The level's operation space is the merge of the operands' runtime
                 // spaces; the output contributes no axis beyond `lhs ∪ rhs`.
