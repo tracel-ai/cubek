@@ -41,26 +41,33 @@ impl<C: Coordinates, L> TileLayout<C> for L where
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct AxisProjection {
-    /// The tile's per-logical-axis extents, in the projection's axis order. The innermost is a
+    /// The tile's per-logical-axis extents, in the space's axis order. The innermost is a
     /// line count, matching the window's innermost physical axis.
     shape: Coords<u32>,
+    #[cube(comptime)]
+    space: Space,
     #[cube(comptime)]
     projection: Projection,
 }
 
 #[cube]
 impl AxisProjection {
-    pub fn new(shape: Coords<u32>, #[comptime] projection: Projection) -> Self {
-        // `to_source_pos` indexes `pos` by `projection.position(axis)`, so a coordinate carries one
-        // entry per *logical* axis, not per physical one. Ranks differ under a gathering mapping,
-        // which is exactly when confusing the two silently reads the wrong axis.
+    pub fn new(
+        shape: Coords<u32>,
+        #[comptime] space: Space,
+        #[comptime] projection: Projection,
+    ) -> Self {
         let rank = shape.len();
         comptime!(assert!(
-            rank == projection.logical_rank(),
-            "AxisProjection: shape has {rank} entries but the projection spans {} logical axes",
-            projection.logical_rank()
+            rank == space.rank(),
+            "AxisProjection: shape has {rank} entries but the space spans {} logical axes",
+            space.rank()
         ));
-        AxisProjection { shape, projection }
+        AxisProjection {
+            shape,
+            space,
+            projection,
+        }
     }
 }
 
@@ -81,7 +88,7 @@ impl Layout for AxisProjection {
             #[unroll]
             for t in 0..n {
                 let term = comptime!(self.projection.physical_axis(pa).terms()[t]);
-                let p = comptime!(self.projection.position(term.axis));
+                let p = comptime!(self.space.position(term.axis));
                 terms.push(pos[p].fmul(comptime!(term.scale.get() as u32)));
             }
             out.push(terms.fsum(comptime!((0..n).collect::<Vec<_>>())));
@@ -145,15 +152,6 @@ fn axis_projection(
     #[comptime] projection: Projection,
     #[comptime] vector_size: usize,
 ) -> AxisProjection {
-    // `shape` is read off `space` while `to_source_pos` indexes by the projection's axis order, so
-    // the two orders being the same sequence is load-bearing. It holds because a tile's space *is*
-    // `space.project(spec.axes())` ([`Tile::of_impl`]), but nothing in the types says so.
-    comptime!(assert!(
-        space.axes().eq(projection.logical_axes().iter().copied()),
-        "AxisProjection: the tile's axis order {:?} differs from its projection's {:?}",
-        space.axes().collect::<Vec<_>>(),
-        projection.logical_axes()
-    ));
     let rank = comptime!(space.rank());
     let last = comptime!(rank - 1);
     let mut shape = Coords::<u32>::new();
@@ -164,5 +162,5 @@ fn axis_projection(
         shape.push(comptime!((if p == last { e / vector_size } else { e }) as u32).runtime());
     }
 
-    AxisProjection::new(shape, projection)
+    AxisProjection::new(shape, space, projection)
 }
