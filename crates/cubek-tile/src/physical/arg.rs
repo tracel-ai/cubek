@@ -77,17 +77,21 @@ pub struct TileSpec {
 }
 
 impl TileSpec {
-    /// Pair an operand's spanned axes with its storage, one logical axis per physical one; the stage
-    /// layout stays derived ([`staged`](Self::staged) overrides it).
+    /// Pair an operand's spanned axes with its storage: one logical axis per physical one, except
+    /// that a storage-tiled axis addresses one physical axis per level ([`Projection::tiled`]). The
+    /// stage layout stays derived ([`staged`](Self::staged) overrides it).
     pub fn new(axes: &[Axis], storage: Storage) -> Self {
-        TileSpec::projected(Projection::direct(axes), storage)
+        TileSpec::projected(
+            Projection::tiled(axes, storage.start_axis, storage.levels),
+            storage,
+        )
     }
 
     /// [`new`](Self::new) for an operand whose physical axes are affine combinations of its logical
     /// ones (a gather-reduce over an abstract dimension). The projection is checked here, the one
     /// place both constructors meet.
     pub fn projected(projection: Projection, storage: Storage) -> Self {
-        projection.validate(&storage);
+        projection.validate();
         TileSpec {
             projection,
             storage,

@@ -160,6 +160,9 @@ impl<T: Numeric> Tile<T> {
         // The one projection: the kernel's space narrowed to this operand's axes.
         let space = comptime!(space.project(spec.axes()));
         let projection = comptime!(spec.projection.clone());
+        // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
+        // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
+        let coords = comptime!(projection.untiled());
         let storage = comptime!(spec.storage);
         // Stage layout: the explicit override, else derived from the space's leaf.
         let stage = comptime!(StagePlan {
@@ -177,12 +180,9 @@ impl<T: Numeric> Tile<T> {
             ComptimeOption::None => 1usize,
         };
         let vector_size = comptime!(bound_width * pack);
-        let start_axis = comptime!(storage.start_axis);
         // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
-        // than its logical space has axes.
-        let num_tiled = comptime!(projection.physical_rank() - storage.start_axis);
-        let levels = comptime!(storage.levels);
-        let rank = comptime!(start_axis + (levels + 1) * num_tiled);
+        // than its logical space has axes, and a storage-tiled one has more.
+        let rank = comptime!(projection.physical_rank());
         let last = comptime!(rank - 1);
         let w = comptime!(vector_size as u32);
         let mut physical_shape = Coords::<u32>::new();
@@ -211,11 +211,11 @@ impl<T: Numeric> Tile<T> {
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         };
-        // `GmemLayout`'s own physical-position map, read off the buffer's real (constant-folded)
-        // fragment extents: storage tiling always applies to a direct operand only
-        // (`Projection::validate` pins an affine one to untiled gmem), so `physical_shape` is
-        // exactly `[pre…, grid…, …, tile…]` in synthetic-axis order.
-        let gmem_projection = comptime!(Projection::of_tiling(start_axis, num_tiled, levels));
+        // `GmemLayout`'s own physical-position map: the operand's own projection relabeled by
+        // position, since the layout is handed coordinates a gather has already resolved. Storage
+        // tiling survives that relabeling, so `physical_shape` is exactly
+        // `[pre…, grid…, …, tile…]` in synthetic-axis order.
+        let gmem_projection = comptime!(projection.positional());
         // Logical bound folded from the physical shape, so it's correct for tiled
         // operands too (the physical buffer is padded; the logical extent is not).
         let bound = logical_extent(comptime!(gmem_projection.clone()), &physical_shape);
@@ -225,7 +225,7 @@ impl<T: Numeric> Tile<T> {
             comptime!(space.clone()),
             &bound,
             vector_size,
-            comptime!(projection.clone()),
+            comptime!(coords.clone()),
         );
         Tile::<T> {
             tile_kind: TileKind::new_Gmem(MemData::<T> {
@@ -240,7 +240,7 @@ impl<T: Numeric> Tile<T> {
                     projection: gmem_projection,
                 },
                 window: Window::new(origin, extent, bound),
-                projection: comptime!(projection),
+                projection: comptime!(coords),
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
@@ -373,18 +373,21 @@ impl<T: Numeric> MemData<T> {
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
     ) -> Tile<T> {
-        let levels = comptime!((!space.is_final() && stage.layout == StageStorage::Tiled) as usize);
+        let nesting = comptime!(stage_nesting(&space, stage.layout));
         let buffer = unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         };
-        let (physical_shape, physical_strides) =
-            storage_layout(comptime!(space.clone()), vector_size, levels);
+        let (physical_shape, physical_strides) = storage_layout(
+            comptime!(space.clone()),
+            vector_size,
+            comptime!(nesting.clone()),
+        );
         let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        let gmem_projection = comptime!(Projection::of_tiling(0, space.rank(), levels));
+        let gmem_projection = comptime!(Projection::of_tiling(0, space.rank(), nesting.len()));
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
@@ -1310,16 +1313,16 @@ fn smem_scale_grid(
     (nb, strides)
 }
 
-/// The smem physical shape/strides over `space`, line-unit like [`Tile::of`].
-/// `levels == 0` is a plain row-major buffer; `levels == 1` is the `[grid…, tile…]` storage
-/// tiling at the space's final tile, each tile a contiguous block.
+/// The smem physical shape/strides over `space`, line-unit like [`Tile::of`]. An empty `nesting`
+/// is a plain row-major buffer; each block in it adds a `[grid…, block…]` split, so the buffer
+/// lays the innermost block down contiguously.
 #[cube]
 fn storage_layout(
     #[comptime] space: Space,
     #[comptime] vector_size: usize,
-    #[comptime] levels: usize,
+    #[comptime] nesting: Vec<Space>,
 ) -> (Coords<u32>, Coords<u32>) {
-    let (shape_c, strides_c) = comptime!(storage_extents(&space, vector_size, levels));
+    let (shape_c, strides_c) = comptime!(storage_extents(&space, vector_size, &nesting));
 
     let mut shape = Coords::<u32>::new();
     let mut strides = Coords::<u32>::new();
@@ -1332,32 +1335,41 @@ fn storage_layout(
     (shape, strides)
 }
 
+/// The storage-tiling nesting a stage over `space` gets: the blocks its buffer lays down
+/// contiguously, coarse to fine, each dividing the one before it (`space` is the implicit
+/// outermost). Empty is a plain row-major buffer.
+///
+/// A `Tiled` stage groups the final tile, the block a cmma transaction reads unstrided. A final
+/// space has no grid left to tile, so it stays plain whatever the layout asks for.
+fn stage_nesting(space: &Space, stage: StageStorage) -> Vec<Space> {
+    match stage {
+        StageStorage::Tiled if !space.is_final() => vec![space.final_space()],
+        _ => Vec::new(),
+    }
+}
+
 /// [`storage_layout`]'s host data: the physical line extents (`[extents…]` flat, or
-/// `[grid…, tile…]`) and their row-major suffix-product strides.
-fn storage_extents(space: &Space, vector_size: usize, levels: usize) -> (Vec<u32>, Vec<u32>) {
+/// `[grid…, …, block…]`, one grid per level of `nesting`) and their row-major suffix-product
+/// strides. A level contributes how many of the next block down it holds; the innermost
+/// contributes its own extents.
+fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> (Vec<u32>, Vec<u32>) {
     let rank = space.rank();
     let mut extents = Vec::new();
-    match levels {
-        0 => {
-            for p in 0..rank {
-                extents.push(space.extent_at(p));
-            }
+    let mut outer = space;
+    for block in nesting {
+        for p in 0..rank {
+            let (e, b) = (outer.extent_at(p), block.extent_at(p));
+            assert!(
+                e.is_multiple_of(b),
+                "MemData::smem: a {b}-element storage block must divide the {e}-element block \
+                 enclosing it on axis {p}"
+            );
+            extents.push(e / b);
         }
-        1 => {
-            let fin = space.final_space();
-            for p in 0..rank {
-                let (e, t) = (space.extent_at(p), fin.extent_at(p));
-                assert!(
-                    e.is_multiple_of(t),
-                    "MemData::smem: the final tile must divide the staged space"
-                );
-                extents.push(e / t);
-            }
-            for p in 0..rank {
-                extents.push(fin.extent_at(p));
-            }
-        }
-        _ => panic!("MemData::smem: one storage-tiling level at most"),
+        outer = block;
+    }
+    for p in 0..rank {
+        extents.push(outer.extent_at(p));
     }
     let last = extents.len() - 1;
     extents[last] /= vector_size;
@@ -1528,5 +1540,84 @@ impl Layout for Window {
         }
 
         valid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+
+    /// `16 -> 8 -> 4` on both axes, so the space, its `divide()`, and its `final_space()` are
+    /// three distinct block shapes to nest.
+    fn space() -> Space {
+        let seq = |edge| Cut::sequential(edge);
+        Tiling::new()
+            .extents(&[(M, 16), (N, 16)])
+            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+                l.axis(M, seq(8)).axis(N, seq(8))
+            })
+            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+                l.axis(M, seq(4)).axis(N, seq(4))
+            })
+            .leaf(Leaf::Register)
+    }
+
+    /// No nesting is the plain row-major buffer: the space's own extents, innermost in lines.
+    #[test]
+    fn flat_nesting_is_the_space_itself() {
+        assert_eq!(
+            storage_extents(&space(), 1, &[]),
+            (vec![16, 16], vec![16, 1])
+        );
+        assert_eq!(storage_extents(&space(), 4, &[]), (vec![16, 4], vec![4, 1]));
+    }
+
+    /// One block is the `[grid…, tile…]` split: each axis holds `16 / 4` tiles of `4`.
+    #[test]
+    fn one_block_splits_grid_and_tile() {
+        let space = space();
+        assert_eq!(
+            storage_extents(&space, 1, &[space.final_space()]),
+            (vec![4, 4, 4, 4], vec![64, 16, 4, 1])
+        );
+    }
+
+    /// Two nested blocks add a middle grid, each level counting how many of the block below it
+    /// it holds: `16 = 2 x (8 = 2 x (4))`.
+    #[test]
+    fn two_blocks_nest() {
+        let space = space();
+        let nesting = [space.divide(), space.final_space()];
+        assert_eq!(
+            storage_extents(&space, 1, &nesting),
+            (vec![2, 2, 2, 2, 4, 4], vec![128, 64, 32, 16, 4, 1])
+        );
+        // The nesting only regroups the buffer, never resizes it.
+        let (shape, _) = storage_extents(&space, 1, &nesting);
+        assert_eq!(shape.iter().product::<u32>(), space.tile_size() as u32);
+    }
+
+    /// A block that does not divide the one enclosing it has no `[grid…, block…]` split.
+    #[test]
+    #[should_panic(expected = "must divide")]
+    fn a_block_must_divide_its_enclosing_block() {
+        let space = space();
+        // Reversed: the coarse block sits inside the fine one.
+        storage_extents(&space, 1, &[space.final_space(), space.divide()]);
+    }
+
+    /// A `Tiled` stage groups the final tile; a final space has no grid left, so it stays plain.
+    #[test]
+    fn stage_nesting_follows_the_layout() {
+        let space = space();
+        assert_eq!(
+            stage_nesting(&space, StageStorage::Tiled),
+            vec![space.final_space()]
+        );
+        assert!(stage_nesting(&space, StageStorage::Strided).is_empty());
+        assert!(stage_nesting(&space.final_space(), StageStorage::Tiled).is_empty());
     }
 }

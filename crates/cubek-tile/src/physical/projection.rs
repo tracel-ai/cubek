@@ -23,9 +23,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::zspace::SmallVec;
 
-use crate::{
-    Axis, ConcreteLayout, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, MAX_AXES, Storage,
-};
+use crate::{Axis, ConcreteLayout, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, MAX_AXES};
 
 /// How far one unit of a logical axis's coordinate moves along one physical axis. Mirrors
 /// [`Extent`](crate::Extent): `Static` is a comptime constant so the advance folds the way
@@ -166,6 +164,74 @@ impl Projection {
         }
     }
 
+    /// [`direct`](Projection::direct) with the axes from `start_axis` on storage-tiled `levels`
+    /// deep: each of them labels `levels + 1` physical axes, in the buffer's
+    /// `[pre…, grid…, tile…]` order. `levels = 0` is [`direct`](Projection::direct) itself.
+    ///
+    /// The tiling lives in the repetition, so the projection alone says how many physical axes the
+    /// buffer has and how a coordinate splits across them ([`digit`](Projection::digit)); no extent
+    /// is read here and none is baked in.
+    pub fn tiled(axes: &[Axis], start_axis: usize, levels: usize) -> Self {
+        let mut physical: Vec<PhysicalAxisMap> = axes[..start_axis]
+            .iter()
+            .map(|&a| PhysicalAxisMap::of(a))
+            .collect();
+        for _ in 0..=levels {
+            physical.extend(axes[start_axis..].iter().map(|&a| PhysicalAxisMap::of(a)));
+        }
+        Projection::new(axes, &physical)
+    }
+
+    /// The same operand in *coordinate* space: an axis's storage fragments merged back into the one
+    /// coordinate they are digits of, so there is one entry per coordinate a
+    /// [`GmemLayout`](crate::GmemLayout) consumes rather than one per physical axis of the buffer.
+    /// [`positional`](Projection::positional) is the other half of the pair, coordinate to
+    /// physical; this one is logical to coordinate. An untiled operand, gathered or not, is its own
+    /// coordinate map.
+    pub fn untiled(&self) -> Projection {
+        let mut carried: Vec<Axis> = Vec::new();
+        let mut physical: Vec<PhysicalAxisMap> = Vec::new();
+        for map in self.physical.iter() {
+            let axis = map.terms()[0].axis;
+            if !carried.contains(&axis) {
+                carried.push(axis);
+                physical.push(map.clone());
+            }
+        }
+        Projection::new(&self.axes, &physical)
+    }
+
+    /// The same buffer addressed by physical position instead of by this operand's own axes: each
+    /// physical axis relabeled with the synthetic [`Axis`] of the coordinate that addresses it, at
+    /// coefficient `1`. Storage tiling survives (a tiled axis's fragments share one label, which is
+    /// what makes them digits of one coordinate); a gather does not, since it is resolved one layer
+    /// up, by [`AxisProjection`](crate::AxisProjection), and never reaches the layout.
+    ///
+    /// This is the map [`GmemLayout`](crate::GmemLayout) splits coordinates through, so a buffer
+    /// only ever has to describe itself once: the operand's projection, relabeled.
+    pub fn positional(&self) -> Projection {
+        let mut carried: Vec<Axis> = Vec::new();
+        for map in self.physical.iter() {
+            let axis = map.terms()[0].axis;
+            if !carried.contains(&axis) {
+                carried.push(axis);
+            }
+        }
+        let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
+        let physical: Vec<PhysicalAxisMap> = self
+            .physical
+            .iter()
+            .map(|map| {
+                let at = carried
+                    .iter()
+                    .position(|&a| a == map.terms()[0].axis)
+                    .expect("collected above");
+                PhysicalAxisMap::of(axes[at])
+            })
+            .collect();
+        Projection::new(&axes, &physical)
+    }
+
     /// [`GmemLayout`](crate::GmemLayout)'s own physical-position map: position `p`
     /// (`0..start_axis + num_tiled`) labeled by the synthetic axis `Axis(p)`. A `GmemLayout`
     /// addresses its buffer by physical position, already resolved past any gather one layer up,
@@ -174,22 +240,14 @@ impl Projection {
     /// order, at any depth.
     pub fn of_tiling(start_axis: usize, num_tiled: usize, levels: usize) -> Projection {
         let axes: Vec<Axis> = (0..start_axis + num_tiled).map(|p| Axis(p as u8)).collect();
-        let mut physical: Vec<PhysicalAxisMap> = axes[..start_axis]
-            .iter()
-            .map(|&a| PhysicalAxisMap::of(a))
-            .collect();
-        for _ in 0..=levels {
-            physical.extend(axes[start_axis..].iter().map(|&a| PhysicalAxisMap::of(a)));
-        }
-        Projection::new(&axes, &physical)
+        Projection::tiled(&axes, start_axis, levels)
     }
 
-    /// Whether this projection's physical rank exceeds its logical rank: some axis is split
-    /// across several physical fragments (storage-tiled). Only [`of_tiling`](Projection::of_tiling)
-    /// and a tiled [`of_layout`](Projection::of_layout) ever produce this; every other constructor
-    /// keeps physical and logical rank equal.
+    /// Whether some axis is storage-tiled: split across several physical fragments, so a
+    /// coordinate along it decomposes into one digit per fragment. Not a rank comparison, which a
+    /// gather also fails (its logical rank exceeds its physical one without any axis being split).
     pub fn is_tiled(&self) -> bool {
-        self.physical.len() != self.axes.len()
+        self.axes.iter().any(|&axis| self.carriers(axis).len() > 1)
     }
 
     /// Where `axis`'s digit at physical axis `pa` sits in the buffer's mixed radix: the physical
@@ -306,9 +364,9 @@ impl Projection {
             .all(|m| matches!(m.terms(), [t] if matches!(t.scale, Scale::Static(1))))
     }
 
-    /// The phase-1 contract for a non-[`direct`](Projection::direct) projection. A direct one is
-    /// unconstrained: it is what the engine has always done.
-    pub fn validate(&self, storage: &Storage) {
+    /// The phase-1 contract for a *gathered* (affine) projection. A plain one, storage-tiled or
+    /// not, is unconstrained: it is what the engine has always done.
+    pub fn validate(&self) {
         assert!(
             !self
                 .physical
@@ -317,7 +375,9 @@ impl Projection {
             "Projection: Dynamic scales are reserved for a runtime stride/dilation and are not \
              implemented yet"
         );
-        if self.is_direct() {
+        // Every physical axis carrying one logical axis at coefficient 1 is exactly "no gather",
+        // whatever the ranks: `direct`, and `tiled`, which repeats a label rather than scaling it.
+        if self.is_invertible() {
             return;
         }
         assert!(
@@ -333,19 +393,19 @@ impl Projection {
             "Projection: the innermost physical axis must be the operand's last logical axis at \
              coefficient 1 (it is addressed in vector lines)"
         );
-        // A tiled `[grid…, tile…]` buffer splits an advance into two digits, which is not linear
-        // in the edge, so it cannot absorb a scaled one. Projected operands are bare gmem.
-        assert!(
-            storage.start_axis == 0 && storage.levels == 0,
-            "Projection: a projected operand must be untiled gmem (start_axis 0, levels 0); \
-             got {storage:?}"
-        );
         for &axis in self.axes.iter() {
             assert!(
                 self.physical.iter().any(|m| m.scale(axis) != 0),
                 "Projection: logical axis {axis:?} addresses no physical axis"
             );
         }
+        // A tiled `[grid…, tile…]` buffer splits an advance into two digits, which is not linear
+        // in the edge, so it cannot absorb a scaled one. Projected operands are bare gmem.
+        assert!(
+            !self.is_tiled(),
+            "Projection: a gathered operand must be untiled gmem, but an axis is split across \
+             several physical fragments"
+        );
     }
 }
 
@@ -501,20 +561,24 @@ mod tests {
             &[A, R],
             &[PhysicalAxisMap::of(A), PhysicalAxisMap::affine(&[(R, 2)])],
         )
-        .validate(&Storage::passthrough(0, 0));
+        .validate();
     }
 
+    /// A gather cannot ride a `[grid…, tile…]` buffer: `B` here is storage-tiled (two fragments)
+    /// while `Ih <- A*2 + R*3` gathers, and one advance cannot be both split into digits and
+    /// scaled.
     #[test]
     #[should_panic(expected = "untiled gmem")]
-    fn projected_rejects_tiled_storage() {
+    fn a_gather_rejects_tiled_storage() {
         Projection::new(
             &[A, R, B],
             &[
                 PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
                 PhysicalAxisMap::of(B),
+                PhysicalAxisMap::of(B),
             ],
         )
-        .validate(&Storage::passthrough(0, 1));
+        .validate();
     }
 
     #[test]
@@ -524,13 +588,32 @@ mod tests {
             &[A, R, B],
             &[PhysicalAxisMap::affine(&[(A, 2)]), PhysicalAxisMap::of(B)],
         )
-        .validate(&Storage::passthrough(0, 0));
+        .validate();
     }
 
-    /// A direct projection is never constrained: tiled storage is exactly what it is for.
+    /// A plain projection is never constrained: storage tiling is exactly what it is for.
     #[test]
-    fn direct_accepts_tiled_storage() {
-        Projection::direct(&[A, B]).validate(&Storage::passthrough(0, 1));
+    fn tiled_is_not_a_gather() {
+        let p = Projection::tiled(&[A, B], 0, 1);
+        assert!(!p.is_direct());
+        assert!(p.is_tiled());
+        assert!(p.is_invertible());
+        p.validate();
+    }
+
+    /// A gather has fewer physical axes than logical ones without any axis being split, so the
+    /// rank comparison it used to be tested by does not answer this.
+    #[test]
+    fn a_gather_is_not_tiled() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(!p.is_tiled());
+        p.validate();
     }
 
     /// `[batch, m_grid, n_grid, m_tile, n_tile]`: a passthrough axis carries one physical axis and
@@ -632,6 +715,55 @@ mod tests {
             };
             assert_eq!(digit(0) * block(0) + digit(1) * block(1), coord);
         }
+    }
+
+    /// A spec built from a realized tiled layout is honest about its buffer: its physical rank
+    /// *is* the tensor's rank, which is what `Tile::of` reads its shape and strides over, and its
+    /// positional relabeling is the synthetic map the layout is addressed through. The declared
+    /// twin (`TileSpec::new` plus a tiled `Storage`) describes the same buffer.
+    #[test]
+    fn a_tiled_spec_matches_its_buffer() {
+        use crate::{PhysicalAxis, Storage, TileSpec};
+
+        const BATCH: Axis = Axis(3);
+        let layout = ConcreteLayout::new(&[
+            PhysicalAxis::new(BATCH, 2),
+            PhysicalAxis::new(A, 4),
+            PhysicalAxis::new(B, 4),
+            PhysicalAxis::new(A, 8),
+            PhysicalAxis::new(B, 8),
+        ]);
+        let spec = TileSpec::from_concrete(&layout, false, 0);
+
+        assert_eq!(spec.projection.physical_rank(), layout.axes().len());
+        assert_eq!(spec.projection.positional(), Projection::of_tiling(1, 2, 1));
+        assert_eq!(
+            TileSpec::new(&[BATCH, A, B], Storage::passthrough(1, 1)).projection,
+            spec.projection
+        );
+    }
+
+    /// An untiled operand is its own positional map, up to the relabeling.
+    #[test]
+    fn positional_of_a_plain_operand_is_the_identity() {
+        assert_eq!(
+            Projection::direct(&[B, A]).positional(),
+            Projection::direct(&[Axis(0), Axis(1)])
+        );
+    }
+
+    /// A gather resolves one layer up, so its layout sees one coordinate per physical axis: the
+    /// two logical axes sharing physical axis 0 collapse into that one position.
+    #[test]
+    fn positional_of_a_gather_drops_the_affine_terms() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert_eq!(p.positional(), Projection::of_tiling(0, 2, 0));
     }
 
     #[test]
