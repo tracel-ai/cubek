@@ -28,6 +28,7 @@ impl<T: Numeric> TmaData<T> {
     pub fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
     ) -> Tile<T> {
         let bound = view.shape();
         let mut pos = CoordsDyn::new();
@@ -38,6 +39,7 @@ impl<T: Numeric> TmaData<T> {
         Tile::<T> {
             tile_kind: TileKind::new_TmaGmem(TmaData::<T> { view, pos, bound }),
             space: comptime!(space),
+            leaf: comptime!(leaf),
         }
     }
 }

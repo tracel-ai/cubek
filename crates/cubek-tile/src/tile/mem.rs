@@ -4,6 +4,7 @@
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    std::quant::view::QuantizedView as DequantView,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
@@ -122,9 +123,13 @@ impl<T: Numeric> Tile<T> {
         values: &Tensor<E>,
         scales: &Tensor<f32>,
         #[comptime] scheme: QuantScheme,
+        #[comptime] until: Until,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        // The engine's own backstop: the builder checks this too, but a hand-built
+        // `QuantTileArgLaunch` reaches here without passing through it.
+        comptime!(validate_until(until, spec.leaf));
         let rank = comptime!(spec.axes().len());
         let block = comptime!(block_edges(scheme, rank));
         let mut strides = Coords::<u32>::new();
@@ -141,6 +146,7 @@ impl<T: Numeric> Tile<T> {
             strides,
             window_start: 0u32,
             block: comptime!(block),
+            until: comptime!(until),
             // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
             scale_shape: comptime!(Vec::new()),
             scheme: comptime!(scheme),
@@ -159,6 +165,7 @@ impl<T: Numeric> Tile<T> {
     ) -> Tile<T> {
         // The one projection: the kernel's space narrowed to this operand's axes.
         let space = comptime!(space.project(spec.axes()));
+        let leaf = comptime!(spec.leaf);
         let projection = comptime!(spec.projection.clone());
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
@@ -173,9 +180,7 @@ impl<T: Numeric> Tile<T> {
         ));
         // Stage layout: the explicit override, else derived from the space's leaf.
         let stage = comptime!(StagePlan {
-            layout: spec
-                .stage
-                .unwrap_or_else(|| StageStorage::for_space(&space)),
+            layout: spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
             units: spec.units,
         });
         // The binding type's own width, comptime; a packed store serves `pack` values per
@@ -261,6 +266,7 @@ impl<T: Numeric> Tile<T> {
                 lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(space),
+            leaf: comptime!(leaf),
         }
     }
 }
@@ -268,27 +274,32 @@ impl<T: Numeric> Tile<T> {
 #[cube]
 impl<T: Numeric> MemData<T> {
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
-    /// the element the operand *serves*: a quantized operand dequantizes at the fill, so the stage
-    /// holds `T`. The twin is [`smem_like_stored`](MemData::smem_like_stored), which keeps the
-    /// operand's stored element instead and dequantizes at the read; a leaf that cannot dequantize
-    /// on read (cmma) must take this one. Identical to its twin for a plain operand, whose served
-    /// and stored elements are the same.
+    /// the element that operand needs staged: the one it *serves* when the load is what decodes it
+    /// ([`Until::Load`], and always for a plain operand, whose served and stored elements are the
+    /// same), else the one it is *stored* in ([`smem_stored`](MemData::smem_stored)). The operand
+    /// carries which, so a caller stages it without asking whether it is quantized at all.
     pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
-        MemData::smem(
-            comptime!(operand.space.divide()),
-            operand.vector_size(),
-            operand.stage(),
-        )
+        let until = operand.until();
+        match comptime!(until) {
+            Until::Load => MemData::smem(
+                comptime!(operand.space.divide()),
+                comptime!(operand.leaf),
+                operand.vector_size(),
+                operand.stage(),
+            ),
+            Until::Read => MemData::smem_stored(operand),
+        }
     }
 
     /// [`smem_like`](MemData::smem_like) in the element the operand is *stored* in rather than the
     /// one it serves: a quantized operand keeps its stored form (native `i8`, or `u32` words when
     /// the scheme packs several values each) and its scales, so the leaf dequantizes at the read
     /// (see [`smem_quant`](MemData::smem_quant)) instead of the fill inflating the stage to `T`.
-    /// Only a leaf that reads through [`matrix_transparent`](MemData::matrix_transparent) can be
-    /// served this; `Staging::new` owns that call.
-    pub fn smem_like_stored(operand: &Tile<T>) -> Tile<T> {
+    /// Reached only through [`smem_like`](MemData::smem_like), on an operand whose quantized form
+    /// runs [`Until::Read`].
+    fn smem_stored(operand: &Tile<T>) -> Tile<T> {
         let space = comptime!(operand.space.divide());
+        let leaf = comptime!(operand.leaf);
         let vector_size = operand.vector_size();
         let stage = operand.stage();
         match &operand.tile_kind {
@@ -296,28 +307,30 @@ impl<T: Numeric> MemData<T> {
                 #[comptime]
                 match &g.store.quant {
                     // Served == stored, so this is `smem_like`.
-                    ComptimeOption::None => MemData::smem(space, vector_size, stage),
+                    ComptimeOption::None => MemData::smem(space, leaf, vector_size, stage),
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
                             QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
                                 space,
+                                leaf,
                                 vector_size,
                                 stage,
                                 comptime!(info.scheme),
                             ),
                             other => panic!(
-                                "MemData::smem_like_stored: native quant storage element {:?} is not wired (i8 only)",
+                                "MemData::smem_stored: native quant storage element {:?} is not wired (i8 only)",
                                 other
                             ),
                         },
                         QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
                             space,
+                            leaf,
                             vector_size,
                             stage,
                             comptime!(info.scheme),
                         ),
                         other => panic!(
-                            "MemData::smem_like_stored: quant storage {:?} is not wired (native or packed-u32)",
+                            "MemData::smem_stored: quant storage {:?} is not wired (native or packed-u32)",
                             other
                         ),
                     },
@@ -326,9 +339,9 @@ impl<T: Numeric> MemData<T> {
             // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
             // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
             // one must not reuse this arm; see `Staging::new`, which refuses that combination.
-            TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
+            TileKind::TmaGmem(_) => MemData::smem(space, leaf, vector_size, stage),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("MemData::smem_like_stored: a fragment is not a stage source")
+                panic!("MemData::smem_stored: a fragment is not a stage source")
             }
         }
     }
@@ -340,12 +353,20 @@ impl<T: Numeric> MemData<T> {
     /// grid to tile, so it is always plain. `units` is the launch's cube size, `0` when unknown.
     pub fn smem(
         #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
         let size!(W) = vector_size;
         let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(space.tile_size() / vector_size));
-        MemData::smem_over(space, vector_size, stage, &smem, ComptimeOption::new_None())
+        MemData::smem_over(
+            space,
+            leaf,
+            vector_size,
+            stage,
+            &smem,
+            ComptimeOption::new_None(),
+        )
     }
 
     /// [`smem`](MemData::smem) staging the element an operand is *stored* in rather than the one it
@@ -356,6 +377,7 @@ impl<T: Numeric> MemData<T> {
     /// [`fill_from`](MemData::fill_from)).
     pub fn smem_quant<I: Numeric>(
         #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         #[comptime] scheme: QuantScheme,
@@ -365,7 +387,7 @@ impl<T: Numeric> MemData<T> {
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(space.tile_size() / vector_size));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
-        MemData::smem_over(space, vector_size, stage, &smem, quant)
+        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant)
     }
 
     /// The body both smem constructors share: everything but the allocation's element, which is why
@@ -375,6 +397,7 @@ impl<T: Numeric> MemData<T> {
     /// window.
     fn smem_over<S: CubePrimitive>(
         #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         smem: &Shared<[S]>,
@@ -423,6 +446,7 @@ impl<T: Numeric> MemData<T> {
                 lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(space),
+            leaf: comptime!(leaf),
         }
     }
 }
@@ -666,6 +690,19 @@ impl<T: Numeric> MemData<T> {
         comptime!(self.access.stage)
     }
 
+    /// How far this store's quantized form travels ([`Until`]). A plain store answers
+    /// [`Until::Load`]: served and stored are the same element, so nothing is left to decode.
+    // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
+    #[allow(clippy::let_and_return)]
+    pub(crate) fn until(&self) -> comptime_type!(Until) {
+        let until = #[comptime]
+        match &self.store.quant {
+            ComptimeOption::Some(info) => comptime!(info.until),
+            ComptimeOption::None => Until::Load,
+        };
+        until
+    }
+
     /// Comptime quant dispatch for a leaf read, mirroring [`fill_from`](MemData::fill_from)'s
     /// storage-element choice: `0` = plain (serve `T` directly); `1` = native (one storage element
     /// per value, `i8`); `>1` = packed `u32`, the packing factor (values per word). The physical
@@ -838,6 +875,14 @@ impl<T: Numeric> MemData<T> {
             !self.access.overhang.masks(),
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
+        // A raw window serves the buffer at the element it was erased to, so a quantized store
+        // would hand its stored bytes over as served values. Every other door refuses the same way.
+        if comptime!(self.store.quant.is_some()) {
+            panic!(
+                "MemData::window_slice: a quantized store has no raw element window; a fragment \
+                 load reads it through Tile::matrix_transparent"
+            )
+        }
         self.window_start.fcast::<usize>()
     }
 
@@ -865,43 +910,6 @@ impl<T: Numeric> MemData<T> {
             self.lines::<W>()
                 .view(self.base())
                 .view(self.window())
-                .view(layout),
-            comptime!(self.access.overhang.masks()),
-        )
-    }
-
-    /// [`masked`](MemData::masked) over the storage element `I` a quantized buffer truly holds
-    /// (see [`QuantInfo`]); a [`QuantizedView`] pairs it with the scales to dequantize each
-    /// read. The windowed twin of [`flat_storage`](MemData::flat_storage).
-    pub(crate) fn masked_storage<I: Numeric, W: Size, C: Coordinates, L: TileLayout<C>>(
-        &self,
-        layout: L,
-    ) -> MaskedView<'_, Vector<I, W>, C> {
-        MaskedView::new(
-            self.lines_storage::<I, W>()
-                .view(self.base())
-                .view(self.window())
-                .view(layout),
-            comptime!(self.access.overhang.masks()),
-        )
-    }
-
-    /// The scales over this same window: [`ScaleLayout`] resolves a window coordinate to its
-    /// block's scale, addressed by the same `layout` as the values, so both answer the same
-    /// coordinate. The windowed twin of [`flat_scales`](MemData::flat_scales).
-    fn masked_scales<'a, C: Coordinates, L: TileLayout<C>>(
-        &self,
-        info: &'a QuantInfo,
-        layout: L,
-    ) -> MaskedView<'a, f32, C> {
-        MaskedView::new(
-            info.buffer
-                .view(ScaleLayout::new(
-                    info.strides.clone(),
-                    info.window_start,
-                    comptime!(info.block.clone()),
-                    comptime!(self.store.vector_size),
-                ))
                 .view(layout),
             comptime!(self.access.overhang.masks()),
         )
@@ -939,53 +947,37 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// [`flat`](MemData::flat) over the storage element `I` a quantized buffer truly holds; the
-    /// [`QuantizedView`](crate::QuantizedView) wraps it to dequantize each read.
-    pub(crate) fn flat_storage<I: Numeric, W: Size>(&self) -> FlatView<'_, Vector<I, W>> {
-        FlatView::new(
-            self.lines_storage::<I, W>()
-                .view(self.base())
-                .view(self.window())
-                .view(FlatLayout::new(self.window.extent.clone())),
-            comptime!(self.access.overhang.masks()),
-        )
-    }
-
-    /// The scales as a third [`flat`](MemData::flat) over this same window: [`ScaleLayout`]
-    /// resolves a window coordinate to its block's scale, then the values' own [`FlatLayout`]
-    /// rides on top, so both views answer the same flat position. Masked like the values, so an
-    /// overhang line reads scale `0` rather than off the end of the scales.
-    fn flat_scales<'a>(&self, info: &'a QuantInfo) -> FlatView<'a, f32> {
-        FlatView::new(
-            info.buffer
-                .view(ScaleLayout::new(
-                    info.strides.clone(),
-                    info.window_start,
-                    comptime!(info.block.clone()),
-                    comptime!(self.store.vector_size),
-                ))
-                .view(FlatLayout::new(self.window.extent.clone())),
-            comptime!(self.access.overhang.masks()),
-        )
-    }
-
     /// Quantization-transparent [`flat`](MemData::flat): a plain store serves the bare
     /// `Direct` read, a quantized one re-types to the storage element `I` and pairs it with the
     /// scales over the same window, dequantizing each read into `T`. `#[comptime]`, so the plain
     /// path pays nothing.
     pub(crate) fn flat_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
-    ) -> TileView<'_, T, I, WP, W, Coords1d> {
+    ) -> FlatView<'_, Vector<T, W>> {
         #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
-                // The storage view groups at the *physical* width: a packed buffer holds
-                // `W / num_quants` elements per served line.
-                self.flat_storage::<I, WP>(),
-                self.flat_scales(info),
-                comptime!(info.scheme),
-            )),
-            ComptimeOption::None => TileView::new_Direct(self.flat::<W>()),
+            ComptimeOption::Some(info) => FlatView::new(
+                DequantView::<I, WP, f32, T, W, Coords1d>::new(
+                    // The storage view groups at the *physical* width: a packed buffer holds
+                    // `W / num_quants` elements per served line.
+                    self.lines_storage::<I, WP>()
+                        .view(self.base())
+                        .view(self.window())
+                        .view(FlatLayout::new(self.window.extent.clone())),
+                    info.buffer
+                        .view(ScaleLayout::new(
+                            info.strides.clone(),
+                            info.window_start,
+                            comptime!(info.block.clone()),
+                            comptime!(self.store.vector_size),
+                        ))
+                        .view(FlatLayout::new(self.window.extent.clone())),
+                    comptime!(info.scheme),
+                )
+                .view(),
+                comptime!(self.access.overhang.masks()),
+            ),
+            ComptimeOption::None => self.flat::<W>(),
         }
     }
 
@@ -995,18 +987,45 @@ impl<T: Numeric> MemData<T> {
     /// the same `layout`, and dequantizes each read into `T`. This is what lets a leaf read a
     /// quantized operand straight from gmem, or from a stage still in the stored element, without
     /// a dequantize-into-`f32` fill. `#[comptime]`, so plain pays nothing.
-    pub(crate) fn transparent<I: Numeric, WP: Size, W: Size, C: Coordinates, L: TileLayout<C>>(
+    pub(crate) fn transparent<
+        I: Numeric,
+        WP: Size,
+        W: Size,
+        C: Coordinates + 'static,
+        L: TileLayout<C>,
+    >(
         &self,
         layout: L,
-    ) -> TileView<'_, T, I, WP, W, C> {
+    ) -> MaskedView<'_, Vector<T, W>, C> {
         #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => TileView::new_Quantized(QuantizedView::new(
-                self.masked_storage::<I, WP, C, L>(layout.clone()),
-                self.masked_scales::<C, L>(info, layout),
-                comptime!(info.scheme),
-            )),
-            ComptimeOption::None => TileView::new_Direct(self.masked::<W, C, L>(layout)),
+            // A quantized view *is* a view: cubecl's decodes on read and answers as `Vector<T, W>`,
+            // so both arms hand back the same masked view and no caller learns the difference.
+            ComptimeOption::Some(info) => MaskedView::new(
+                DequantView::<I, WP, f32, T, W, C>::new(
+                    // The storage view groups at the *physical* width: a packed buffer holds
+                    // `W / num_quants` elements per served line.
+                    self.lines_storage::<I, WP>()
+                        .view(self.base())
+                        .view(self.window())
+                        .view(layout.clone()),
+                    // The scales over this same window: `ScaleLayout` resolves a window coordinate
+                    // to its block's scale, addressed by the same `layout` as the values, so both
+                    // answer the same coordinate.
+                    info.buffer
+                        .view(ScaleLayout::new(
+                            info.strides.clone(),
+                            info.window_start,
+                            comptime!(info.block.clone()),
+                            comptime!(self.store.vector_size),
+                        ))
+                        .view(layout),
+                    comptime!(info.scheme),
+                )
+                .view(),
+                comptime!(self.access.overhang.masks()),
+            ),
+            ComptimeOption::None => self.masked::<W, C, L>(layout),
         }
     }
 
@@ -1014,7 +1033,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         layout: BatchMatrix,
-    ) -> TileView<'_, T, I, WP, W, Coords2d> {
+    ) -> MatrixView<'_, Vector<T, W>> {
         self.transparent::<I, WP, W, Coords2d, BatchMatrix>(layout)
     }
 
@@ -1023,7 +1042,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn nd_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         layout: AxisProjection,
-    ) -> TileView<'_, T, I, WP, W, CoordsDyn> {
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout)
     }
 
@@ -1300,6 +1319,9 @@ fn smem_quant_info(
         strides,
         window_start: 0u32,
         block: comptime!(block),
+        // A stage only keeps its quantized form when the read is what decodes it; that is the one
+        // path reaching here.
+        until: comptime!(Until::Read),
         scale_shape: comptime!(nb),
         scheme: comptime!(scheme),
     })
@@ -1585,7 +1607,7 @@ mod tests {
             .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
                 l.axis(M, seq(4)).axis(N, seq(4))
             })
-            .leaf(Leaf::Register)
+            .build()
     }
 
     /// No nesting is the plain row-major buffer: the space's own extents, innermost in lines.

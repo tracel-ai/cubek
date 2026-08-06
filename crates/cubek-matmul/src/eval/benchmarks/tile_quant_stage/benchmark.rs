@@ -113,7 +113,7 @@ impl TileQuantStageBench {
                     .axis(N, Cut::unit(un))
                     .axis(K, Cut::sequential(self.tk))
             })
-            .leaf(Leaf::Register)
+            .build()
     }
 }
 
@@ -129,7 +129,7 @@ impl Benchmark for TileQuantStageBench {
             .arange();
         let b = TileInput::builder(&self.client, space.project(&[K, N]))
             .untiled()
-            .packed(&self.scheme)
+            .packed(&self.scheme, Until::Read)
             .arange();
         let c = TileInput::builder(&self.client, space.project(&[M, N]))
             .untiled()
@@ -146,7 +146,7 @@ impl Benchmark for TileQuantStageBench {
             .arg(b.tile.handle().binding())
             .subspace(&[K, N])
             .vectorize(self.pack)
-            .quantized(b.scales_arg(), self.scheme)
+            .quantized(b.scales_arg(), self.scheme, Until::Read)
             .build();
         // The register microkernel lines the accumulator at the RHS's served width.
         let c = launcher

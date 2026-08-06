@@ -140,8 +140,8 @@ fn mma_register_direct<
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
-        let lhs_check = lhs.check();
-        let rhs_check = rhs.check();
+        let lhs_check = comptime!(lhs.check);
+        let rhs_check = comptime!(rhs.check);
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
@@ -249,8 +249,8 @@ fn mma_register_gather<
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
-        let lhs_check = lhs_view.check();
-        let rhs_check = rhs_view.check();
+        let lhs_check = comptime!(lhs_view.check);
+        let rhs_check = comptime!(rhs_view.check);
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);

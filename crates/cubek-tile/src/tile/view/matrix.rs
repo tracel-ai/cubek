@@ -124,7 +124,7 @@ impl<T: Numeric> Tile<T> {
     pub fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         i: usize,
-    ) -> TileView<'_, T, I, WP, W, Coords2d> {
+    ) -> MatrixView<'_, Vector<T, W>> {
         let layout = self.batch_matrix(i);
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.matrix_transparent::<I, WP, W>(layout),

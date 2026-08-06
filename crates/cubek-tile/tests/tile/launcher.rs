@@ -5,7 +5,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, StridedOperand, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Schedule, StridedOperand, Tiling, Until, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -83,7 +83,7 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
                 .axis(N, Cut::plane(8))
                 .axis(K, Cut::sequential(4))
         })
-        .leaf(Leaf::Register)
+        .build()
 }
 
 #[test]
@@ -242,7 +242,11 @@ fn quantize(v: usize, scheme: QuantScheme) {
         .subspace(&[M, K])
         .vectorize(v)
         .checked(false)
-        .quantized(binding(&client, &[1, 8]).into_tensor_arg(), scheme)
+        .quantized(
+            binding(&client, &[1, 8]).into_tensor_arg(),
+            scheme,
+            Until::Read,
+        )
         .build();
 }
 

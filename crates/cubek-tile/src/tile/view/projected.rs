@@ -126,7 +126,7 @@ impl<T: Numeric> Tile<T> {
     /// axis of its [`Space`](crate::Space) (the innermost a line index). The N-D counterpart of
     /// [`matrix_transparent`](Tile::matrix_transparent), and the only read surface a gathered
     /// operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
-    pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> TileView<'_, T, I, WP, W, CoordsDyn> {
+    pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let layout = axis_projection(

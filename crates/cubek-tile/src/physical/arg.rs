@@ -32,12 +32,17 @@ pub struct TileSpec {
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
     pub stage: Option<StageStorage>,
+    /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
+    /// two encodings. A format decision, so it belongs to the operand rather than to the
+    /// partitioning; [`Tile::of`](crate::Tile::of) carries it onto the tile. Operands that disagree
+    /// meet the kind-pairing panics at the instruction.
+    pub leaf: Leaf,
 }
 
 impl TileSpec {
     /// An operand's spec from its mapping alone; the optional halves are the safe defaults
-    /// (unchecked, cube size unknown) and are set by [`checked`](Self::checked),
-    /// [`units`](Self::units), and [`staged`](Self::staged).
+    /// (unchecked, cube size unknown, memory leaf) and are set by [`checked`](Self::checked),
+    /// [`units`](Self::units), [`staged`](Self::staged), and [`leaf`](Self::leaf).
     pub fn new(projection: Projection) -> Self {
         projection.validate();
         TileSpec {
@@ -45,6 +50,7 @@ impl TileSpec {
             check_bounds: false,
             units: 0,
             stage: None,
+            leaf: Leaf::Memory,
         }
     }
 
@@ -66,6 +72,12 @@ impl TileSpec {
         TileSpec::new(Projection::of_layout(layout))
             .checked(check)
             .units(units)
+    }
+
+    /// State what this operand is at the instruction (default [`Leaf::Memory`], the memory form).
+    pub fn leaf(mut self, leaf: Leaf) -> Self {
+        self.leaf = leaf;
+        self
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
@@ -121,6 +133,9 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub spec: TileSpec,
     #[cube(comptime)]
     pub scheme: QuantScheme,
+    /// How far this operand stays quantized; stated at launch, where what can decode is known.
+    #[cube(comptime)]
+    pub until: Until,
 }
 
 #[cube]
@@ -132,6 +147,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             self.values,
             self.scales,
             comptime!(self.scheme),
+            comptime!(self.until),
             space,
             comptime!(self.spec.clone()),
         )
@@ -157,6 +173,7 @@ impl<E: Numeric> TmaTileArg<E> {
         TmaData::from_tensor_map(
             self.view.clone(),
             comptime!(space.project(self.spec.axes())),
+            comptime!(self.spec.leaf),
         )
     }
 }
@@ -242,6 +259,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         axes: &[Axis],
         dims: (u32, u32, u32),
         transposed: bool,
+        leaf: Leaf,
     ) -> Self {
         let batched = match axes.len() {
             2 => false,
@@ -252,7 +270,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes))
+        Self::new(view, TileSpec::direct(axes).leaf(leaf))
     }
 }
 

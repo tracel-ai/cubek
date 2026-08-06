@@ -4,21 +4,59 @@ use crate::{Fold, FoldExpand};
 use cubecl::prelude::*;
 
 /// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out.
+///
+/// A `Unit` axis the tile doesn't span is *folded*: the lanes cover disjoint slices of it, so
+/// each holds a partial. One the tile does span is *carried*: it gives each lane a different
+/// cell. Which of the three cases below a tile is in is what says how a partial drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LaneShare {
-    /// The lane's cells are whole, so they read and write as they are.
+    /// Nothing folded: the lane's cells are whole, so they read and write as they are.
     Whole,
-    /// The lane's cells are a partial: an axis the tile doesn't span is spread across the lanes,
-    /// so an accumulator only becomes true once combined across the plane.
-    Partial,
+    /// Nothing carried either, so every lane of the plane holds a partial of the *same* cell and
+    /// the plane's own reduction is the drain.
+    Plane,
+    /// Both, so the plane splits into groups — one cell each, several cells in flight at once.
+    /// `fold_mask` is the set of lane-index bits the folded axes occupy, so a cell's partials
+    /// live on exactly the lanes that agree outside it and differ inside.
+    Group { fold_mask: usize },
 }
 
-/// A descent's share, given the parent's and the level's: once partial, always partial.
+/// A descent's share, given the parent's and the level's: the folds compose, since each level
+/// takes its own bits of the lane index.
+///
+/// [`LaneShare::Plane`] already spans every lane, so nothing can fold under it — and nothing
+/// builds that, since [`Space::cube_dim`](crate::Space::cube_dim) caps the tree's `Unit` instance
+/// product at the plane width.
 pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare {
     match (parent, level) {
-        (LaneShare::Whole, LaneShare::Whole) => LaneShare::Whole,
-        _ => LaneShare::Partial,
+        (LaneShare::Whole, share) | (share, LaneShare::Whole) => share,
+        (LaneShare::Group { fold_mask: a }, LaneShare::Group { fold_mask: b }) => {
+            LaneShare::Group { fold_mask: a | b }
+        }
+        _ => panic!("join_lane_share: {parent:?} under {level:?} — nothing folds under a plane"),
     }
+}
+
+/// Combine a lane group's partials, leaving every lane of the group holding the group's total.
+///
+/// One butterfly step per bit of `fold_mask`. A cell's partials sit on the lanes that agree
+/// outside the mask and differ inside it, so an xor by a single mask bit stays within the group
+/// — every group folds at once, each over its own cell, with no guard and no branch.
+/// [`LaneShare::Plane`] is this same fold across every bit, and takes the hardware's reduction
+/// instead.
+#[cube]
+pub(crate) fn fold_group<E: Numeric, V: Size>(
+    value: Vector<E, V>,
+    #[comptime] fold_mask: usize,
+) -> Vector<E, V> {
+    let mut total = value;
+    #[unroll]
+    for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
+        if comptime!(fold_mask & (1 << bit) != 0) {
+            total = total + plane_shuffle_xor(total, comptime!(1u32 << bit));
+        }
+    }
+    total
 }
 
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
