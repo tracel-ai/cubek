@@ -11,7 +11,7 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RowState, Space, StagePlan, Storage, TileArg, TileArgLaunch, TileSpec,
+    Axis, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
 };
 
 const Q: Axis = Axis(0);
@@ -168,11 +168,11 @@ fn run(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+            TileSpec::direct(&[Q, S]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+            TileSpec::direct(&[Q, S]),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
@@ -441,11 +441,11 @@ fn run_smem_acc(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+            TileSpec::direct(&[Q, S]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[Q, S], Storage::of(2, 2)),
+            TileSpec::direct(&[Q, S]),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),

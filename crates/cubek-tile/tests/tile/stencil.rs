@@ -87,11 +87,11 @@ fn run(
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
-            TileSpec::new(w_axes, Storage::passthrough(0, 0)),
+            TileSpec::direct(w_axes),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(out_axes, Storage::of(out_rank, out_rank)),
+            TileSpec::direct(out_axes),
         ),
         space,
         f32_ty,
@@ -154,7 +154,7 @@ impl Conv1d {
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
-        let in_spec = TileSpec::projected(
+        let in_spec = TileSpec::new(
             Projection::new(
                 &[OH, RH, CI],
                 &[
@@ -162,7 +162,8 @@ impl Conv1d {
                     PhysicalAxisMap::of(CI),
                 ],
             ),
-            Storage::passthrough(0, 0),
+            false,
+            0,
         );
 
         let (got, input, weight) = run(
@@ -345,7 +346,7 @@ impl Conv2d {
             .leaf(Leaf::Register);
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
-        let in_spec = TileSpec::projected(
+        let in_spec = TileSpec::new(
             Projection::new(
                 &[OH, OW, RH, RW, CI],
                 &[
@@ -354,7 +355,8 @@ impl Conv2d {
                     PhysicalAxisMap::of(CI),
                 ],
             ),
-            Storage::passthrough(0, 0),
+            false,
+            0,
         );
 
         let (got, input, weight) = run(

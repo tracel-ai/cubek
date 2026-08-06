@@ -14,7 +14,9 @@ use cubecl::{
     TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
     quant::scheme::QuantScheme, zspace::Shape,
 };
-use cubek_tile::{QuantTileArgLaunch, Space, Storage, TileArgLaunch, TileSpec as CubekTileSpec};
+use cubek_tile::{
+    Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec as CubekTileSpec,
+};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -123,12 +125,6 @@ impl TileInput {
         .into_tensor_arg()
     }
 
-    /// The tensor's physical [`Storage`] — derived from the buffer's rank vs the
-    /// logical space's rank, so the launch never hand-writes tile levels.
-    pub fn storage(&self) -> Storage {
-        Storage::of(self.handle.shape().len(), self.space.rank())
-    }
-
     /// The tile as one launch argument: its scalar-unit tensor paired with its
     /// [`spec`](Self::spec). The kernel's element type carries the width.
     pub fn arg<E: Numeric, V: Size>(&self) -> TileArgLaunch<'static, E, V, TestRuntime> {
@@ -141,7 +137,9 @@ impl TileInput {
         let axes: Vec<_> = (0..self.space.rank())
             .map(|i| self.space.axis_at(i))
             .collect();
-        CubekTileSpec::new(&axes, self.storage())
+        let levels = self.handle.shape().len() / self.space.rank() - 1;
+        let tiling = StorageTiling::uniform(self.space.rank(), levels);
+        CubekTileSpec::new(Projection::tiled(&axes, tiling), false, 0)
     }
 
     /// The semantic space the tile lives in.

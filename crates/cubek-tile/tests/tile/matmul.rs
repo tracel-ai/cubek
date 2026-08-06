@@ -234,8 +234,8 @@ fn matmul_cpu_dynamic_k() {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
-        TileArgLaunch::new(b.tensor_arg(1), TileSpec::new(&[K, N], b.storage())),
+        a.arg(),
+        b.arg(),
         c.arg(),
         space.with_dynamic(&[K]),
         dtype,
@@ -1497,7 +1497,6 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         .zeros();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a_storage = Storage::of(2, 2);
     let e_dtype = f32::as_type_native_unchecked().storage_type();
 
     cmma_matmul_quant::launch::<TestRuntime>(
@@ -1507,7 +1506,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2033,7 +2032,6 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a_storage = Storage::of(2, 2);
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
         .untiled()
@@ -2050,7 +2048,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2118,7 +2116,6 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a_storage = Storage::of(2, 2);
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
         .untiled()
@@ -2135,7 +2132,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2220,8 +2217,6 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
     let scales = TestInput::builder(client.clone(), shape![1, 1])
         .custom(vec![scale])
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
@@ -2239,7 +2234,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2314,8 +2309,6 @@ fn cmma_matmul_quant_block_m_k_walk() {
     let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
@@ -2333,7 +2326,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2408,8 +2401,6 @@ fn cmma_matmul_quant_block_k_k_walk() {
     let scales = TestInput::builder(client.clone(), shape![1, k / bk])
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
@@ -2427,7 +2418,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2502,8 +2493,6 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     let scales = TestInput::builder(client.clone(), shape![1, k / bk])
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
@@ -2521,7 +2510,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
         ),
         b.arg(),
@@ -2871,12 +2860,7 @@ fn run_register_matmul_quant(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        QuantTileArgLaunch::new(
-            a_arg,
-            scales_arg,
-            TileSpec::new(&[M, K], Storage::of(2, 2)),
-            scheme,
-        ),
+        QuantTileArgLaunch::new(a_arg, scales_arg, TileSpec::direct(&[M, K]), scheme),
         b.arg(),
         c.arg(),
         space,

@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, StorageTiling, Tiling, WalkOrder};
 
 use crate::{
     definition::{
@@ -193,20 +193,20 @@ pub fn launch_ref<R: Runtime>(
         .arg(lhs.into_data())
         .subspace(&[M, K])
         .batches(&out_batch_axes)
-        .levels(lhs_levels)
+        .tiling(StorageTiling::uniform(2, lhs_levels))
         .build();
     let b = launch
         .arg(rhs)
         .subspace(&[K, N])
         .batches(&out_batch_axes)
-        .levels(rhs_levels)
+        .tiling(StorageTiling::uniform(2, rhs_levels))
         .vectorize(v)
         .build();
     let c = launch
         .arg(out)
         .subspace(&[M, N])
         .batches(&out_batch_axes)
-        .levels(out_levels)
+        .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)
         .build();
     cpu_gemm_kernel::launch::<R>(

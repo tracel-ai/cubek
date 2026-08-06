@@ -47,7 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
+    Axis, CubeAxis, Cut, Leaf, Schedule, Space, TileArg, TileArgLaunch, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -249,9 +249,9 @@ fn run(
         client,
         space.cube_count(),
         mapping.cube_dim(&space, client),
-        TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
-        TileArgLaunch::new(rhs_arg(&b, mapping), TileSpec::new(&[K, N], b.storage())),
-        TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+        TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
+        TileArgLaunch::new(c.tensor_arg(1), c.spec()),
         space,
         dtype,
     );
@@ -288,12 +288,9 @@ impl Benchmark for SplitKBench {
             &self.client,
             self.cube_count.clone(),
             self.cube_dim,
-            TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
-            TileArgLaunch::new(
-                rhs_arg(b, self.mapping),
-                TileSpec::new(&[K, N], b.storage()),
-            ),
-            TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
+            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+            TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
             self.space.clone(),
             dtype,
         );

@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, ByAxis, Distribution, Partitioner, QuantTileArg, QuantTileArgLaunch, Space, Storage,
-    TileArg, TileArgLaunch, TileSpec,
+    Axis, ByAxis, Distribution, Partitioner, Projection, QuantTileArg, QuantTileArgLaunch, Space,
+    StorageTiling, TileArg, TileArgLaunch, TileSpec,
 };
 
 // Input axes
@@ -42,8 +42,9 @@ pub fn launch_ref<R: Runtime>(
     // concrete extents; the kernel gets the dynamic form, so m and n resolve in-kernel
     // from the tensor's own shape and never fork the compiled kernel.
     let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
-    let input_storage = Storage::of(input.shape.len(), space.rank());
-    let output_storage = Storage::of(output.shape.len(), space.rank());
+    // Both operands are plain 2-D tensors: every axis untiled, one physical axis apiece.
+    let input_tiling = StorageTiling::uniform(space.rank(), input.shape.len() / space.rank() - 1);
+    let output_tiling = StorageTiling::uniform(space.rank(), output.shape.len() / space.rank() - 1);
     let cube_count = space.cube_count();
     let cube_dim = space.cube_dim(client);
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
@@ -54,12 +55,12 @@ pub fn launch_ref<R: Runtime>(
         QuantTileArgLaunch::new(
             input.into_tensor_arg(),
             scales.into_tensor_arg(),
-            TileSpec::new(&[M, N], input_storage),
+            TileSpec::new(Projection::tiled(&[M, N], input_tiling), false, 0),
             *scheme,
         ),
         TileArgLaunch::new(
             output.into_tensor_arg(),
-            TileSpec::new(&[M, N], output_storage),
+            TileSpec::new(Projection::tiled(&[M, N], output_tiling), false, 0),
         ),
         space.all_dynamic(),
         input_dtype,

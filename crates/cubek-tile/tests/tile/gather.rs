@@ -62,7 +62,7 @@ fn run(
     let f32_ty = f32::as_type_native_unchecked().storage_type();
 
     let (a_len, b_len) = (a_shape.num_elements(), b_shape.num_elements());
-    let (a_rank, b_rank, c_rank) = (a_shape.rank(), b_shape.rank(), c_shape.rank());
+
     let (a_handle, _) = TestInput::builder(client.clone(), a_shape)
         .dtype(f32_ty)
         .custom(ramp(a_len, 7))
@@ -82,15 +82,15 @@ fn run(
         space.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
-            TileSpec::new(a_axes, Storage::of(a_rank, a_rank)),
+            TileSpec::direct(a_axes),
         ),
         TileArgLaunch::new(
             b_handle.binding().into_tensor_arg(),
-            TileSpec::new(b_axes, Storage::of(b_rank, b_rank)),
+            TileSpec::direct(b_axes),
         ),
         TileArgLaunch::new(
             c_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(c_axes, Storage::of(c_rank, c_rank)),
+            TileSpec::direct(c_axes),
         ),
         space,
         f32_ty,

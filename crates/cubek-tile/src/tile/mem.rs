@@ -163,13 +163,12 @@ impl<T: Numeric> Tile<T> {
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
         let coords = comptime!(projection.untiled());
-        let storage = comptime!(spec.storage);
         // Stage layout: the explicit override, else derived from the space's leaf.
         let stage = comptime!(StagePlan {
             layout: spec
                 .stage
                 .unwrap_or_else(|| StageStorage::for_space(&space)),
-            units: storage.units,
+            units: spec.units,
         });
         // The binding type's own width, comptime; a packed store serves `pack` values per
         // stored element.
@@ -244,7 +243,7 @@ impl<T: Numeric> Tile<T> {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    overhang: if storage.check_bounds {
+                    overhang: if spec.check_bounds {
                         Overhang::Masked
                     } else {
                         Overhang::Fits
@@ -387,7 +386,10 @@ impl<T: Numeric> MemData<T> {
         let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        let gmem_projection = comptime!(Projection::of_tiling(0, space.rank(), nesting.len()));
+        let gmem_projection = comptime!(Projection::of_tiling(StorageTiling::uniform(
+            space.rank(),
+            nesting.len()
+        )));
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {

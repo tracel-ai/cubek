@@ -8,8 +8,8 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, Storage, StreamFold,
-    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
+    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, StreamFold, TileArg,
+    TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -190,19 +190,19 @@ fn run(
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+            TileSpec::direct(&[G, QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[S, D], Storage::of(2, 2)),
+            TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[S, V], Storage::of(2, 2)),
+            TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[R, C], Storage::of(2, 2)),
+            TileSpec::direct(&[R, C]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
@@ -524,19 +524,19 @@ fn run_split(
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+            TileSpec::direct(&[G, QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[S, D], Storage::of(2, 2)),
+            TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[S, V], Storage::of(2, 2)),
+            TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[R, C], Storage::of(2, 2)),
+            TileSpec::direct(&[R, C]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
@@ -723,19 +723,19 @@ fn run_stream(
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[G, QP, D], Storage::of(3, 3)),
+            TileSpec::direct(&[G, QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[S, D], Storage::of(2, 2)),
+            TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[S, V], Storage::of(2, 2)),
+            TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::new(&[G, QP, V], Storage::of(3, 3)),
+            TileSpec::direct(&[G, QP, V]),
         ),
         scale,
         bound_s as u32,

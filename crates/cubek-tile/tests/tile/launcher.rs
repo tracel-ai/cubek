@@ -96,13 +96,13 @@ fn arg_derives_check_from_subspace_overhang() {
         .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .build();
-    assert!(touches_k.spec.storage.check_bounds);
+    assert!(touches_k.spec.check_bounds);
 
     let avoids_k = launch
         .arg(binding(&client, &[64, 64]))
         .subspace(&[M, N])
         .build();
-    assert!(!avoids_k.spec.storage.check_bounds);
+    assert!(!avoids_k.spec.check_bounds);
 
     // An explicit override still wins over the derivation.
     let forced = launch
@@ -110,7 +110,7 @@ fn arg_derives_check_from_subspace_overhang() {
         .subspace(&[M, K])
         .checked(false)
         .build();
-    assert!(!forced.spec.storage.check_bounds);
+    assert!(!forced.spec.check_bounds);
 }
 
 #[test]

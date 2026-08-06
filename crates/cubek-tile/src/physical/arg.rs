@@ -12,54 +12,6 @@ use cubecl::std::tensor::{
 
 use crate::*;
 
-/// How a launched tensor's `[pre…, grid…, tile…]` buffer maps to the logical
-/// [`Space`]. A property of the tensor, distinct from the space's partitioner.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Storage {
-    pub start_axis: usize,
-    pub levels: usize,
-    /// Whether this operand's logical extent can overhang its tile grid, so edge
-    /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
-    /// keeps the unchecked (divisible) fast path.
-    pub check_bounds: bool,
-    /// The launch's cube size (units per cube), `0` when unknown; carried into the
-    /// [`StagePlan`] of every stage derived from this operand.
-    pub units: usize,
-}
-
-impl Storage {
-    /// Every axis tiled, no passthrough; `levels` read off the tensor's rank.
-    pub fn of(physical_rank: usize, logical_rank: usize) -> Self {
-        Storage {
-            start_axis: 0,
-            levels: physical_rank / logical_rank - 1,
-            check_bounds: false,
-            units: 0,
-        }
-    }
-
-    pub fn passthrough(start_axis: usize, levels: usize) -> Self {
-        Storage {
-            start_axis,
-            levels,
-            check_bounds: false,
-            units: 0,
-        }
-    }
-
-    /// Set whether edge reads/writes must be bounds-checked.
-    pub fn checked(mut self, check_bounds: bool) -> Self {
-        self.check_bounds = check_bounds;
-        self
-    }
-
-    /// Set the launch's cube size (units per cube).
-    pub fn units(mut self, units: usize) -> Self {
-        self.units = units;
-        self
-    }
-}
-
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer
 /// spans and how they address its physical axes ([`Projection`]), plus how the buffer is tiled
 /// ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of) alongside that space;
@@ -70,31 +22,24 @@ impl Storage {
 pub struct TileSpec {
     /// How this operand's logical axes address its buffer's physical ones.
     pub projection: Projection,
-    pub storage: Storage,
+    pub check_bounds: bool,
+    pub units: usize,
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
     pub stage: Option<StageStorage>,
 }
 
 impl TileSpec {
-    /// Pair an operand's spanned axes with its storage: one logical axis per physical one, except
-    /// that a storage-tiled axis addresses one physical axis per level ([`Projection::tiled`]). The
-    /// stage layout stays derived ([`staged`](Self::staged) overrides it).
-    pub fn new(axes: &[Axis], storage: Storage) -> Self {
-        TileSpec::projected(
-            Projection::tiled(axes, storage.start_axis, storage.levels),
-            storage,
-        )
+    pub fn direct(axes: &[Axis]) -> Self {
+        Self::new(Projection::direct(axes), false, 0)
     }
 
-    /// [`new`](Self::new) for an operand whose physical axes are affine combinations of its logical
-    /// ones (a gather-reduce over an abstract dimension). The projection is checked here, the one
-    /// place both constructors meet.
-    pub fn projected(projection: Projection, storage: Storage) -> Self {
+    pub fn new(projection: Projection, check_bounds: bool, units: usize) -> Self {
         projection.validate();
         TileSpec {
             projection,
-            storage,
+            check_bounds,
+            units,
             stage: None,
         }
     }
@@ -105,19 +50,26 @@ impl TileSpec {
     }
 
     /// Derive an operand's spec from its realized [`ConcreteLayout`]: the [`Projection`] and the
-    /// tiling [`Storage`] both read off the layout's repeated axis labels. The one derivation every
+    /// tiling both read off the layout's repeated axis labels. The one derivation every
     /// launch site shares.
     pub fn from_concrete(layout: &ConcreteLayout, check: bool, units: usize) -> Self {
-        TileSpec::projected(
-            Projection::of_layout(layout),
-            Storage::from(layout).checked(check).units(units),
-        )
+        TileSpec::new(Projection::of_layout(layout), check, units)
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
     /// [`StageStorage::for_space`]).
     pub fn staged(mut self, layout: StageStorage) -> Self {
         self.stage = Some(layout);
+        self
+    }
+
+    pub fn checked(mut self, check: bool) -> Self {
+        self.check_bounds = check;
+        self
+    }
+
+    pub fn units(mut self, units: usize) -> Self {
+        self.units = units;
         self
     }
 }
@@ -286,10 +238,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(
-            view,
-            TileSpec::new(axes, Storage::of(axes.len(), axes.len())),
-        )
+        Self::new(view, TileSpec::direct(axes))
     }
 }
 
