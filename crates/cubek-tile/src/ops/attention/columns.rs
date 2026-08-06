@@ -1,36 +1,34 @@
-//! The attention verb's matmul leaves, at column ownership: each unit owns a
-//! cyclic slice of the output's trailing axis, so a gmem operand streamed
-//! along it is read exactly once across the owning team. Ownership is
-//! team-local (`UNIT_POS_X` of `CUBE_DIM_X`): a split fold lays its teams on
-//! the cube's y dim, each folding its own S range; an unsplit cube (y = 1)
-//! spans every unit. Leaf-scoped like
-//! [`softmax`](super::softmax): the verb owns the walk, the staging, and the
-//! syncs; these run on already-lowered final tiles with no syncs of their own.
-//!
-//! Trailing-two-axes convention throughout (matmul's): leading degenerate axes
-//! ride the flat index.
+//! Attention's matmul leaves at column ownership: each unit owns every
+//! `CUBE_DIM_X`-th column of the output, so a K or V block streamed along
+//! that axis is read from gmem once per team. Split teams sit on the cube's
+//! y dim; a cube with y = 1 is one team spanning every unit. Like
+//! [`softmax`](crate::Tile::softmax) these are leaf ops on final tiles: the
+//! caller owns the walk and the syncs. Trailing-two-axes convention
+//! (matmul's): leading degenerate axes ride the flat index.
 
 use cubecl::prelude::*;
 
 use crate::*;
 
-/// Comptime row chunk bounding the per-unit vector accumulators: `chunk × W`
-/// registers live at once, whatever the score tile's height.
-const ROW_CHUNK: usize = 4;
-
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// `self[r, c] = dot(q[r, :], k[c, :])` — the score matmul, `self` a final
-    /// rank-2 `{rows, cols}` memory tile. Each unit owns columns
-    /// `UNIT_POS, UNIT_POS + CUBE_DIM, …` and streams whole `k` rows for
-    /// them, so a gmem `k` is read once across the cube; `q` is read
-    /// `cols`-fold and belongs in shared memory. Accumulates in `EA` lanes,
-    /// horizontal-summed once per cell. `cols_bound` clips the ragged tail:
-    /// columns at or past it are neither read from `k` (which may end before
-    /// the block does) nor written — the softmax's mask probe overwrites
-    /// every out-of-prefix cell regardless of its stale content.
+    /// The score matmul: `self[r, c] = dot(q[r, :], k[c, :])`.
+    ///
+    /// `self` is a final rank-2 `{rows, cols}` scalar tile. Each unit streams
+    /// whole `k` rows for its owned columns, so a gmem `k` is read once per
+    /// team; `q` is read `cols` times over and belongs in shared memory.
+    /// Columns at or past `cols_bound` are neither read nor written: `k` may
+    /// end before the block does, and the softmax's mask probe overwrites
+    /// those cells anyway. `row_chunk` caps the live accumulators (that many
+    /// vectors at once), a register-budget decision the caller makes.
     /// The caller syncs after.
-    pub fn score_columns<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>, cols_bound: usize) {
+    pub fn score_columns<EI: Numeric>(
+        &mut self,
+        q: &Tile<EI>,
+        k: &Tile<EI>,
+        cols_bound: usize,
+        #[comptime] row_chunk: usize,
+    ) {
         let rank = comptime!(self.space.rank());
         let rows = comptime!(self.space.extent_at(rank - 2));
         let cols = comptime!(self.space.extent_at(rank - 1));
@@ -58,15 +56,15 @@ impl<EA: Float> Tile<EA> {
         let kf = k.flat::<WI>();
         let mut out = self.flat_mut::<W>();
 
-        let chunks = comptime!(rows.div_ceil(ROW_CHUNK));
+        let chunks = comptime!(rows.div_ceil(row_chunk));
         let workers = CUBE_DIM_X as usize;
         let bound = min(cols_bound, cols);
         let mut c = UNIT_POS_X as usize;
         while c < bound {
             #[unroll]
             for ch in 0..chunks {
-                let base = comptime!(ch * ROW_CHUNK);
-                let height = comptime!(ROW_CHUNK.min(rows - base));
+                let base = comptime!(ch * row_chunk);
+                let height = comptime!(row_chunk.min(rows - base));
                 let mut acc = Array::<Vector<EA, WI>>::new(height);
                 #[unroll]
                 for i in 0..height {
@@ -82,11 +80,7 @@ impl<EA: Float> Tile<EA> {
                 }
                 #[unroll]
                 for i in 0..height {
-                    let mut s = EA::from_int(0);
-                    #[unroll]
-                    for j in 0..wq {
-                        s += acc[i].extract(j);
-                    }
+                    let s = hsum(acc[i], wq);
                     out.write((base + i) * cols + c, Vector::cast_from(s));
                 }
             }
@@ -94,21 +88,24 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// `self[r, v..] = self[r, v..] · factors[r] + Σ_{c < cols_bound}
-    /// p[r, c] · val[c, v..]` — the value matmul with the online-softmax
-    /// rescale fused in (each cell has one owner here, so the correction
-    /// rides the same visit). `self` is a final rank-2 `{rows, val_dim}`
-    /// accumulator; each unit owns cyclic *lines* of the value axis, so a
-    /// gmem `val` is read once across the cube and adjacent units read
-    /// adjacent lines (coalesced). `cols_bound` clips the block's ragged
-    /// tail: stale cache beyond the attended prefix (possibly NaN) must not
-    /// ride a zero probability. The caller syncs on both sides.
+    /// The value matmul with the online-softmax rescale fused in:
+    /// `self[r, :] = self[r, :] · factors[r] + Σ_{c < cols_bound} p[r, c] · val[c, :]`.
+    ///
+    /// `self` is a final rank-2 `{rows, val_dim}` accumulator. Each unit owns
+    /// every `CUBE_DIM_X`-th line of the value axis, so a gmem `val` is read
+    /// once per team and adjacent units read adjacent lines. The rescale
+    /// rides the same visit because each cell has exactly one owner here.
+    /// Columns at or past `cols_bound` are skipped: stale cache beyond the
+    /// attended prefix (possibly NaN) must not ride a zero probability.
+    /// `row_chunk` as in [`score_columns`](Tile::score_columns). The caller
+    /// syncs on both sides.
     pub fn mix_columns<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
         factors: &Tile<EA>,
         cols_bound: usize,
+        #[comptime] row_chunk: usize,
     ) {
         let rank = comptime!(self.space.rank());
         let rows = comptime!(self.space.extent_at(rank - 2));
@@ -139,14 +136,14 @@ impl<EA: Float> Tile<EA> {
         let mut out = self.flat_mut::<W>();
 
         let bound = min(cols_bound, cols);
-        let chunks = comptime!(rows.div_ceil(ROW_CHUNK));
+        let chunks = comptime!(rows.div_ceil(row_chunk));
         let workers = CUBE_DIM_X as usize;
         let mut li = UNIT_POS_X as usize;
         while li < v_lines {
             #[unroll]
             for ch in 0..chunks {
-                let base = comptime!(ch * ROW_CHUNK);
-                let height = comptime!(ROW_CHUNK.min(rows - base));
+                let base = comptime!(ch * row_chunk);
+                let height = comptime!(row_chunk.min(rows - base));
                 let mut acc = Array::<Vector<EA, WV>>::new(height);
                 #[unroll]
                 for i in 0..height {
@@ -174,4 +171,15 @@ impl<EA: Float> Tile<EA> {
             li += workers;
         }
     }
+}
+
+/// Horizontal sum of a vector's `width` lanes.
+#[cube]
+pub(super) fn hsum<E: Float, N: Size>(v: Vector<E, N>, #[comptime] width: usize) -> E {
+    let mut s = E::from_int(0);
+    #[unroll]
+    for j in 0..width {
+        s += v.extract(j);
+    }
+    s
 }

@@ -268,6 +268,10 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                         (block_row as u32, block_col as u32),
                     ))
                 }
+                QuantLevel::BlockTensor { .. } => unimplemented!(
+                    "two-level quantization is not supported by the quantized matmul, got {:?}",
+                    scheme.level
+                ),
             }
         };
 

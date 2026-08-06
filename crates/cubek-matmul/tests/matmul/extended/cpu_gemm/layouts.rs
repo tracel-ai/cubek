@@ -13,7 +13,7 @@ use cubek_matmul::routines::cpu_gemm::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, Space, StridedTileArg, StridedTileArgLaunch};
+use cubek_tile::{Axis, Space, TileArg, TileArgLaunch, TileSpec};
 
 use super::Dims;
 use crate::matmul::assert_result;
@@ -30,12 +30,13 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &StridedTileArg<'_, E>,
-    dst: &StridedTileArg<'_, E>,
+    src: &TileArg<'_, E, Const<1>>,
+    dst: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
     #[define(E)] _dtype: StorageType,
 ) {
-    let src = src.tile();
-    let mut dst = dst.tile();
+    let src = src.tile(comptime!(space.clone()));
+    let mut dst = dst.tile(space);
     let r = src.view::<Const<1>>();
     let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();
@@ -124,12 +125,14 @@ impl Operand {
 /// Copy every logical element from `src` into `dst` through their views — moving
 /// data between two physical layouts in logical order.
 fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
+    // src and dst are built over the same logical space; it is the kernel's one space.
     copy_logical::launch::<TestRuntime>(
         client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        tile_arg(src, src.space.clone()),
-        tile_arg(dst, dst.space.clone()),
+        tile_arg(src),
+        tile_arg(dst),
+        src.space.clone(),
         f32::as_type_native_unchecked().storage_type(),
     );
 }
@@ -141,15 +144,12 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
     binding
 }
 
-/// The operand's launchable `StridedTileArg`, viewed in `space`: its tensor arg (with the
-/// layout's physical strides) and the matching [`Storage`]. Generic over the element
-/// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric>(
-    op: &Operand,
-    space: Space,
-) -> StridedTileArgLaunch<'static, E, TestRuntime> {
+/// The operand as one launch argument: its tensor arg (with the layout's physical
+/// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
+fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V, TestRuntime> {
     let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    StridedTileArgLaunch::strided(tensor, 1, space, storage)
+    let axes: Vec<_> = (0..op.space.rank()).map(|i| op.space.axis_at(i)).collect();
+    TileArgLaunch::new(tensor, TileSpec::new(&axes, storage))
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.

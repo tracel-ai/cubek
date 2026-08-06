@@ -149,20 +149,46 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
 
 /// Shared memory one cube of this matmul allocates.
 ///
-/// The operands are not the whole footprint: the kernel also holds an
-/// accumulator/output stage. `expand_config` builds that one once and hands it
-/// back as both `acc_smem_config` and `out_smem_config`, so `out` covers both
-/// and is counted a single time.
+/// The operands are not the whole footprint: the kernel also stages its
+/// output. `expand_config` builds that stage once and hands it back as both
+/// `acc_smem_config` and `out_smem_config`, so `out` covers both and is
+/// counted a single time — at the writer's allocation, not the full stage
+/// (see [`out_smem_bytes`]).
 ///
-/// This has to match what the kernel allocates. A total that comes in under the
-/// real footprint admits a blueprint that then over-requests at launch, which
-/// autotune profiling surfaces as a lost device rather than a skipped candidate.
+/// This has to match what the kernel allocates, in both directions. A total
+/// that comes in under the real footprint admits a blueprint that then
+/// over-requests at launch, which autotune profiling surfaces as a lost device
+/// rather than a skipped candidate. A total that comes in over it rejects
+/// blueprints that do fit — and with them the kernels autotune would have
+/// picked.
 fn requested_smem_bytes(
     lhs: &StageMemoryConfig,
     rhs: &StageMemoryConfig,
     out: &StageMemoryConfig,
 ) -> usize {
-    smem_bytes(lhs) + smem_bytes(rhs) + smem_bytes(out)
+    smem_bytes(lhs) + smem_bytes(rhs) + out_smem_bytes(out)
+}
+
+/// Shared memory the writer allocates for the accumulator/output stage.
+///
+/// No writer holds the full stage: `PartitionedStage::new` clamps
+/// `tiles_per_partition_along_{row,col}` to 1, so a plane (or unit) stages one
+/// tile at a time and loops over its partition. This mirrors that clamp.
+/// Charging the full stage instead rejected blueprints that fit — on Apple
+/// silicon the simple cmma multi-rows kernel allocates 13312 bytes but was
+/// charged 45056, past the 32768-byte budget, so the fastest kernel for the
+/// shape became unavailable.
+///
+/// A launch that reads an accumulator input stages it through a full-size
+/// reader stage on top of this; the problem seen here does not say whether one
+/// is present, so that stage is not counted, as before.
+fn out_smem_bytes(out: &StageMemoryConfig) -> usize {
+    let per_tile = StageMemoryConfig {
+        tiles_per_partition_along_row: 1,
+        tiles_per_partition_along_col: 1,
+        ..*out
+    };
+    smem_bytes(&per_tile)
 }
 
 fn smem_bytes(cfg: &StageMemoryConfig) -> usize {
@@ -223,5 +249,48 @@ mod tests {
         let out = stage(64, 64, 1);
 
         assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 3 * 8_192);
+    }
+
+    /// A stage of 8x8 f32 tiles with the given partition structure, as the
+    /// plane-partitioned blueprints build them.
+    fn tiled_stage(
+        tiles_per_partition: (u32, u32),
+        partitions_per_stage: (u32, u32),
+    ) -> StageMemoryConfig {
+        StageMemoryConfig {
+            num_planes: 4,
+            elements_per_tile_along_row: 8,
+            elements_per_tile_along_col: 8,
+            tiles_per_partition_along_row: tiles_per_partition.0,
+            tiles_per_partition_along_col: tiles_per_partition.1,
+            partitions_per_stage_along_row: partitions_per_stage.0,
+            partitions_per_stage_along_col: partitions_per_stage.1,
+            vector_size: 1,
+            matrix_layout: MatrixLayout::RowMajor,
+            swizzle: SwizzleMode::None,
+            num_stages: 1,
+            dtype: ElemType::Float(FloatKind::F32).into(),
+        }
+    }
+
+    /// The writer never allocates the full out stage: `PartitionedStage::new`
+    /// clamps `tiles_per_partition` to one, so each plane stages a single tile
+    /// and loops. These are the stages of the simple cmma multi-rows blueprint
+    /// on Apple silicon — tile (8, 8, 8), partition (4, 8, 2), stage (4, 1, 1),
+    /// f32. The kernel allocates 13312 bytes; charging the full out stage says
+    /// 45056, past the 32768-byte budget, and rejects the fastest kernel the
+    /// device has for the shape.
+    #[test]
+    fn the_out_stage_is_charged_at_the_writers_allocation() {
+        let lhs = tiled_stage((4, 2), (4, 1));
+        let rhs = tiled_stage((2, 8), (1, 1));
+        let out = tiled_stage((4, 8), (4, 1));
+
+        assert_eq!(smem_bytes(&lhs), 8_192);
+        assert_eq!(smem_bytes(&rhs), 4_096);
+        assert_eq!(smem_bytes(&out), 32_768);
+        assert_eq!(out_smem_bytes(&out), 1_024);
+
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 13_312);
     }
 }

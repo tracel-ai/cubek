@@ -1,13 +1,12 @@
-//! The attention verb's leaves. Two families, one per fold shape:
+//! The attention verb's leaves, one family per fold shape:
 //!
-//! * [`columns`] — the shared-memory fold's matmul leaves (score into a
-//!   materialized tile, value mix with the rescale fused), at team-local
-//!   column ownership. The shape prefill wants: real query blocks, a score
-//!   tile between two matmuls.
-//! * [`stream`] — the register-resident decode fold: no score tile, no
-//!   barriers; each position's dot closes with a plane sum and the
-//!   probability multiplies the value row immediately. The shape a single
-//!   query position wants.
+//! * [`columns`]: the shared-memory fold's matmuls (score into a
+//!   materialized tile, value mix with the rescale fused), at column
+//!   ownership. Prefill's shape: real query blocks, a score tile between
+//!   two matmuls.
+//! * [`stream`]: the register-resident fold. No score tile and no barriers;
+//!   each position's dot closes with a plane sum and feeds the accumulator
+//!   immediately. Decode's shape: a single query position per group.
 
 mod columns;
 mod stream;

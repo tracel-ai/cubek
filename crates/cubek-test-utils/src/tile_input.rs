@@ -5,6 +5,7 @@
 //! `tiled_view`. No `Tiler`, no semantic-view juggling.
 #![allow(dead_code)]
 
+use cubecl::prelude::{Numeric, Size};
 use cubecl::std::tensor::{
     TensorHandle,
     layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
@@ -13,7 +14,7 @@ use cubecl::{
     TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
     quant::scheme::QuantScheme, zspace::Shape,
 };
-use cubek_tile::{Space, Storage};
+use cubek_tile::{QuantTileArgLaunch, Space, Storage, TileArgLaunch, TileSpec as CubekTileSpec};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -92,9 +93,9 @@ impl TileInput {
 
     /// Launch arg for this tile's raw global buffer — a plain [`TensorArg`] over the
     /// `[grid…, tile…]` buffer, optionally re-lined by `vector_size` along the inner
-    /// axis (so a kernel reading `Vector<E, S>` lands on contiguous lines).
-    /// `StridedTileArgLaunch::strided` wraps it in a `TiledViewLayout` at launch (this just produces the
-    /// raw physical buffer/strides). `vector_size == 1` is the plain buffer.
+    /// axis (so a kernel reading raw `Vector<E, S>` slices lands on contiguous lines).
+    /// `vector_size == 1` is the plain buffer. For `Tile::of` pass the plain buffer:
+    /// the kernel's element type carries the width and the metadata stays scalar-unit.
     pub fn tensor_arg(&self, vector_size: usize) -> TensorArg<TestRuntime> {
         if vector_size <= 1 {
             return self.handle.clone().binding().into_tensor_arg();
@@ -126,6 +127,21 @@ impl TileInput {
     /// logical space's rank, so the launch never hand-writes tile levels.
     pub fn storage(&self) -> Storage {
         Storage::of(self.handle.shape().len(), self.space.rank())
+    }
+
+    /// The tile as one launch argument: its scalar-unit tensor paired with its
+    /// [`spec`](Self::spec). The kernel's element type carries the width.
+    pub fn arg<E: Numeric, V: Size>(&self) -> TileArgLaunch<'static, E, V, TestRuntime> {
+        TileArgLaunch::new(self.tensor_arg(1), self.spec())
+    }
+
+    /// The comptime [`CubekTileSpec`] a kernel feeds `Tile::of`: the axes this tile spans
+    /// (its own space's, in buffer order) paired with its derived storage.
+    pub fn spec(&self) -> CubekTileSpec {
+        let axes: Vec<_> = (0..self.space.rank())
+            .map(|i| self.space.axis_at(i))
+            .collect();
+        CubekTileSpec::new(&axes, self.storage())
     }
 
     /// The semantic space the tile lives in.
@@ -331,6 +347,7 @@ impl QuantizedTileInputBuilder {
                 levels: 0,
             },
             scales,
+            scheme: self.scheme,
             q,
             scale_values,
         }
@@ -343,6 +360,7 @@ impl QuantizedTileInputBuilder {
 pub struct QuantizedTileInput {
     pub tile: TileInput,
     scales: TensorHandle<TestRuntime>,
+    scheme: QuantScheme,
     /// The quant values, row-major in the logical shape.
     pub q: Vec<i32>,
     /// One scale per block, row-major over the scheme's block grid.
@@ -353,5 +371,15 @@ impl QuantizedTileInput {
     /// Launch arg for the scales tensor.
     pub fn scales_arg(&self) -> TensorArg<TestRuntime> {
         self.scales.clone().binding().into_tensor_arg()
+    }
+
+    /// The quantized tile as one launch argument: values, scales, spec and scheme.
+    pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V, TestRuntime> {
+        QuantTileArgLaunch::new(
+            self.tile.tensor_arg(1),
+            self.scales_arg(),
+            self.tile.spec(),
+            self.scheme,
+        )
     }
 }

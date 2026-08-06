@@ -1,6 +1,6 @@
 use cubek_test_utils::{HostData, Progress};
 
-use super::{build_f32_output, for_each_output_coord, output_shape};
+use super::{build_f32_output, for_each_output_coord, output_shape, should_replace_max};
 
 pub fn reference_max_abs(input: &HostData, axis: usize, progress: Option<&Progress>) -> HostData {
     let axis_len = input.shape[axis];
@@ -13,7 +13,7 @@ pub fn reference_max_abs(input: &HostData, axis: usize, progress: Option<&Progre
         for i in 0..axis_len {
             coord[axis] = i;
             let v = input.get_f32(&coord).abs();
-            if v > best {
+            if should_replace_max(best, v) {
                 best = v;
             }
         }

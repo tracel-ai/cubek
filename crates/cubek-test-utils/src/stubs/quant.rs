@@ -188,6 +188,10 @@ pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
             .iter()
             .map(|&b| b as usize)
             .collect(),
+        QuantLevel::BlockTensor { .. } => unimplemented!(
+            "two-level quantization is not supported here, got {:?}",
+            scheme.level
+        ),
     }
 }
 

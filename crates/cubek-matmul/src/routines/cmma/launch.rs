@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Delivery, DeliveryFamily, Launcher, Leaf, Schedule, Space, Strided,
-    StridedTileArgLaunch, Tiling, Tma, TmaTileArgLaunch, WalkOrder,
+    Axis, CubeAxis, Cut, Delivery, Launcher, Leaf, Schedule, Space, Strided, Tiling, Tma,
+    TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -213,9 +213,9 @@ pub fn launch_ref<R: Runtime>(
     let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());
 
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
-    // `launch_kernel` runs once for either and never branches on the delivery again.
+    // Either path runs the same kernel body and never branches on the delivery again.
     match blueprint.delivery {
-        Delivery::Strided => launch_kernel::<Strided, R>(
+        Delivery::Strided => launch_strided::<R>(
             client,
             &launch,
             cube_count,
@@ -224,11 +224,9 @@ pub fn launch_ref<R: Runtime>(
             rhs,
             out,
             &out_batch_axes,
-            &blueprint,
             dtypes,
-            (m, n, k),
         ),
-        Delivery::Tma => launch_kernel::<Tma, R>(
+        Delivery::Tma => launch_tma::<R>(
             client,
             &launch,
             cube_count,
@@ -246,40 +244,22 @@ pub fn launch_ref<R: Runtime>(
     Ok(())
 }
 
-/// One operand's launch geometry: the two axes it spans (`outer`, then the innermost
-/// contiguous axis TMA boxes and vectorization key on), the TMA box (its stage edges),
-/// and the operand's runtime `(rows, cols)`.
-struct Operand {
-    axes: [Axis; 2],
-    box_dims: (usize, usize),
-    extent: (u32, u32),
-}
-
-/// Host-side counterpart to [`DeliveryFamily`]: how a delivery builds one operand's launch
-/// arg. Implemented for the tile crate's family markers. Lives here rather than on
-/// `cubek_tile`'s `Delivery` because building the arg reaches `cubek_std`'s [`tma_operand`]
-/// and the routine's own axes.
-trait OperandLaunch: DeliveryFamily {
-    fn operand<E: Numeric, R: Runtime>(
-        launch: &Launcher<'_, R>,
-        binding: TensorBinding<R>,
-        operand: Operand,
-        out_batch_axes: &[Axis],
-        dtype: StorageType,
-    ) -> <Self::Arg<E> as LaunchArg>::RuntimeArg<R>;
-}
-
-impl OperandLaunch for Strided {
-    /// Line the operand's innermost contiguous axis at the widest width the launcher's gate
-    /// allows (the box/extent are TMA-only).
-    fn operand<E: Numeric, R: Runtime>(
-        launch: &Launcher<'_, R>,
-        binding: TensorBinding<R>,
-        operand: Operand,
-        out_batch_axes: &[Axis],
-        dtype: StorageType,
-    ) -> StridedTileArgLaunch<'static, E, R> {
-        let [outer, inner] = operand.axes;
+/// The strided path: each operand lined at the widest width the launcher's gate allows,
+/// built by the shared [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
+#[allow(clippy::too_many_arguments)]
+fn launch_strided<R: Runtime>(
+    client: &ComputeClient<R>,
+    launch: &Launcher<'_, R>,
+    cube_count: CubeCount,
+    cube_dim: CubeDim,
+    lhs: TensorBinding<R>,
+    rhs: TensorBinding<R>,
+    out: TensorBinding<R>,
+    out_batch_axes: &[Axis],
+    dtypes: &MatmulElems,
+) {
+    let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: StorageType| {
+        let [outer, inner] = axes;
         let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
         launch
             .arg(binding)
@@ -287,42 +267,33 @@ impl OperandLaunch for Strided {
             .batches(out_batch_axes)
             .vectorize(v)
             .build()
-    }
+    };
+    let a = operand(lhs, [M, K], dtypes.lhs_global);
+    let b = operand(rhs, [K, N], dtypes.rhs_global);
+    let c = operand(out, [M, N], dtypes.acc_global);
+    cmma_kernel::launch::<Strided, R>(
+        client,
+        cube_count,
+        cube_dim,
+        a.vector_size,
+        b.vector_size,
+        c.vector_size,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launch.space().clone(),
+        dtypes.lhs_global,
+        dtypes.rhs_global,
+        dtypes.acc_global,
+        mandated_acc(dtypes),
+    );
 }
 
-impl OperandLaunch for Tma {
-    /// Encode a tensor map whose box is the stage; the operand stays scalar (TMA moves
-    /// whole boxes, so vectorization and the batch-axis list don't apply).
-    fn operand<E: Numeric, R: Runtime>(
-        launch: &Launcher<'_, R>,
-        binding: TensorBinding<R>,
-        operand: Operand,
-        _out_batch_axes: &[Axis],
-        dtype: StorageType,
-    ) -> TmaTileArgLaunch<E, R> {
-        let (map, transposed) = tma_operand(
-            binding,
-            1,
-            MatrixLayout::RowMajor,
-            operand.box_dims,
-            dtype,
-            TensorMapSwizzle::None,
-        );
-        let (rows, cols) = operand.extent;
-        TmaTileArgLaunch::tensor_map(
-            map,
-            launch.space().project(&operand.axes),
-            (1, rows, cols),
-            transposed,
-        )
-    }
-}
-
-/// The launch body, shared by every delivery: it asks the family `D` for each operand, and
-/// the out is strided under either. The args are built here, not returned, so the element
-/// types the launch macro erases stay inside one body.
+/// The TMA path: each input rides a tensor map whose box is the stage (scalar; TMA moves
+/// whole boxes, so vectorization and the batch-axis list don't apply). The out is strided
+/// under either delivery.
 #[allow(clippy::too_many_arguments)]
-fn launch_kernel<D: OperandLaunch, R: Runtime>(
+fn launch_tma<R: Runtime>(
     client: &ComputeClient<R>,
     launch: &Launcher<'_, R>,
     cube_count: CubeCount,
@@ -337,31 +308,38 @@ fn launch_kernel<D: OperandLaunch, R: Runtime>(
 ) {
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
-    let a = D::operand(
-        launch,
+    // A fn, not a closure: each operand instantiates its own erased element type.
+    fn operand<E: Numeric, R: Runtime>(
+        binding: TensorBinding<R>,
+        axes: [Axis; 2],
+        box_dims: (usize, usize),
+        (rows, cols): (u32, u32),
+        dtype: StorageType,
+    ) -> TmaTileArgLaunch<E, R> {
+        let (map, transposed) = tma_operand(
+            binding,
+            1,
+            MatrixLayout::RowMajor,
+            box_dims,
+            dtype,
+            TensorMapSwizzle::None,
+        );
+        TmaTileArgLaunch::tensor_map(map, &axes, (1, rows, cols), transposed)
+    }
+    let a = operand(
         lhs,
-        Operand {
-            axes: [M, K],
-            box_dims: (stage_m, stage_k),
-            extent: (m as u32, k as u32),
-        },
-        out_batch_axes,
+        [M, K],
+        (stage_m, stage_k),
+        (m as u32, k as u32),
         dtypes.lhs_global,
     );
-    let b = D::operand(
-        launch,
+    let b = operand(
         rhs,
-        Operand {
-            axes: [K, N],
-            box_dims: (stage_k, stage_n),
-            extent: (k as u32, n as u32),
-        },
-        out_batch_axes,
+        [K, N],
+        (stage_k, stage_n),
+        (k as u32, n as u32),
         dtypes.rhs_global,
     );
-    // The out is strided under either delivery: lined at the widest width the launcher's
-    // gate allows, labeled with the full output batch-axis list (the builder right-aligns
-    // it, numpy broadcast, size-1 dims drop out).
     let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
     let c = launch
         .arg(out)
@@ -369,13 +347,17 @@ fn launch_kernel<D: OperandLaunch, R: Runtime>(
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();
-    cmma_kernel::launch::<D, R>(
+    cmma_kernel::launch::<Tma, R>(
         client,
         cube_count,
         cube_dim,
+        1,
+        1,
+        c.vector_size,
         a,
         b,
-        c,
+        c.arg(),
+        launch.space().clone(),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,

@@ -10,12 +10,19 @@ pub const LOGIT_MASKED: f32 = -6e4;
 /// Below this an `l` row sum is numerically zero (fully-masked row).
 pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 
-/// Per-row online-softmax running state `(m, l)`, in the owning unit's
-/// registers. Its space is the kept axes of the softmax: the score axis it
-/// omits is the one reduced over. Allocated once before the walk, threaded
-/// through every [`Tile::softmax`](crate::Tile::softmax) call (or every
-/// [`absorb`](RowState::absorb) of a streamed fold), materialized by the
-/// epilogue.
+/// `1/l`, exactly zero when `l` is numerically zero, so a fully-masked row
+/// drains to exact zeros instead of NaN.
+#[cube]
+pub fn masked_recip<E: Float>(l: E) -> E {
+    let eps = E::new(FULLY_MASKED_ROW_THRESHOLD);
+    E::cast_from(l >= eps) * clamp_min(l, eps).recip()
+}
+
+/// Per-row running state `(m, l)` of the online softmax, in the owning
+/// unit's registers. Its space is the softmax's kept axes; the score axis it
+/// omits is the reduced one. Allocated once before the walk, threaded through
+/// every [`Tile::softmax`](crate::Tile::softmax) call (or every
+/// [`absorb`](RowState::absorb) of a streamed fold), drained by the epilogue.
 #[derive(CubeType)]
 pub struct RowState<E: Float> {
     pub m: Array<E>,
@@ -31,9 +38,9 @@ pub struct RowState<E: Float> {
 /// value row by `weight`.
 #[derive(CubeType)]
 pub struct Rescale<E: Float> {
-    /// `exp(m_old − m_new)` — rescales the accumulated mix.
+    /// Rescales the accumulated mix: `exp(m_old - m_new)`.
     pub correction: E,
-    /// `exp(score − m_new)` — weights the new position's value.
+    /// Weights the new position's value: `exp(score - m_new)`.
     pub weight: E,
 }
 
@@ -70,11 +77,10 @@ impl<E: Float> RowState<E> {
         corr
     }
 
-    /// Fold one streamed score into row `i`'s `(m, l)` — the per-position
-    /// reading of the same update [`update`](RowState::update) applies per
-    /// block. The `min_value` identity makes the first real score overwrite
-    /// the state cleanly (`exp(min − score) = 0`), and a row that never
-    /// absorbs keeps `l = 0` for the epilogue's masked guard.
+    /// Fold one streamed score into row `i`'s `(m, l)`: the per-position
+    /// reading of [`update`](RowState::update). The `min_value` identity
+    /// makes the first real score overwrite the state cleanly, and a row
+    /// that never absorbs keeps `l = 0` for the epilogue's masked guard.
     pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
         let m_new = max(self.m[i], score);
         let correction = (self.m[i] - m_new).exp();
@@ -89,12 +95,9 @@ impl<E: Float> RowState<E> {
         self.m[i] + E::ln(self.l[i])
     }
 
-    /// Epilogue `1/l`, exactly zero for fully-masked rows so their output
-    /// rows stay zero.
+    /// Epilogue `1/l` for row `i`, with the fully-masked guard.
     pub fn recip_l(&self, i: usize) -> E {
-        let eps = E::new(FULLY_MASKED_ROW_THRESHOLD);
-        let l = self.l[i];
-        E::cast_from(l >= eps) * clamp_min(l, eps).recip()
+        masked_recip::<E>(self.l[i])
     }
 }
 
