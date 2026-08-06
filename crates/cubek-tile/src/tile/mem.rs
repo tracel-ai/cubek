@@ -170,6 +170,14 @@ impl<T: Numeric> Tile<T> {
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
         let coords = comptime!(projection.untiled());
+        // The scales are gridded over the operand's *logical* axes (`strides` and `block` below
+        // are one entry per logical axis), while `at` re-windows them over the physical ones. The
+        // two ranks coincide for every direct operand, tiled or not, and diverge under a gather.
+        comptime!(assert!(
+            quant.is_none() || coords.is_direct(),
+            "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
+             logical axes, which its buffer's physical axes no longer match"
+        ));
         // Stage layout: the explicit override, else derived from the operand's leaf.
         let stage = comptime!(StagePlan {
             layout: spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
@@ -810,6 +818,10 @@ impl<T: Numeric> MemData<T> {
             !self.layout.projection.is_tiled(),
             "MemData::dense_lines: a storage-tiled window is not dense"
         ));
+        comptime!(assert!(
+            self.projection.is_direct(),
+            "MemData::dense_lines: a gathered window is not dense (sibling windows overlap)"
+        ));
         if comptime!(self.store.quant.is_some()) {
             panic!("MemData::dense_lines: a quantized store dequantizes under Tile::copy_from")
         }
@@ -827,6 +839,10 @@ impl<T: Numeric> MemData<T> {
         comptime!(assert!(
             !self.layout.projection.is_tiled(),
             "MemData::dense_lines_mut: a storage-tiled window is not dense"
+        ));
+        comptime!(assert!(
+            self.projection.is_direct(),
+            "MemData::dense_lines_mut: a gathered window is not dense (sibling windows overlap)"
         ));
         if comptime!(self.store.quant.is_some()) {
             panic!("MemData::dense_lines_mut: a quantized store cannot be written dense")
@@ -996,6 +1012,9 @@ impl<T: Numeric> MemData<T> {
                         .view(self.base())
                         .view(self.window())
                         .view(layout.clone()),
+                    // The scales over this same window: `ScaleLayout` resolves a window coordinate
+                    // to its block's scale, addressed by the same `layout` as the values, so both
+                    // answer the same coordinate.
                     info.buffer
                         .view(ScaleLayout::new(
                             info.strides.clone(),
@@ -1141,6 +1160,11 @@ impl<T: Numeric> MemData<T> {
                 // One term per contributing axis: its tile coordinate times its sub-tile edge
                 // times its coefficient. All comptime but the coordinate, so this stays the
                 // multiply-add `window_start` is documented to be.
+                //
+                // Each term divides by `w` on its own, which only sums back to the whole
+                // advance because the innermost physical axis carries a single identity term:
+                // `Projection::validate` requires it, precisely because this axis is addressed
+                // in lines. A second term here would need the division after the sum, not before.
                 let picks =
                     comptime!((0..proj.physical_axis(pa).terms().len()).collect::<Vec<_>>());
                 let mut terms = Coords::<u32>::new();

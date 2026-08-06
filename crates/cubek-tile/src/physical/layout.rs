@@ -65,33 +65,4 @@ impl ConcreteLayout {
         }
         out
     }
-
-    /// Storage-tiling nesting depth: the deepest logical axis splits into `levels + 1` physical
-    /// fragments. `0` when untiled (every axis is one fragment).
-    pub fn levels(&self) -> usize {
-        let deepest = self
-            .axes
-            .iter()
-            .map(|a| self.fragments(a.axis))
-            .max()
-            .unwrap_or(1);
-        deepest - 1
-    }
-
-    /// The leading passthrough (untiled) axes before the first storage-tiled one; the batch
-    /// prefix. `0` when untiled, so the whole buffer is one tiled block.
-    pub fn passthrough(&self) -> usize {
-        if self.levels() == 0 {
-            return 0;
-        }
-        self.axes
-            .iter()
-            .position(|a| self.fragments(a.axis) > 1)
-            .unwrap_or(0)
-    }
-
-    /// How many physical fragments `axis` splits into; `1` when it is not storage-tiled.
-    fn fragments(&self, axis: Axis) -> usize {
-        self.axes.iter().filter(|b| b.axis == axis).count()
-    }
 }

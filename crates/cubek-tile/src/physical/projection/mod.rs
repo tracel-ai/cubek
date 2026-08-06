@@ -19,12 +19,12 @@
 //! overlap by the receptive field. [`Projection`] is that combination;
 //! [`direct`](Projection::direct) is the degenerate one every current operand uses.
 
+mod base;
 mod fold;
 mod map;
-mod projection;
 mod tiling;
 
+pub use base::*;
 pub use fold::*;
 pub use map::*;
-pub use projection::*;
 pub use tiling::*;

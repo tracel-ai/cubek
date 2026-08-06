@@ -2321,6 +2321,7 @@ fn mma_matmul_quant_until_read() {
     let scales = TestInput::builder(client.clone(), shape![1, 1])
         .custom(vec![scale])
         .generate_without_host_data();
+
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .leaf(leaf)
         .untiled()

@@ -143,11 +143,17 @@ impl Projection {
         Projection::tiled(&axes, tiling)
     }
 
-    /// The fragments per logical axis, read back off the physical map: the inverse of
-    /// [`tiled`](Projection::tiled) for anything [`is_invertible`](Projection::is_invertible),
-    /// which is every projection storage tiling can describe. A gathered one reports one fragment
-    /// per axis, since several of its axes share one physical axis rather than one axis spanning
-    /// several: it is not tiled, and its physical rank does not follow from this.
+    /// How many fragments each logical axis is split across, counted off the physical map. A
+    /// gathered one reports one fragment per axis, since several of its axes share one physical
+    /// axis rather than one axis spanning several: it is not tiled, and its physical rank does not
+    /// follow from this.
+    ///
+    /// Counts only, not an order: [`tiled`](Projection::tiled) reconstructs this projection from
+    /// them exactly when it is [`level_major`](Projection::is_level_major), which is every
+    /// projection [`tiled`](Projection::tiled) itself builds but not every one
+    /// [`of_layout`](Projection::of_layout) can read off a real buffer (`[A, A, B]` counts as
+    /// `[2, 1]`, whose level-major order is `[A, B, A]`). [`is_tiled`](Projection::is_tiled) asks
+    /// only whether some count exceeds one, which the order cannot change.
     pub fn tiling(&self) -> StorageTiling {
         StorageTiling::per_axis(
             &self
@@ -156,6 +162,22 @@ impl Projection {
                 .map(|&axis| self.carriers(axis).len())
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// Whether the physical axes run in [`StorageTiling`]'s level-major order, so
+    /// [`tiling`](Projection::tiling) describes this projection whole and
+    /// [`tiled`](Projection::tiled) rebuilds it. True by construction for
+    /// [`tiled`](Projection::tiled) and [`of_tiling`](Projection::of_tiling), and for any untiled
+    /// projection trivially; a buffer that groups an axis's fragments together
+    /// (`[A, A, B]`) is a layout the counts alone do not pin down.
+    pub fn is_level_major(&self) -> bool {
+        self.is_invertible()
+            && self.tiling().order(&self.axes)
+                == self
+                    .physical
+                    .iter()
+                    .map(|m| m.terms()[0].axis)
+                    .collect::<Vec<_>>()
     }
 
     /// Whether some axis is storage-tiled: split across several physical fragments, so a
@@ -573,6 +595,48 @@ mod tests {
         p.validate();
     }
 
+    /// The fragment counts pin a buffer down only up to the level-major order. A buffer that keeps
+    /// an axis's fragments adjacent counts the same as the level-major one it is not, so `tiling`
+    /// round-trips through `tiled` for exactly the projections that report `is_level_major`.
+    #[test]
+    fn tiling_describes_only_a_level_major_buffer() {
+        use crate::PhysicalAxis;
+
+        let grouped = Projection::of_layout(&ConcreteLayout::new(&[
+            PhysicalAxis::new(A, 4),
+            PhysicalAxis::new(A, 8),
+            PhysicalAxis::new(B, 4),
+        ]));
+        let level_major = Projection::tiled(&[A, B], StorageTiling::per_axis(&[2, 1]));
+
+        // Same axes, same counts, different buffers.
+        assert_eq!(grouped.logical_axes(), level_major.logical_axes());
+        assert_eq!(grouped.tiling(), level_major.tiling());
+        assert_ne!(grouped, level_major);
+
+        assert!(!grouped.is_level_major());
+        assert!(level_major.is_level_major());
+        // What the counts do settle, whatever the order.
+        assert!(grouped.is_tiled() && level_major.is_tiled());
+        assert_eq!(grouped.carriers(A).as_slice(), &[0, 1]);
+        assert_eq!(level_major.carriers(A).as_slice(), &[0, 2]);
+    }
+
+    /// A gathered projection is never level-major: its counts do not describe its physical rank at
+    /// all, so there is no order for them to be right or wrong about.
+    #[test]
+    fn a_gather_is_not_level_major() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(!p.is_level_major());
+        assert!(Projection::direct(&[A, B]).is_level_major());
+    }
+
     /// `tiling` inverts `tiled` for every projection storage tiling can build, so the two are one
     /// description read in either direction.
     #[test]
@@ -588,6 +652,7 @@ mod tests {
             assert_eq!(p.tiling(), tiling);
             assert_eq!(p.physical_rank(), tiling.physical_rank());
             assert_eq!(p.is_tiled(), tiling.is_tiled());
+            assert!(p.is_level_major());
         }
     }
 
