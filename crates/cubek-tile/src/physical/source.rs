@@ -41,9 +41,8 @@ struct TileSourceData<'a, R: Runtime> {
     stage: Option<StageStorage>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
-    /// Quantization side-channel: the scales, the scheme saying how to fold them back in, and how
-    /// far the quantized form travels. [`build`](StridedTileSource::build) validates all three.
-    quant: Option<(TensorArg<R>, QuantScheme, Until)>,
+    /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
+    quant: Option<Quantization<R>>,
     /// What this operand is at the instruction; default [`Leaf::Memory`], the memory form.
     leaf: Leaf,
 }
@@ -175,11 +174,44 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
         scheme: QuantScheme,
         until: Until,
     ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
-        self.data.quant = Some((scales, scheme, until));
+        self.data.quant = Some(Quantization::new(scales, scheme, until));
         StridedTileSource {
             data: self.data,
             _state: PhantomData,
         }
+    }
+}
+
+/// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
+/// back in, and how far the quantized form travels before something decodes it. One thing, because
+/// none of the three says anything on its own — a scheme without scales cannot be applied, and an
+/// [`Until`] without a scheme has nothing to bound.
+pub struct Quantization<R: Runtime> {
+    pub scales: TensorArg<R>,
+    pub scheme: QuantScheme,
+    pub until: Until,
+}
+
+impl<R: Runtime> Quantization<R> {
+    pub fn new(scales: TensorArg<R>, scheme: QuantScheme, until: Until) -> Self {
+        Quantization {
+            scales,
+            scheme,
+            until,
+        }
+    }
+
+    /// Values per stored element: `1` unless the scheme packs several into each.
+    pub fn num_quants(&self) -> usize {
+        self.scheme.num_quants()
+    }
+
+    /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
+    /// operand's cuts and served width, the [`Until`] against the reader that would have to honour
+    /// it. Both rules live here because both are facts about this quantization and nothing else.
+    pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
+        validate_scheme(space, vector_size, self.scheme);
+        validate_until(self.until, leaf);
     }
 }
 
@@ -205,9 +237,7 @@ pub struct QuantOperand<R: Runtime> {
     /// Served width (values per line); the binding is narrower by the packing factor.
     pub vector_size: usize,
     pub spec: TileSpec,
-    pub scales: TensorArg<R>,
-    pub scheme: QuantScheme,
-    pub until: Until,
+    pub quant: Quantization<R>,
 }
 
 impl<R: Runtime> QuantOperand<R> {
@@ -215,14 +245,20 @@ impl<R: Runtime> QuantOperand<R> {
     /// generic. A packed store's buffer is narrower than the served width by the packing
     /// factor ([`tile_dequant`](crate::TileArg::tile_dequant) serves binding width × pack).
     pub fn bound_width(&self) -> usize {
-        self.vector_size / self.scheme.num_quants()
+        self.vector_size / self.quant.num_quants()
     }
 
     /// The operand as the kernel's [`QuantTileArg`](crate::QuantTileArg) launch argument:
     /// values, scales, spec and scheme as one thing. Read
     /// [`bound_width`](Self::bound_width) before consuming.
     pub fn arg<E: Numeric, V: Size>(self) -> QuantTileArgLaunch<'static, E, V, R> {
-        QuantTileArgLaunch::new(self.tensor, self.scales, self.spec, self.scheme, self.until)
+        QuantTileArgLaunch::new(
+            self.tensor,
+            self.quant.scales,
+            self.spec,
+            self.quant.scheme,
+            self.quant.until,
+        )
     }
 }
 
@@ -244,7 +280,7 @@ struct Realized<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
     spec: TileSpec,
-    quant: Option<(TensorArg<R>, QuantScheme, Until)>,
+    quant: Option<Quantization<R>>,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -333,8 +369,8 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         if let Some(stage) = stage {
             spec = spec.staged(stage);
         }
-        if let Some((_, scheme, _)) = &quant {
-            validate_scheme(&space.project(&spec.axes), v, *scheme);
+        if let Some(quant) = &quant {
+            quant.validate(&space.project(&spec.axes), v, leaf);
         }
         Realized {
             tensor: binding.into_tensor_arg(),
@@ -364,26 +400,19 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
-    /// Build the quantized operand: the same derivation plus the validated scheme, with the scales,
-    /// scheme and [`Until`] as first-class fields. Shared by both quantized typestates, which
-    /// differ only in whether `until` was stated.
+    /// Build the quantized operand: the plain derivation plus its validated [`Quantization`].
     fn build_quant(self) -> QuantOperand<R> {
-        let leaf = self.data.leaf;
         let Realized {
             tensor,
             vector_size,
             spec,
             quant,
         } = self.realize();
-        let (scales, scheme, until) = quant.unwrap();
-        validate_until(until, leaf);
         QuantOperand {
             tensor,
             vector_size,
             spec,
-            scales,
-            scheme,
-            until,
+            quant: quant.unwrap(),
         }
     }
 }

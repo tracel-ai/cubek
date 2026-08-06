@@ -79,8 +79,10 @@ operand builder at the line that states it.
 
 ## Known gaps
 
-- `validate_until` runs on both the builder and in `Tile::of_dequant`, because 14 sites build a
-  `QuantTileArgLaunch` by hand and never touch the builder. The engine does not trust its inputs.
+- `validate_until` runs on both the builder and in `Tile::of_dequant`. The builder is not the only
+  door: a `QuantTileArgLaunch` can be built by hand, and test fixtures do exactly that on purpose
+  (they *state* an unusual physical layout where the builder *derives* one from a real tensor). So
+  the engine validates regardless of the path taken to reach it.
 
 - Scale element is still `f32` (`QuantInfo.buffer: Box<[f32]>`). cubecl's view is generic over it,
   so this is now a field type rather than anything structural.
