@@ -147,7 +147,7 @@ impl<T: Numeric> Tile<T> {
 /// The tile's per-axis extents paired with its operand's mapping. `Space` is scalar; the
 /// innermost axis is a line count, matching the window it indexes into.
 #[cube]
-fn axis_projection(
+pub(crate) fn axis_projection(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
     #[comptime] vector_size: usize,

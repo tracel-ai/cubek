@@ -1,9 +1,9 @@
-//! Gather-reduce: contractions over more than one abstract axis.
+//! Multi-axis reduce: contractions over more than one abstract axis.
 //!
 //! The first client is the simplest one that cannot be a matmul: a matmul whose `K` is declared as
 //! *two* axes. Nothing about the data or the arithmetic changes, only how many axes the operands
 //! contract, so the answer must be exactly the plain matmul's. That isolates the multi-axis reduce
-//! nest from the projection machinery, which the stencil tests exercise separately.
+//! nest from the projection machinery, which the conv tests exercise separately.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -26,7 +26,7 @@ const B: Axis = Axis(5);
 /// `c.zero(); c.mma(a, b)` over whatever space it is handed: the same body serves the one-axis
 /// and the two-axis contraction, which is the point.
 #[cube(launch)]
-fn gather_matmul_kernel<E: Numeric>(
+fn reduce_matmul_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
@@ -76,7 +76,7 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    gather_matmul_kernel::launch::<TestRuntime>(
+    reduce_matmul_kernel::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -188,7 +188,7 @@ fn split_k_whole_reduce_at_leaf() {
 }
 
 /// The major half is walked instead: `k1` sequential `mma` calls, each reducing `k2`. The leaf
-/// still contracts two axes (`K1` is present at extent 1), so it still takes the gather path.
+/// still contracts two axes (`K1` is present at extent 1), so it still takes the N-D nest.
 #[test]
 fn split_k_major_half_walked() {
     let (m, n, k1, k2) = (8, 8, 3, 4);

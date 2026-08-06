@@ -496,9 +496,23 @@ impl<T: Numeric> MemData<T> {
     /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole
     /// `Vector<T, W>` lines at `self`'s width, unit `u` moving lines `u`, `u + CUBE_DIM`, ….
     /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
-    pub(crate) fn fill_from(&mut self, src: &MemData<T>) {
+    ///
+    /// `space` is the logical space both sides carry. A gathered `src` has fewer physical axes
+    /// than that space has logical ones, so its read resolves through [`AxisProjection`]; see
+    /// [`fill_straight`](MemData::fill_straight). The destination is dense and
+    /// [`direct`](Projection::direct) either way, which is what keeps the projection to this one
+    /// read and out of every consumer.
+    pub(crate) fn fill_from(&mut self, src: &MemData<T>, #[comptime] space: Space) {
         let size!(W) = comptime!(self.store.vector_size);
+        let gathered = comptime!(!src.projection.is_direct());
         if comptime!(self.store.quant.is_some()) {
+            // A gathered operand's scale blocks are gridded over its logical axes while its buffer
+            // is addressed over its physical ones, so a staged side-channel would have to re-grid
+            // the scales rather than copy them.
+            comptime!(assert!(
+                !gathered,
+                "MemData::fill_from: a gathered operand cannot stage in its quantized form"
+            ));
             // Quant → quant: stage the packed storage words verbatim through the straight-line fill,
             // then the scales beside them, so a leaf read dequantizes straight out of smem with no
             // f32 inflation. A quantized stage is always a fresh whole buffer, so the masked slow
@@ -512,7 +526,9 @@ impl<T: Numeric> MemData<T> {
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                     // Unpacked: one element per value, so the physical line is the served line.
                     QuantStore::Native => match comptime!(info.scheme.value) {
-                        QuantValue::Q8F | QuantValue::Q8S => self.fill_straight::<i8, W>(src),
+                        QuantValue::Q8F | QuantValue::Q8S => {
+                            self.fill_straight::<i8, W>(src, comptime!(space.clone()))
+                        }
                         other => panic!(
                             "MemData::fill_from: native quant storage element {:?} is not wired (i8 only)",
                             other
@@ -523,7 +539,7 @@ impl<T: Numeric> MemData<T> {
                     QuantStore::PackedU32(_) => {
                         let size!(WP) =
                             comptime!(self.store.vector_size / info.scheme.num_quants());
-                        self.fill_straight::<u32, WP>(src);
+                        self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
                     }
                     other => panic!(
                         "MemData::fill_from: quant storage {:?} is not wired (native or packed-u32)",
@@ -540,8 +556,17 @@ impl<T: Numeric> MemData<T> {
         ) {
             // Plain → plain, whole destination: fill in destination-physical order (the write is
             // linear and only the source decodes, once per line by constants on a static store).
-            self.fill_straight::<T, W>(src);
+            self.fill_straight::<T, W>(src, comptime!(space.clone()));
         } else {
+            // The general path reads the source as a flat run of its *window*, which is the
+            // logical box only when the two coincide. A gathered source's window is a physical
+            // box of a different rank, so it is addressed per axis or not at all. Reached by a
+            // windowed or masked destination, and by a quantized source serving a plain one.
+            comptime!(assert!(
+                !gathered,
+                "MemData::fill_from: a gathered source fills only a whole, unmasked, unquantized \
+                 destination (a stage)"
+            ));
             // The read decodes at the source's true storage element: `T` for a plain tile, else the
             // quantized store's element recovered from its scheme (the tile serves `T`, so `I` was
             // erased at construction and lives only on the scheme). This is what lets a plain
@@ -576,13 +601,36 @@ impl<T: Numeric> MemData<T> {
     /// line, by constants on a static store; half the address math of a logical-order scan). `I2` /
     /// `WP2` are the *storage* element and physical width: the served `(T, self.store.vector_size)` for a
     /// plain copy, the packed storage `(u32, served/pack)` (or native `i8`) for a quant stage.
-    fn fill_straight<I2: Numeric, WP2: Size>(&mut self, src: &MemData<T>) {
-        let s = MaskedView::new(
-            src.lines_storage::<I2, WP2>()
-                .view(src.base())
-                .view(src.window()),
-            comptime!(src.access.overhang.masks()),
-        );
+    ///
+    /// The destination's coordinate is decoded once per line and handed to the source, so the
+    /// source's own mapping is the only thing that varies: a direct source takes that coordinate
+    /// as physical, a gathered one resolves it through [`AxisProjection`] (`space`'s axes onto its
+    /// buffer's physical ones) first. Sound because the destination is dense over `space`, so
+    /// [`physical_pos`] hands back exactly a logical coordinate; the [`Window`] sits below either
+    /// way, so an out-of-range tap still masks to zero.
+    fn fill_straight<I2: Numeric, WP2: Size>(&mut self, src: &MemData<T>, #[comptime] space: Space) {
+        let check = comptime!(src.access.overhang.masks());
+        let s = if comptime!(src.projection.is_direct()) {
+            MaskedView::new(
+                src.lines_storage::<I2, WP2>()
+                    .view(src.base())
+                    .view(src.window()),
+                check,
+            )
+        } else {
+            let layout = axis_projection(
+                space,
+                comptime!(src.projection.clone()),
+                comptime!(src.store.vector_size),
+            );
+            MaskedView::new(
+                src.lines_storage::<I2, WP2>()
+                    .view(src.base())
+                    .view(src.window())
+                    .view(layout),
+                check,
+            )
+        };
         let shape = self.layout.physical_shape.clone();
         let plen = shape.len().comptime();
         let total = shape

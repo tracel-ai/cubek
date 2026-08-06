@@ -23,15 +23,13 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         // Staging copies an operand into a dense buffer shaped like its *logical* sub-tile. A
-        // gathered operand has no such shape: its window is a smaller, overlapping physical box,
-        // so a fill would have to gather rather than copy. Until it does, gather-reduce is
-        // `Schedule::Direct` and reads from where the operand lives.
+        // gathered operand's window is a smaller, overlapping physical box, so its fill gathers
+        // rather than copies: the stage is the compacted logical tile and the projection is
+        // resolved at the fill's source read ([`MemData::fill_from`]). The stage itself is dense
+        // and direct, so nothing downstream learns the operand was gathered.
         let lhs_gathered = lhs.gathered();
         let rhs_gathered = rhs.gathered();
-        comptime!(assert!(
-            !lhs_gathered && !rhs_gathered,
-            "Staging: a gathered operand cannot be staged; run the level Direct"
-        ));
+        let gathered = comptime!(lhs_gathered || rhs_gathered);
         let lhs_delivery = lhs.delivery();
         let rhs_delivery = rhs.delivery();
         // Pin an operand only when its window is genuinely fixed across the walk. A barrier
@@ -50,6 +48,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
                 comptime!(assert!(
                     !lhs_delivery.is_tma() && !rhs_delivery.is_tma(),
                     "Staging: a TMA source cannot stage into plane tiles"
+                ));
+                // A fragment fill reads its source as a 2-D window, which a gathered operand has
+                // no equivalent of. Staging it into smem first is what the memory leaf does.
+                comptime!(assert!(
+                    !gathered,
+                    "Staging: a gathered operand cannot stage into plane tiles"
                 ));
                 // Each operand's fragment encoding is its own; `out` only names the contracted axis.
                 let a = PlanePartition::store(
