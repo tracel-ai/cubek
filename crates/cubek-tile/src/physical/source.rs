@@ -395,10 +395,13 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
     }
 }
 
-/// Refuse an [`Until`] nothing can honour. A strided load decodes whatever it moves, since it runs
+/// Refuse an [`Until`] nothing can honour. Called by [`build`](StridedTileSource::build) so a bad
+/// plan fails on the caller's thread, and again by [`Tile::of_dequant`](crate::Tile::of_dequant),
+/// which every launch path reaches including the raw
+/// [`QuantTileArgLaunch`](crate::QuantTileArgLaunch) one. A strided load decodes whatever it moves, since it runs
 /// code per element, so only the leaf constrains: a fragment load takes a raw window at one element
 /// type, so a leaf that loads fragments needs its values already served.
-fn validate_until(until: Until, leaf: Leaf) {
+pub(crate) fn validate_until(until: Until, leaf: Leaf) {
     match (until, leaf) {
         (Until::Load, _) => {}
         // The memory leaf reads through a matrix view; so does the manual-mma fragment load, which
@@ -407,12 +410,12 @@ fn validate_until(until: Until, leaf: Leaf) {
         (Until::Read, Leaf::Mma { io, .. }) => assert!(
             matches!(io.lhs_load_method, LoadMethod::Manual)
                 && matches!(io.rhs_load_method, LoadMethod::Manual),
-            "StridedTileSource::until: the ldmatrix transport copies raw lanes, so it cannot \
-             decode as it reads; such an operand must be served by its load (Until::Load)"
+            "Until::Read: the ldmatrix transport copies raw lanes, so it cannot decode as it \
+             reads; such an operand must be served by its load (Until::Load)"
         ),
         (Until::Read, other) => panic!(
-            "StridedTileSource::until: {other:?} loads fragments at one element type, so it cannot \
-             decode as it reads; such an operand must be served by its load (Until::Load)"
+            "Until::Read: {other:?} loads fragments at one element type, so it cannot decode as \
+             it reads; such an operand must be served by its load (Until::Load)"
         ),
     }
 }

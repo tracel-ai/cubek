@@ -79,6 +79,9 @@ operand builder at the line that states it.
 
 ## Known gaps
 
+- `validate_until` runs on both the builder and in `Tile::of_dequant`, because 14 sites build a
+  `QuantTileArgLaunch` by hand and never touch the builder. The engine does not trust its inputs.
+
 - Scale element is still `f32` (`QuantInfo.buffer: Box<[f32]>`). cubecl's view is generic over it,
   so this is now a field type rather than anything structural.
 - `load_manual` refuses a col-major stage: the view is shaped by the stage's space, so a transposed

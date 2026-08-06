@@ -120,6 +120,9 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        // The engine's own backstop: the builder checks this too, but a hand-built
+        // `QuantTileArgLaunch` reaches here without passing through it.
+        comptime!(validate_until(until, spec.leaf));
         let rank = comptime!(spec.axes.len());
         let block = comptime!(block_edges(scheme, rank));
         let mut strides = Coords::<u32>::new();
