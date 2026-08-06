@@ -81,6 +81,20 @@ impl<T: Numeric> TileKind<T> {
     }
 }
 
+/// How far an operand's quantized form travels before something decodes it. Stated at launch,
+/// once: the quantized form ends at one boundary. Which values are available is fixed by what the
+/// operand's transports can decode, never by preference, so a stated value is either the one that
+/// was left or a genuine fork between stage size and per-read cost.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Until {
+    /// The load into the stage decodes; the stage holds served values, so it inflates by the
+    /// served-to-stored ratio and the achievable stage depth drops with it.
+    Load,
+    /// The stage keeps the quantized values and their scales; the instruction's read decodes,
+    /// amortized over whatever reuse the leaf has.
+    Read,
+}
+
 /// Quantization a tile's store carries, so reads dequantize on their own. Holds the scale `buffer`
 /// plus what walks the scales in step with the values: a per-axis `strides`, a running
 /// `window_start`, and comptime `block` sizes. [`ScaleLayout`] turns those into an address ([`MemData::at`]).
@@ -93,6 +107,10 @@ pub struct QuantInfo {
     pub(crate) window_start: u32,
     #[cube(comptime)]
     pub(crate) block: Vec<usize>,
+    /// Where this operand's quantized form ends. Read by [`MemData::smem_like`], which is why no
+    /// call site asks an operand whether it is quantized before staging it.
+    #[cube(comptime)]
+    pub(crate) until: Until,
     /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
     /// ([`MemData::smem_quant`]): the values stage as packed words and their scales stage compactly
     /// beside them, so the fill knows how many blocks to copy. Empty for a gmem operand, which reads
@@ -146,20 +164,29 @@ impl QuantInfo {
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
+            until: comptime!(self.until),
             scale_shape: comptime!(self.scale_shape.clone()),
             scheme: comptime!(self.scheme),
         }
     }
 }
 
-/// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it projects.
-/// `T` is the element the tile serves and computes in; its physical vector width is a storage detail
-/// inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
+/// One operand's data: a runtime [`TileKind`] backing store, the comptime [`Space`] it projects,
+/// and what it is at the instruction ([`Leaf`]). `T` is the element the tile serves and computes in;
+/// its physical vector width is a storage detail inside the [`TileKind`], read back with
+/// [`vector_size`](Tile::vector_size).
+///
+/// The leaf rides here, not on the [`Space`]: it is a format decision, and formats belong to the
+/// operand whose format they are. The partitioning says how the problem is cut and nothing about
+/// what the pieces become. Operands that disagree meet the kind-pairing panics at the instruction,
+/// which is the same way every other mismatched pair is caught.
 #[derive(CubeType)]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
+    #[cube(comptime)]
+    pub leaf: Leaf,
 }
 
 #[cube]
@@ -207,6 +234,18 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
                 comptime!(LaneShare::Whole)
+            }
+        }
+    }
+
+    /// How far this operand's quantized form travels ([`Until`]). A tile with nothing to decode
+    /// answers [`Until::Load`]: its served and stored elements are the same, so its load already
+    /// delivers what the read wants.
+    pub(crate) fn until(&self) -> comptime_type!(Until) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.until(),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(Until::Load)
             }
         }
     }
@@ -299,6 +338,7 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
+            leaf: comptime!(self.leaf),
         }
     }
 
@@ -350,7 +390,7 @@ impl<T: Numeric> Tile<T> {
     /// output takes the unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
         match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final(_) => match &mut self.tile_kind {
+            Partitioner::Final => match &mut self.tile_kind {
                 TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
                 TileKind::PlaneTile(t) => t.zero(),
                 TileKind::PlanePartition(p) => p.zero(),
@@ -404,7 +444,9 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::PlanePartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
                     d.fill_from(src)
                 }
-                (TileKind::PlaneTile(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                (TileKind::PlaneTile(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
+                    d.load_window(src)
+                }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
                     s.store_window(d)
                 }

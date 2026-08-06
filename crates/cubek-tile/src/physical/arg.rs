@@ -73,16 +73,22 @@ pub struct TileSpec {
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
     pub stage: Option<StageStorage>,
+    /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
+    /// two encodings. A format decision, so it belongs to the operand rather than to the
+    /// partitioning; [`Tile::of`](crate::Tile::of) carries it onto the tile. Operands that disagree
+    /// meet the kind-pairing panics at the instruction.
+    pub leaf: Leaf,
 }
 
 impl TileSpec {
-    /// Pair an operand's spanned axes with its storage; the stage layout stays derived
-    /// ([`staged`](Self::staged) overrides it).
+    /// Pair an operand's spanned axes with its storage; the stage layout and the leaf stay
+    /// derived ([`staged`](Self::staged) / [`leaf`](Self::leaf) override them).
     pub fn new(axes: &[Axis], storage: Storage) -> Self {
         TileSpec {
             axes: axes.to_vec(),
             storage,
             stage: None,
+            leaf: Leaf::Memory,
         }
     }
 
@@ -94,6 +100,12 @@ impl TileSpec {
             &layout.distinct_axes(),
             Storage::from(layout).checked(check).units(units),
         )
+    }
+
+    /// State what this operand is at the instruction (default [`Leaf::Memory`], the memory form).
+    pub fn leaf(mut self, leaf: Leaf) -> Self {
+        self.leaf = leaf;
+        self
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
@@ -137,6 +149,9 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub spec: TileSpec,
     #[cube(comptime)]
     pub scheme: QuantScheme,
+    /// How far this operand stays quantized; stated at launch, where what can decode is known.
+    #[cube(comptime)]
+    pub until: Until,
 }
 
 #[cube]
@@ -148,6 +163,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             self.values,
             self.scales,
             comptime!(self.scheme),
+            comptime!(self.until),
             space,
             comptime!(self.spec.clone()),
         )
@@ -170,7 +186,11 @@ impl<E: Numeric> TmaTileArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
     /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
-        TmaData::from_tensor_map(self.view.clone(), comptime!(space.project(&self.spec.axes)))
+        TmaData::from_tensor_map(
+            self.view.clone(),
+            comptime!(space.project(&self.spec.axes)),
+            comptime!(self.spec.leaf),
+        )
     }
 }
 
@@ -255,6 +275,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         axes: &[Axis],
         dims: (u32, u32, u32),
         transposed: bool,
+        leaf: Leaf,
     ) -> Self {
         let batched = match axes.len() {
             2 => false,
@@ -267,7 +288,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
         Self::new(
             view,
-            TileSpec::new(axes, Storage::of(axes.len(), axes.len())),
+            TileSpec::new(axes, Storage::of(axes.len(), axes.len())).leaf(leaf),
         )
     }
 }

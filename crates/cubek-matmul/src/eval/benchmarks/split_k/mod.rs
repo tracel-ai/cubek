@@ -47,7 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
+    Axis, CubeAxis, Cut, Schedule, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -123,7 +123,7 @@ impl Mapping {
                         .axis(N, Cut::cube(CubeAxis::X, 1))
                         .axis(K, seq(k))
                 })
-                .leaf(Leaf::Register),
+                .build(),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
@@ -135,7 +135,7 @@ impl Mapping {
                 .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
                     l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
                 })
-                .leaf(Leaf::Register),
+                .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *space* — only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
@@ -145,7 +145,7 @@ impl Mapping {
                         .axis(N, Cut::cube(CubeAxis::X, cols))
                         .axis(K, Cut::unit(k / lanes))
                 })
-                .leaf(Leaf::Register),
+                .build(),
         }
         .resolve_lanes(lanes)
     }

@@ -100,8 +100,8 @@ fn mma_register_typed<
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
-        let lhs_check = lhs.check();
-        let rhs_check = rhs.check();
+        let lhs_check = comptime!(lhs.check);
+        let rhs_check = comptime!(rhs.check);
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = Array::<Vector<E, V>>::new(mr * nr);

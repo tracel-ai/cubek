@@ -11,7 +11,8 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RowState, Space, StagePlan, Storage, TileArg, TileArgLaunch, TileSpec,
+    Axis, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, Storage, TileArg, TileArgLaunch,
+    TileSpec,
 };
 
 const Q: Axis = Axis(0);
@@ -36,9 +37,18 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(space);
-    let mut score =
-        MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let mut score = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let mut p = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -283,9 +293,18 @@ fn softmax_smem_acc_kernel(
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(space);
-    let mut score =
-        MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let mut score = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let mut p = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -293,9 +312,19 @@ fn softmax_smem_acc_kernel(
     let mut state = RowState::<f32>::new(kept_space.clone(), units);
     let rpu = comptime!(state.rows_per_unit);
 
-    let mut factors = MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::strided()));
+    let mut factors = MemData::<f32>::smem(
+        kept_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let mut acc = MemData::<f32>::smem(
+        acc_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
     acc.zero();
 
     for blk in 0..num_blocks {

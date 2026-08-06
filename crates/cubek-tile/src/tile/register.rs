@@ -14,7 +14,7 @@ use crate::*;
 // CPU backend refuses a vectorized operand — allocate at the vector element instead.)
 define_size!(pub(crate) RA);
 
-/// An `mr × nr` block of `RA`-wide accumulators living in registers, the [`Leaf::Register`]
+/// An `mr × nr` block of `RA`-wide accumulators living in registers, the [`Leaf::Memory`]
 /// encoding of a [`PlaneTile`].
 ///
 /// The block exists so the software leaf can accumulate the way the hardware ones do. It used

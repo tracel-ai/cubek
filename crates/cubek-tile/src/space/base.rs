@@ -210,7 +210,7 @@ impl Space {
     pub fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
-            partitioner: Partitioner::Final(Leaf::Register),
+            partitioner: Partitioner::Final,
         }
     }
 
@@ -256,13 +256,6 @@ impl Space {
         self
     }
 
-    /// Set the chain-end [`Leaf`] after all levels are stacked (appending a level resets
-    /// it); the public surface is the order-safe [`Tiling::leaf`](crate::LeveledTiling::leaf).
-    pub(crate) fn with_leaf(mut self, leaf: Leaf) -> Self {
-        self.partitioner = self.partitioner.with_leaf(leaf);
-        self
-    }
-
     pub fn partitioner(&self) -> &Partitioner {
         &self.partitioner
     }
@@ -271,19 +264,18 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How this output plan's operands stage: [`Plane`](OperandStage::Plane) when a plane leaf is
-    /// fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
-    pub(crate) fn operand_stage(&self) -> OperandStage {
+    /// How an operand that becomes `leaf` stages under this plan: [`Plane`](OperandStage::Plane)
+    /// when a plane fragment is fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
+    pub(crate) fn operand_stage(&self, leaf: Leaf) -> OperandStage {
         match self.partitioner() {
-            Partitioner::Level(_) => match (self.partitioner().leaf(), self.partitioner().next()) {
-                (Leaf::Cmma { .. } | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role()
-                {
+            Partitioner::Level(_) => match (leaf, self.partitioner().next()) {
+                (Leaf::Cmma | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role() {
                     LevelRole::Partition => OperandStage::Plane,
                     LevelRole::Instance => OperandStage::Smem,
                 },
                 _ => OperandStage::Smem,
             },
-            Partitioner::Final(_) => OperandStage::Smem,
+            Partitioner::Final => OperandStage::Smem,
         }
     }
 
@@ -350,7 +342,7 @@ impl Space {
     /// partition (a k-step walk) all cut nothing.
     pub(crate) fn cuts_tiles(&self) -> bool {
         match self.partitioner() {
-            Partitioner::Final(_) => false,
+            Partitioner::Final => false,
             Partitioner::Level(level) => match level.role() {
                 LevelRole::Instance => false,
                 LevelRole::Partition => crate::partition_grid(self) != (1, 1),
@@ -393,7 +385,7 @@ impl Space {
             .map(|p| &p.partitioner)
             .find(|p| !p.is_final())
             .cloned()
-            .unwrap_or(Partitioner::Final(Leaf::Register));
+            .unwrap_or(Partitioner::Final);
 
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),

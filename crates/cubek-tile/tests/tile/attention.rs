@@ -50,19 +50,38 @@ fn attention_fold_kernel<W: Size>(
     // score leaf), score/p/factors/acc the fold's working set.
     let mut q_s = MemData::<f32>::smem(
         comptime!(q.space.clone()),
+        comptime!(q.leaf),
         q.vector_size(),
         comptime!(StagePlan::strided()),
     );
     q_s.copy_from(&q);
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
-    let mut score =
-        MemData::<f32>::smem(score_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut p = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::strided()));
+    let mut score = MemData::<f32>::smem(
+        score_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let mut p = MemData::<f32>::smem(
+        score_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
     let row_space = comptime!(Space::new(&[(R, rows)]));
-    let mut factors =
-        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let mut factors = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let mut acc = MemData::<f32>::smem(
+        acc_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
     let rpu = comptime!(state.rows_per_unit);
@@ -181,7 +200,7 @@ fn run(
                 .axis(R, Cut::sequential(1))
                 .axis(C, Cut::sequential(1))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     attention_fold_kernel::launch::<TestRuntime>(
         &client,
@@ -308,6 +327,7 @@ fn attention_fold_split_kernel<W: Size>(
 
     let mut q_s = MemData::<f32>::smem(
         comptime!(q.space.clone()),
+        comptime!(q.leaf),
         q.vector_size(),
         comptime!(StagePlan::strided()),
     );
@@ -323,7 +343,7 @@ fn attention_fold_split_kernel<W: Size>(
                 l.axis(R, Cut::sequential(rows))
                     .axis(C, Cut::sequential(block))
             })
-            .leaf(Leaf::Register)
+            .build()
     );
     let row_space = comptime!(
         Tiling::new()
@@ -331,7 +351,7 @@ fn attention_fold_split_kernel<W: Size>(
             .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
                 l.axis(R, Cut::sequential(rows))
             })
-            .leaf(Leaf::Register)
+            .build()
     );
     let acc_space = comptime!(
         Tiling::new()
@@ -340,18 +360,47 @@ fn attention_fold_split_kernel<W: Size>(
                 l.axis(R, Cut::sequential(rows))
                     .axis(V, Cut::sequential(val_dim))
             })
-            .leaf(Leaf::Register)
+            .build()
     );
-    let score_all =
-        MemData::<f32>::smem(score_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let p_all = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::strided()));
-    let mut factors_all =
-        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let score_all = MemData::<f32>::smem(
+        score_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let p_all = MemData::<f32>::smem(
+        score_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let mut factors_all = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let m_all = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let l_all = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
+    let mut acc_all = MemData::<f32>::smem(
+        acc_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::strided()),
+    );
     let mut recip = MemData::<f32>::smem(
         comptime!(Space::new(&[(R, rows)])),
+        Leaf::Memory,
         1usize,
         comptime!(StagePlan::strided()),
     );
@@ -515,7 +564,7 @@ fn run_split(
                 .axis(R, Cut::sequential(1))
                 .axis(C, Cut::sequential(1))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     attention_fold_split_kernel::launch::<TestRuntime>(
         &client,
@@ -714,7 +763,7 @@ fn run_stream(
                 .axis(D, Cut::sequential(d))
                 .axis(V, Cut::sequential(val_dim))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     attention_stream_test_kernel::launch::<TestRuntime>(
         &client,

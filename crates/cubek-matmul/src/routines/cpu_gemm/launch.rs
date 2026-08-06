@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, Schedule, Tiling, WalkOrder};
 
 use crate::{
     definition::{
@@ -172,7 +172,7 @@ pub fn launch_ref<R: Runtime>(
                 .axis(N, Cut::plane(leaf.n))
                 .axis(K, Cut::sequential(leaf.k))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
     // shape family), overhang checks derived per operand — all inside the launcher.

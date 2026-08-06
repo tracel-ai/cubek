@@ -30,12 +30,10 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs)
         }
+        // A memory accumulator runs the software microkernel. A plane-form accumulator that was
+        // never promoted lands in the arms above and meets their kind-pairing panics; there is no
+        // second declaration left to check this one against.
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            comptime!(assert!(
-                space.partitioner().leaf() == Leaf::Register,
-                "mma: a cmma-leaf accumulator runs register-resident; \
-                 promote it first (Tile::promote), copy it back after"
-            ));
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),

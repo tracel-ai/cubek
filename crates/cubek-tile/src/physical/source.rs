@@ -9,8 +9,8 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, ConcreteLayout, PhysicalAxis, QuantTileArgLaunch, Space, StageStorage, Storage,
-    TileArgLaunch, TileSpec, validate_scheme,
+    Axis, ConcreteLayout, Leaf, LoadMethod, PhysicalAxis, QuantTileArgLaunch, Space, StageStorage,
+    Storage, TileArgLaunch, TileSpec, Until, validate_scheme,
 };
 
 /// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
@@ -41,9 +41,11 @@ struct TileSourceData<'a, R: Runtime> {
     stage: Option<StageStorage>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
-    /// Quantization side-channel: the scales plus the scheme saying how to fold them back in.
-    /// [`build`](StridedTileSource::build) validates the scheme and carries the pair through.
-    quant: Option<(TensorArg<R>, QuantScheme)>,
+    /// Quantization side-channel: the scales, the scheme saying how to fold them back in, and how
+    /// far the quantized form travels. [`build`](StridedTileSource::build) validates all three.
+    quant: Option<(TensorArg<R>, QuantScheme, Until)>,
+    /// What this operand is at the instruction; default [`Leaf::Memory`], the memory form.
+    leaf: Leaf,
 }
 
 /// Typestate builder for a strided tile kernel operand, started with
@@ -72,6 +74,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 stage: None,
                 units: 0,
                 quant: None,
+                leaf: Leaf::Memory,
             },
             _state: PhantomData,
         }
@@ -128,8 +131,16 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
+    /// What this operand is at the instruction: a memory window ([`Leaf::Memory`], the default)
+    /// or a plane fragment in one of the two encodings. The partitioning says nothing about it;
+    /// operands that disagree meet the kind-pairing panics at the instruction.
+    pub fn leaf(mut self, leaf: Leaf) -> Self {
+        self.data.leaf = leaf;
+        self
+    }
+
     /// The [`StageStorage`] layout of the smem stages derived from this operand. Default
-    /// [`StageStorage::for_space`]: storage-tiled for a cmma leaf, plain strided otherwise.
+    /// [`StageStorage::for_leaf`]: storage-tiled for a cmma leaf, plain strided otherwise.
     pub fn stage(mut self, stage: StageStorage) -> Self {
         self.data.stage = Some(stage);
         self
@@ -153,14 +164,18 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
     /// **in values**; a packed store's buffer is narrower than its shape by the packing
     /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
-    /// [`vectorize`](Self::vectorize) still names the *served* width. Flips the typestate:
-    /// [`build`](Self::build) now yields a [`QuantOperand`].
+    /// [`vectorize`](Self::vectorize) still names the *served* width. `until` says how far the
+    /// quantized form travels; it rides here rather than in its own setter because the quantized
+    /// form ends at exactly one boundary, so one call says it once by construction. Which values
+    /// are available is a capability of this operand's transports, and [`build`](Self::build)
+    /// refuses one nothing can honour. Flips the typestate: `build` now yields a [`QuantOperand`].
     pub fn quantized(
         mut self,
         scales: TensorArg<R>,
         scheme: QuantScheme,
+        until: Until,
     ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
-        self.data.quant = Some((scales, scheme));
+        self.data.quant = Some((scales, scheme, until));
         StridedTileSource {
             data: self.data,
             _state: PhantomData,
@@ -192,6 +207,7 @@ pub struct QuantOperand<R: Runtime> {
     pub spec: TileSpec,
     pub scales: TensorArg<R>,
     pub scheme: QuantScheme,
+    pub until: Until,
 }
 
 impl<R: Runtime> QuantOperand<R> {
@@ -206,7 +222,7 @@ impl<R: Runtime> QuantOperand<R> {
     /// values, scales, spec and scheme as one thing. Read
     /// [`bound_width`](Self::bound_width) before consuming.
     pub fn arg<E: Numeric, V: Size>(self) -> QuantTileArgLaunch<'static, E, V, R> {
-        QuantTileArgLaunch::new(self.tensor, self.scales, self.spec, self.scheme)
+        QuantTileArgLaunch::new(self.tensor, self.scales, self.spec, self.scheme, self.until)
     }
 }
 
@@ -228,7 +244,7 @@ struct Realized<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
     spec: TileSpec,
-    quant: Option<(TensorArg<R>, QuantScheme)>,
+    quant: Option<(TensorArg<R>, QuantScheme, Until)>,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -248,6 +264,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             stage,
             units,
             quant,
+            leaf,
         } = self.data;
         let space = space.unwrap();
 
@@ -311,11 +328,12 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        let mut spec = TileSpec::from_concrete(&ConcreteLayout::new(&phys), check, units);
+        let mut spec =
+            TileSpec::from_concrete(&ConcreteLayout::new(&phys), check, units).leaf(leaf);
         if let Some(stage) = stage {
             spec = spec.staged(stage);
         }
-        if let Some((_, scheme)) = &quant {
+        if let Some((_, scheme, _)) = &quant {
             validate_scheme(&space.project(&spec.axes), v, *scheme);
         }
         Realized {
@@ -345,23 +363,56 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
     }
 }
 
-impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
-    /// Build the quantized operand: the same derivation plus the validated scheme, with
-    /// the scales and scheme as first-class fields.
-    pub fn build(self) -> QuantOperand<R> {
+impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
+    /// Build the quantized operand: the same derivation plus the validated scheme, with the scales,
+    /// scheme and [`Until`] as first-class fields. Shared by both quantized typestates, which
+    /// differ only in whether `until` was stated.
+    fn build_quant(self) -> QuantOperand<R> {
+        let leaf = self.data.leaf;
         let Realized {
             tensor,
             vector_size,
             spec,
             quant,
         } = self.realize();
-        let (scales, scheme) = quant.unwrap();
+        let (scales, scheme, until) = quant.unwrap();
+        validate_until(until, leaf);
         QuantOperand {
             tensor,
             vector_size,
             spec,
             scales,
             scheme,
+            until,
         }
+    }
+}
+
+impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
+    /// Build the quantized operand.
+    pub fn build(self) -> QuantOperand<R> {
+        self.build_quant()
+    }
+}
+
+/// Refuse an [`Until`] nothing can honour. A strided load decodes whatever it moves, since it runs
+/// code per element, so only the leaf constrains: a fragment load takes a raw window at one element
+/// type, so a leaf that loads fragments needs its values already served.
+fn validate_until(until: Until, leaf: Leaf) {
+    match (until, leaf) {
+        (Until::Load, _) => {}
+        // The memory leaf reads through a matrix view; so does the manual-mma fragment load, which
+        // addresses one element at a time. Only the intrinsic transports are opaque.
+        (Until::Read, Leaf::Memory) => {}
+        (Until::Read, Leaf::Mma { io, .. }) => assert!(
+            matches!(io.lhs_load_method, LoadMethod::Manual)
+                && matches!(io.rhs_load_method, LoadMethod::Manual),
+            "StridedTileSource::until: the ldmatrix transport copies raw lanes, so it cannot \
+             decode as it reads; such an operand must be served by its load (Until::Load)"
+        ),
+        (Until::Read, other) => panic!(
+            "StridedTileSource::until: {other:?} loads fragments at one element type, so it cannot \
+             decode as it reads; such an operand must be served by its load (Until::Load)"
+        ),
     }
 }

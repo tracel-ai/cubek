@@ -6,7 +6,7 @@ use cubecl::{
 };
 use cubek_tile::{
     Axis, ByAxis, Distribution, Partitioner, QuantTileArg, QuantTileArgLaunch, Space, Storage,
-    TileArg, TileArgLaunch, TileSpec,
+    TileArg, TileArgLaunch, TileSpec, Until,
 };
 
 // Input axes
@@ -56,6 +56,8 @@ pub fn launch_ref<R: Runtime>(
             scales.into_tensor_arg(),
             TileSpec::new(&[M, N], input_storage),
             *scheme,
+            // Nothing stages this operand, so its read is what decodes it.
+            Until::Read,
         ),
         TileArgLaunch::new(
             output.into_tensor_arg(),

@@ -5,8 +5,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, Leaf, QuantTileArg, QuantTileArgLaunch, Schedule, Space, Storage, TileArg,
-    TileArgLaunch, TileSpec, Tiling, WalkOrder,
+    Axis, Cut, QuantTileArg, QuantTileArgLaunch, Schedule, Space, Storage, TileArg, TileArgLaunch,
+    TileSpec, Tiling, Until, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -88,6 +88,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, N], storage),
             scheme,
+            Until::Read,
         ),
         output.arg(),
         space,
@@ -172,7 +173,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let space = Space::new(&[(M, m), (N, n)]);
     let input = TileInput::builder(&client, space.clone())
         .untiled()
-        .packed(&scheme)
+        .packed(&scheme, Until::Read)
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
@@ -273,7 +274,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
         })
-        .leaf(Leaf::Register);
+        .build();
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
     let storage = Storage::of(2, space.rank()).checked(check);
@@ -297,6 +298,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
             scales.binding().into_tensor_arg(),
             TileSpec::new(&[M, N], storage),
             scheme,
+            Until::Read,
         ),
         TileArgLaunch::new(
             output.tensor_arg(1),
