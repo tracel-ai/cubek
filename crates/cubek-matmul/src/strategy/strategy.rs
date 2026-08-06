@@ -507,22 +507,45 @@ impl Strategy {
                 &stamp_kind(s, Mma, set_specialized),
                 dtypes,
             ),
-            Strategy::OrderedDoubleCmma(s) => launch_tiling::launch_ref(
-                client,
-                lhs,
-                rhs,
-                out,
-                &stamp_kind(s, Cmma, set_ordered),
-                dtypes,
-            ),
-            Strategy::OrderedDoubleMma(s) => launch_tiling::launch_ref(
-                client,
-                lhs,
-                rhs,
-                out,
-                &stamp_kind(s, Mma, set_ordered),
-                dtypes,
-            ),
+            // Ordered loading carries a hard divisibility constraint on the
+            // *device's* plane size (each loading plane must own a whole
+            // number of vectors per lane), so a selection recorded on one
+            // device — or under an older selector — can be invalid on
+            // another. The entry stays reliable by degrading to the universal
+            // unit kernel on an invalid config, like the gemv/gemm routines
+            // below — availability and validation errors surface unchanged.
+            Strategy::OrderedDoubleCmma(s) => {
+                match launch_tiling::launch_ref(
+                    client,
+                    lhs.clone(),
+                    rhs.clone(),
+                    out.clone(),
+                    &stamp_kind(s, Cmma, set_ordered),
+                    dtypes,
+                ) {
+                    Err(MatmulSetupError::InvalidConfig(_)) => {
+                        Strategy::SimpleUnit(Default::default())
+                            .launch_ref(client, lhs, rhs, out, dtypes)
+                    }
+                    other => other,
+                }
+            }
+            Strategy::OrderedDoubleMma(s) => {
+                match launch_tiling::launch_ref(
+                    client,
+                    lhs.clone(),
+                    rhs.clone(),
+                    out.clone(),
+                    &stamp_kind(s, Mma, set_ordered),
+                    dtypes,
+                ) {
+                    Err(MatmulSetupError::InvalidConfig(_)) => {
+                        Strategy::SimpleUnit(Default::default())
+                            .launch_ref(client, lhs, rhs, out, dtypes)
+                    }
+                    other => other,
+                }
+            }
             Strategy::SimpleUnit(selection) => {
                 launch_tiling::launch_ref(client, lhs, rhs, out, selection, dtypes)
             }
