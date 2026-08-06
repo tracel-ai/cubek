@@ -22,6 +22,16 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         #[comptime] op_space: Space,
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
+        // Staging copies an operand into a dense buffer shaped like its *logical* sub-tile. A
+        // gathered operand has no such shape: its window is a smaller, overlapping physical box,
+        // so a fill would have to gather rather than copy. Until it does, gather-reduce is
+        // `Schedule::Direct` and reads from where the operand lives.
+        let lhs_gathered = lhs.gathered();
+        let rhs_gathered = rhs.gathered();
+        comptime!(assert!(
+            !lhs_gathered && !rhs_gathered,
+            "Staging: a gathered operand cannot be staged; run the level Direct"
+        ));
         let lhs_delivery = lhs.delivery();
         let rhs_delivery = rhs.delivery();
         // Pin an operand only when its window is genuinely fixed across the walk. A barrier

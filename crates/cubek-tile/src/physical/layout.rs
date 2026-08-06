@@ -72,7 +72,7 @@ impl ConcreteLayout {
         let deepest = self
             .axes
             .iter()
-            .map(|a| self.axes.iter().filter(|b| b.axis == a.axis).count())
+            .map(|a| self.fragments(a.axis))
             .max()
             .unwrap_or(1);
         deepest - 1
@@ -86,7 +86,12 @@ impl ConcreteLayout {
         }
         self.axes
             .iter()
-            .position(|a| self.axes.iter().filter(|b| b.axis == a.axis).count() > 1)
+            .position(|a| self.fragments(a.axis) > 1)
             .unwrap_or(0)
+    }
+
+    /// How many physical fragments `axis` splits into; `1` when it is not storage-tiled.
+    fn fragments(&self, axis: Axis) -> usize {
+        self.axes.iter().filter(|b| b.axis == axis).count()
     }
 }

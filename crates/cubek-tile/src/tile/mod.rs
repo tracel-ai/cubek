@@ -222,6 +222,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
+    /// coordinate is not a physical one, so the only read surface that describes the tile is the
+    /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a
+    /// [`direct`](Projection::direct) operand, and for a fragment or a tensor map, which have no
+    /// buffer to gather from.
+    pub fn gathered(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(!g.projection.is_direct()),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(false)
+            }
+        }
+    }
+
     /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
     /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.
     pub fn at(&self, region: &Region) -> Tile<T> {

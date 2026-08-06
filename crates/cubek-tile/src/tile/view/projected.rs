@@ -1,0 +1,168 @@
+//! The gathered read view over a [`Tile`](crate::Tile). [`AxisProjection`] is the [`Layout`] that
+//! turns the tile's *logical* coordinate (one per axis of its [`Space`](crate::Space)) into the
+//! *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
+//!
+//! Under the direct mapping the two coincide and this layout is never built; the matmul leaves keep
+//! reading through [`BatchMatrix`](super::BatchMatrix). Under a gathering mapping they differ in
+//! rank: a 2-D stencil input carries five logical axes over three physical ones, and two logical
+//! coordinates (an output step and a tap) address the same physical axis.
+
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Coordinates, CoordsDyn, Layout, LayoutExpand},
+};
+
+use crate::*;
+
+/// The layouts a windowed tile re-views through: any [`Layout`] from a coordinate `C` onto the
+/// window's `CoordsDyn`, cloneable in both worlds so the transparent read can address the values
+/// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
+/// a new concept; [`BatchMatrix`](super::BatchMatrix) and [`AxisProjection`] are the two members.
+pub trait TileLayout<C: Coordinates>:
+    Layout<Coordinates = C, SourceCoordinates = CoordsDyn>
+    + Clone
+    + 'static
+    + CubeType<ExpandType: Clone>
+{
+}
+
+impl<C: Coordinates, L> TileLayout<C> for L where
+    L: Layout<Coordinates = C, SourceCoordinates = CoordsDyn>
+        + Clone
+        + 'static
+        + CubeType<ExpandType: Clone>
+{
+}
+
+/// A [`Layout`] mapping a tile's logical coordinate to its window's physical one:
+/// `phys[pa] = Σ logical[axis] * scale`. Sits between the [`Window`](crate::Window) and the
+/// element layout, so the window's `bound` still masks the read (an out-of-range stencil tap
+/// reads zero).
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct AxisProjection {
+    /// The tile's per-logical-axis extents, in the projection's axis order. The innermost is a
+    /// line count, matching the window's innermost physical axis.
+    shape: Coords<u32>,
+    #[cube(comptime)]
+    projection: Projection,
+}
+
+#[cube]
+impl AxisProjection {
+    pub fn new(shape: Coords<u32>, #[comptime] projection: Projection) -> Self {
+        // `to_source_pos` indexes `pos` by `projection.position(axis)`, so a coordinate carries one
+        // entry per *logical* axis, not per physical one. Ranks differ under a gathering mapping,
+        // which is exactly when confusing the two silently reads the wrong axis.
+        let rank = shape.len();
+        comptime!(assert!(
+            rank == projection.logical_rank(),
+            "AxisProjection: shape has {rank} entries but the projection spans {} logical axes",
+            projection.logical_rank()
+        ));
+        AxisProjection { shape, projection }
+    }
+}
+
+#[cube]
+impl Layout for AxisProjection {
+    type Coordinates = CoordsDyn;
+    type SourceCoordinates = CoordsDyn;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let mut out = CoordsDyn::new();
+
+        #[unroll]
+        for pa in 0..comptime!(self.projection.physical_rank()) {
+            let n = comptime!(self.projection.physical_axis(pa).terms().len());
+            // Per-term products, summed below (chained, so a single coefficient-1 term folds to
+            // the coordinate itself).
+            let mut terms = Coords::<u32>::new();
+            #[unroll]
+            for t in 0..n {
+                let term = comptime!(self.projection.physical_axis(pa).terms()[t]);
+                let p = comptime!(self.projection.position(term.axis));
+                terms.push(pos[p].fmul(comptime!(term.scale.get() as u32)));
+            }
+            out.push(terms.fsum(comptime!((0..n).collect::<Vec<_>>())));
+        }
+
+        out
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        let in_bounds = self.is_in_bounds(pos.clone());
+        (self.to_source_pos(pos), in_bounds)
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        self.shape.to_dyn()
+    }
+
+    /// The logical box. Whether the physical coordinate it maps to is within the operand's valid
+    /// data is the [`Window`](crate::Window)'s question, asked one layer down.
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        let mut valid = true;
+
+        #[unroll]
+        for p in 0..self.shape.len() {
+            valid = valid && pos[p] < self.shape.at(p);
+        }
+
+        valid
+    }
+}
+
+#[cube]
+impl<T: Numeric> Tile<T> {
+    /// This tile's whole logical box as a quantization-transparent read view, one coordinate per
+    /// axis of its [`Space`](crate::Space) (the innermost a line index). The N-D counterpart of
+    /// [`matrix_transparent`](Tile::matrix_transparent), and the only read surface a gathered
+    /// operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
+    pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> TileView<'_, T, I, WP, W, CoordsDyn> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                let layout = axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    self.vector_size(),
+                );
+                g.nd_transparent::<I, WP, W>(layout)
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::nd: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
+        }
+    }
+}
+
+/// The tile's per-axis extents paired with its operand's mapping. `Space` is scalar; the
+/// innermost axis is a line count, matching the window it indexes into.
+#[cube]
+fn axis_projection(
+    #[comptime] space: Space,
+    #[comptime] projection: Projection,
+    #[comptime] vector_size: usize,
+) -> AxisProjection {
+    // `shape` is read off `space` while `to_source_pos` indexes by the projection's axis order, so
+    // the two orders being the same sequence is load-bearing. It holds because a tile's space *is*
+    // `space.project(spec.axes())` ([`Tile::of_impl`]), but nothing in the types says so.
+    comptime!(assert!(
+        space.axes().eq(projection.logical_axes().iter().copied()),
+        "AxisProjection: the tile's axis order {:?} differs from its projection's {:?}",
+        space.axes().collect::<Vec<_>>(),
+        projection.logical_axes()
+    ));
+    let rank = comptime!(space.rank());
+    let last = comptime!(rank - 1);
+    let mut shape = Coords::<u32>::new();
+
+    #[unroll]
+    for p in 0..rank {
+        let e = comptime!(space.extent_at(p));
+        shape.push(comptime!((if p == last { e / vector_size } else { e }) as u32).runtime());
+    }
+
+    AxisProjection::new(shape, projection)
+}

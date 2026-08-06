@@ -486,6 +486,14 @@ impl Space {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
+    /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
+    /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
+    /// there are is what picks a leaf's microkernel, so every site that deduces a 2-D single-`K`
+    /// shape asks here rather than reading an operand's rank.
+    pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
+        Space::merge(operands).contracting(output)
+    }
+
     /// The single axis this operand contracts against `output`:
     /// [`contracting`](Space::contracting) with the one-axis contract asserted.
     pub fn contraction(&self, output: &Space) -> Axis {

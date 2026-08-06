@@ -316,7 +316,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             spec = spec.staged(stage);
         }
         if let Some((_, scheme)) = &quant {
-            validate_scheme(&space.project(&spec.axes), v, *scheme);
+            validate_scheme(&space.project(spec.axes()), v, *scheme);
         }
         Realized {
             tensor: binding.into_tensor_arg(),

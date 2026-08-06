@@ -61,14 +61,15 @@ impl Storage {
 }
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer
-/// spans, and how ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of)
-/// alongside that space; `of` projects the space onto `axes`, so no operand ever carries
+/// spans and how they address its physical axes ([`Projection`]), plus how the buffer is tiled
+/// ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of) alongside that space;
+/// `of` projects the space onto the projection's logical axes, so no operand ever carries
 /// its own copy of the space. The launch-side builder derives it
 /// ([`build`](crate::StridedTileSource::build)).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileSpec {
-    /// The axes this operand spans, in its buffer's dim order.
-    pub axes: Vec<Axis>,
+    /// How this operand's logical axes address its buffer's physical ones.
+    pub projection: Projection,
     pub storage: Storage,
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
@@ -76,22 +77,35 @@ pub struct TileSpec {
 }
 
 impl TileSpec {
-    /// Pair an operand's spanned axes with its storage; the stage layout stays derived
-    /// ([`staged`](Self::staged) overrides it).
+    /// Pair an operand's spanned axes with its storage, one logical axis per physical one; the stage
+    /// layout stays derived ([`staged`](Self::staged) overrides it).
     pub fn new(axes: &[Axis], storage: Storage) -> Self {
+        TileSpec::projected(Projection::direct(axes), storage)
+    }
+
+    /// [`new`](Self::new) for an operand whose physical axes are affine combinations of its logical
+    /// ones (a gather-reduce over an abstract dimension). The projection is checked here, the one
+    /// place both constructors meet.
+    pub fn projected(projection: Projection, storage: Storage) -> Self {
+        projection.validate(&storage);
         TileSpec {
-            axes: axes.to_vec(),
+            projection,
             storage,
             stage: None,
         }
     }
 
-    /// Derive an operand's spec from its realized [`ConcreteLayout`]: the spanned axes
-    /// and the tiling [`Storage`] both read off the layout. The one derivation every
+    /// The axes this operand spans, in its logical order.
+    pub fn axes(&self) -> &[Axis] {
+        self.projection.logical_axes()
+    }
+
+    /// Derive an operand's spec from its realized [`ConcreteLayout`]: the [`Projection`] and the
+    /// tiling [`Storage`] both read off the layout's repeated axis labels. The one derivation every
     /// launch site shares.
     pub fn from_concrete(layout: &ConcreteLayout, check: bool, units: usize) -> Self {
-        TileSpec::new(
-            &layout.distinct_axes(),
+        TileSpec::projected(
+            Projection::of_layout(layout),
             Storage::from(layout).checked(check).units(units),
         )
     }
@@ -118,7 +132,7 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 #[cube]
 impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`]: the kernel's one `space` projected onto this
-    /// operand's `spec.axes`.
+    /// operand's `spec` axes.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
         Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
     }
@@ -142,7 +156,7 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
 #[cube]
 impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`] of the served type `O`: the kernel's one `space`
-    /// projected onto this operand's `spec.axes`, reads dequantizing per the scheme.
+    /// projected onto this operand's `spec` axes, reads dequantizing per the scheme.
     pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
         Tile::<O>::of_dequant(
             self.values,
@@ -170,7 +184,10 @@ impl<E: Numeric> TmaTileArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
     /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
-        TmaData::from_tensor_map(self.view.clone(), comptime!(space.project(&self.spec.axes)))
+        TmaData::from_tensor_map(
+            self.view.clone(),
+            comptime!(space.project(self.spec.axes())),
+        )
     }
 }
 

@@ -124,8 +124,8 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(one_batch.spec.axes.contains(&B1));
-    assert!(!one_batch.spec.axes.contains(&B0));
+    assert!(one_batch.spec.axes().contains(&B1));
+    assert!(!one_batch.spec.axes().contains(&B0));
 
     // A size-1 dim drops out entirely (broadcast omission).
     let broadcast = launch
@@ -133,8 +133,8 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(!broadcast.spec.axes.contains(&B0));
-    assert!(!broadcast.spec.axes.contains(&B1));
+    assert!(!broadcast.spec.axes().contains(&B0));
+    assert!(!broadcast.spec.axes().contains(&B1));
 }
 
 // ---- Launcher::vector_size -------------------------------------------------

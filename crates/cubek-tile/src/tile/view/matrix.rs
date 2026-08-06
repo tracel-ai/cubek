@@ -97,7 +97,7 @@ impl<T: Numeric> Tile<T> {
     pub fn matrix<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
         let layout = self.batch_matrix(i);
         match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.masked::<W>(layout),
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.masked::<W, Coords2d, BatchMatrix>(layout),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix: a plane tile has no memory view")
             }
