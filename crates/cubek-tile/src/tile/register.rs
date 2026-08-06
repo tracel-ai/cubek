@@ -91,8 +91,8 @@ impl<T: Numeric> RegisterData<T> {
     /// Write the block into `mem`'s window, casting down to its element — the same manual,
     /// row-major store the mma fragment does, over lines instead of lane positions.
     ///
-    /// Under [`LaneShare::Partial`] each lane holds only part of every cell, so the block is not
-    /// the answer until the plane is summed: combine first, then let one lane write. This is
+    /// Under a folded [`LaneShare`] each lane holds only part of every cell, so the block is not
+    /// the answer until those lanes are combined: fold first, then let one of them write. This is
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
     /// every lane writing its own fraction over the last.
     pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
@@ -123,7 +123,7 @@ impl<T: Numeric> RegisterData<T> {
                     }
                 }
             }
-            LaneShare::Partial =>
+            LaneShare::Plane =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
@@ -131,6 +131,24 @@ impl<T: Numeric> RegisterData<T> {
                     for n in 0..comptime!(self.nr) {
                         let combined = plane_sum(self.data[comptime!(i * self.nr + n)]);
                         if UNIT_POS_X == 0 {
+                            let offset = (i as u32) * line_stride + comptime!(n as u32);
+                            out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
+                        }
+                    }
+                }
+            }
+            LaneShare::Group { fold_mask } =>
+            {
+                #[unroll]
+                for i in 0..comptime!(self.mr) {
+                    #[unroll]
+                    for n in 0..comptime!(self.nr) {
+                        let combined = fold_group::<T, RA>(
+                            self.data[comptime!(i * self.nr + n)],
+                            comptime!(fold_mask),
+                        );
+                        let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
+                        if lane_in_group == 0 {
                             let offset = (i as u32) * line_stride + comptime!(n as u32);
                             out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
                         }

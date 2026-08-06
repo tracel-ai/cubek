@@ -458,27 +458,56 @@ impl Space {
             .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
     }
 
-    /// What the plane's lanes hold of this space's cells: `Partial` once a level spreads an axis
-    /// the space doesn't span, since each lane then covers a disjoint slice of it.
+    /// What the plane's lanes hold of this space's cells: a `Unit` axis the space doesn't span is
+    /// *folded* across the lanes, so each holds only a partial; one it does span is *carried*,
+    /// giving each lane a cell of its own.
+    ///
+    /// Which lanes hold partials of one cell is a question about the lane index's digits, so the
+    /// answer is a bit mask. `Walk::from_counts` decodes a `Unit` axis as
+    /// `UNIT_POS_X / inner_weight % instances`, which for power-of-two counts is a contiguous run
+    /// of bits; the folded axes' runs are exactly the bits a cell's partials differ in. Fold
+    /// everything and that mask is the whole plane ([`LaneShare::Plane`]); fold under a carry and
+    /// it is a [`LaneShare::Group`], whatever order the axes sit in.
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
         }
-        for axis in self.partitioner.axes() {
-            if self.contains(axis) {
-                continue;
-            }
-            if let Distribution::Spatial {
+        // Innermost first, so `weight` is the axis's stride in the lane index as it is reached —
+        // the same least-significant-last ordering `Walk::from_counts` decodes with.
+        let (mut weight, mut fold_mask) = (1usize, 0usize);
+        for axis in self.partitioner.axes().into_iter().rev() {
+            let Distribution::Spatial {
                 scope: ComputeScope::Unit,
                 coverage,
                 ..
             } = self.partitioner.distribution(axis)
-                && coverage.instances_const().is_some_and(|lanes| lanes > 1)
-            {
-                return LaneShare::Partial;
+            else {
+                continue;
+            };
+            // Asserted, not skipped: a `Unit` axis always resolves to `Instances`
+            // (`Distribution::unit` defers through `PlaneLanes`), and passing over one whose
+            // count we could not read would shift every inner axis's bits by its width.
+            let lanes = coverage
+                .instances_const()
+                .expect("Space::lane_share: a Unit axis must carry a const instance count");
+            if lanes == 1 {
+                continue;
             }
+            assert!(
+                lanes.is_power_of_two(),
+                "Space::lane_share: {axis:?} rides {lanes} lanes, which is not a power of two, so its partials are not a bit range"
+            );
+            if !self.contains(axis) {
+                fold_mask |= (lanes - 1) * weight;
+            }
+            weight *= lanes;
         }
-        LaneShare::Whole
+        match fold_mask {
+            0 => LaneShare::Whole,
+            // Every lane's bit folded: nothing is carried, so the plane shares the one cell.
+            mask if mask == weight - 1 => LaneShare::Plane,
+            fold_mask => LaneShare::Group { fold_mask },
+        }
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
