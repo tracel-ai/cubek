@@ -20,6 +20,7 @@ use crate::{
     components::global::memory::{GlobalMemoryConfig, ViewDirection},
     components::global::multi_stage::EventLoadingMode,
 };
+use crate::components::global::read::LoadingValidation as _;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
 use std::marker::PhantomData;
@@ -146,6 +147,13 @@ where
             plane_flow_partition_rule: plane_flow_config.partition_rule,
             plane_dim: blueprint.plane_dim,
         };
+
+        // Checked here — where a violation is a recoverable setup error —
+        // rather than only at the kernel's comptime re-check, whose failure
+        // surfaces as an asynchronous compile error no caller can recover
+        // from. See the same block in the ordered family's `expand_config`.
+        LL::validate_with_config(device_props, &lhs_reader_config)?;
+        RL::validate_with_config(device_props, &rhs_reader_config)?;
 
         Ok(SharedGlobalMatmulConfig {
             stage_config,
