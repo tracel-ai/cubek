@@ -143,6 +143,16 @@ where
             plane_dim: blueprint.plane_dim,
         };
 
+        // The readers' config constraints, checked here — where a violation is
+        // a recoverable setup error the tuner can skip and a dispatch can
+        // degrade on. The kernel re-checks them at comptime, but an error
+        // raised there only surfaces as an asynchronous compile failure at the
+        // next flush (e.g. ordered loading on a plane-64 device whose stage
+        // leaves fewer vectors per plane than lanes), which no caller can
+        // recover from.
+        LL::validate_with_config(device_props, &lhs_reader_config)?;
+        RL::validate_with_config(device_props, &rhs_reader_config)?;
+
         Ok(SharedGlobalMatmulConfig {
             stage_config,
             num_planes: plane_flow_config.counts.total_count(),

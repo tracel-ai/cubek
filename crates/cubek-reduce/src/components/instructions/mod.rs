@@ -1,6 +1,7 @@
 mod all;
 mod any;
 mod base;
+mod extrema;
 mod max;
 mod maxabs;
 mod mean;
@@ -14,6 +15,7 @@ mod utils;
 pub use all::*;
 pub use any::*;
 pub use base::*;
+pub(crate) use extrema::*;
 pub use max::*;
 pub use maxabs::*;
 pub use mean::*;

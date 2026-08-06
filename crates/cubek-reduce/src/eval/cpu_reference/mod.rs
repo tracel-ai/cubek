@@ -258,6 +258,14 @@ pub(crate) fn output_shape(input_shape: &Shape, axis: usize) -> Vec<usize> {
     out
 }
 
+pub(super) fn should_replace_max(current: f32, candidate: f32) -> bool {
+    !current.is_nan() && (candidate.is_nan() || candidate > current)
+}
+
+pub(super) fn should_replace_min(current: f32, candidate: f32) -> bool {
+    !current.is_nan() && (candidate.is_nan() || candidate < current)
+}
+
 pub(crate) fn for_each_output_coord(output_shape: &[usize], mut f: impl FnMut(usize, &[usize])) {
     let rank = output_shape.len();
     if rank == 0 {

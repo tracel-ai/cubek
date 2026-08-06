@@ -47,8 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, StridedTileArg, StridedTileArgLaunch, Tiling,
-    WalkOrder,
+    Axis, CubeAxis, Cut, Leaf, Schedule, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -59,14 +58,15 @@ const K: Axis = Axis(2);
 /// variable. Mirrors the tile suite's `launch_staged_matmul`.
 #[cube(launch)]
 fn launch_split_k_matmul<E: Numeric>(
-    a: &StridedTileArg<'_, E>,
-    b: &StridedTileArg<'_, E>,
-    c: &StridedTileArg<'_, E>,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
     #[define(E)] _dtype: StorageType,
 ) {
-    let a = a.tile();
-    let b = b.tile();
-    let mut c = c.tile();
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -249,9 +249,10 @@ fn run(
         client,
         space.cube_count(),
         mapping.cube_dim(&space, client),
-        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        StridedTileArgLaunch::strided(rhs_arg(&b, mapping), 1, space.project(&[K, N]), b.storage()),
-        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
+        TileArgLaunch::new(rhs_arg(&b, mapping), TileSpec::new(&[K, N], b.storage())),
+        TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
+        space,
         dtype,
     );
     c
@@ -266,9 +267,9 @@ struct SplitKBench {
     cube_dim: CubeDim,
     a: TileInput,
     b: TileInput,
-    /// The kernel-side rhs space, always `[K, N]`; `b.space()` is `[N, K]` for the
-    /// transposed layout, so it cannot serve here.
-    rhs_space: Space,
+    /// The one kernel space; each operand's spec carries only its spanned axes (the rhs
+    /// is `[K, N]` even when its buffer is the transposed layout re-strided).
+    space: Space,
     c: TileInput,
 }
 
@@ -287,14 +288,13 @@ impl Benchmark for SplitKBench {
             &self.client,
             self.cube_count.clone(),
             self.cube_dim,
-            StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-            StridedTileArgLaunch::strided(
+            TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
+            TileArgLaunch::new(
                 rhs_arg(b, self.mapping),
-                1,
-                self.rhs_space.clone(),
-                b.storage(),
+                TileSpec::new(&[K, N], b.storage()),
             ),
-            StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+            TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
+            self.space.clone(),
             dtype,
         );
         Ok(())
@@ -423,7 +423,6 @@ pub fn bench(
         .untiled()
         .uniform(0, 0.0, 1.0);
     let b = rhs_input(&client, mapping, &space, |bld| bld.uniform(1, 0.0, 1.0));
-    let rhs_space = space.project(&[K, N]);
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
@@ -437,7 +436,7 @@ pub fn bench(
         cube_dim,
         a,
         b,
-        rhs_space,
+        space,
         c,
     };
 

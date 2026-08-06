@@ -5,8 +5,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, Leaf, Schedule, Space, Storage, StridedTileArg, StridedTileArgLaunch, Tiling,
-    WalkOrder,
+    Axis, Cut, Leaf, QuantTileArg, QuantTileArgLaunch, Schedule, Space, Storage, TileArg,
+    TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -22,16 +22,16 @@ fn copy_non_quantized_matches_reference() {
     let input = TileInput::builder(&client, space.clone())
         .untiled()
         .arange();
-    let output = TileInput::builder(&client, space).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
-    dequant_copy::launch::<TestRuntime>(
+    plain_copy::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        StridedTileArgLaunch::strided(input.tensor_arg(1), 1, input.space(), input.storage()),
-        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
-        dtype,
+        input.arg(),
+        output.arg(),
+        space,
         dtype,
     );
 
@@ -82,9 +82,15 @@ fn copy_quantized_per_tensor_matches_reference() {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        StridedTileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
-            .quantized(scales.binding().into_tensor_arg(), scheme),
-        StridedTileArgLaunch::strided(output.tensor_arg(1), 1, output.space(), output.storage()),
+        1,
+        QuantTileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
+            TileSpec::new(&[M, N], storage),
+            scheme,
+        ),
+        output.arg(),
+        space,
         input_dtype,
         out_dtype,
     );
@@ -168,25 +174,20 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         .untiled()
         .packed(&scheme)
         .arange();
-    let output = TileInput::builder(&client, space).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     let input_dtype = u32::as_type_native_unchecked().storage_type();
     let out_dtype = f32::as_type_native_unchecked().storage_type();
+    // The packed binding stays a scalar `u32`: the scheme serves `pack` values per word,
+    // so the copy moves whole lines and the destination is lined at that served width.
     dequant_copy::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        // The served line is one whole `u32`: `pack` values, so a physical width of 1.
-        StridedTileArgLaunch::strided(
-            input.tile.tensor_arg(1),
-            pack,
-            input.tile.space(),
-            input.tile.storage(),
-        )
-        .quantized(input.scales_arg(), scheme),
-        // The copy moves whole lines, so the destination is lined at the served width too
-        // (the arg stays scalar-unit; `strided` does the lining).
-        StridedTileArgLaunch::strided(output.tensor_arg(1), pack, output.space(), output.storage()),
+        pack,
+        input.arg(),
+        output.arg(),
+        space,
         input_dtype,
         out_dtype,
     );
@@ -212,19 +213,30 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
 }
 
 #[cube(launch)]
-/// input: the input tensor, storage-typed (`I`); quantized when its payload carries scales
-/// output: the dequantized output tensor
-///
-/// `I` names the binding's element only: the copy recovers it from the scheme on its own, so a
+/// A plain (non-quantized) copy: both tiles serve `E` straight from their tensors.
+pub fn plain_copy<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(space);
+    output.copy_from(&input);
+}
+
+#[cube(launch)]
+/// `I` names the binding's element only: the arg's scheme recovers the served value, so a
 /// quantized input dequantizes with nothing threaded through the body.
-pub fn dequant_copy<I: Numeric, O: Numeric>(
-    input: &StridedTileArg<'_, I>,
-    output: &StridedTileArg<'_, O>,
+pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
+    input: &QuantTileArg<'_, I, Const<1>>,
+    output: &TileArg<'_, O, V>,
+    #[comptime] space: Space,
     #[define(I)] _input_dtype: StorageType,
     #[define(O)] _output_dtype: StorageType,
 ) {
-    let input = input.tile_dequant::<O>();
-    let mut output = output.tile();
+    let input = input.tile::<O>(comptime!(space.clone()));
+    let mut output = output.tile(space);
     output.copy_from(&input);
 }
 
@@ -279,14 +291,18 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        StridedTileArgLaunch::strided(input.binding().into_tensor_arg(), 1, space, storage)
-            .quantized(scales.binding().into_tensor_arg(), scheme),
-        StridedTileArgLaunch::strided(
-            output.tensor_arg(1),
-            1,
-            output.space(),
-            output.storage().checked(check),
+        1,
+        QuantTileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
+            TileSpec::new(&[M, N], storage),
+            scheme,
         ),
+        TileArgLaunch::new(
+            output.tensor_arg(1),
+            TileSpec::new(&[M, N], output.storage().checked(check)),
+        ),
+        space,
         input_dtype,
         out_dtype,
     );

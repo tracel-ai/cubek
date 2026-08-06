@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Set, Space, StridedTileArgLaunch, StridedTileSource, Unset};
+use crate::{Axis, Set, Space, StridedOperand, StridedTileSource, Unset};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -51,14 +51,11 @@ impl<'c, R: Runtime> Launcher<'c, R> {
         &self.concrete
     }
 
-    /// Start a tile argument over the kernel space: [`StridedTileArgLaunch::source`] with
+    /// Start a tile operand over the kernel space: [`StridedOperand::source`] with
     /// [`space`](StridedTileSource::space) pre-set and the bounds-check derived from the concrete
     /// space's overhang (an explicit [`checked`](StridedTileSource::checked) still wins).
-    pub fn arg<E: Numeric>(
-        &self,
-        binding: TensorBinding<R>,
-    ) -> StridedTileSource<'_, Set, Unset, E, R> {
-        StridedTileArgLaunch::source(binding)
+    pub fn arg(&self, binding: TensorBinding<R>) -> StridedTileSource<'_, Set, Unset, Unset, R> {
+        StridedOperand::source(binding)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)

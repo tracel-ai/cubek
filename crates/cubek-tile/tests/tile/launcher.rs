@@ -5,9 +5,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Storage, StridedTileArgLaunch, Tiling, WalkOrder,
-};
+use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, StridedOperand, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -95,24 +93,24 @@ fn arg_derives_check_from_subspace_overhang() {
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
 
     let touches_k = launch
-        .arg::<f32>(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .build();
-    assert!(touches_k.storage.check_bounds);
+    assert!(touches_k.spec.storage.check_bounds);
 
     let avoids_k = launch
-        .arg::<f32>(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]))
         .subspace(&[M, N])
         .build();
-    assert!(!avoids_k.storage.check_bounds);
+    assert!(!avoids_k.spec.storage.check_bounds);
 
     // An explicit override still wins over the derivation.
     let forced = launch
-        .arg::<f32>(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .checked(false)
         .build();
-    assert!(!forced.storage.check_bounds);
+    assert!(!forced.spec.storage.check_bounds);
 }
 
 #[test]
@@ -122,21 +120,21 @@ fn arg_right_aligns_batches_and_drops_size_one() {
 
     // One leading dim: right-aligns to B1 (the trailing axis of the full list).
     let one_batch = launch
-        .arg::<f32>(binding(&client, &[3, 64, 16]))
+        .arg(binding(&client, &[3, 64, 16]))
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(one_batch.space.contains(B1));
-    assert!(!one_batch.space.contains(B0));
+    assert!(one_batch.spec.axes.contains(&B1));
+    assert!(!one_batch.spec.axes.contains(&B0));
 
     // A size-1 dim drops out entirely (broadcast omission).
     let broadcast = launch
-        .arg::<f32>(binding(&client, &[1, 64, 16]))
+        .arg(binding(&client, &[1, 64, 16]))
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(!broadcast.space.contains(B0));
-    assert!(!broadcast.space.contains(B1));
+    assert!(!broadcast.spec.axes.contains(&B0));
+    assert!(!broadcast.spec.axes.contains(&B1));
 }
 
 // ---- Launcher::vector_size -------------------------------------------------
@@ -203,7 +201,7 @@ fn arg_checked_and_vectorized_panics() {
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let _ = launch
-        .arg::<f32>(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .vectorize(4)
         .build();
@@ -225,13 +223,13 @@ fn arg_more_batch_dims_than_axes_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
     let _ = launch
-        .arg::<f32>(binding(&client, &[4, 3, 64, 16]))
+        .arg(binding(&client, &[4, 3, 64, 16]))
         .subspace(&[M, K])
         .batches(&[B1])
         .build();
 }
 
-// ---- StridedTileArgLaunch::quantized ---------------------------------------
+// ---- StridedTileSource::quantized ------------------------------------------
 
 /// Attach `scheme` to an `M×K` operand served in `v`-wide lines. Every rule below is also an
 /// in-kernel assumption, so the launch is the one place a violation can still be seen: an
@@ -239,13 +237,13 @@ fn arg_more_batch_dims_than_axes_panics() {
 fn quantize(v: usize, scheme: QuantScheme) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
-    let _ = StridedTileArgLaunch::<i8, _>::strided(
-        binding(&client, &[64, 16]).into_tensor_arg(),
-        v,
-        space.clone(),
-        Storage::of(2, space.rank()),
-    )
-    .quantized(binding(&client, &[1, 8]).into_tensor_arg(), scheme);
+    let _ = StridedOperand::source(binding(&client, &[64, 16]))
+        .space(&space)
+        .subspace(&[M, K])
+        .vectorize(v)
+        .checked(false)
+        .quantized(binding(&client, &[1, 8]).into_tensor_arg(), scheme)
+        .build();
 }
 
 fn quant_scheme(level: QuantLevel) -> QuantScheme {

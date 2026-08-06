@@ -236,6 +236,10 @@ pub fn scales_layout<R: Runtime>(
                 scales_vector_size,
             ))
         }
+        QuantLevel::BlockTensor { .. } => unimplemented!(
+            "two-level quantization is not supported here, got {:?}",
+            scheme.level
+        ),
     }
 }
 
