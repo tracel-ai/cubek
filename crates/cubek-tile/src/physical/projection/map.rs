@@ -9,7 +9,8 @@ use crate::{Axis, MAX_AXES};
 /// How far one unit of a logical axis's coordinate moves along one physical axis. Mirrors
 /// [`Extent`](crate::Extent): `Static` is a comptime constant so the advance folds the way
 /// [`window_start`](crate::MemData) needs, `Dynamic` is reserved for a runtime stride/dilation
-/// and is rejected by [`Projection::validate`] until the runtime half exists.
+/// and is rejected by [`Projection::validate`](crate::Projection::validate) until the runtime
+/// half exists.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Scale {
     Static(usize),
@@ -36,7 +37,8 @@ impl Scale {
 
 /// One logical axis's contribution to one physical axis: `digit * scale`, where the digit is the
 /// whole coordinate unless the axis is spread over several physical axes, which
-/// [`Projection::digit`] reads off the map's own shape rather than off a stored constant.
+/// [`Projection::digit`](crate::Projection::digit) reads off the map's own shape rather than off a
+/// stored constant.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AxisTerm {
     pub axis: Axis,
@@ -88,7 +90,7 @@ impl PhysicalAxisMap {
     }
 
     /// Whether this physical axis is exactly `axis` at coefficient `1`. Says nothing about digit
-    /// extraction, which is a property of the whole [`Projection`] (how many physical axes carry
+    /// extraction, which is a property of the whole [`Projection`](crate::Projection) (how many physical axes carry
     /// `axis`), not of one map.
     pub fn is_identity(&self, axis: Axis) -> bool {
         matches!(

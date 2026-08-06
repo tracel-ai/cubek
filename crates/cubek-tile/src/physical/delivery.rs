@@ -73,7 +73,7 @@ impl StageStorage {
 
 /// How an operand's shared-memory stages are laid out and cooperatively filled: the tile
 /// `layout` and the launch's `units` (cube size). One comptime value threaded from the
-/// operand's [`Storage`](crate::Storage) to every stage derived from it, so a fill never
+/// operand's [`TileSpec`](crate::TileSpec) to every stage derived from it, so a fill never
 /// re-derives either.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StagePlan {

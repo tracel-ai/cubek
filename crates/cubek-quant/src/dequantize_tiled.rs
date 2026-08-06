@@ -55,12 +55,12 @@ pub fn launch_ref<R: Runtime>(
         QuantTileArgLaunch::new(
             input.into_tensor_arg(),
             scales.into_tensor_arg(),
-            TileSpec::new(Projection::tiled(&[M, N], input_tiling), false, 0),
+            TileSpec::new(Projection::tiled(&[M, N], input_tiling)),
             *scheme,
         ),
         TileArgLaunch::new(
             output.into_tensor_arg(),
-            TileSpec::new(Projection::tiled(&[M, N], output_tiling), false, 0),
+            TileSpec::new(Projection::tiled(&[M, N], output_tiling)),
         ),
         space.all_dynamic(),
         input_dtype,

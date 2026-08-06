@@ -62,7 +62,7 @@ pub fn step_offset(
     parts.fsum(picks)
 }
 
-/// The inverse of [`GmemLayout::to_source_pos`](crate::GmemLayout::to_source_pos): the logical
+/// The inverse of `GmemLayout`'s `to_source_pos`: the logical
 /// coordinate under `projection` that produced physical digits `digits` (one entry per physical
 /// axis, already decoded off the flat physical index). Requires
 /// [`Projection::is_invertible`]; a gathered (affine, scale != 1) projection never reaches this,

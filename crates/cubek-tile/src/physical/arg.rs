@@ -1,4 +1,4 @@
-//! The launch-side operand vocabulary: the [`Storage`] mapping, the comptime [`TileSpec`]
+//! The launch-side operand vocabulary: the [`Projection`] mapping, the comptime [`TileSpec`]
 //! a kernel feeds [`Tile::of`](crate::Tile::of), and the TMA argument [`TmaTileArg`]
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
@@ -13,16 +13,21 @@ use cubecl::std::tensor::{
 use crate::*;
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer
-/// spans and how they address its physical axes ([`Projection`]), plus how the buffer is tiled
-/// ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of) alongside that space;
-/// `of` projects the space onto the projection's logical axes, so no operand ever carries
-/// its own copy of the space. The launch-side builder derives it
+/// spans and how they address its physical axes ([`Projection`], which carries the buffer's
+/// storage tiling in its own repetition). What a kernel feeds [`Tile::of`](crate::Tile::of)
+/// alongside that space; `of` projects the space onto the projection's logical axes, so no operand
+/// ever carries its own copy of the space. The launch-side builder derives it
 /// ([`build`](crate::StridedTileSource::build)).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileSpec {
     /// How this operand's logical axes address its buffer's physical ones.
     pub projection: Projection,
+    /// Whether this operand's logical extent can overhang its tile grid, so edge reads/writes must
+    /// be bounds-checked. Set from divisibility at launch; `false` keeps the unchecked (divisible)
+    /// fast path.
     pub check_bounds: bool,
+    /// The launch's cube size (units per cube), `0` when unknown; carried into the
+    /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
     pub units: usize,
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
@@ -30,18 +35,23 @@ pub struct TileSpec {
 }
 
 impl TileSpec {
-    pub fn direct(axes: &[Axis]) -> Self {
-        Self::new(Projection::direct(axes), false, 0)
-    }
-
-    pub fn new(projection: Projection, check_bounds: bool, units: usize) -> Self {
+    /// An operand's spec from its mapping alone; the optional halves are the safe defaults
+    /// (unchecked, cube size unknown) and are set by [`checked`](Self::checked),
+    /// [`units`](Self::units), and [`staged`](Self::staged).
+    pub fn new(projection: Projection) -> Self {
         projection.validate();
         TileSpec {
             projection,
-            check_bounds,
-            units,
+            check_bounds: false,
+            units: 0,
             stage: None,
         }
+    }
+
+    /// [`new`](Self::new) over the [`direct`](Projection::direct) mapping: one logical axis per
+    /// physical axis, which is every non-gather, untiled operand.
+    pub fn direct(axes: &[Axis]) -> Self {
+        Self::new(Projection::direct(axes))
     }
 
     /// The axes this operand spans, in its logical order.
@@ -53,7 +63,9 @@ impl TileSpec {
     /// tiling both read off the layout's repeated axis labels. The one derivation every
     /// launch site shares.
     pub fn from_concrete(layout: &ConcreteLayout, check: bool, units: usize) -> Self {
-        TileSpec::new(Projection::of_layout(layout), check, units)
+        TileSpec::new(Projection::of_layout(layout))
+            .checked(check)
+            .units(units)
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
@@ -63,11 +75,13 @@ impl TileSpec {
         self
     }
 
+    /// Set whether edge reads/writes must be bounds-checked.
     pub fn checked(mut self, check: bool) -> Self {
         self.check_bounds = check;
         self
     }
 
+    /// Set the launch's cube size (units per cube).
     pub fn units(mut self, units: usize) -> Self {
         self.units = units;
         self

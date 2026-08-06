@@ -1,15 +1,26 @@
-//! Register-resident leaf GEMM microkernel over memory tiles.
+//! The register-resident leaf: a software outer-product GEMM microkernel over memory tiles.
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
-/// Maximum cell count for unrolling register blocks to avoid optimizer overflow.
+/// Fully unroll the `mr × nr` register block only up to this many cells; past it the
+/// load/store loops run at runtime, since hundreds of inlined cells overflow the
+/// optimizer's recursive block pass. An *edge-masked* block never fully unrolls
+/// regardless of size: each guarded access is its own CFG branch (see [`mma_register_direct`]).
 const UNROLL_BLOCK: usize = 64;
 
-/// Runs the register microkernel over batch matrices for plain or quantized operands.
+/// Run the register microkernel over each batch matrix, reading operands through the
+/// quant-transparent [`matrix_transparent`](Tile::matrix_transparent): a plain operand is a bare
+/// matrix read, a quantized one dequantizes per read (no dequantize-into-`f32` fill). Either
+/// operand may be the quantized one (the gemv weight is the RHS, an activation-times-weight the
+/// LHS), so this dispatches each operand's storage element/packing (`0` plain, `1` native i8, `>1`
+/// packed u32). Both quantized at once is not a real workload and is refused.
 ///
-/// Dispatches to 2D direct or N-D gather microkernels based on contracted axes count.
+/// The 2-D microkernel reads each operand as a batch matrix, which is only a description of it
+/// when one axis is contracted *and* a logical coordinate is a physical one. Either condition
+/// failing takes the N-D nest ([`mma_register_gather`]); they are independent, so a stencil
+/// contracting a single axis is a gather just as much as a two-axis reduce is.
 #[cube]
 pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
@@ -20,7 +31,10 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     let size!(L) = lhs.vector_size();
     let size!(V) = rhs.vector_size();
 
-    // Validate quantization packing (at most one operand quantized).
+    // Each operand's storage element is `i8` native / `u32` packed / the served element when plain;
+    // its pack factor narrows the physical line, derived in the microkernel. `quant_pack` is `0`
+    // plain / `1` native / `>1` the packed-u32 factor. At most one operand is quantized (the gemv
+    // weight is the RHS, an activation·weight the LHS); both at once is refused.
     let pack_l = lhs.quant_pack();
     let pack_r = rhs.quant_pack();
     comptime!(assert!(
@@ -28,7 +42,13 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
         "register leaf: both operands quantized is not a supported direct-serve case"
     ));
 
-    let nd = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space).len() > 1);
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    let nd = comptime!(
+        Space::contracted(&[&lhs.space, &rhs.space], &space).len() > 1
+            || lhs_gathered
+            || rhs_gathered
+    );
     if nd {
         if comptime!(pack_l == 1) {
             mma_register_gather::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
@@ -54,7 +74,16 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
-/// 2D register microkernel for single-axis contraction over batch matrices.
+/// The register microkernel for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
+/// matrix, the `mr × nr` block of `V`-wide accumulators lives in registers (load once, `kc` rank-1
+/// updates, store once). `pack_l`/`pack_r` narrow each operand's physical line (`served / pack`,
+/// `1` for plain/native). The storage element per operand is the price of a typed quant view
+/// (`#[cube]` takes no `impl Trait`, so the view can't be erased behind a `read` trait); `#[cube]`
+/// inlines at trace time, so folding the rank-1 step in here costs nothing over a separate fn.
+///
+/// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` address
+/// the operands. [`mma_register_memory`] routes anything else to [`mma_register_gather`], so the
+/// two conditions below are re-asserted rather than re-decided.
 #[cube]
 fn mma_register_direct<
     E: Numeric,
@@ -72,7 +101,6 @@ fn mma_register_direct<
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
 ) {
-    // Ensure single contracted axis and un-gathered operands.
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
         "register leaf: the 2-D microkernel contracts exactly one axis"
@@ -84,7 +112,8 @@ fn mma_register_direct<
         "register leaf: a gathered operand has no 2-D matrix view; it needs the N-D nest"
     ));
 
-    // Compute tile dimensions and vector sizes.
+    // `nr` is a line count (spans `N` in `V`-wide lines); `mr` (rows) and `kc` (scalar `K`, off
+    // `rhs`) are unvectorized. A packed operand's physical line is `served / pack` narrower.
     let lw = lhs.vector_size();
     let vw = rhs.vector_size();
     let (mr, nr, kc) = comptime! {
@@ -110,14 +139,18 @@ fn mma_register_direct<
         let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
-        // Unroll when block size is within limits and unmasked.
+        // Unroll only when no mask, otherwise compilation too long.
         let lhs_check = lhs.check();
         let rhs_check = rhs.check();
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
-        // Outer-product updates over contracted K dimension.
+        // One rank-1 update per scalar `K` step `p`: `c += outer(A[:, p], B[p, :])`. `p` is a
+        // runtime step (the `kc` loop never unrolls), so the line index and lane fold are runtime;
+        // `extract` takes a runtime index. `A[i, p]` is lane `p % lw` of `lhs`'s `(p / lw)` K-line,
+        // broadcast; `B`'s `V`-wide lines widen from `ER` into the accumulate element `E`. Reads
+        // past the operands' logical bound contribute `0` to the contraction.
         for p in 0..kc {
             let mut b = Array::<Vector<E, V>>::new(nr);
             #[unroll(unroll)]
@@ -130,7 +163,9 @@ fn mma_register_direct<
                 let a = Vector::<E, V>::cast_from(lhs_line.extract(p % lw));
                 #[unroll(unroll)]
                 for n in 0..nr {
-                    // Explicit FMA to force fused multiply-add instructions.
+                    // Explicit `fma`: `+= a * b` lowers to a separate mul + dependent add (no
+                    // fast-math contraction on the CPU backend), doubling the FP instruction count
+                    // and serializing the accumulate. `fma` emits one fused op (`fmla`).
                     c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
                 }
             }
@@ -140,7 +175,15 @@ fn mma_register_direct<
     }
 }
 
-/// N-D register microkernel for multi-axis contraction or gathered operands.
+/// [`mma_register_direct`]'s N-D twin, for the two cases a batch matrix does not describe: several
+/// contracted axes, and an operand whose logical coordinate is not a physical one
+/// ([`Projection`]). The register block, the unroll rule, and the rank-1 step are the same; only
+/// the addressing differs, since each read resolves a whole coordinate ([`resolve_nd_coords`])
+/// through [`Tile::nd`] rather than a `(row, col)` pair through a matrix view.
+///
+/// The reduce nest is flattened to one runtime `kc` loop rather than nested loops: the leaf's
+/// contract is one rank-1 update per step, and a nest of comptime-known extents unravels back
+/// ([`unravel_reduce_index`]) for the cost of the div/mod the flat index already implies.
 #[cube]
 fn mma_register_gather<
     E: Numeric,
@@ -167,7 +210,9 @@ fn mma_register_gather<
     let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / vw));
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
 
-    // Flatten contracted axes into total reduction steps.
+    // The reduce axes' extents come off the operands' merged space, not the accumulator's: a
+    // contracted axis is by definition absent from the accumulator, and an axis only one operand
+    // spans still has to be walked.
     let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
     let reduce = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space).to_vec());
     let reduce_extents = comptime!(reduce.iter().map(|&a| merged.extent(a)).collect::<Vec<_>>());
@@ -177,12 +222,15 @@ fn mma_register_gather<
         &lhs.space, &rhs.space, &space, &reduce, lw
     ));
 
-    // N-D view over operand logical bounds.
+    // Built once, outside the walk: the view is over the tile's whole logical box, so it does not
+    // depend on the matrix or the step, unlike the per-matrix views the 2-D kernel takes.
     let lhs_view = lhs.nd::<IL, WPL, L>();
     let rhs_view = rhs.nd::<IR, WPR, V>();
 
     for mat in 0..matrices {
-        // Unravel flat matrix index into batch coordinates.
+        // The batch coordinate the flat `mat` index stands for. The accumulator takes `mat` itself
+        // (`matrix_accumulate` unravels it the same way); the operands are addressed per axis, so
+        // they need the coordinates spelled out.
         let mut batch = Coords::<u32>::new();
         #[unroll]
         for p in 0..comptime!(rank - 2) {
@@ -200,16 +248,20 @@ fn mma_register_gather<
 
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
-        // Unroll when block size is within limits and unmasked.
+        // Unroll only when no mask, otherwise compilation too long.
         let lhs_check = lhs_view.check();
         let rhs_check = rhs_view.check();
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
-        // Outer-product updates over N-D contracted axes.
+        // One rank-1 update per reduce step, as in the 2-D kernel; `p` walks the whole flattened
+        // nest instead of a single `K`.
         for p in 0..kc {
             let reduce_coords = unravel_reduce_index(p, comptime!(reduce_extents.clone()));
+            // `lhs` lines along the fastest contracted axis (`assert_operand_shapes`), so that
+            // axis's coordinate splits into the line index `resolve_nd_coords` divides out and the
+            // lane within it, broadcast below.
             let lane = reduce_coords
                 .at(comptime!(reduce.len() - 1))
                 .frem(comptime!(lw as u32))
@@ -254,7 +306,10 @@ fn mma_register_gather<
     }
 }
 
-/// Loads accumulator block into registers.
+/// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the rank-1
+/// updates never touch memory. Shared by both microkernels: how a cell is addressed differs, how
+/// the block is held does not. `unroll` is the caller's decision, not a size test here, because a
+/// masked block must stay rolled whatever its size ([`UNROLL_BLOCK`]).
 #[cube]
 fn load_accumulators<E: Numeric, V: Size>(
     acc: &mut AccumulateView<'_, E, V>,
@@ -273,7 +328,9 @@ fn load_accumulators<E: Numeric, V: Size>(
     c
 }
 
-/// Stores accumulator block to memory.
+/// The twin of [`load_accumulators`]: commit the block back once the whole reduce is folded into
+/// it. Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
+/// rather than the leaf knowing it was split.
 #[cube]
 fn store_accumulators<E: Numeric, V: Size>(
     acc: &mut AccumulateView<'_, E, V>,
@@ -291,7 +348,10 @@ fn store_accumulators<E: Numeric, V: Size>(
     }
 }
 
-/// Unravels a flat reduction index into multi-axis coordinates.
+/// The reduce nest's coordinate at flat step `k_step`, row-major over `reduce_extents` (the outer
+/// axis moves slowest). The outermost digit takes the bare quotient: it has no enclosing extent to
+/// wrap against, and `k_step < Π extents` by construction, so a modulo there would only cost an
+/// instruction. Every radix is comptime, so on a static nest this folds to shifts and masks.
 #[cube]
 fn unravel_reduce_index(k_step: usize, #[comptime] reduce_extents: Vec<usize>) -> Coords<u32> {
     let n = comptime!(reduce_extents.len());
@@ -311,7 +371,16 @@ fn unravel_reduce_index(k_step: usize, #[comptime] reduce_extents: Vec<usize>) -
     reduce_coords
 }
 
-/// Resolves N-D coordinates for operand access at the current step.
+/// The coordinate `operand` is read at, one entry per axis of its own space, assembled from the
+/// three sources a step has: the accumulator cell (`row`/`col`), the reduce nest, and the batch.
+/// Every operand axis falls in exactly one of them, since an axis absent from the accumulator is
+/// contracted by definition.
+///
+/// `width` is the operand's line width, and only its innermost axis is addressed in lines, so the
+/// division applies there alone. The `col` branch needs none: it is already a line index, the
+/// accumulator's innermost axis being the one the rhs lines along ([`assert_operand_shapes`]).
+/// The reduce branch does: the lhs lines along the fastest contracted axis, whose coordinate is a
+/// scalar step, and the lane within the line is folded back by the caller.
 #[cube]
 fn resolve_nd_coords(
     #[comptime] operand: Space,
@@ -351,7 +420,10 @@ fn resolve_nd_coords(
     out
 }
 
-/// Validates layout constraints for gather microkernel.
+/// What [`resolve_nd_coords`] and the lane fold assume about how the operands are lined up. Both
+/// treat one axis per operand as the vectorized one and address it in lines; if that is not the
+/// axis the operand actually lines along, the reads are silently off by the width rather than
+/// wrong in a way a test would localize. Host-side, so a violation is a comptime message.
 fn assert_operand_shapes(
     lhs: &Space,
     rhs: &Space,

@@ -7,7 +7,8 @@ use crate::{Axis, MAX_AXES};
 
 /// How many physical fragments each logical axis is split across, in the operand's own axis order.
 /// One fragment is an untiled axis; `n` fragments make a coordinate along it an `n`-digit mixed
-/// radix number ([`Projection::digit`]), which is the whole encoding of storage tiling. No extent
+/// radix number ([`Projection::digit`](crate::Projection::digit)), which is the whole encoding of
+/// storage tiling. No extent
 /// appears here: the radices are read off the buffer's `physical_shape` at use time.
 ///
 /// The physical order this induces is level-major, coarsest first: every axis contributes its
@@ -78,8 +79,8 @@ impl StorageTiling {
 
     /// The physical axis labels this tiling induces over `axes`, in buffer order: the level-major
     /// emission itself, one entry per physical axis, a tiled axis appearing once per fragment. The
-    /// single place the order is defined, shared by [`Projection::tiled`] and by callers labeling a
-    /// binding's dims ([`ConcreteLayout`]).
+    /// single place the order is defined, shared by [`Projection::tiled`](crate::Projection::tiled)
+    /// and by callers labeling a binding's dims ([`ConcreteLayout`](crate::ConcreteLayout)).
     pub fn order(&self, axes: &[Axis]) -> Vec<Axis> {
         assert_eq!(
             self.rank(),

@@ -44,6 +44,24 @@ fn stencil_kernel<E: Numeric>(
     out.mma(&input, &weight);
 }
 
+/// [`stencil_kernel`] serving the input in two-wide lines. The gathered operand lines along its
+/// fastest contracted axis, which is the one the leaf splits into a line index and a lane, so the
+/// width has to be a real one somewhere to exercise that fold at all.
+#[cube(launch)]
+fn stencil_kernel_lined<E: Numeric>(
+    input: &TileArg<'_, E, Const<2>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    out.zero();
+    out.mma(&input, &weight);
+}
+
 /// Small integers, so the accumulation is exact in `f32` and the reference can be compared for
 /// equality rather than closeness.
 fn ramp(n: usize, period: usize) -> Vec<f32> {
@@ -57,15 +75,15 @@ fn run(
     out_shape: Shape,
     in_spec: TileSpec,
     w_axes: &[Axis],
-    out_axes: &[Axis],
+    out_spec: TileSpec,
     space: Space,
+    in_v: usize,
 ) -> (HostData, Vec<f32>, Vec<f32>) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::as_type_native_unchecked().storage_type();
 
     let in_data = ramp(in_shape.num_elements(), 7);
     let w_data = ramp(w_shape.num_elements(), 5);
-    let out_rank = out_shape.rank();
 
     let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
         .dtype(f32_ty)
@@ -80,22 +98,36 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    stencil_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
-        TileArgLaunch::new(
-            w_handle.binding().into_tensor_arg(),
-            TileSpec::direct(w_axes),
+    // Every binding stays scalar-unit: the kernel's element type carries the width, and `Tile::of`
+    // is what converts the shape and strides to lines.
+    let in_binding = in_handle.binding();
+    // `#[cube(launch)]` mints its own element type per kernel, so the two arms cannot share
+    // pre-built arguments; only the bindings are common.
+    let w_binding = w_handle.binding();
+    let out_binding = out_handle.clone().binding();
+    match in_v {
+        1 => stencil_kernel::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
+            TileArgLaunch::new(w_binding.into_tensor_arg(), TileSpec::direct(w_axes)),
+            TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+            space,
+            f32_ty,
         ),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(out_axes),
+        2 => stencil_kernel_lined::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
+            TileArgLaunch::new(w_binding.into_tensor_arg(), TileSpec::direct(w_axes)),
+            TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
+            space,
+            f32_ty,
         ),
-        space,
-        f32_ty,
-    );
+        other => panic!("stencil: no kernel at input width {other}"),
+    }
 
     (
         HostData::from_tensor_handle(&client, out_handle, HostDataType::F32),
@@ -142,6 +174,13 @@ impl Conv1d {
     }
 
     fn check(&self, tile_oh: usize, tile_co: usize) {
+        self.check_at(tile_oh, tile_co, 1, false)
+    }
+
+    /// `check` with the input served in `in_v`-wide lines and, when `checked`, both the input and
+    /// the output bounds-masked: the two axes of the gather path a plain `check` leaves at their
+    /// degenerate values.
+    fn check_at(&self, tile_oh: usize, tile_co: usize, in_v: usize, checked: bool) {
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
             .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
@@ -154,17 +193,14 @@ impl Conv1d {
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
-        let in_spec = TileSpec::new(
-            Projection::new(
-                &[OH, RH, CI],
-                &[
-                    PhysicalAxisMap::affine(&[(OH, self.stride), (RH, self.dilation)]),
-                    PhysicalAxisMap::of(CI),
-                ],
-            ),
-            false,
-            0,
-        );
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, self.stride), (RH, self.dilation)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        ))
+        .checked(checked);
 
         let (got, input, weight) = run(
             shape![self.in_len(), self.ci],
@@ -172,8 +208,9 @@ impl Conv1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            &[OH, CO],
+            TileSpec::direct(&[OH, CO]).checked(checked),
             space,
+            in_v,
         );
 
         let want = self.reference(&input, &weight);
@@ -275,6 +312,69 @@ fn conv1d_single_tile() {
     .check(6, 4);
 }
 
+/// The gathered operand in two-wide lines. Its innermost axis is `CI`, the fastest contracted one,
+/// so the leaf splits each reduce step into the line index it reads and the lane it broadcasts:
+/// the one arithmetic on the gather path that a width of `1` leaves dead.
+#[test]
+fn conv1d_vectorized_input() {
+    Conv1d {
+        oh: 8,
+        co: 4,
+        rh: 3,
+        ci: 4,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_at(4, 4, 2, false);
+}
+
+/// Vectorized with stride and dilation both off `1`, so the line fold and the affine advance are
+/// exercised at once rather than one at a time.
+#[test]
+fn conv1d_vectorized_strided_and_dilated() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 4,
+        stride: 2,
+        dilation: 2,
+    }
+    .check_at(3, 2, 2, false);
+}
+
+/// An output extent the tile edge does not divide: the last tile's receptive field runs past the
+/// input's real length. The masking happens under the projection, so the tap that overhangs must
+/// read `0` and the output cell that does not exist must not be written, leaving every valid
+/// position equal to the reference.
+#[test]
+fn conv1d_masked_overhang() {
+    Conv1d {
+        oh: 7,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_at(4, 4, 1, true);
+}
+
+/// The same overhang with a stride, where the window runs further past the end: the mask is on the
+/// physical axis, so how far the gather reached past it must not matter.
+#[test]
+fn conv1d_masked_overhang_strided() {
+    Conv1d {
+        oh: 5,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 2,
+        dilation: 1,
+    }
+    .check_at(2, 4, 1, true);
+}
+
 // ---- 2-D -------------------------------------------------------------------
 
 /// `out[oh, ow, co] = Σ_{rh, rw, ci} w[rh, rw, ci, co] · in[oh·sh + rh·dh, ow·sw + rw·dw, ci]`.
@@ -346,18 +446,14 @@ impl Conv2d {
             .leaf(Leaf::Register);
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
-        let in_spec = TileSpec::new(
-            Projection::new(
-                &[OH, OW, RH, RW, CI],
-                &[
-                    PhysicalAxisMap::affine(&[(OH, self.sh), (RH, self.dh)]),
-                    PhysicalAxisMap::affine(&[(OW, self.sw), (RW, self.dw)]),
-                    PhysicalAxisMap::of(CI),
-                ],
-            ),
-            false,
-            0,
-        );
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, OW, RH, RW, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, self.sh), (RH, self.dh)]),
+                PhysicalAxisMap::affine(&[(OW, self.sw), (RW, self.dw)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        ));
 
         let (got, input, weight) = run(
             shape![self.in_h(), self.in_w(), self.ci],
@@ -365,8 +461,9 @@ impl Conv2d {
             shape![self.oh, self.ow, self.co],
             in_spec,
             &[RH, RW, CI, CO],
-            &[OH, OW, CO],
+            TileSpec::direct(&[OH, OW, CO]),
             space,
+            1,
         );
 
         let want = self.reference(&input, &weight);

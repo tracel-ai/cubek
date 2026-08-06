@@ -74,7 +74,7 @@ pub struct Access {
     pub whole: bool,
     pub overhang: Overhang,
     /// How this store's stages are laid out and cooperatively filled: the [`StageStorage`] layout
-    /// plus the launch's cube size. Carried from the operand's [`Storage`] so a fill re-derives
+    /// plus the launch's cube size. Carried from the operand's [`TileSpec`] so a fill re-derives
     /// neither.
     pub stage: StagePlan,
 }
@@ -653,7 +653,7 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// How this store's stages are laid out and filled, carried from the operand's [`Storage`].
+    /// How this store's stages are laid out and filled, carried from the operand's [`TileSpec`].
     pub(crate) fn stage(&self) -> comptime_type!(StagePlan) {
         comptime!(self.access.stage)
     }

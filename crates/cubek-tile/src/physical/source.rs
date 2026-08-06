@@ -27,7 +27,6 @@ struct TileSourceData<'a, R: Runtime> {
     concrete: Option<&'a Space>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
-    physical_axes: Option<Vec<Axis>>,
     /// How the subspace axes are storage-tiled in the binding; `None` is untiled.
     tiling: Option<StorageTiling>,
     v: usize,
@@ -60,7 +59,6 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 concrete: None,
                 subspace: &[],
                 batch_axes: &[],
-                physical_axes: None,
                 tiling: None,
                 v: 1,
                 check: None,
@@ -101,16 +99,10 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
-    pub fn physical_axes(mut self, axes: &[Axis]) -> Self {
-        self.data.physical_axes = Some(axes.to_vec());
-        self
-    }
-
     /// How this binding storage-tiles the [`subspace`](Self::subspace) axes: one fragment count
     /// per subspace axis, laid out level-major behind the batch dims. Default untiled (one
     /// physical dim per axis). Only labels the dims, so the tiling is read back off the
-    /// [`ConcreteLayout`] rather than declared twice; pass
-    /// [`physical_axes`](Self::physical_axes) instead to label them by hand.
+    /// [`ConcreteLayout`](crate::ConcreteLayout) rather than declared twice.
     pub fn tiling(mut self, tiling: StorageTiling) -> Self {
         self.data.tiling = Some(tiling);
         self
@@ -245,7 +237,6 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             concrete,
             batch_axes,
             subspace,
-            physical_axes,
             tiling,
             v,
             check,
@@ -264,33 +255,29 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             tiling.rank(),
             subspace.len()
         );
-        let physical_axes = physical_axes.unwrap_or_else(|| {
-            let block = tiling.order(subspace);
-            let block_dims = block.len();
-            assert!(
-                rank >= block_dims,
-                "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
-                subspace.len()
-            );
-            let batch_dims = rank - block_dims;
-            assert!(
-                batch_dims <= batch_axes.len(),
-                "StridedTileSource: {batch_dims} batch dims but only {} batch axes given",
-                batch_axes.len()
-            );
-            let mut axes = Vec::new();
-            axes.extend_from_slice(&batch_axes[batch_axes.len() - batch_dims..]);
-            axes.extend_from_slice(&block);
-            axes
-        });
-
-        assert_eq!(
-            rank,
-            physical_axes.len(),
-            "StridedTileSource: binding rank {rank} does not match physical_axes len {}",
-            physical_axes.len()
+        // One axis label per buffer dim: the trailing block is the subspace emitted level-major
+        // per `tiling`, and whatever leads it is this operand's batches, labeled by the trailing
+        // (right-aligned) slice of `batch_axes`.
+        let block = tiling.order(subspace);
+        let block_dims = block.len();
+        assert!(
+            rank >= block_dims,
+            "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
+            subspace.len()
         );
+        let batch_dims = rank - block_dims;
+        assert!(
+            batch_dims <= batch_axes.len(),
+            "StridedTileSource: {batch_dims} batch dims but only {} batch axes given",
+            batch_axes.len()
+        );
+        let mut physical_axes = Vec::with_capacity(rank);
+        physical_axes.extend_from_slice(&batch_axes[batch_axes.len() - batch_dims..]);
+        physical_axes.extend_from_slice(&block);
 
+        // Explicit override wins; a Launcher-minted source derives the check from overhang, and
+        // the free-standing path stays conservatively checked. A dim whose axis is absent from the
+        // space is a broadcast omission (it drops out below): nothing to overhang.
         let check = check.unwrap_or_else(|| match concrete {
             Some(concrete) => physical_axes
                 .iter()
@@ -299,6 +286,8 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             None => true,
         });
 
+        // A masked access counts its length in lines and would clip valid rows, so a
+        // bounds-checked operand must stay scalar.
         assert!(
             !(check && v > 1),
             "StridedTileSource: a bounds-checked operand cannot be vectorized"
@@ -310,8 +299,10 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 
         for (i, &axis) in physical_axes.iter().enumerate() {
             let extent = binding.shape[i];
+            // A size-1 batch dim is a broadcast omission: the dim and its axis both drop out. A
+            // subspace axis never does, however small, since the tile is shaped over it.
             if batch_axes.contains(&axis) && extent == 1 && !subspace.contains(&axis) {
-                continue; // broadcast omission
+                continue;
             }
             phys.push(PhysicalAxis::new(axis, extent));
             shape.push(extent);

@@ -1,6 +1,6 @@
 //! The concrete physical layout of a stored buffer: its axes in major-to-minor order, with a
 //! storage-tiled axis contributing several fragments. Built from a real tensor and its
-//! [`Storage`](crate::Storage) at realization; constructed directly in tests.
+//! [`Projection`](crate::Projection) at realization; constructed directly in tests.
 
 use cubecl::zspace::SmallVec;
 
@@ -10,7 +10,7 @@ use crate::{Axis, MAX_AXES};
 /// its extent. Storage tiling is *not* an annotation here; a tiled logical axis contributes
 /// several `PhysicalAxis` entries (one per nesting level, outer grid to inner leaf), so tiling
 /// is just higher physical rank with the label repeated, mirroring the `[grid…, tile…]` buffer
-/// the tile engine ([`Storage`](crate::Storage)) actually launches.
+/// the tile engine ([`Projection`](crate::Projection)) actually launches.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PhysicalAxis {
     axis: Axis,
@@ -34,7 +34,7 @@ impl PhysicalAxis {
 /// A concrete physical layout: its axes in major (outer) to minor (inner) order, the last
 /// being innermost/contiguous. A storage-tiled axis appears as several entries, level-major
 /// (coarse grid outer, leaf inner), so the rank can exceed the number of logical axes. Built
-/// from a real tensor and its [`Storage`](crate::Storage) at realization; constructed directly
+/// from a real tensor and its [`Projection`](crate::Projection) at realization; constructed directly
 /// in tests.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ConcreteLayout {

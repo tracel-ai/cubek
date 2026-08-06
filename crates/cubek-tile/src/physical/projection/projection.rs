@@ -72,15 +72,11 @@ impl Projection {
     /// physical; this one is logical to coordinate. An untiled operand, gathered or not, is its own
     /// coordinate map.
     pub fn untiled(&self) -> Projection {
-        let mut carried: Vec<Axis> = Vec::new();
-        let mut physical: Vec<PhysicalAxisMap> = Vec::new();
-        for map in self.physical.iter() {
-            let axis = map.terms()[0].axis;
-            if !carried.contains(&axis) {
-                carried.push(axis);
-                physical.push(map.clone());
-            }
-        }
+        let carried = self.carried_groups();
+        let physical: Vec<PhysicalAxisMap> = carried
+            .iter()
+            .map(|&pa| self.physical[pa].clone())
+            .collect();
         Projection::new(&self.axes, &physical)
     }
 
@@ -93,13 +89,7 @@ impl Projection {
     /// This is the map [`GmemLayout`](crate::GmemLayout) splits coordinates through, so a buffer
     /// only ever has to describe itself once: the operand's projection, relabeled.
     pub fn positional(&self) -> Projection {
-        let mut carried: Vec<Axis> = Vec::new();
-        for map in self.physical.iter() {
-            let axis = map.terms()[0].axis;
-            if !carried.contains(&axis) {
-                carried.push(axis);
-            }
-        }
+        let carried = self.carried_groups();
         let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
         let physical: Vec<PhysicalAxisMap> = self
             .physical
@@ -107,12 +97,41 @@ impl Projection {
             .map(|map| {
                 let at = carried
                     .iter()
-                    .position(|&a| a == map.terms()[0].axis)
+                    .position(|&pa| self.physical[pa].terms()[0].axis == map.terms()[0].axis)
                     .expect("collected above");
                 PhysicalAxisMap::of(axes[at])
             })
             .collect();
         Projection::new(&axes, &physical)
+    }
+
+    /// One physical axis per *coordinate* this operand is addressed by: the first fragment of each
+    /// distinct leading axis, in buffer order. The two collapsing views ([`untiled`],
+    /// [`positional`]) share it, since both fold an axis's fragments back into the one coordinate
+    /// they are digits of.
+    ///
+    /// Identifying a group by its leading term is only an identity when a physical axis carries
+    /// one logical axis, which is exactly what storage tiling produces: an affine map contributes
+    /// its whole cell as one coordinate, so a *gathered* projection must be untiled for this to
+    /// mean anything. [`validate`](Projection::validate) pins that down at construction, and the
+    /// assert here keeps a hand-built projection from silently losing a physical axis.
+    fn carried_groups(&self) -> Vec<usize> {
+        assert!(
+            self.is_invertible() || !self.is_tiled(),
+            "Projection: an affine map cannot also be storage-tiled; its physical axes do not \
+             group into coordinates"
+        );
+        let mut carried: Vec<usize> = Vec::new();
+        for (pa, map) in self.physical.iter().enumerate() {
+            let axis = map.terms()[0].axis;
+            if !carried
+                .iter()
+                .any(|&q| self.physical[q].terms()[0].axis == axis)
+            {
+                carried.push(pa);
+            }
+        }
+        carried
     }
 
     /// [`GmemLayout`](crate::GmemLayout)'s own physical-position map: coordinate `p`
@@ -168,7 +187,7 @@ impl Projection {
 
     /// The physical axes carrying `axis`, in buffer order: one entry unless the axis is
     /// storage-tiled, in which case its extents multiply back to the logical one
-    /// ([`logical_extent`]). Never empty: every caller decomposes a coordinate along `axis`, and an
+    /// ([`logical_extent`](crate::logical_extent)). Never empty: every caller decomposes a coordinate along `axis`, and an
     /// axis addressing no physical axis has no decomposition, so that is a malformed projection
     /// rather than an empty answer ([`validate`](Projection::validate) rules it out up front).
     pub fn carriers(&self, axis: Axis) -> SmallVec<[usize; MAX_AXES]> {
@@ -230,13 +249,6 @@ impl Projection {
         self.physical[pa].scale(axis)
     }
 
-    /// How far one *tile* step along `axis` moves physical axis `pa`, given that level's sub-tile
-    /// `edge`. The direct case is `edge`, which is what [`MemData::at`](crate::MemData) has always
-    /// added.
-    pub fn origin_step(&self, pa: usize, axis: Axis, edge: usize) -> usize {
-        edge * self.scale(pa, axis)
-    }
-
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
     /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
     /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
@@ -250,8 +262,8 @@ impl Projection {
     }
 
     /// Whether every physical axis carries exactly one logical axis at coefficient `1`, so the
-    /// physical coordinates uniquely determine the logical ones and [`fold_physical`] can invert
-    /// [`GmemLayout::to_source_pos`](crate::GmemLayout::to_source_pos). True for
+    /// physical coordinates uniquely determine the logical ones and
+    /// [`fold_physical`](crate::fold_physical) can invert `GmemLayout`'s `to_source_pos`. True for
     /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
     /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell.
     pub fn is_invertible(&self) -> bool {
@@ -321,10 +333,8 @@ mod tests {
     }
 
     #[test]
-    fn direct_span_and_step_are_the_edge() {
+    fn direct_span_is_the_edge() {
         let p = Projection::direct(&[A, B]);
-        assert_eq!(p.origin_step(0, A, 8), 8);
-        assert_eq!(p.origin_step(0, B, 8), 0);
         assert_eq!(p.span(0, |_| 8), 8);
     }
 
@@ -340,8 +350,8 @@ mod tests {
             ],
         );
         assert!(!p.is_direct());
-        assert_eq!(p.origin_step(0, A, 4), 8);
-        assert_eq!(p.origin_step(0, R, 4), 12);
+        assert_eq!(p.scale(0, A), 2);
+        assert_eq!(p.scale(0, R), 3);
         assert_eq!(p.scale(0, B), 0);
         // 1 + (4-1)*2 + (3-1)*3 = 13
         assert_eq!(p.span(0, |a| if a == A { 4 } else { 3 }), 13);

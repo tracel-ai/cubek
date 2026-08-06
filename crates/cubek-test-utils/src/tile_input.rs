@@ -139,7 +139,7 @@ impl TileInput {
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
         let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling), false, 0)
+        CubekTileSpec::new(Projection::tiled(&axes, tiling))
     }
 
     /// The semantic space the tile lives in.
