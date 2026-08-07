@@ -553,13 +553,13 @@ fn conv2d_single_tile() {
 // ---- staged ----------------------------------------------------------------
 
 // The same convolutions with the level `Staged`. A gathered operand's region is copied into a
-// shared-memory tile shaped like its *logical* sub-tile (`oh × rh × ci`), so the overlapping
-// physical window is compacted and the tap the leaf reads is a plain dense coordinate. The
-// projection is applied once, at the fill's source read; the stage itself is dense and direct, so
-// the leaf and the reference are unchanged and every case here must agree with its `Direct` twin.
+// shared-memory tile shaped like the physical *window* it reads (`span(oh, rh) × ci`), compacted
+// onto the lattice its stride and dilation reach, so each input element is stored once. The stage
+// keeps the operand's own projection, so the leaf gathers out of smem exactly as it gathered out of
+// gmem, and every case here must agree with its `Direct` twin.
 
-/// Stride 1: consecutive windows overlap by `rh - 1`, so the compaction replicates elements and
-/// the stage is genuinely larger than the physical span it was read from.
+/// Stride 1: consecutive windows overlap by `rh - 1`, so the window the stage holds
+/// (`oh + rh - 1`) is smaller than the `oh × rh` logical cells reading it.
 #[test]
 fn conv1d_staged_dense_window() {
     Conv1d {
@@ -673,6 +673,37 @@ fn conv1d_staged_masked_overhang_strided() {
         dilation: 1,
     }
     .check_at(2, 4, 1, true, Schedule::Staged);
+}
+
+/// A single tap at stride 2 reaches only every second input position, so the stage keeps half of
+/// the window it spans and the fill steps by two. The only case where the compaction's step is not
+/// `1`, together with its vectorized twin below.
+#[test]
+fn conv1d_staged_single_tap_strided() {
+    Conv1d {
+        oh: 8,
+        co: 4,
+        rh: 1,
+        ci: 2,
+        stride: 2,
+        dilation: 1,
+    }
+    .check_at(4, 4, 1, false, Schedule::Staged);
+}
+
+/// The overhang masked *and* the input lined: the fill steps whole lines through a window whose
+/// last taps read past the input, so the line fold and the mask have to hold at once.
+#[test]
+fn conv1d_staged_vectorized_masked_overhang() {
+    Conv1d {
+        oh: 7,
+        co: 4,
+        rh: 3,
+        ci: 4,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_at(4, 4, 2, true, Schedule::Staged);
 }
 
 /// Double buffering drives the same fill from two slots on alternating regions, so a gathered

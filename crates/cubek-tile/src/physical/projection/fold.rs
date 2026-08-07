@@ -64,9 +64,10 @@ pub fn step_offset(
 
 /// The inverse of `GmemLayout`'s `to_source_pos`: the logical
 /// coordinate under `projection` that produced physical digits `digits` (one entry per physical
-/// axis, already decoded off the flat physical index). Requires
-/// [`Projection::is_invertible`]; a gathered (affine, scale != 1) projection never reaches this,
-/// since a stage is always materialized dense through [`Projection::direct_over`] first.
+/// axis, already decoded off the flat physical index). Requires [`Projection::is_invertible`]; a
+/// gathered (affine, scale != 1) projection never reaches this, since the only projection a
+/// [`GmemLayout`](crate::GmemLayout) carries is its buffer's own positional map, and a gather is
+/// resolved a layer above it.
 #[cube]
 pub fn fold_physical(
     #[comptime] projection: Projection,

@@ -281,12 +281,19 @@ impl<T: Numeric> MemData<T> {
     pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
         let until = operand.until();
         match comptime!(until) {
-            Until::Load => MemData::smem(
-                comptime!(operand.space.divide()),
-                comptime!(operand.leaf),
-                operand.vector_size(),
-                operand.stage(),
-            ),
+            Until::Load => {
+                let space = comptime!(operand.space.divide());
+                let projection = operand.projection();
+                let leaf = comptime!(operand.leaf);
+                let vector_size = operand.vector_size();
+                let stage = operand.stage();
+
+                if comptime!(projection.is_direct()) {
+                    MemData::smem(space, leaf, vector_size, stage)
+                } else {
+                    MemData::smem_gathered(space, leaf, vector_size, stage, projection)
+                }
+            }
             Until::Read => MemData::smem_stored(operand),
         }
     }
@@ -357,8 +364,50 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
+        MemData::smem_with_form(
+            space,
+            leaf,
+            vector_size,
+            stage,
+            comptime!(StageForm::dense(&space, vector_size, stage.layout)),
+        )
+    }
+
+    /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
+    /// sub-tile reads, compacted ([`Compaction`]), rather than the logical tile. Several logical
+    /// cells of a gather read the same physical one, so staging the logical tile would replicate
+    /// elements by roughly the tap count; staging the window holds each one once.
+    ///
+    /// The stage therefore keeps the operand's own [`Projection`] (with the compaction's lattice
+    /// quotiented out) instead of becoming direct: its buffer is the same shape of window the gmem
+    /// operand was, so [`Tile::nd`] and [`at`](MemData::at) address it through exactly the machinery
+    /// they address gmem through, and the fill stays a plain box copy.
+    pub fn smem_gathered(
+        #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
+        #[comptime] vector_size: usize,
+        #[comptime] stage: StagePlan,
+        #[comptime] projection: Projection,
+    ) -> Tile<T> {
+        MemData::smem_with_form(
+            space,
+            leaf,
+            vector_size,
+            stage,
+            comptime!(StageForm::gathered(&space, vector_size, &projection)),
+        )
+    }
+
+    /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
+    fn smem_with_form(
+        #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
+        #[comptime] vector_size: usize,
+        #[comptime] stage: StagePlan,
+        #[comptime] form: StageForm,
+    ) -> Tile<T> {
         let size!(W) = vector_size;
-        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(space.tile_size() / vector_size));
+        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
         MemData::smem_over(
             space,
             leaf,
@@ -366,6 +415,7 @@ impl<T: Numeric> MemData<T> {
             stage,
             &smem,
             ComptimeOption::new_None(),
+            form,
         )
     }
 
@@ -384,17 +434,17 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
         // the layout and window below are the same grid either way.
+        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
-        let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(space.tile_size() / vector_size));
+        let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
-        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant)
+        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant, form)
     }
 
-    /// The body both smem constructors share: everything but the allocation's element, which is why
-    /// `smem` takes the allocated slice rather than making it. Scalar-erases it to the served `T`
-    /// (the views recover the stored
-    /// element through [`lines_storage`](MemData::lines_storage)) and wraps it in the whole-buffer
-    /// window.
+    /// The body every smem constructor shares: everything but the allocation's element (which is why
+    /// it takes the allocated slice rather than making it) and the buffer's [`StageForm`]. Scalar-
+    /// erases the slice to the served `T` (the views recover the stored element through
+    /// [`lines_storage`](MemData::lines_storage)) and wraps it in the whole-buffer window.
     fn smem_over<S: CubePrimitive>(
         #[comptime] space: Space,
         #[comptime] leaf: Leaf,
@@ -402,25 +452,18 @@ impl<T: Numeric> MemData<T> {
         #[comptime] stage: StagePlan,
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
+        #[comptime] form: StageForm,
     ) -> Tile<T> {
-        let nesting = comptime!(stage_nesting(&space, stage.layout));
         let buffer = unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         };
-        let (physical_shape, physical_strides) = storage_layout(
-            comptime!(space.clone()),
-            vector_size,
-            comptime!(nesting.clone()),
-        );
-        let (origin, extent) = full_window(comptime!(space.clone()), vector_size);
+        let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
+        let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        let gmem_projection = comptime!(Projection::of_tiling(StorageTiling::uniform(
-            space.rank(),
-            nesting.len()
-        )));
+        let gmem_projection = comptime!(form.positional.clone());
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
@@ -434,9 +477,7 @@ impl<T: Numeric> MemData<T> {
                     projection: gmem_projection,
                 },
                 window: Window::new(origin, extent, bound),
-                // A stage is a materialized dense copy, so it addresses its own buffer directly
-                // whatever the operand it stages was gathered through.
-                projection: comptime!(Projection::direct_over(&space)),
+                projection: comptime!(form.projection),
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
@@ -497,11 +538,10 @@ impl<T: Numeric> MemData<T> {
     /// `Vector<T, W>` lines at `self`'s width, unit `u` moving lines `u`, `u + CUBE_DIM`, ….
     /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
     ///
-    /// `space` is the logical space both sides carry. A gathered `src` has fewer physical axes
-    /// than that space has logical ones, so its read resolves through [`AxisProjection`]; see
-    /// [`fill_straight`](MemData::fill_straight). The destination is dense and
-    /// [`direct`](Projection::direct) either way, which is what keeps the projection to this one
-    /// read and out of every consumer.
+    /// `space` is the logical space both sides carry. A gathered `src` stages into the compacted
+    /// copy of the *window* it reads rather than of its logical tile, so the fill stays a box copy
+    /// and the gather stays where it already was, at the leaf's read; see
+    /// [`fill_straight`](MemData::fill_straight) and [`Compaction`].
     pub(crate) fn fill_from(&mut self, src: &MemData<T>, #[comptime] space: Space) {
         let size!(W) = comptime!(self.store.vector_size);
         let gathered = comptime!(!src.projection.is_direct());
@@ -558,13 +598,14 @@ impl<T: Numeric> MemData<T> {
             // linear and only the source decodes, once per line by constants on a static store).
             self.fill_straight::<T, W>(src, comptime!(space.clone()));
         } else {
-            // The general path reads the source as a flat run of its *window*, which is the
-            // logical box only when the two coincide. A gathered source's window is a physical
-            // box of a different rank, so it is addressed per axis or not at all. Reached by a
-            // windowed or masked destination, and by a quantized source serving a plain one.
+            // The general path reads the source as a flat run of its *window* and writes the
+            // destination as a flat run of its own, which pairs the two only when they are the same
+            // box. A gathered side's window is a physical box its logical rank does not match, so it
+            // is addressed per axis or not at all. Reached by a windowed or masked destination, and
+            // by a quantized source serving a plain one.
             comptime!(assert!(
-                !gathered,
-                "MemData::fill_from: a gathered source fills only a whole, unmasked, unquantized \
+                !gathered && self.projection.is_direct(),
+                "MemData::fill_from: a gathered tile fills only a whole, unmasked, unquantized \
                  destination (a stage)"
             ));
             // The read decodes at the source's true storage element: `T` for a plain tile, else the
@@ -602,15 +643,21 @@ impl<T: Numeric> MemData<T> {
     /// `WP2` are the *storage* element and physical width: the served `(T, self.store.vector_size)` for a
     /// plain copy, the packed storage `(u32, served/pack)` (or native `i8`) for a quant stage.
     ///
-    /// The destination's coordinate is decoded once per line and handed to the source, so the
-    /// source's own mapping is the only thing that varies: a direct source takes that coordinate
-    /// as physical, a gathered one resolves it through [`AxisProjection`] (`space`'s axes onto its
-    /// buffer's physical ones) first. Sound because the destination is dense over `space`, so
-    /// [`physical_pos`] hands back exactly a logical coordinate; the [`Window`] sits below either
-    /// way, so an out-of-range tap still masks to zero.
-    fn fill_straight<I2: Numeric, WP2: Size>(&mut self, src: &MemData<T>, #[comptime] space: Space) {
+    /// Both sides are physical boxes of the same rank here, whatever they are logically: the
+    /// destination's coordinate is decoded once per line ([`physical_pos`]) and lands on the source
+    /// cell it was staged from, so the fill copies and never gathers. A gathered pair differs only
+    /// by the compaction's step ([`stage_steps`]), which is `1` unless the source's window has holes
+    /// to skip. The [`Window`] sits below either way, so a cell past the source's bound still masks
+    /// to zero, and the stage holds that zero rather than re-masking at every read.
+    fn fill_straight<I2: Numeric, WP2: Size>(
+        &mut self,
+        src: &MemData<T>,
+        #[comptime] space: Space,
+    ) {
         let check = comptime!(src.access.overhang.masks());
-        let s = if comptime!(src.projection.is_direct()) {
+        let steps = comptime!(stage_steps(&src.projection, &self.projection, &space));
+        let shape = self.layout.physical_shape.clone();
+        let s = if comptime!(steps.iter().all(|&g| g == 1)) {
             MaskedView::new(
                 src.lines_storage::<I2, WP2>()
                     .view(src.base())
@@ -618,37 +665,14 @@ impl<T: Numeric> MemData<T> {
                 check,
             )
         } else {
-            // `space` is handed in by the caller as the *destination*'s space, used here to
-            // address `src`; sound only when the two coincide, which every caller of
-            // `fill_from` today arranges (`smem_like` stages over `operand.space.divide()`, and
-            // `Tile::at` windows both sides by the same `space.divide()`). `Tile::copy_from` is
-            // public and does not itself guarantee that, so check it here rather than trust it.
-            comptime!(assert!(
-                space.rank() == src.projection.logical_rank()
-                    && (0..space.rank())
-                        .all(|p| space.axis_at(p) == src.projection.logical_axes()[p]),
-                "MemData::fill_straight: the destination space's axes must match the gathered \
-                 source's projected axes; fill_from addresses the source through the \
-                 destination's space"
-            ));
-            // Every other width in this function is `self.store.vector_size` (`WP2`); the
-            // gathered branch is only ever reached with `src.store.vector_size` equal to it (the
-            // quant-destination path asserts `!gathered` before it can differ), so use the same
-            // one consistently rather than re-deriving it off `src`.
-            let layout = axis_projection(
-                space,
-                comptime!(src.projection.clone()),
-                comptime!(self.store.vector_size),
-            );
             MaskedView::new(
                 src.lines_storage::<I2, WP2>()
                     .view(src.base())
                     .view(src.window())
-                    .view(layout),
+                    .view(StepUp::new(shape.clone(), comptime!(steps))),
                 check,
             )
         };
-        let shape = self.layout.physical_shape.clone();
         let plen = shape.len().comptime();
         let total = shape
             .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
@@ -1292,22 +1316,16 @@ impl<T: Numeric> MemData<T> {
     }
 }
 
-/// The whole-tile window: `origin = 0`, `extent =` the space's per-axis extents. `Space` is
-/// conceptual; the innermost (vectorized) axis's extent is a line count, `/ vector_size`.
+/// The whole-buffer window of a stage: `origin = 0`, `extent =` its own physical extents.
 #[cube]
-fn full_window(
-    #[comptime] space: Space,
-    #[comptime] vector_size: usize,
-) -> (Coords<u32>, Coords<u32>) {
+fn full_window(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
     let mut origin = Coords::<u32>::new();
     let mut extent = Coords::<u32>::new();
-    let last = comptime!(space.rank() - 1);
 
     #[unroll]
-    for p in 0..space.rank() {
+    for p in 0..comptime!(form.extents.len()) {
         origin.push(0);
-        let e = comptime!(space.extent(space.axis_at(p)));
-        extent.push(comptime!((if p == last { e / vector_size } else { e }) as u32).runtime());
+        extent.push(comptime!(form.extents[p] as u32).runtime());
     }
 
     (origin, extent)
@@ -1423,23 +1441,96 @@ fn smem_scale_grid(
     (nb, strides)
 }
 
-/// The smem physical shape/strides over `space`, line-unit like [`Tile::of`]. An empty `nesting`
-/// is a plain row-major buffer; each block in it adds a `[grid…, block…]` split, so the buffer
-/// lays the innermost block down contiguously.
+/// What one cell of a stage steps in the source it is filled from, per physical axis, and the one
+/// contract between the two sides of a fill: the destination must be addressed by exactly the
+/// [`Compaction`] of the source's own map, since that is what makes its physical box the window the
+/// source was windowed down to.
+///
+/// `space` is the destination's, used here to size the source's window; the assert is what keeps a
+/// caller that does not carry the same space on both sides (`Tile::copy_from` is public) from
+/// mis-addressing silently. A direct pair has nothing to compact and answers without reading an
+/// extent at all, since a top-level `Dynamic` axis has none to read.
+fn stage_steps(src: &Projection, dst: &Projection, space: &Space) -> Vec<usize> {
+    if src.is_direct() && dst.is_direct() {
+        return vec![1; src.physical_rank()];
+    }
+    let compaction = Compaction::of(src, |axis| space.extent(axis));
+    assert!(
+        compaction.projection() == dst,
+        "MemData::fill_straight: a gathered source fills the compacted stage of its own \
+         projection, addressed by {:?}, but the destination is addressed by {dst:?}",
+        compaction.projection()
+    );
+    compaction.steps().to_vec()
+}
+
+/// A stage's buffer: the physical extents it takes and the two mappings that address them. The one
+/// place a dense stage and a gathered one differ, so [`smem_over`](MemData::smem_over) builds either
+/// without knowing which it is.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct StageForm {
+    /// Physical extents in lines, innermost already divided by the store width.
+    extents: Vec<usize>,
+    /// The buffer's own per-position map, what [`GmemLayout`] splits coordinates through.
+    positional: Projection,
+    /// How the staged tile's logical axes address those extents.
+    projection: Projection,
+}
+
+impl StageForm {
+    /// A materialized dense copy of the logical tile: what every direct operand stages into. An
+    /// empty `nesting` is a plain row-major buffer; each block in it adds a `[grid…, block…]` split,
+    /// so the buffer lays the innermost block down contiguously.
+    fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
+        let nesting = stage_nesting(space, stage);
+        StageForm {
+            extents: storage_extents(space, vector_size, &nesting),
+            positional: Projection::of_tiling(StorageTiling::uniform(space.rank(), nesting.len())),
+            // A dense stage is a copy of the tile itself, so it addresses its own buffer directly
+            // whatever the operand it stages was gathered through.
+            projection: Projection::direct_over(space),
+        }
+    }
+
+    /// The compacted window a gathered operand stages into ([`Compaction`]): one cell per element
+    /// its sub-tile reads, addressed by the operand's own map with the lattice quotiented out.
+    /// Always plain row-major, since an affine map cannot also be storage-tiled
+    /// ([`Projection::validate`]).
+    fn gathered(space: &Space, vector_size: usize, projection: &Projection) -> StageForm {
+        let compaction = Compaction::of(projection, |axis| space.extent(axis));
+        let extents = compaction.line_extents(vector_size);
+        StageForm {
+            positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
+            projection: compaction.projection().clone(),
+            extents,
+        }
+    }
+
+    /// How many lines the buffer holds.
+    fn cells(&self) -> usize {
+        self.extents.iter().product()
+    }
+
+    /// Row-major suffix-product strides over [`extents`](StageForm::extents).
+    fn strides(&self) -> Vec<usize> {
+        (0..self.extents.len())
+            .map(|p| self.extents[p + 1..].iter().product())
+            .collect()
+    }
+}
+
+/// A stage's physical shape and strides, in lines like [`Tile::of`]'s.
 #[cube]
-fn storage_layout(
-    #[comptime] space: Space,
-    #[comptime] vector_size: usize,
-    #[comptime] nesting: Vec<Space>,
-) -> (Coords<u32>, Coords<u32>) {
-    let (shape_c, strides_c) = comptime!(storage_extents(&space, vector_size, &nesting));
+fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
+    let strides_c = comptime!(form.strides());
 
     let mut shape = Coords::<u32>::new();
     let mut strides = Coords::<u32>::new();
+    #[allow(clippy::needless_range_loop)]
     #[unroll]
-    for p in 0..comptime!(shape_c.len()) {
-        shape.push(comptime!(shape_c[p]));
-        strides.push(comptime!(strides_c[p]));
+    for p in 0..comptime!(form.extents.len()) {
+        shape.push(comptime!(form.extents[p] as u32));
+        strides.push(comptime!(strides_c[p] as u32));
     }
 
     (shape, strides)
@@ -1458,11 +1549,10 @@ fn stage_nesting(space: &Space, stage: StageStorage) -> Vec<Space> {
     }
 }
 
-/// [`storage_layout`]'s host data: the physical line extents (`[extents…]` flat, or
-/// `[grid…, …, block…]`, one grid per level of `nesting`) and their row-major suffix-product
-/// strides. A level contributes how many of the next block down it holds; the innermost
+/// A dense stage's physical line extents: `[extents…]` flat, or `[grid…, …, block…]`, one grid per
+/// level of `nesting`. A level contributes how many of the next block down it holds; the innermost
 /// contributes its own extents.
-fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> (Vec<u32>, Vec<u32>) {
+fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<usize> {
     let rank = space.rank();
     let mut extents = Vec::new();
     let mut outer = space;
@@ -1483,12 +1573,7 @@ fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> (Vec
     }
     let last = extents.len() - 1;
     extents[last] /= vector_size;
-
-    let shape = extents.iter().map(|&e| e as u32).collect();
-    let strides = (0..extents.len())
-        .map(|p| extents[p + 1..].iter().product::<usize>() as u32)
-        .collect();
-    (shape, strides)
+    extents
 }
 
 /// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
@@ -1678,11 +1763,8 @@ mod tests {
     /// No nesting is the plain row-major buffer: the space's own extents, innermost in lines.
     #[test]
     fn flat_nesting_is_the_space_itself() {
-        assert_eq!(
-            storage_extents(&space(), 1, &[]),
-            (vec![16, 16], vec![16, 1])
-        );
-        assert_eq!(storage_extents(&space(), 4, &[]), (vec![16, 4], vec![4, 1]));
+        assert_eq!(storage_extents(&space(), 1, &[]), vec![16, 16]);
+        assert_eq!(storage_extents(&space(), 4, &[]), vec![16, 4]);
     }
 
     /// One block is the `[grid…, tile…]` split: each axis holds `16 / 4` tiles of `4`.
@@ -1691,7 +1773,7 @@ mod tests {
         let space = space();
         assert_eq!(
             storage_extents(&space, 1, &[space.final_space()]),
-            (vec![4, 4, 4, 4], vec![64, 16, 4, 1])
+            vec![4, 4, 4, 4]
         );
     }
 
@@ -1701,13 +1783,38 @@ mod tests {
     fn two_blocks_nest() {
         let space = space();
         let nesting = [space.divide(), space.final_space()];
-        assert_eq!(
-            storage_extents(&space, 1, &nesting),
-            (vec![2, 2, 2, 2, 4, 4], vec![128, 64, 32, 16, 4, 1])
-        );
+        let extents = storage_extents(&space, 1, &nesting);
+        assert_eq!(extents, vec![2, 2, 2, 2, 4, 4]);
         // The nesting only regroups the buffer, never resizes it.
-        let (shape, _) = storage_extents(&space, 1, &nesting);
-        assert_eq!(shape.iter().product::<u32>(), space.tile_size() as u32);
+        assert_eq!(extents.iter().product::<usize>(), space.tile_size());
+    }
+
+    /// The strides a buffer's extents imply, row-major: `[grid…, tile…]` or plain, the same rule.
+    #[test]
+    fn a_form_strides_row_major() {
+        let space = space();
+        let form = StageForm::dense(&space, 4, StageStorage::Strided);
+        assert_eq!(form.extents, vec![16, 4]);
+        assert_eq!(form.strides(), vec![4, 1]);
+        assert_eq!(form.cells(), space.tile_size() / 4);
+
+        let tiled = StageForm::dense(&space, 1, StageStorage::Tiled);
+        assert_eq!(tiled.extents, vec![4, 4, 4, 4]);
+        assert_eq!(tiled.strides(), vec![64, 16, 4, 1]);
+    }
+
+    /// A gathered stage is the compacted window, not the logical tile: `M` and `N` here map onto
+    /// one physical axis, so the stage holds their receptive field instead of their product.
+    #[test]
+    fn a_gathered_form_is_the_compacted_window() {
+        let space = space().divide();
+        let projection = Projection::new(&[M, N], &[PhysicalAxisMap::affine(&[(M, 1), (N, 1)])]);
+        let form = StageForm::gathered(&space, 1, &projection);
+        // 8 x 8 logical cells over 1 + 7 + 7 physical ones.
+        assert_eq!(form.extents, vec![15]);
+        assert_eq!(form.cells(), 15);
+        assert_eq!(form.projection, projection);
+        assert!(form.positional.is_direct());
     }
 
     /// A block that does not divide the one enclosing it has no `[grid…, block…]` split.

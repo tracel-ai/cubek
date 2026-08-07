@@ -275,6 +275,18 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source
+    /// have no buffer to project onto, so they answer [`direct`](Projection::direct) over their own
+    /// space, which is what every non-gather operand carries anyway.
+    pub(crate) fn projection(&self) -> comptime_type!(Projection) {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(g.projection.clone()),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(Projection::direct_over(&self.space))
+            }
+        }
+    }
+
     /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
     /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.
     pub fn at(&self, region: &Region) -> Tile<T> {

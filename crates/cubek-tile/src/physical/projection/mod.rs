@@ -20,11 +20,13 @@
 //! [`direct`](Projection::direct) is the degenerate one every current operand uses.
 
 mod base;
+mod compact;
 mod fold;
 mod map;
 mod tiling;
 
 pub use base::*;
+pub use compact::*;
 pub use fold::*;
 pub use map::*;
 pub use tiling::*;
