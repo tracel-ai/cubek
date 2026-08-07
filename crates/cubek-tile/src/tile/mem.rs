@@ -506,9 +506,9 @@ impl<T: Numeric> MemData<T> {
         let size!(W) = comptime!(self.store.vector_size);
         let gathered = comptime!(!src.projection.is_direct());
         if comptime!(self.store.quant.is_some()) {
-            // A gathered operand's scale blocks are gridded over its logical axes while its buffer
-            // is addressed over its physical ones, so a staged side-channel would have to re-grid
-            // the scales rather than copy them.
+            // Unreachable in practice: `Tile::of_impl` already asserts `quant.is_none() ||
+            // coords.is_direct()` at construction, so a gathered `src` never carries a quantized
+            // form to begin with. Kept as defense in case that invariant ever loosens.
             comptime!(assert!(
                 !gathered,
                 "MemData::fill_from: a gathered operand cannot stage in its quantized form"
@@ -618,10 +618,27 @@ impl<T: Numeric> MemData<T> {
                 check,
             )
         } else {
+            // `space` is handed in by the caller as the *destination*'s space, used here to
+            // address `src`; sound only when the two coincide, which every caller of
+            // `fill_from` today arranges (`smem_like` stages over `operand.space.divide()`, and
+            // `Tile::at` windows both sides by the same `space.divide()`). `Tile::copy_from` is
+            // public and does not itself guarantee that, so check it here rather than trust it.
+            comptime!(assert!(
+                space.rank() == src.projection.logical_rank()
+                    && (0..space.rank())
+                        .all(|p| space.axis_at(p) == src.projection.logical_axes()[p]),
+                "MemData::fill_straight: the destination space's axes must match the gathered \
+                 source's projected axes; fill_from addresses the source through the \
+                 destination's space"
+            ));
+            // Every other width in this function is `self.store.vector_size` (`WP2`); the
+            // gathered branch is only ever reached with `src.store.vector_size` equal to it (the
+            // quant-destination path asserts `!gathered` before it can differ), so use the same
+            // one consistently rather than re-deriving it off `src`.
             let layout = axis_projection(
                 space,
                 comptime!(src.projection.clone()),
-                comptime!(src.store.vector_size),
+                comptime!(self.store.vector_size),
             );
             MaskedView::new(
                 src.lines_storage::<I2, WP2>()

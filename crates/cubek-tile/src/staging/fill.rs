@@ -27,6 +27,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         // rather than copies: the stage is the compacted logical tile and the projection is
         // resolved at the fill's source read ([`MemData::fill_from`]). The stage itself is dense
         // and direct, so nothing downstream learns the operand was gathered.
+        //
+        // Staging a gathered operand replicates elements: a stencil's stage is
+        // `tile_oh * rh * ci` against the smaller, overlapping physical span it reads from. At
+        // stride 1 that is roughly an `rh`-times shared-memory blow-up over reading the operand
+        // `Direct` (unstaged). That blow-up is the reason to keep `Direct` a real option rather
+        // than always staging.
         let lhs_gathered = lhs.gathered();
         let rhs_gathered = rhs.gathered();
         let gathered = comptime!(lhs_gathered || rhs_gathered);
@@ -50,10 +56,13 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
                     "Staging: a TMA source cannot stage into plane tiles"
                 ));
                 // A fragment fill reads its source as a 2-D window, which a gathered operand has
-                // no equivalent of. Staging it into smem first is what the memory leaf does.
+                // no equivalent of. `OperandStage::Smem` resolves the gather at the fill's source
+                // read instead (see `MemData::fill_from`); a cmma leaf (`OperandStage::Plane`) has
+                // no such path, so a gathered operand cannot feed one today.
                 comptime!(assert!(
                     !gathered,
-                    "Staging: a gathered operand cannot stage into plane tiles"
+                    "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane); \
+                     only OperandStage::Smem resolves a gather, at the fill's source read"
                 ));
                 // Each operand's fragment encoding is its own; `out` only names the contracted axis.
                 let a = PlanePartition::store(
