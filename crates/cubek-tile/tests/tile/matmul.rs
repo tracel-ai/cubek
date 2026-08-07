@@ -1514,7 +1514,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2142,7 +2142,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2227,7 +2227,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2269,9 +2269,9 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
     check_cmma_matmul_quant_k_walk(32, Schedule::DoubleBuffered);
 }
 
-/// The manual-mma leaf decoding at the *read*: `Until::Read` keeps `A`'s stage in its stored `i8`,
+/// The manual-mma leaf decoding at the *read*: `DequantAt::Read` keeps `A`'s stage in its stored `i8`,
 /// and the fragment load decodes each element through the quant-transparent matrix view. The cmma
-/// twin of this test has no choice but `Until::Load`, because its fragment load takes a raw window;
+/// twin of this test has no choice but `DequantAt::Load`, because its fragment load takes a raw window;
 /// the manual transport addresses one element at a time, so it can decode. Same numbers, a stage
 /// that is a quarter the size.
 #[test]
@@ -2342,7 +2342,7 @@ fn mma_matmul_quant_until_read() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
-            Until::Read,
+            DequantAt::Read,
         ),
         b.arg(),
         c.arg(),
@@ -2432,7 +2432,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2528,7 +2528,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2624,7 +2624,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2720,7 +2720,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -3019,7 +3019,7 @@ fn run_register_matmul_quant_packed(
 
     let a = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
         .untiled()
-        .packed(&scheme, Until::Read)
+        .packed(&scheme, DequantAt::Read)
         .arange();
 
     let a_dtype = u32::as_type_native_unchecked().storage_type();
@@ -3074,7 +3074,7 @@ fn run_register_matmul_quant(
             scales_arg,
             TileSpec::direct(&[M, K]),
             scheme,
-            Until::Load,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -3134,7 +3134,7 @@ fn register_matmul_quant_rhs_packed_q8() {
         register_staged_partitioner(4, 4, 4),
         QuantValue::Q8S,
         4,
-        Until::Read,
+        DequantAt::Read,
     );
 }
 
@@ -3148,7 +3148,7 @@ fn register_matmul_quant_rhs_packed_q4() {
         register_staged_partitioner(4, 8, 4),
         QuantValue::Q4S,
         8,
-        Until::Read,
+        DequantAt::Read,
     );
 }
 
@@ -3163,7 +3163,7 @@ fn register_matmul_quant_rhs_gemv_row() {
         register_staged_partitioner(1, 4, 4),
         QuantValue::Q8S,
         4,
-        Until::Read,
+        DequantAt::Read,
     );
 }
 
@@ -3182,7 +3182,14 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
         .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (1, 16, 8), plan, QuantValue::Q8S, 4, Until::Read);
+    run_register_matmul_quant_rhs(
+        client,
+        (1, 16, 8),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Read,
+    );
 }
 
 /// Direct-serve the quantized RHS weight (Keystone K): a `Direct` schedule stages nothing, so the
@@ -3203,7 +3210,7 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
         .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (1, 8, 8), plan, QuantValue::Q8S, 4, Until::Read);
+    run_register_matmul_quant_rhs(client, (1, 8, 8), plan, QuantValue::Q8S, 4, DequantAt::Read);
 }
 
 /// The Goal path: a `.staged()` packed weight whose smem stage holds the *packed u32 words*, not a
@@ -3225,10 +3232,17 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
         .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (4, 8, 16), plan, QuantValue::Q8S, 4, Until::Read);
+    run_register_matmul_quant_rhs(
+        client,
+        (4, 8, 16),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Read,
+    );
 }
 
-/// The same staged packed weight, decoded by the load instead of the read (`Until::Load`): the
+/// The same staged packed weight, decoded by the load instead of the read (`DequantAt::Load`): the
 /// stage holds served values, so it costs the served-to-stored ratio in shared memory and the
 /// decode happens once per element rather than per read. The fork a register leaf may take and a
 /// cmma leaf is forced into; same numbers either way, which is the point of checking it.
@@ -3245,7 +3259,14 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
         .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (4, 8, 16), plan, QuantValue::Q8S, 4, Until::Load);
+    run_register_matmul_quant_rhs(
+        client,
+        (4, 8, 16),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Load,
+    );
 }
 
 /// A cmma leaf loads fragments at one element type, so it cannot decode as it reads: an operand
@@ -3276,7 +3297,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .leaf(leaf)
         .untiled()
-        .packed(&scheme, Until::Load)
+        .packed(&scheme, DequantAt::Load)
         .arange();
 
     let launcher = space.launcher(&client);
@@ -3285,7 +3306,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
         .subspace(&[K, N])
         .vectorize(scheme.num_quants())
         .leaf(leaf)
-        .quantized(b.scales_arg(), scheme, Until::Read)
+        .quantized(b.scales_arg(), scheme, DequantAt::Read)
         .build();
 }
 
@@ -3297,7 +3318,7 @@ fn run_register_matmul_quant_rhs(
     plan: Partitioner,
     value: QuantValue,
     bn: usize,
-    until: Until,
+    dequant_at: DequantAt,
 ) {
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::block([1, bn as u8]))
@@ -3323,7 +3344,7 @@ fn run_register_matmul_quant_rhs(
     // The weight and its per-(k, N-group) scales, minted together.
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
-        .packed(&scheme, until)
+        .packed(&scheme, dequant_at)
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
@@ -3339,7 +3360,7 @@ fn run_register_matmul_quant_rhs(
         .arg(b.tile.handle().binding())
         .subspace(&[K, N])
         .vectorize(pack)
-        .quantized(b.scales_arg(), scheme, until)
+        .quantized(b.scales_arg(), scheme, dequant_at)
         .build();
     // The register microkernel lines the accumulator at the RHS's served width.
     let c_op = launcher

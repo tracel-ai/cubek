@@ -135,7 +135,7 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub scheme: QuantScheme,
     /// How far this operand stays quantized; stated at launch, where what can decode is known.
     #[cube(comptime)]
-    pub until: Until,
+    pub dequant_at: DequantAt,
 }
 
 #[cube]
@@ -147,7 +147,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             self.values,
             self.scales,
             comptime!(self.scheme),
-            comptime!(self.until),
+            comptime!(self.dequant_at),
             space,
             comptime!(self.spec.clone()),
         )

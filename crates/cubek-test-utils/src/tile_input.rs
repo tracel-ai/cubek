@@ -15,8 +15,8 @@ use cubecl::{
     quant::scheme::QuantScheme, zspace::Shape,
 };
 use cubek_tile::{
-    Leaf, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
-    TileSpec as CubekTileSpec, Until,
+    DequantAt, Leaf, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
+    TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
@@ -232,7 +232,7 @@ impl TileInputBuilder {
     /// [`arange`](QuantizedTileInputBuilder::arange)), which also mints the scales — a
     /// quantized tensor is one thing (data + scales + scheme). Untiled only: packed storage
     /// has no physically tiled layout.
-    pub fn packed(self, scheme: &QuantScheme, until: Until) -> QuantizedTileInputBuilder {
+    pub fn packed(self, scheme: &QuantScheme, dequant_at: DequantAt) -> QuantizedTileInputBuilder {
         let levels = self
             .levels
             .expect("TileInput: set .untiled() before .packed");
@@ -245,7 +245,7 @@ impl TileInputBuilder {
             space: self.space,
             scheme: *scheme,
             leaf: self.leaf,
-            until,
+            dequant_at,
         }
     }
 
@@ -314,7 +314,7 @@ impl TileInputBuilder {
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
     leaf: Leaf,
-    until: Until,
+    dequant_at: DequantAt,
     client: ComputeClient<TestRuntime>,
     space: Space,
     scheme: QuantScheme,
@@ -362,7 +362,7 @@ impl QuantizedTileInputBuilder {
             },
             scales,
             scheme: self.scheme,
-            until: self.until,
+            dequant_at: self.dequant_at,
             q,
             scale_values,
         }
@@ -374,7 +374,7 @@ impl QuantizedTileInputBuilder {
 /// plus the exact numbers behind both for host references.
 pub struct QuantizedTileInput {
     /// How far this operand's quantized form travels, stated when it was declared quantized.
-    pub until: Until,
+    pub dequant_at: DequantAt,
     pub tile: TileInput,
     scales: TensorHandle<TestRuntime>,
     scheme: QuantScheme,
@@ -398,7 +398,7 @@ impl QuantizedTileInput {
             self.scales_arg(),
             self.tile.spec(),
             self.scheme,
-            self.until,
+            self.dequant_at,
         )
     }
 }

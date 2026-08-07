@@ -9,8 +9,8 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, ConcreteLayout, Leaf, LoadMethod, PhysicalAxis, QuantTileArgLaunch, Space, StageStorage,
-    StorageTiling, TileArgLaunch, TileSpec, Until, validate_scheme,
+    Axis, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, QuantTileArgLaunch, Space,
+    StageStorage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -158,7 +158,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
     /// **in values**; a packed store's buffer is narrower than its shape by the packing
     /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
-    /// [`vectorize`](Self::vectorize) still names the *served* width. `until` says how far the
+    /// [`vectorize`](Self::vectorize) still names the *served* width. `dequant_at` says how far the
     /// quantized form travels; it rides here rather than in its own setter because the quantized
     /// form ends at exactly one boundary, so one call says it once by construction. Which values
     /// are available is a capability of this operand's transports, and [`build`](Self::build)
@@ -167,9 +167,9 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
         mut self,
         scales: TensorArg<R>,
         scheme: QuantScheme,
-        until: Until,
+        dequant_at: DequantAt,
     ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
-        self.data.quant = Some(Quantization::new(scales, scheme, until));
+        self.data.quant = Some(Quantization::new(scales, scheme, dequant_at));
         StridedTileSource {
             data: self.data,
             _state: PhantomData,
@@ -180,19 +180,19 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
 /// back in, and how far the quantized form travels before something decodes it. One thing, because
 /// none of the three says anything on its own — a scheme without scales cannot be applied, and an
-/// [`Until`] without a scheme has nothing to bound.
+/// [`DequantAt`] without a scheme has nothing to bound.
 pub struct Quantization<R: Runtime> {
     pub scales: TensorArg<R>,
     pub scheme: QuantScheme,
-    pub until: Until,
+    pub dequant_at: DequantAt,
 }
 
 impl<R: Runtime> Quantization<R> {
-    pub fn new(scales: TensorArg<R>, scheme: QuantScheme, until: Until) -> Self {
+    pub fn new(scales: TensorArg<R>, scheme: QuantScheme, dequant_at: DequantAt) -> Self {
         Quantization {
             scales,
             scheme,
-            until,
+            dequant_at,
         }
     }
 
@@ -202,11 +202,11 @@ impl<R: Runtime> Quantization<R> {
     }
 
     /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
-    /// operand's cuts and served width, the [`Until`] against the reader that would have to honour
+    /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
     /// it. Both rules live here because both are facts about this quantization and nothing else.
     pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
         validate_scheme(space, vector_size, self.scheme);
-        validate_until(self.until, leaf);
+        validate_dequant_at(self.dequant_at, leaf);
     }
 }
 
@@ -252,7 +252,7 @@ impl<R: Runtime> QuantOperand<R> {
             self.quant.scales,
             self.spec,
             self.quant.scheme,
-            self.quant.until,
+            self.quant.dequant_at,
         )
     }
 }
@@ -424,27 +424,34 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
     }
 }
 
-/// Refuse an [`Until`] nothing can honour. Called by [`build`](StridedTileSource::build) so a bad
+/// Refuse a [`DequantAt`] nothing can honour. Called by [`build`](StridedTileSource::build) so a bad
 /// plan fails on the caller's thread, and again by [`Tile::of_dequant`](crate::Tile::of_dequant),
 /// which every launch path reaches including the raw
-/// [`QuantTileArgLaunch`](crate::QuantTileArgLaunch) one. A strided load decodes whatever it moves, since it runs
-/// code per element, so only the leaf constrains: a fragment load takes a raw window at one element
-/// type, so a leaf that loads fragments needs its values already served.
-pub(crate) fn validate_until(until: Until, leaf: Leaf) {
-    match (until, leaf) {
-        (Until::Load, _) => {}
+/// [`QuantTileArgLaunch`](crate::QuantTileArgLaunch) one.
+///
+/// Both transports constrain, but only the leaf can differ here: this operand is
+/// [`Delivery::Strided`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
+/// and a strided load runs code per element, so it decodes whatever it moves. Only the leaf is left:
+/// a fragment load takes a raw window at one element type, so a leaf that loads fragments needs its
+/// values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this — a bulk
+/// copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the only site
+/// it can honour — but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)), so a
+/// quantized TMA operand is not expressible and the rule has no site to fire at yet.
+pub(crate) fn validate_dequant_at(dequant_at: DequantAt, leaf: Leaf) {
+    match (dequant_at, leaf) {
+        (DequantAt::Load, _) => {}
         // The memory leaf reads through a matrix view; so does the manual-mma fragment load, which
         // addresses one element at a time. Only the intrinsic transports are opaque.
-        (Until::Read, Leaf::Memory) => {}
-        (Until::Read, Leaf::Mma { io, .. }) => assert!(
+        (DequantAt::Read, Leaf::Memory) => {}
+        (DequantAt::Read, Leaf::Mma { io, .. }) => assert!(
             matches!(io.lhs_load_method, LoadMethod::Manual)
                 && matches!(io.rhs_load_method, LoadMethod::Manual),
-            "Until::Read: the ldmatrix transport copies raw lanes, so it cannot decode as it \
-             reads; such an operand must be served by its load (Until::Load)"
+            "DequantAt::Read: the ldmatrix transport copies raw lanes, so it cannot decode as it \
+             reads; such an operand must be served by its load (DequantAt::Load)"
         ),
-        (Until::Read, other) => panic!(
-            "Until::Read: {other:?} loads fragments at one element type, so it cannot decode as \
-             it reads; such an operand must be served by its load (Until::Load)"
+        (DequantAt::Read, other) => panic!(
+            "DequantAt::Read: {other:?} loads fragments at one element type, so it cannot decode as \
+             it reads; such an operand must be served by its load (DequantAt::Load)"
         ),
     }
 }

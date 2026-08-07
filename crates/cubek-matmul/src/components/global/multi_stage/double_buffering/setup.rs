@@ -20,7 +20,6 @@ use crate::{
     components::global::memory::{GlobalMemoryConfig, ViewDirection},
     components::global::multi_stage::EventLoadingMode,
 };
-use crate::components::global::read::LoadingValidation as _;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
 use std::marker::PhantomData;

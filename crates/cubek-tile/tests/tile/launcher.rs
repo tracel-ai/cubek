@@ -5,7 +5,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{Axis, CubeAxis, Cut, Schedule, StridedOperand, Tiling, Until, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, DequantAt, Schedule, StridedOperand, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -245,7 +245,7 @@ fn quantize(v: usize, scheme: QuantScheme) {
         .quantized(
             binding(&client, &[1, 8]).into_tensor_arg(),
             scheme,
-            Until::Read,
+            DequantAt::Read,
         )
         .build();
 }

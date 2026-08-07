@@ -4,7 +4,7 @@ use crate::*;
 
 /// The view a register block accumulates through: [`seed`](AccumulateView::seed) it, contract into
 /// it, [`commit`](AccumulateView::commit) it back. The write-side mirror of a
-/// [`QuantizedView`] dequantizing on read: it owns the [`LaneShare`], so cells the plane's lanes
+/// quantized view dequantizing on read: it owns the [`LaneShare`], so cells the plane's lanes
 /// hold partials of combine on commit and the contraction never asks.
 #[derive(CubeType)]
 pub struct AccumulateView<'a, E: Numeric, V: Size> {

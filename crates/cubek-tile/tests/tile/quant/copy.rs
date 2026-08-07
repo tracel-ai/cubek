@@ -5,8 +5,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg, TileArgLaunch, TileSpec,
-    Tiling, Until, WalkOrder,
+    Axis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg,
+    TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -87,7 +87,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
             scheme,
-            Until::Read,
+            DequantAt::Read,
         ),
         output.arg(),
         space,
@@ -172,7 +172,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let space = Space::new(&[(M, m), (N, n)]);
     let input = TileInput::builder(&client, space.clone())
         .untiled()
-        .packed(&scheme, Until::Read)
+        .packed(&scheme, DequantAt::Read)
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
@@ -296,7 +296,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
             scheme,
-            Until::Read,
+            DequantAt::Read,
         ),
         TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
         space,

@@ -123,13 +123,13 @@ impl<T: Numeric> Tile<T> {
         values: &Tensor<E>,
         scales: &Tensor<f32>,
         #[comptime] scheme: QuantScheme,
-        #[comptime] until: Until,
+        #[comptime] dequant_at: DequantAt,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
         // The engine's own backstop: the builder checks this too, but a hand-built
         // `QuantTileArgLaunch` reaches here without passing through it.
-        comptime!(validate_until(until, spec.leaf));
+        comptime!(validate_dequant_at(dequant_at, spec.leaf));
         let rank = comptime!(spec.axes().len());
         let block = comptime!(block_edges(scheme, rank));
         let mut strides = Coords::<u32>::new();
@@ -146,7 +146,7 @@ impl<T: Numeric> Tile<T> {
             strides,
             window_start: 0u32,
             block: comptime!(block),
-            until: comptime!(until),
+            dequant_at: comptime!(dequant_at),
             // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
             scale_shape: comptime!(Vec::new()),
             scheme: comptime!(scheme),
@@ -178,7 +178,7 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
              logical axes, which its buffer's physical axes no longer match"
         ));
-        // Stage layout: the explicit override, else derived from the space's leaf.
+        // Stage layout: the explicit override, else derived from the operand's leaf.
         let stage = comptime!(StagePlan {
             layout: spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
             units: spec.units,
@@ -216,7 +216,7 @@ impl<T: Numeric> Tile<T> {
         }
         // Re-typing the buffer to the served scalar `T` is a static coercion for a plain
         // operand (the binding's real element is `Vector<T, w>`, same bytes); a quantized
-        // store truly holds the stored type and the read view downcasts back (`flat_storage`).
+        // store truly holds the stored type and the read view downcasts back (`lines_storage`).
         let buffer = unsafe {
             tensor
                 .as_slice()
@@ -275,13 +275,13 @@ impl<T: Numeric> Tile<T> {
 impl<T: Numeric> MemData<T> {
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
     /// the element that operand needs staged: the one it *serves* when the load is what decodes it
-    /// ([`Until::Load`], and always for a plain operand, whose served and stored elements are the
+    /// ([`DequantAt::Load`], and always for a plain operand, whose served and stored elements are the
     /// same), else the one it is *stored* in ([`smem_stored`](MemData::smem_stored)). The operand
     /// carries which, so a caller stages it without asking whether it is quantized at all.
     pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
-        let until = operand.until();
-        match comptime!(until) {
-            Until::Load => {
+        let dequant_at = operand.dequant_at();
+        match comptime!(dequant_at) {
+            DequantAt::Load => {
                 let space = comptime!(operand.space.divide());
                 let projection = operand.projection();
                 let leaf = comptime!(operand.leaf);
@@ -294,7 +294,7 @@ impl<T: Numeric> MemData<T> {
                     MemData::smem_gathered(space, leaf, vector_size, stage, projection)
                 }
             }
-            Until::Read => MemData::smem_stored(operand),
+            DequantAt::Read => MemData::smem_stored(operand),
         }
     }
 
@@ -303,7 +303,7 @@ impl<T: Numeric> MemData<T> {
     /// the scheme packs several values each) and its scales, so the leaf dequantizes at the read
     /// (see [`smem_quant`](MemData::smem_quant)) instead of the fill inflating the stage to `T`.
     /// Reached only through [`smem_like`](MemData::smem_like), on an operand whose quantized form
-    /// runs [`Until::Read`].
+    /// runs [`DequantAt::Read`].
     fn smem_stored(operand: &Tile<T>) -> Tile<T> {
         let space = comptime!(operand.space.divide());
         let leaf = comptime!(operand.leaf);
@@ -364,13 +364,8 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
-        MemData::smem_with_form(
-            space,
-            leaf,
-            vector_size,
-            stage,
-            comptime!(StageForm::dense(&space, vector_size, stage.layout)),
-        )
+        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
+        MemData::smem_with_form(space, leaf, vector_size, stage, form)
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -389,13 +384,8 @@ impl<T: Numeric> MemData<T> {
         #[comptime] stage: StagePlan,
         #[comptime] projection: Projection,
     ) -> Tile<T> {
-        MemData::smem_with_form(
-            space,
-            leaf,
-            vector_size,
-            stage,
-            comptime!(StageForm::gathered(&space, vector_size, &projection)),
-        )
+        let form = comptime!(StageForm::gathered(&space, vector_size, &projection));
+        MemData::smem_with_form(space, leaf, vector_size, stage, form)
     }
 
     /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
@@ -502,7 +492,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 if comptime!(g.store.quant.is_some()) {
                     panic!(
-                        "Tile::view: a quantized tile only serves dequantized reads (Tile::flat)"
+                        "Tile::view: a quantized tile only serves dequantized reads \
+                         (Tile::copy_from, Tile::matrix_transparent)"
                     )
                 }
                 g.lines::<W>().view(g.base()).view(g.window())
@@ -779,17 +770,17 @@ impl<T: Numeric> MemData<T> {
         comptime!(self.access.stage)
     }
 
-    /// How far this store's quantized form travels ([`Until`]). A plain store answers
-    /// [`Until::Load`]: served and stored are the same element, so nothing is left to decode.
+    /// How far this store's quantized form travels ([`DequantAt`]). A plain store answers
+    /// [`DequantAt::Load`]: served and stored are the same element, so nothing is left to decode.
     // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
     #[allow(clippy::let_and_return)]
-    pub(crate) fn until(&self) -> comptime_type!(Until) {
-        let until = #[comptime]
+    pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
+        let dequant_at = #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => comptime!(info.until),
-            ComptimeOption::None => Until::Load,
+            ComptimeOption::Some(info) => comptime!(info.dequant_at),
+            ComptimeOption::None => DequantAt::Load,
         };
-        until
+        dequant_at
     }
 
     /// Comptime quant dispatch for a leaf read, mirroring [`fill_from`](MemData::fill_from)'s
@@ -993,7 +984,10 @@ impl<T: Numeric> MemData<T> {
         layout: L,
     ) -> MaskedView<'_, Vector<T, W>, C> {
         if comptime!(self.store.quant.is_some()) {
-            panic!("Tile::matrix: a quantized tile only serves dequantized reads (Tile::flat)")
+            panic!(
+                "Tile::matrix: a quantized tile only serves dequantized reads \
+                 (Tile::matrix_transparent)"
+            )
         }
         MaskedView::new(
             self.lines::<W>()
@@ -1036,10 +1030,9 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// Quantization-transparent [`flat`](MemData::flat): a plain store serves the bare
-    /// `Direct` read, a quantized one re-types to the storage element `I` and pairs it with the
-    /// scales over the same window, dequantizing each read into `T`. `#[comptime]`, so the plain
-    /// path pays nothing.
+    /// Quantization-transparent [`flat`](MemData::flat): a plain store is read as it stands, a
+    /// quantized one re-types to the storage element `I` and pairs it with the scales over the same
+    /// window, dequantizing each read into `T`. `#[comptime]`, so the plain path pays nothing.
     pub(crate) fn flat_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
     ) -> FlatView<'_, Vector<T, W>> {
@@ -1071,9 +1064,9 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Quantization-transparent [`masked`](MemData::masked): the windowed twin of
-    /// [`flat_transparent`](MemData::flat_transparent). A plain store serves the bare `Direct`
-    /// read; a quantized one re-types to the storage element `I`, pairs it with the scales over
-    /// the same `layout`, and dequantizes each read into `T`. This is what lets a leaf read a
+    /// [`flat_transparent`](MemData::flat_transparent). A plain store is read as it stands; a
+    /// quantized one re-types to the storage element `I`, pairs it with the scales over the same
+    /// `layout`, and dequantizes each read into `T`. This is what lets a leaf read a
     /// quantized operand straight from gmem, or from a stage still in the stored element, without
     /// a dequantize-into-`f32` fill. `#[comptime]`, so plain pays nothing.
     pub(crate) fn transparent<
@@ -1374,7 +1367,7 @@ fn top_window(
 /// The staged scales side-channel for a quantized smem stage: a compact `Shared` buffer holding one
 /// f32 per block of the sub-tile (row-major over the block grid), paired with self-relative strides
 /// (`window_start = 0`). [`fill_from`](MemData::fill_from) refills its contents per region;
-/// [`masked_scales`](MemData::masked_scales) reads it exactly as it reads a gmem operand's scales.
+/// [`transparent`](MemData::transparent) reads it exactly as it reads a gmem operand's scales.
 #[cube]
 fn smem_quant_info(
     #[comptime] space: Space,
@@ -1404,7 +1397,7 @@ fn smem_quant_info(
         block: comptime!(block),
         // A stage only keeps its quantized form when the read is what decodes it; that is the one
         // path reaching here.
-        until: comptime!(Until::Read),
+        dequant_at: comptime!(DequantAt::Read),
         scale_shape: comptime!(nb),
         scheme: comptime!(scheme),
     })
