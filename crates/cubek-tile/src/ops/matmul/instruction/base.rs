@@ -8,9 +8,11 @@ use cubecl::prelude::*;
 use super::register::mma_register_memory;
 use crate::*;
 
-/// What the cmma leaf's 2-D single-`K` deduction rules out.
-const PLANE_2D: &str = "mma: a cmma leaf reads one contracted axis off a directly addressed \
-                        operand; a gather-reduce runs on the manual-mma or register leaf";
+/// What a strided-window fragment's 2-D single-`K` deduction rules out.
+const STRIDED_2D: &str = "mma: a cmma or plane-register fragment reads one contracted axis off a \
+                          directly addressed operand; a gather or a wider reduce needs the \
+                          manual-mma leaf, or an unpromoted Gmem/Smem accumulator, whose software \
+                          microkernel is the `mma_register_memory` arm below";
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
 /// storage config
@@ -21,40 +23,28 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
 ) {
     let space = comptime!(acc.space.clone());
-    // A gather-reduce runs on any leaf that addresses its operands *through a view*: the register
-    // microkernel's N-D nest, and the manual-mma leaf, whose fragment load reads element by element
-    // through `Tile::fragment_matrix` and so takes both a wider reduce nest (the axes flatten into
-    // the `k` edge) and a gathered operand (the compacted stage folds underneath).
-    //
-    // Cmma cannot. It loads a raw strided window (`window_slice` + `row_stride`), which no gather
-    // is expressible in, and its fragment grid is deduced 2-D and single-contraction throughout:
-    // `PlanePartition::store` infers the A/B role from where the contracted axis sits in the
-    // trailing two, and `partition_grid` reads the grid off those same two. Both halves stay
-    // refused for that encoding rather than failing silently further down.
-    let lhs_gathered = lhs.gathered();
-    let rhs_gathered = rhs.gathered();
-    let plane_2d = comptime!(
-        matches!(acc.leaf, Leaf::Mma { .. })
-            || (!lhs_gathered
-                && !rhs_gathered
-                && Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1)
-    );
+    // Both operands flatten their contracted axes into one `k` edge by extent alone
+    // (`matrix_split`), so listing the same axes in different orders would contract mismatched
+    // positions with matching shapes. Vacuous for a single contracted axis.
+    comptime!(assert!(
+        Space::contraction_agrees(&lhs.space, &rhs.space, &space),
+        "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \
+         so their `k` edges do not line up",
+        lhs.space.contracting(&space),
+        rhs.space.contracting(&space)
+    ));
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        TileKind::PlaneTile(t) => {
-            comptime!(assert!(plane_2d, "{}", PLANE_2D));
-            t.mma(lhs, rhs)
-        }
+        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.
         TileKind::PlanePartition(p) => {
-            comptime!(assert!(plane_2d, "{}", PLANE_2D));
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,
                 "mma_leaf: a multi-tile partition must be contracted at its partition level"
             ));
             let mut t = p.at(0usize, 0usize);
-            t.mma(lhs, rhs)
+            t.mma(lhs, rhs, space)
         }
         // A memory accumulator runs the software microkernel. A plane-form accumulator that was
         // never promoted lands in the arms above and meets their kind-pairing panics; there is no
@@ -68,12 +58,41 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
 
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
-    /// Contract this plane tile: the only place the two encodings' executes diverge.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(&mut self, lhs: &Tile<EL>, rhs: &Tile<ER>) {
+    /// Contract this plane tile: the only place the encodings' executes diverge, and so the only
+    /// place that knows which of them reads a raw strided window.
+    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+        &mut self,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
+        #[comptime] out: Space,
+    ) {
         match self {
-            PlaneTile::Cmma(d) => d.mma(lhs, rhs),
+            PlaneTile::Cmma(d) => {
+                strided_2d(lhs, rhs, out);
+                d.mma(lhs, rhs)
+            }
+            // Reads its operands element by element through `Tile::fragment_matrix`, so a gather
+            // folds underneath and a wider reduce flattens into the `k` edge.
             PlaneTile::Mma(d) => d.mma(lhs, rhs),
-            PlaneTile::Register(d) => d.mma(lhs, rhs),
+            PlaneTile::Register(d) => {
+                strided_2d(lhs, rhs, out);
+                d.mma(lhs, rhs)
+            }
         }
     }
+}
+
+/// Refuse what a raw strided window (`window_slice` + `row_stride`) cannot address: a gathered
+/// operand, and a contraction over more than one axis.
+#[cube]
+fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    comptime!(assert!(
+        !lhs_gathered
+            && !rhs_gathered
+            && Space::contracted(&[&lhs.space, &rhs.space], &out).len() == 1,
+        "{}",
+        STRIDED_2D
+    ));
 }

@@ -23,24 +23,6 @@ use crate::*;
 /// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
 /// a new concept; [`BatchMatrix`](super::BatchMatrix) and [`AxisProjection`] are the two the leaves
 /// read through, and [`StepUp`] rides the same bounds under a fill.
-pub trait TileLayout<C: Coordinates>:
-    Layout<Coordinates = C, SourceCoordinates = CoordsDyn>
-    + Clone
-    + 'static
-    + CubeType<ExpandType: Clone>
-{
-}
-
-impl<C: Coordinates, L> TileLayout<C> for L where
-    L: Layout<Coordinates = C, SourceCoordinates = CoordsDyn>
-        + Clone
-        + 'static
-        + CubeType<ExpandType: Clone>
-{
-}
-
-/// [`TileLayout`] with its own coordinate left implicit, so a wrapper can name the bound without
-/// carrying that coordinate as a second parameter it would then need a `PhantomData` to hold.
 pub trait LogicalLayout:
     Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>
 {
@@ -51,10 +33,16 @@ impl<L> LogicalLayout for L where
 {
 }
 
+/// [`LogicalLayout`] answering a particular coordinate `C`, for the readers that name one.
+pub trait TileLayout<C: Coordinates>: LogicalLayout + Layout<Coordinates = C> {}
+
+impl<C: Coordinates, L> TileLayout<C> for L where L: LogicalLayout + Layout<Coordinates = C> {}
+
 /// Any [`LogicalLayout`] with an operand's [`Projection`] applied under it: the inner layout
 /// resolves a reader's coordinate to the tile's *logical* one, then [`AxisProjection`] folds that
-/// onto the window's *physical* one. Every gathered view is its direct view wrapped in this, so
-/// the two ranks meet in one place rather than once per reader.
+/// onto the window's *physical* one. Every view goes through this, so the two ranks meet in one
+/// place rather than once per reader; under the direct mapping the fold is the identity, which
+/// [`Fold`](crate::Fold) collapses to the coordinate itself.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Projected<L: LogicalLayout> {
@@ -87,10 +75,8 @@ impl<L: LogicalLayout> Layout for Projected<L> {
         self.inner.shape()
     }
 
-    /// The inner box alone. The logical box [`AxisProjection`] would re-check is the same one: its
-    /// extents *are* the space's, which is where the inner layout's own bounds come from. Whether
-    /// the physical cell it maps to holds valid data is the [`Window`](crate::Window)'s question,
-    /// asked one layer down.
+    /// The inner box alone: the logical box [`AxisProjection`] would re-check is the same one, its
+    /// extents being the space's, which is where the inner layout's bounds come from.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         self.inner.is_in_bounds(pos)
     }
@@ -171,14 +157,7 @@ impl Layout for AxisProjection {
     /// The logical box. Whether the physical coordinate it maps to is within the operand's valid
     /// data is the [`Window`](crate::Window)'s question, asked one layer down.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut valid = true;
-
-        #[unroll]
-        for p in 0..self.shape.len() {
-            valid = valid && pos[p] < self.shape.at(p);
-        }
-
-        valid
+        within(&self.shape, pos)
     }
 }
 
@@ -235,18 +214,24 @@ impl Layout for StepUp {
         self.shape.to_dyn()
     }
 
-    /// The compacted box. Whether the source cell it steps up to holds valid data is the
-    /// [`Window`](crate::Window)'s question, asked one layer down.
+    /// The compacted box, the source cell it steps up to being the [`Window`](crate::Window)'s
+    /// question.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut valid = true;
-
-        #[unroll]
-        for p in 0..self.shape.len() {
-            valid = valid && pos[p] < self.shape.at(p);
-        }
-
-        valid
+        within(&self.shape, pos)
     }
+}
+
+/// Whether every coordinate of `pos` falls inside `shape`.
+#[cube]
+fn within(shape: &Coords<u32>, pos: CoordsDyn) -> bool {
+    let mut valid = true;
+
+    #[unroll]
+    for p in 0..shape.len() {
+        valid = valid && pos[p] < shape.at(p);
+    }
+
+    valid
 }
 
 #[cube]

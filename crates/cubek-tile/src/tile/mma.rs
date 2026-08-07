@@ -130,17 +130,10 @@ impl<T: Numeric> MmaData<T> {
         let io = comptime!(self.io);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         match &mut self.fragment {
-            MmaFragment::Lhs(f) => {
-                let e = comptime!(fragment_edges(MatrixIdent::A, m, n, k));
-                load_fragment(src, f, &def, MatrixIdent::A, layout, io, e)
-            }
-            MmaFragment::Rhs(f) => {
-                let e = comptime!(fragment_edges(MatrixIdent::B, m, n, k));
-                load_fragment(src, f, &def, MatrixIdent::B, layout, io, e)
-            }
+            MmaFragment::Lhs(f) => load_fragment(src, f, &def, MatrixIdent::A, layout, io, m, n, k),
+            MmaFragment::Rhs(f) => load_fragment(src, f, &def, MatrixIdent::B, layout, io, m, n, k),
             MmaFragment::Acc(f) => {
-                let e = comptime!(fragment_edges(MatrixIdent::Accumulator, m, n, k));
-                load_fragment(src, f, &def, MatrixIdent::Accumulator, layout, io, e)
+                load_fragment(src, f, &def, MatrixIdent::Accumulator, layout, io, m, n, k)
             }
         }
     }
@@ -231,13 +224,8 @@ fn fill_registers<E: Numeric, N: Size>(fragment: &mut Array<Vector<E, N>>, value
 /// Load `fragment` (role `ident`) from `mem`'s row-major window. `ldmatrix` needs a vectorized
 /// row slice, which a `MemData` window cannot serve yet, so that path is refused rather than wrong.
 ///
-/// A gathered operand never consults the config: `ldmatrix` reads a raw strided tile, which no
-/// gather is expressible in, the same objection the cmma leaf is refused a gather for. Its manual
-/// load reads element by element through [`Tile::fragment_matrix`], so the compacted stage folds
-/// underneath. That refusal is permanent rather than pending, so it selects the manual path here
-/// instead of panicking: a host-derived [`MmaIOConfig::new`] picks `LoadMatrix` on any backend
-/// advertising `ldmatrix` over the stage's element, and a convolution has no reason to be denied
-/// that config when the leaf it lands on can serve it.
+/// That refusal is permanent rather than pending, so it selects the manual path here
+/// instead of panicking.
 #[cube]
 fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile<T>,
@@ -246,7 +234,9 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
     #[comptime] io: MmaIOConfig,
-    #[comptime] edges: (usize, usize),
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] k: usize,
 ) {
     let gathered = src.gathered();
     let method = comptime!(if gathered {
@@ -255,7 +245,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
         io.load_method(ident)
     });
     match method {
-        LoadMethod::Manual => load_manual_dispatch(src, fragment, def, ident, layout, edges),
+        LoadMethod::Manual => load_manual_dispatch(src, fragment, def, ident, layout, m, n, k),
         LoadMethod::LoadMatrix => {
             comptime!(panic!(
                 "MmaData::load: the ldmatrix fast path is not yet wired for MemData windows; \
@@ -275,19 +265,21 @@ fn load_manual_dispatch<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] edges: (usize, usize),
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] k: usize,
 ) {
     let pack = src.quant_pack();
     let served = src.vector_size();
     let size!(W) = served;
     if comptime!(pack == 1) {
         let size!(WP) = served;
-        load_manual::<T, i8, WP, W, N, A, B, CD>(src, fragment, def, ident, layout, edges);
+        load_manual::<T, i8, WP, W, N, A, B, CD>(src, fragment, def, ident, layout, m, n, k);
     } else if comptime!(pack > 1) {
         let size!(WP) = comptime!(served / pack);
-        load_manual::<T, u32, WP, W, N, A, B, CD>(src, fragment, def, ident, layout, edges);
+        load_manual::<T, u32, WP, W, N, A, B, CD>(src, fragment, def, ident, layout, m, n, k);
     } else {
-        load_manual::<T, T, W, W, N, A, B, CD>(src, fragment, def, ident, layout, edges);
+        load_manual::<T, T, W, W, N, A, B, CD>(src, fragment, def, ident, layout, m, n, k);
     }
 }
 
@@ -311,7 +303,9 @@ fn load_manual<
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] edges: (usize, usize),
+    #[comptime] m: usize,
+    #[comptime] n: usize,
+    #[comptime] k: usize,
 ) {
     let num_vectors = def.vectors_per_lane(ident);
     let vector_size = def.vector_size(ident);
@@ -330,7 +324,7 @@ fn load_manual<
     // The fragment's own edges, not the stage's trailing two axes: an operand contracting over
     // several logical axes (a convolution's taps and channels) flattens them into `k`, and a
     // gathered stage folds that logical coordinate onto its compacted cells underneath.
-    let (rows, cols) = comptime!(edges);
+    let (rows, cols) = comptime!(fragment_edges(ident, m, n, k));
     let view = src.fragment_matrix::<I, WP, W>(rows, cols);
 
     #[unroll]

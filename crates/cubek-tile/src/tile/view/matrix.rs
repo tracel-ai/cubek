@@ -1,14 +1,8 @@
-//! The 2-D matrix view over a [`Tile`]. [`BatchMatrix`] is a [`Layout`] that re-views the tile's
-//! N-D [`Space`] as a plain [`Coords2d`] `(row, col)` matrix: leading batch axes pinned, trailing
-//! two exposed; [`Tile::matrix`]/[`Tile::matrix_mut`] then wrap it as a [`MatrixView`]/
-//! [`MatrixViewMut`] (a [`MaskedView`] carrying the comptime overhang-`check` flag). Used by the
-//! matmul leaves and [`copy_2d()`].
-//!
-//! [`ProjectedBatchMatrix`] is the same surface over a *gathered* operand, whose logical axes
-//! outnumber its buffer's physical ones: [`BatchMatrix`] resolves the matrix coordinate to the
-//! tile's logical one, then [`AxisProjection`] folds that onto the window's physical one. Every
-//! generalized step is gated on [`Projection::is_direct`], so a direct operand keeps its exact
-//! previous codegen.
+//! The 2-D matrix views over a [`Tile`]. Two [`Layout`]s re-view the tile's N-D [`Space`] as a
+//! plain [`Coords2d`] `(row, col)` matrix: [`BatchMatrix`] pins the leading axes and exposes the
+//! trailing two, [`GroupedMatrix`] flattens every axis into the two edges. [`Tile::matrix`] and
+//! friends then wrap the result as a [`MatrixView`] (a [`MaskedView`] carrying the comptime
+//! overhang-`check` flag). Used by the matmul leaves and [`copy_2d()`].
 
 use cubecl::{
     prelude::*,
@@ -27,9 +21,8 @@ pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct BatchMatrix {
-    /// [`Coords`], not [`CoordsDyn`]: the pinned coordinates are never reassigned, and a
-    /// `Sequence` holder copies them into mutable slots, which erases the constness the fold
-    /// arithmetic downstream needs (see [`Coords`](crate::Coords)).
+    /// [`Coords`], not [`CoordsDyn`]: a `Sequence` holder copies its elements into mutable slots,
+    /// which erases the constness the fold arithmetic downstream needs (see [`Coords`](crate::Coords)).
     batches: Coords<u32>,
     tile_shape: Coords2d,
 }
@@ -51,8 +44,6 @@ impl Layout for BatchMatrix {
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (t0, t1) = pos;
-        // Built up rather than cloned-and-extended: an empty `Sequence` has nothing to copy into
-        // mutable slots, so each pinned coordinate reaches the source position as it was folded.
         let mut out = CoordsDyn::new();
         #[unroll]
         for p in 0..self.batches.len() {
@@ -79,23 +70,20 @@ impl Layout for BatchMatrix {
     }
 }
 
-/// [`BatchMatrix`] over a *gathered* operand.
+/// What every 2-D reader of a tile goes through: a [`BatchMatrix`] over the operand's mapping.
 pub type ProjectedBatchMatrix = Projected<BatchMatrix>;
 
-/// [`GroupedMatrix`] over a *gathered* operand: what an mma fragment reads a compacted stage
-/// through.
+/// What an mma fragment reads its stage through: a [`GroupedMatrix`] over the operand's mapping.
 pub type ProjectedGroupedMatrix = Projected<GroupedMatrix>;
 
 /// A [`Layout`] presenting the tile's *whole* logical box as one `(row, col)` matrix: `row`
 /// unravels over a leading group of logical axes, `col` over the trailing group (the innermost a
-/// line count). Where [`BatchMatrix`] pins the leading axes and exposes exactly two, this
-/// flattens them into the two edges.
+/// line count).
 ///
-/// That is the difference between a tile that has a matrix face and one that *is* a matrix. An
-/// mma fragment contracts over a single `k` edge, but an operand's contraction can span several
-/// logical axes (a convolution contracts over its taps *and* its channels), and no pinning
-/// exposes that as one edge. Splitting the axes into two groups does, and the split is where the
-/// contraction starts: `[M…, K…]` for the `A` role, `[K…, N…]` for `B`.
+/// An mma fragment contracts over a single `k` edge, but an operand's contraction can span several
+/// logical axes (a convolution contracts over its taps *and* its channels), which no pinning of
+/// trailing axes exposes as one edge. The split is where the contraction starts: `[M…, K…]` for
+/// the `A` role, `[K…, N…]` for `B`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct GroupedMatrix {
@@ -165,12 +153,11 @@ impl Layout for GroupedMatrix {
 /// A direct operand reads them off the window, which is the only place a
 /// [`Dynamic`](crate::Extent::Dynamic) top-level axis carries a size. A gathered one reads them
 /// off the space: its window is boxed in *physical* axes, which are fewer than the logical ones
-/// and are combinations of them, so no entry of it sizes a logical axis. Those extents are always
-/// comptime, the same ones [`axis_projection`] shapes its logical box with.
+/// and are combinations of them, so no entry of it sizes a logical axis.
 #[cube]
 fn leading_extents(
     bound: &Coords<u32>,
-    #[comptime] space: Space,
+    #[comptime] space: &Space,
     #[comptime] gathered: bool,
 ) -> Coords<u32> {
     let mut out = Coords::<u32>::new();
@@ -188,12 +175,9 @@ fn leading_extents(
 }
 
 /// Unravel a flat index over `extents`: `out[p] = (i / Π extents[p+1..]) % extents[p]`. Folding
-/// throughout, so comptime extents and a comptime index leave no arithmetic behind.
-///
-/// The outermost digit keeps the bare quotient: it has no enclosing block to be reduced against,
-/// and `i` is always within the product (a matrix index counts the matrices, a row counts the
-/// rows), so the modulo there is the identity. Same reasoning as
-/// [`Projection::digit`](crate::Projection::digit), whose outermost fragment carries `None`.
+/// throughout, so comptime extents and a comptime index leave no arithmetic behind. The outermost
+/// digit keeps the bare quotient, for the reason
+/// [`Projection::digit`](crate::Projection::digit)'s outermost fragment carries `None`.
 #[cube]
 fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
     let n = extents.len();
@@ -218,15 +202,15 @@ fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
 #[cube]
 pub(crate) fn batch_matrix(
     bound: &Coords<u32>,
-    #[comptime] space: Space,
-    #[comptime] projection: Projection,
+    #[comptime] space: &Space,
+    #[comptime] gathered: bool,
     #[comptime] vector_size: usize,
     i: usize,
 ) -> BatchMatrix {
     let rank = comptime!(space.rank());
     let rows = comptime!(space.extent_at(rank - 2));
     let cols = comptime!(space.extent_at(rank - 1) / vector_size);
-    let extents = leading_extents(bound, comptime!(space), comptime!(!projection.is_direct()));
+    let extents = leading_extents(bound, comptime!(space), gathered);
 
     BatchMatrix::new(unravel(&extents, i.fcast::<u32>()), rows, cols)
 }
@@ -238,7 +222,7 @@ pub(crate) fn batch_matrix(
 /// The two edges pin the split, so a caller states the matrix it wants rather than how the tile's
 /// axes are grouped into it. A `(rows, cols)` pair that is not a face of this box is a mismatched
 /// fragment, caught here rather than read out of bounds.
-pub(crate) fn matrix_split(space: &Space, rows: usize, cols: usize) -> usize {
+pub(crate) fn matrix_split(space: &Space, rows: usize, cols: usize, vector_size: usize) -> usize {
     let rank = space.rank();
     let mut split = rank;
     let mut trailing = 1;
@@ -253,10 +237,16 @@ pub(crate) fn matrix_split(space: &Space, rows: usize, cols: usize) -> usize {
          axes multiply to {trailing}, the leading ones to {leading})"
     );
     // The innermost axis is the vectorized one, and the view serves lines along `col`, so it has
-    // to land in the trailing group.
+    // to land in the trailing group, whole: the column edge and the innermost extent are both
+    // counted in lines, and a partial line would divide one of them to a different group product.
     assert!(
         split < rank,
         "matrix_split: the innermost (vectorized) axis must be part of the column group"
+    );
+    let innermost = space.extent_at(rank - 1);
+    assert!(
+        innermost.is_multiple_of(vector_size),
+        "matrix_split: the innermost extent {innermost} is not a whole number of {vector_size}-wide lines"
     );
     split
 }
@@ -266,13 +256,13 @@ pub(crate) fn matrix_split(space: &Space, rows: usize, cols: usize) -> usize {
 /// column edge and the innermost extent both divide by the width.
 #[cube]
 pub(crate) fn grouped_matrix(
-    #[comptime] space: Space,
+    #[comptime] space: &Space,
     #[comptime] vector_size: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
 ) -> GroupedMatrix {
     let rank = comptime!(space.rank());
-    let split = comptime!(matrix_split(&space, rows, cols));
+    let split = comptime!(matrix_split(space, rows, cols, vector_size));
 
     let mut row_extents = Coords::<u32>::new();
     #[unroll]
@@ -297,24 +287,35 @@ pub(crate) fn grouped_matrix(
     )
 }
 
-/// [`batch_matrix`] with the operand's [`Projection`] applied under it: what a gathered operand's
-/// 2-D readers go through.
+/// [`batch_matrix`] over the operand's mapping: the `i`-th batch matrix as every 2-D reader of a
+/// tile sees it.
 #[cube]
-fn projected_batch_matrix(
+pub(crate) fn projected_batch_matrix(
     bound: &Coords<u32>,
     #[comptime] space: Space,
     #[comptime] projection: Projection,
     #[comptime] vector_size: usize,
     i: usize,
 ) -> ProjectedBatchMatrix {
+    let gathered = comptime!(!projection.is_direct());
     ProjectedBatchMatrix::new(
-        batch_matrix(
-            bound,
-            comptime!(space.clone()),
-            comptime!(projection.clone()),
-            vector_size,
-            i,
-        ),
+        batch_matrix(bound, comptime!(&space), gathered, vector_size, i),
+        axis_projection(comptime!(space), comptime!(projection), vector_size),
+    )
+}
+
+/// [`grouped_matrix`] over the operand's mapping: the whole logical box as the `rows x cols`
+/// matrix an mma fragment reads.
+#[cube]
+pub(crate) fn projected_grouped_matrix(
+    #[comptime] space: Space,
+    #[comptime] projection: Projection,
+    #[comptime] vector_size: usize,
+    #[comptime] rows: usize,
+    #[comptime] cols: usize,
+) -> ProjectedGroupedMatrix {
+    ProjectedGroupedMatrix::new(
+        grouped_matrix(comptime!(&space), vector_size, rows, cols),
         axis_projection(comptime!(space), comptime!(projection), vector_size),
     )
 }
@@ -327,15 +328,14 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let bound = g.extent();
-                let space = comptime!(self.space.clone());
-                let projection = comptime!(g.projection.clone());
-                if comptime!(projection.is_direct()) {
-                    let layout = batch_matrix(&bound, space, projection, vector_size, i);
-                    g.masked::<W, Coords2d, BatchMatrix>(layout)
-                } else {
-                    let layout = projected_batch_matrix(&bound, space, projection, vector_size, i);
-                    g.masked::<W, Coords2d, ProjectedBatchMatrix>(layout)
-                }
+                let layout = projected_batch_matrix(
+                    &bound,
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    vector_size,
+                    i,
+                );
+                g.masked::<W, Coords2d, ProjectedBatchMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix: a plane tile has no memory view")
@@ -349,15 +349,14 @@ impl<T: Numeric> Tile<T> {
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let bound = g.extent();
-                let space = comptime!(self.space.clone());
-                let projection = comptime!(g.projection.clone());
-                if comptime!(projection.is_direct()) {
-                    let layout = batch_matrix(&bound, space, projection, vector_size, i);
-                    g.masked_mut::<W, Coords2d, BatchMatrix>(layout)
-                } else {
-                    let layout = projected_batch_matrix(&bound, space, projection, vector_size, i);
-                    g.masked_mut::<W, Coords2d, ProjectedBatchMatrix>(layout)
-                }
+                let layout = projected_batch_matrix(
+                    &bound,
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    vector_size,
+                    i,
+                );
+                g.masked_mut::<W, Coords2d, ProjectedBatchMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix_mut: a plane tile has no memory view")
@@ -379,15 +378,14 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let bound = g.extent();
-                let space = comptime!(self.space.clone());
-                let projection = comptime!(g.projection.clone());
-                if comptime!(projection.is_direct()) {
-                    let layout = batch_matrix(&bound, space, projection, vector_size, i);
-                    g.matrix_transparent::<I, WP, W, BatchMatrix>(layout)
-                } else {
-                    let layout = projected_batch_matrix(&bound, space, projection, vector_size, i);
-                    g.matrix_transparent::<I, WP, W, ProjectedBatchMatrix>(layout)
-                }
+                let layout = projected_batch_matrix(
+                    &bound,
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    vector_size,
+                    i,
+                );
+                g.matrix_transparent::<I, WP, W, ProjectedBatchMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix_transparent: a plane tile has no memory view")
@@ -413,18 +411,14 @@ impl<T: Numeric> Tile<T> {
         let vector_size = self.vector_size();
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
-                let space = comptime!(self.space.clone());
-                let projection = comptime!(g.projection.clone());
-                let layout = grouped_matrix(comptime!(space.clone()), vector_size, rows, cols);
-                if comptime!(projection.is_direct()) {
-                    g.matrix_transparent::<I, WP, W, GroupedMatrix>(layout)
-                } else {
-                    let projected = ProjectedGroupedMatrix::new(
-                        layout,
-                        axis_projection(space, projection, vector_size),
-                    );
-                    g.matrix_transparent::<I, WP, W, ProjectedGroupedMatrix>(projected)
-                }
+                let layout = projected_grouped_matrix(
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    vector_size,
+                    rows,
+                    cols,
+                );
+                g.matrix_transparent::<I, WP, W, ProjectedGroupedMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::fragment_matrix: a plane tile has no memory view")
@@ -444,37 +438,26 @@ mod tests {
     const RH: Axis = Axis(1);
     const CI: Axis = Axis(2);
 
-    fn space(extents: &[(Axis, usize)]) -> Space {
-        let mut t = Tiling::new().extents(extents);
-        t = t.level(WalkOrder::RowMajor, Schedule::Direct, |mut l| {
-            for &(axis, e) in extents {
-                l = l.axis(axis, Cut::sequential(e));
-            }
-            l
-        });
-        t.build()
-    }
-
     /// A plain matmul operand: one axis per edge, the split right down the middle.
     #[test]
     fn a_rank_two_operand_splits_between_its_axes() {
-        let s = space(&[(OH, 8), (CI, 4)]);
-        assert_eq!(matrix_split(&s, 8, 4), 1);
+        let s = flat_space(&[(OH, 8), (CI, 4)]);
+        assert_eq!(matrix_split(&s, 8, 4, 1), 1);
     }
 
     /// The convolution shape: the trailing *two* axes are the contraction, so `k` is their
     /// product and the split leaves only the output axis in the row group.
     #[test]
     fn a_contraction_over_two_axes_splits_before_both() {
-        let s = space(&[(OH, 8), (RH, 2), (CI, 4)]);
-        assert_eq!(matrix_split(&s, 8, 8), 1);
+        let s = flat_space(&[(OH, 8), (RH, 2), (CI, 4)]);
+        assert_eq!(matrix_split(&s, 8, 8, 1), 1);
     }
 
     /// Both edges spanning several axes, which is what a 2-D convolution's input needs.
     #[test]
     fn both_groups_may_span_several_axes() {
-        let s = space(&[(OH, 3), (RH, 4), (CI, 2)]);
-        assert_eq!(matrix_split(&s, 12, 2), 2);
+        let s = flat_space(&[(OH, 3), (RH, 4), (CI, 2)]);
+        assert_eq!(matrix_split(&s, 12, 2, 2), 2);
     }
 
     /// The smallest column group that reaches `cols` wins, so a degenerate leading axis stays in
@@ -482,16 +465,16 @@ mod tests {
     /// cells; taking the smaller keeps the answer deterministic.
     #[test]
     fn a_degenerate_leading_axis_stays_in_the_row_group() {
-        let s = space(&[(OH, 1), (RH, 2), (CI, 4)]);
-        assert_eq!(matrix_split(&s, 1, 8), 1);
+        let s = flat_space(&[(OH, 1), (RH, 2), (CI, 4)]);
+        assert_eq!(matrix_split(&s, 1, 8, 1), 1);
     }
 
     /// No split gives the asked-for edges: the extents multiply to 32, and 8x8 is not a face.
     #[test]
     #[should_panic(expected = "no split of this tile's axes")]
     fn a_mismatched_fragment_is_refused() {
-        let s = space(&[(OH, 8), (RH, 2), (CI, 2)]);
-        matrix_split(&s, 8, 8);
+        let s = flat_space(&[(OH, 8), (RH, 2), (CI, 2)]);
+        matrix_split(&s, 8, 8, 1);
     }
 
     /// The column group must contain the innermost axis: the view serves lines along `col`, so a
@@ -499,7 +482,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "innermost (vectorized) axis")]
     fn the_vectorized_axis_must_land_in_the_column_group() {
-        let s = space(&[(OH, 8), (CI, 4)]);
-        matrix_split(&s, 32, 1);
+        let s = flat_space(&[(OH, 8), (CI, 4)]);
+        matrix_split(&s, 32, 1, 1);
+    }
+
+    /// The column edge and the innermost extent are both counted in lines, so a width that does
+    /// not divide the innermost extent would scale the two by different amounts.
+    #[test]
+    #[should_panic(expected = "whole number of 4-wide lines")]
+    fn a_partial_innermost_line_is_refused() {
+        let s = flat_space(&[(OH, 8), (CI, 6)]);
+        matrix_split(&s, 8, 6, 4);
     }
 }

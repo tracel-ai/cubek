@@ -1,8 +1,7 @@
 //! The manual-mma leaf: `acc += lhs · rhs` via [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition),
 //! the raw-mma twin of [`cmma`](super::cmma). The accumulator is a register fragment; the operands
-//! arrive as fragments or as row-major smem windows, the latter loaded into transient `A`/`B`
-//! fragments here (a gmem window's layout is unchecked, so it must be staged first, exactly as in
-//! the cmma path).
+//! arrive as fragments or as memory windows (smem or gmem), the latter loaded into transient `A`/`B`
+//! fragments here.
 
 use cubecl::prelude::*;
 
@@ -31,7 +30,7 @@ impl<A: Numeric> MmaData<A> {
                     },
                     _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
-                (TileKind::Smem(_), TileKind::Smem(_)) => {
+                (TileKind::Smem(_) | TileKind::Gmem(_), TileKind::Smem(_) | TileKind::Gmem(_)) => {
                     let mut la = MmaData::<L>::lhs(m, n, k, layout, io);
                     la.load_window(lhs);
                     let mut rb = MmaData::<R>::rhs(m, n, k, layout, io);
@@ -43,7 +42,7 @@ impl<A: Numeric> MmaData<A> {
                         _ => panic!("MmaData::mma: transient operand fragments in the wrong roles"),
                     }
                 }
-                _ => panic!("MmaData::mma: operands must be fragments or staged smem windows"),
+                _ => panic!("MmaData::mma: operands must be fragments or memory windows"),
             },
             MmaFragment::Lhs(_) | MmaFragment::Rhs(_) => {
                 panic!("MmaData::mma: the accumulator must carry the Acc role")

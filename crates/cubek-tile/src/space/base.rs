@@ -516,19 +516,27 @@ impl Space {
     }
 
     /// The `k` edge this operand contracts over against `output`: the product of every
-    /// [`contracting`](Space::contracting) axis's extent, read off the operand's
-    /// [`final_space`](Space::final_space).
+    /// [`contracting`](Space::contracting) axis's extent. An instruction sees one contraction
+    /// depth, not a list of axes.
     ///
-    /// An instruction sees one contraction depth, not a list of axes. A matmul has the one axis
-    /// [`contraction`](Space::contraction) names; a convolution contracts over its taps *and* its
-    /// channels, and their product is the `k` a fragment is sized by and the edge
-    /// [`matrix_split`](crate::matrix_split) flattens those axes into.
+    /// Reads the extents off this space as it stands, like every other consumer of a tile's edges
+    /// ([`matrix_split`](crate::matrix_split)); call it on the [`final_space`](Space::final_space)
+    /// when the caller holds a level above the leaf.
     pub fn contracted_extent(&self, output: &Space) -> usize {
-        let leaf = self.final_space();
         self.contracting(output)
             .iter()
-            .map(|&axis| leaf.extent(axis))
+            .map(|&axis| self.extent(axis))
             .product()
+    }
+
+    /// Whether `lhs` and `rhs` enumerate their contracted axes in the same order.
+    ///
+    /// A fragment groups its `k` edge by extent alone ([`matrix_split`](crate::matrix_split)), so
+    /// two operands listing the same axes in different orders contract mismatched positions with
+    /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
+    /// axis list, which is stated per operand, so nothing upstream forces them to agree.
+    pub fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
+        lhs.contracting(output) == rhs.contracting(output)
     }
 
     /// The single axis this operand contracts against `output`:
@@ -652,6 +660,22 @@ impl<'a> IntoIterator for &'a Space {
     }
 }
 
+/// A single-level space whose every axis is one sequential cut of its extent: what the shape
+/// helpers are exercised against, since they read extents and axis order rather than the walk.
+#[cfg(test)]
+pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
+    use crate::{Cut, Schedule, Tiling, WalkOrder};
+    Tiling::new()
+        .extents(extents)
+        .level(WalkOrder::RowMajor, Schedule::Direct, |mut l| {
+            for &(axis, e) in extents {
+                l = l.axis(axis, Cut::sequential(e));
+            }
+            l
+        })
+        .build()
+}
+
 #[cfg(test)]
 mod contraction_tests {
     use crate::*;
@@ -661,22 +685,11 @@ mod contraction_tests {
     const K: Axis = Axis(2);
     const R: Axis = Axis(3);
 
-    fn space(extents: &[(Axis, usize)]) -> Space {
-        let mut t = Tiling::new().extents(extents);
-        t = t.level(WalkOrder::RowMajor, Schedule::Direct, |mut l| {
-            for &(axis, e) in extents {
-                l = l.axis(axis, Cut::sequential(e));
-            }
-            l
-        });
-        t.build()
-    }
-
     /// A matmul contracts one axis, so the `k` edge is that axis's extent, as it always was.
     #[test]
     fn a_matmul_contracts_its_one_axis() {
-        let lhs = space(&[(M, 8), (K, 4)]);
-        let out = space(&[(M, 8), (N, 8)]);
+        let lhs = flat_space(&[(M, 8), (K, 4)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
         assert_eq!(lhs.contracted_extent(&out), 4);
     }
 
@@ -684,16 +697,36 @@ mod contraction_tests {
     /// which is their product.
     #[test]
     fn a_convolution_contracts_taps_times_channels() {
-        let lhs = space(&[(M, 8), (R, 3), (K, 4)]);
-        let out = space(&[(M, 8), (N, 8)]);
+        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
         assert_eq!(lhs.contracted_extent(&out), 12);
     }
 
     /// An operand spanning only output axes contracts nothing, and an empty product is `1`.
     #[test]
     fn contracting_nothing_is_a_unit_depth() {
-        let lhs = space(&[(M, 8), (N, 8)]);
-        let out = space(&[(M, 8), (N, 8)]);
+        let lhs = flat_space(&[(M, 8), (N, 8)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
         assert_eq!(lhs.contracted_extent(&out), 1);
+    }
+
+    /// The `A` and `B` roles of a convolution, listing taps then channels in the order each
+    /// operand's own spec states them.
+    #[test]
+    fn operands_listing_one_contraction_order_agree() {
+        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
+        let rhs = flat_space(&[(R, 3), (K, 4), (N, 8)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(Space::contraction_agrees(&lhs, &rhs, &out));
+    }
+
+    /// The same axes and the same `k`, listed the other way round on `rhs`: nothing about the
+    /// shapes distinguishes this from the case above, so the order has to be compared.
+    #[test]
+    fn a_permuted_contraction_order_disagrees() {
+        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
+        let rhs = flat_space(&[(K, 4), (R, 3), (N, 8)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(!Space::contraction_agrees(&lhs, &rhs, &out));
     }
 }

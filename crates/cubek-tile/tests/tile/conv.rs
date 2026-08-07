@@ -814,13 +814,24 @@ fn projected_matrix_kernel<E: Numeric>(
     }
 }
 
-/// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
-/// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
-/// Three pinned axes is what makes this worth running: the unravel's weights are a product of
-/// several extents, and reading those off the window instead of the space would silently pick up
-/// the receptive field's span (`IH`, `IW`) rather than the logical edges.
-#[test]
-fn conv2d_projected_matrix_view() {
+struct Conv2dViewSetup {
+    oh: usize,
+    ow: usize,
+    rh: usize,
+    rw: usize,
+    ci: usize,
+    sh: usize,
+    sw: usize,
+    dh: usize,
+    dw: usize,
+    in_w: usize,
+    space: Space,
+    in_spec: TileSpec,
+    in_data: Vec<f32>,
+    in_handle: cubecl::std::tensor::TensorHandle<TestRuntime>,
+}
+
+fn setup_conv2d_view() -> Conv2dViewSetup {
     let (oh, ow, rh, rw, ci) = (3usize, 4usize, 2usize, 3usize, 2usize);
     let (sh, sw, dh, dw) = (2usize, 1usize, 1usize, 2usize);
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
@@ -846,9 +857,6 @@ fn conv2d_projected_matrix_view() {
         ],
     ));
 
-    let matrices = oh * ow * rh;
-    let (rows, cols) = (rw, ci);
-
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::as_type_native_unchecked().storage_type();
     let in_data = ramp(in_h * in_w * ci, 7);
@@ -856,6 +864,43 @@ fn conv2d_projected_matrix_view() {
         .dtype(f32_ty)
         .custom(in_data.clone())
         .generate_with_f32_host_data();
+
+    Conv2dViewSetup {
+        oh,
+        ow,
+        rh,
+        rw,
+        ci,
+        sh,
+        sw,
+        dh,
+        dw,
+        in_w,
+        space,
+        in_spec,
+        in_data,
+        in_handle,
+    }
+}
+
+/// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
+/// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
+/// Three pinned axes is what makes this worth running: the unravel's weights are a product of
+/// several extents, and reading those off the window instead of the space would silently pick up
+/// the receptive field's span (`IH`, `IW`) rather than the logical edges.
+#[test]
+fn conv2d_projected_matrix_view() {
+    let s = setup_conv2d_view();
+    let (oh, ow, rh, rw, ci) = (s.oh, s.ow, s.rh, s.rw, s.ci);
+    let (sh, sw, dh, dw) = (s.sh, s.sw, s.dh, s.dw);
+    let (in_w, in_data) = (s.in_w, s.in_data);
+    let space = s.space;
+
+    let matrices = oh * ow * rh;
+    let (rows, cols) = (rw, ci);
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
     let out_handle = TestInput::builder(client.clone(), shape![matrices, rows, cols])
         .dtype(f32_ty)
         .zeros()
@@ -865,7 +910,7 @@ fn conv2d_projected_matrix_view() {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
         space,
         matrices,
@@ -921,43 +966,19 @@ fn fragment_matrix_kernel<E: Numeric>(
 
 /// The 2-D convolution input as one `(OH·OW) x (RH·RW·CI)` matrix: five logical axes flattened
 /// into two edges over three physical ones. Neither edge is a single axis, which is the whole
-/// point — no pinning of trailing axes produces this face, and it is the one an mma contracts.
+/// point: no pinning of trailing axes produces this face, and it is the one an mma contracts.
 #[test]
 fn conv2d_fragment_matrix_view() {
-    let (oh, ow, rh, rw, ci) = (3usize, 4usize, 2usize, 3usize, 2usize);
-    let (sh, sw, dh, dw) = (2usize, 1usize, 1usize, 2usize);
-    let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
-    let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
-
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(OH, Cut::sequential(oh))
-                .axis(OW, Cut::sequential(ow))
-                .axis(RH, Cut::sequential(rh))
-                .axis(RW, Cut::sequential(rw))
-                .axis(CI, Cut::sequential(ci))
-        })
-        .build();
-
-    let in_spec = TileSpec::new(Projection::new(
-        &[OH, OW, RH, RW, CI],
-        &[
-            PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]),
-            PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]),
-            PhysicalAxisMap::of(CI),
-        ],
-    ));
+    let s = setup_conv2d_view();
+    let (oh, ow, rh, rw, ci) = (s.oh, s.ow, s.rh, s.rw, s.ci);
+    let (sh, sw, dh, dw) = (s.sh, s.sw, s.dh, s.dw);
+    let (in_w, in_data) = (s.in_w, s.in_data);
+    let space = s.space;
 
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let in_data = ramp(in_h * in_w * ci, 7);
-    let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
-        .dtype(f32_ty)
-        .custom(in_data.clone())
-        .generate_with_f32_host_data();
     let out_handle = TestInput::builder(client.clone(), shape![rows, cols])
         .dtype(f32_ty)
         .zeros()
@@ -967,7 +988,7 @@ fn conv2d_fragment_matrix_view() {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
         space,
         rows,
@@ -1015,21 +1036,11 @@ fn conv_mma_kernel<E: Numeric>(
     out.copy_from(&acc);
 }
 
-/// A convolution contracted on the manual-mma leaf: `m x n x k` is `OH x CO x (RH·CI)`, so the
-/// `k` edge spans two logical axes and the lhs reaches the fragment through its gather. Gated on
-/// the backend advertising manual mma, like [`mma_matmul_8x8x8`]; run with `cargo test-cuda` /
-/// `test-metal`.
 #[test]
 fn conv1d_mma_leaf() {
     conv1d_mma_leaf_with(MmaIOConfig::manual());
 }
 
-/// The same contraction with `ldmatrix` selected for the lhs, which is the gathered operand. A
-/// host-derived [`MmaIOConfig::new`] picks that whenever the backend advertises `ldmatrix` over
-/// the stage's element, and no gather is expressible in a raw strided tile, so the load has to
-/// fall to the manual path on its own rather than refusing the config. The other two roles stay
-/// manual: they are direct operands, for which `ldmatrix` is genuinely unwired over a `MemData`
-/// window and still refused.
 #[test]
 fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
     conv1d_mma_leaf_with(MmaIOConfig {

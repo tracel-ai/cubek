@@ -319,8 +319,7 @@ impl Projection {
         // arithmetic is only sound when it is one logical axis at coefficient 1.
         //
         // The other direction, a *coarser* physical axis also scaling that same logical axis,
-        // would mix lines into an element count. It needs no assert of its own: an axis carried by
-        // two physical axes is storage-tiled by `tiling`, which the last assert below refuses.
+        // would mix lines into an element count.
         let innermost = self.axes[self.axes.len() - 1];
         assert!(
             self.physical[self.physical.len() - 1].is_identity(innermost),
@@ -328,9 +327,14 @@ impl Projection {
              coefficient 1 (it is addressed in vector lines)"
         );
         for &axis in self.axes.iter() {
+            let count = self.physical.iter().filter(|m| m.scale(axis) != 0).count();
             assert!(
-                self.physical.iter().any(|m| m.scale(axis) != 0),
+                count > 0,
                 "Projection: logical axis {axis:?} addresses no physical axis"
+            );
+            assert!(
+                count == 1,
+                "Projection: logical axis {axis:?} addresses several physical axes"
             );
         }
         // A tiled `[grid…, tile…]` buffer splits an advance into two digits, which is not linear

@@ -1190,8 +1190,8 @@ impl<T: Numeric> MemData<T> {
         let bound = self.extent();
         let layout = batch_matrix(
             &bound,
-            space,
-            comptime!(self.projection.clone()),
+            comptime!(&space),
+            false,
             comptime!(self.store.vector_size),
             i,
         );
