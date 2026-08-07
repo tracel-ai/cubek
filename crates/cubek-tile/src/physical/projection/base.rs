@@ -317,6 +317,10 @@ impl Projection {
         // The innermost physical axis is addressed in *lines*, not elements: `MemData::at` divides
         // its edge by the vector size and `of_impl` counts its physical shape in lines. That
         // arithmetic is only sound when it is one logical axis at coefficient 1.
+        //
+        // The other direction, a *coarser* physical axis also scaling that same logical axis,
+        // would mix lines into an element count. It needs no assert of its own: an axis carried by
+        // two physical axes is storage-tiled by `tiling`, which the last assert below refuses.
         let innermost = self.axes[self.axes.len() - 1];
         assert!(
             self.physical[self.physical.len() - 1].is_identity(innermost),
@@ -386,6 +390,22 @@ mod tests {
             ],
         );
         assert_eq!(q.span(0, |a| if a == A { 4 } else { 1 }), 4);
+    }
+
+    /// The innermost axis is addressed in lines, so a coarser physical axis scaling it would mix
+    /// line and element units. Carrying it twice is what storage tiling *is*, so the tiling refusal
+    /// is what rules the shape out. `A <- A*1 + B*2` over logical `[A, B]` with `B` innermost.
+    #[test]
+    #[should_panic(expected = "must be untiled gmem")]
+    fn innermost_axis_rides_no_coarser_physical_axis() {
+        Projection::new(
+            &[A, B],
+            &[
+                PhysicalAxisMap::affine(&[(A, 1), (B, 2)]),
+                PhysicalAxisMap::of(B),
+            ],
+        )
+        .validate();
     }
 
     #[test]

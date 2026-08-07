@@ -14,7 +14,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use cubek_tile::*;
 
@@ -779,4 +779,349 @@ fn conv2d_staged_mixed_steps() {
         dw: 1,
     }
     .check_at(2, 2, 4, Schedule::Staged);
+}
+
+// ---- the projected 2-D view ------------------------------------------------
+
+/// Reads a gathered operand through [`Tile::matrix`] and writes every batch matrix out flat, so
+/// the host can check the projected layout against the same gather done by hand. The 2-D door for
+/// an operand whose logical axes outnumber its buffer's physical ones: the matrix coordinate
+/// resolves through the leading axes first, then folds onto the window through the projection.
+#[cube(launch)]
+fn projected_matrix_kernel<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    out: &mut Tensor<f32>,
+    #[comptime] space: Space,
+    #[comptime] matrices: usize,
+    #[comptime] rows: usize,
+    #[comptime] cols: usize,
+    #[define(E)] _dtype: StorageType,
+) {
+    let input = input.tile(space);
+    let size!(W) = input.vector_size();
+
+    #[unroll]
+    for m in 0..matrices {
+        let view = input.matrix::<W>(m);
+        #[unroll]
+        for r in 0..rows {
+            #[unroll]
+            for c in 0..cols {
+                let value = view.read((r as u32, c as u32).runtime());
+                out[comptime!((m * rows + r) * cols + c)] = f32::cast_from(value);
+            }
+        }
+    }
+}
+
+/// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
+/// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
+/// Three pinned axes is what makes this worth running: the unravel's weights are a product of
+/// several extents, and reading those off the window instead of the space would silently pick up
+/// the receptive field's span (`IH`, `IW`) rather than the logical edges.
+#[test]
+fn conv2d_projected_matrix_view() {
+    let (oh, ow, rh, rw, ci) = (3usize, 4usize, 2usize, 3usize, 2usize);
+    let (sh, sw, dh, dw) = (2usize, 1usize, 1usize, 2usize);
+    let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
+    let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(OH, Cut::sequential(oh))
+                .axis(OW, Cut::sequential(ow))
+                .axis(RH, Cut::sequential(rh))
+                .axis(RW, Cut::sequential(rw))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, OW, RH, RW, CI],
+        &[
+            PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]),
+            PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]),
+            PhysicalAxisMap::of(CI),
+        ],
+    ));
+
+    let matrices = oh * ow * rh;
+    let (rows, cols) = (rw, ci);
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let in_data = ramp(in_h * in_w * ci, 7);
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![matrices, rows, cols])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    projected_matrix_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        out_handle.clone().binding().into_tensor_arg(),
+        space,
+        matrices,
+        rows,
+        cols,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for m in 0..matrices {
+        // The pinned axes, unraveled the way the layout unravels them: row-major over `[OH, OW, RH]`.
+        let (o_h, o_w, r_h) = (m / (ow * rh), (m / rh) % ow, m % rh);
+        for r_w in 0..rows {
+            for c_i in 0..cols {
+                let h = o_h * sh + r_h * dh;
+                let w = o_w * sw + r_w * dw;
+                assert_eq!(
+                    got.get_f32(&[m, r_w, c_i]),
+                    in_data[(h * in_w + w) * ci + c_i],
+                    "projected matrix {m} ({o_h}, {o_w}, {r_h}) at ({r_w}, {c_i})"
+                );
+            }
+        }
+    }
+}
+
+/// Reads a gathered operand through [`Tile::fragment_matrix`] and writes the whole matrix out, so
+/// the host can check it against the im2col expansion done by hand. This is the face an mma
+/// fragment reads: the output positions flattened into the row edge, the taps and channels into
+/// the column edge, resolved onto the compact window underneath.
+#[cube(launch)]
+fn fragment_matrix_kernel<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    out: &mut Tensor<f32>,
+    #[comptime] space: Space,
+    #[comptime] rows: usize,
+    #[comptime] cols: usize,
+    #[define(E)] _dtype: StorageType,
+) {
+    let input = input.tile(space);
+    let size!(W) = input.vector_size();
+    let view = input.fragment_matrix::<E, W, W>(rows, cols);
+
+    #[unroll]
+    for r in 0..rows {
+        #[unroll]
+        for c in 0..cols {
+            let value = view.read((r as u32, c as u32).runtime());
+            out[comptime!(r * cols + c)] = f32::cast_from(value);
+        }
+    }
+}
+
+/// The 2-D convolution input as one `(OH·OW) x (RH·RW·CI)` matrix: five logical axes flattened
+/// into two edges over three physical ones. Neither edge is a single axis, which is the whole
+/// point — no pinning of trailing axes produces this face, and it is the one an mma contracts.
+#[test]
+fn conv2d_fragment_matrix_view() {
+    let (oh, ow, rh, rw, ci) = (3usize, 4usize, 2usize, 3usize, 2usize);
+    let (sh, sw, dh, dw) = (2usize, 1usize, 1usize, 2usize);
+    let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
+    let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(OH, Cut::sequential(oh))
+                .axis(OW, Cut::sequential(ow))
+                .axis(RH, Cut::sequential(rh))
+                .axis(RW, Cut::sequential(rw))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, OW, RH, RW, CI],
+        &[
+            PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]),
+            PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]),
+            PhysicalAxisMap::of(CI),
+        ],
+    ));
+
+    let (rows, cols) = (oh * ow, rh * rw * ci);
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let in_data = ramp(in_h * in_w * ci, 7);
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    fragment_matrix_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        out_handle.clone().binding().into_tensor_arg(),
+        space,
+        rows,
+        cols,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for r in 0..rows {
+        let (o_h, o_w) = (r / ow, r % ow);
+        for c in 0..cols {
+            // The column edge unravels row-major over `[RH, RW, CI]`, as the layout groups it.
+            let (r_h, r_w, c_i) = (c / (rw * ci), (c / ci) % rw, c % ci);
+            let h = o_h * sh + r_h * dh;
+            let w = o_w * sw + r_w * dw;
+            assert_eq!(
+                got.get_f32(&[r, c]),
+                in_data[(h * in_w + w) * ci + c_i],
+                "fragment matrix at ({r}, {c}) = ({o_h}, {o_w}, {r_h}, {r_w}, {c_i})"
+            );
+        }
+    }
+}
+
+// ---- the manual-mma leaf ---------------------------------------------------
+
+/// The resident promote → zero → mma → drain kernel of the matmul tests, with a *gathered* lhs.
+/// The accumulator is sized by the whole contraction (taps times channels), the input stages into
+/// its compacted smem window, and the fragment load flattens the tap and channel axes back into
+/// the `k` edge as it reads that window.
+#[cube(launch)]
+fn conv_mma_kernel<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    let mut acc = out.promote(&input);
+    acc.zero();
+    acc.mma(&input, &weight);
+    out.copy_from(&acc);
+}
+
+/// A convolution contracted on the manual-mma leaf: `m x n x k` is `OH x CO x (RH·CI)`, so the
+/// `k` edge spans two logical axes and the lhs reaches the fragment through its gather. Gated on
+/// the backend advertising manual mma, like [`mma_matmul_8x8x8`]; run with `cargo test-cuda` /
+/// `test-metal`.
+#[test]
+fn conv1d_mma_leaf() {
+    conv1d_mma_leaf_with(MmaIOConfig::manual());
+}
+
+/// The same contraction with `ldmatrix` selected for the lhs, which is the gathered operand. A
+/// host-derived [`MmaIOConfig::new`] picks that whenever the backend advertises `ldmatrix` over
+/// the stage's element, and no gather is expressible in a raw strided tile, so the load has to
+/// fall to the manual path on its own rather than refusing the config. The other two roles stay
+/// manual: they are direct operands, for which `ldmatrix` is genuinely unwired over a `MemData`
+/// window and still refused.
+#[test]
+fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
+    conv1d_mma_leaf_with(MmaIOConfig {
+        lhs_load_method: LoadMethod::LoadMatrix,
+        ..MmaIOConfig::manual()
+    });
+}
+
+fn conv1d_mma_leaf_with(io: MmaIOConfig) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.mma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no manual mma (features.matmul.mma) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    // `k = rh * ci = 8`, an 8x8x8 instruction, as the matmul mma test uses.
+    let (oh, co, rh, ci) = (8usize, 8usize, 2usize, 4usize);
+    let (stride, dilation) = (1usize, 1usize);
+    let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
+    let leaf = Leaf::Mma { io };
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(OH, Cut::sequential(oh))
+                .axis(CO, Cut::sequential(co))
+                .axis(RH, Cut::sequential(rh))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .leaf(leaf);
+
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let in_data = ramp(in_len * ci, 7);
+    let w_data = ramp(rh * ci * co, 5);
+
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![in_len, ci])
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let (w_handle, _) = TestInput::builder(client.clone(), shape![rh, ci, co])
+        .dtype(f32_ty)
+        .custom(w_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![oh, co])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    conv_mma_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            w_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[RH, CI, CO]).leaf(leaf),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[OH, CO]).leaf(leaf),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for o in 0..oh {
+        for c in 0..co {
+            let want: f32 = (0..rh)
+                .flat_map(|r| (0..ci).map(move |i| (r, i)))
+                .map(|(r, i)| {
+                    let h = o * stride + r * dilation;
+                    in_data[h * ci + i] * w_data[(r * ci + i) * co + c]
+                })
+                .sum();
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want,
+                "conv1d mma leaf: wrong at ({o}, {c})"
+            );
+        }
+    }
 }

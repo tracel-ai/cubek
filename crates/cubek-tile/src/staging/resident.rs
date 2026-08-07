@@ -26,9 +26,10 @@ impl<Acc: Numeric> Tile<Acc> {
     /// contraction depth has to come from a side that has it. The `mma` call is the next line at
     /// every call site, so it is already in hand.
     pub fn promote<EA: Numeric, EL: Numeric>(&self, lhs: &Tile<EL>) -> Tile<EA> {
-        // The contracted axis is the one `lhs` spans and this accumulator does not.
-        let contracted = comptime!(lhs.space.contraction(&self.space));
-        let k = comptime!(lhs.space.final_space().extent(contracted));
+        // The contracted axes are those `lhs` spans and this accumulator does not; the fragment is
+        // sized by their product, which is one axis for a matmul and taps times channels for a
+        // convolution.
+        let k = comptime!(lhs.space.contracted_extent(&self.space));
         // The block's lines match the memory it drains back into; the hardware
         // encodings ignore it.
         let vector_size = self.vector_size();

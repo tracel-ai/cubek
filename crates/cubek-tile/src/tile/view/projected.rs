@@ -39,6 +39,63 @@ impl<C: Coordinates, L> TileLayout<C> for L where
 {
 }
 
+/// [`TileLayout`] with its own coordinate left implicit, so a wrapper can name the bound without
+/// carrying that coordinate as a second parameter it would then need a `PhantomData` to hold.
+pub trait LogicalLayout:
+    Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>
+{
+}
+
+impl<L> LogicalLayout for L where
+    L: Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>
+{
+}
+
+/// Any [`LogicalLayout`] with an operand's [`Projection`] applied under it: the inner layout
+/// resolves a reader's coordinate to the tile's *logical* one, then [`AxisProjection`] folds that
+/// onto the window's *physical* one. Every gathered view is its direct view wrapped in this, so
+/// the two ranks meet in one place rather than once per reader.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct Projected<L: LogicalLayout> {
+    inner: L,
+    projection: AxisProjection,
+}
+
+#[cube]
+impl<L: LogicalLayout> Projected<L> {
+    pub fn new(inner: L, projection: AxisProjection) -> Self {
+        Projected::<L> { inner, projection }
+    }
+}
+
+#[cube]
+impl<L: LogicalLayout> Layout for Projected<L> {
+    type Coordinates = L::Coordinates;
+    type SourceCoordinates = CoordsDyn;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        self.projection.to_source_pos(self.inner.to_source_pos(pos))
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        let in_bounds = self.is_in_bounds(pos.clone());
+        (self.to_source_pos(pos), in_bounds)
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        self.inner.shape()
+    }
+
+    /// The inner box alone. The logical box [`AxisProjection`] would re-check is the same one: its
+    /// extents *are* the space's, which is where the inner layout's own bounds come from. Whether
+    /// the physical cell it maps to holds valid data is the [`Window`](crate::Window)'s question,
+    /// asked one layer down.
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        self.inner.is_in_bounds(pos)
+    }
+}
+
 /// A [`Layout`] mapping a tile's logical coordinate to its window's physical one:
 /// `phys[pa] = Σ logical[axis] * scale`. Sits between the [`Window`](crate::Window) and the
 /// element layout, so the window's `bound` still masks the read (an out-of-range stencil tap

@@ -515,6 +515,22 @@ impl Space {
         Space::merge(operands).contracting(output)
     }
 
+    /// The `k` edge this operand contracts over against `output`: the product of every
+    /// [`contracting`](Space::contracting) axis's extent, read off the operand's
+    /// [`final_space`](Space::final_space).
+    ///
+    /// An instruction sees one contraction depth, not a list of axes. A matmul has the one axis
+    /// [`contraction`](Space::contraction) names; a convolution contracts over its taps *and* its
+    /// channels, and their product is the `k` a fragment is sized by and the edge
+    /// [`matrix_split`](crate::matrix_split) flattens those axes into.
+    pub fn contracted_extent(&self, output: &Space) -> usize {
+        let leaf = self.final_space();
+        self.contracting(output)
+            .iter()
+            .map(|&axis| leaf.extent(axis))
+            .product()
+    }
+
     /// The single axis this operand contracts against `output`:
     /// [`contracting`](Space::contracting) with the one-axis contract asserted.
     pub fn contraction(&self, output: &Space) -> Axis {
@@ -633,5 +649,51 @@ impl<'a> IntoIterator for &'a Space {
 
     fn into_iter(self) -> Axes<'a> {
         self.axes()
+    }
+}
+
+#[cfg(test)]
+mod contraction_tests {
+    use crate::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+    const R: Axis = Axis(3);
+
+    fn space(extents: &[(Axis, usize)]) -> Space {
+        let mut t = Tiling::new().extents(extents);
+        t = t.level(WalkOrder::RowMajor, Schedule::Direct, |mut l| {
+            for &(axis, e) in extents {
+                l = l.axis(axis, Cut::sequential(e));
+            }
+            l
+        });
+        t.build()
+    }
+
+    /// A matmul contracts one axis, so the `k` edge is that axis's extent, as it always was.
+    #[test]
+    fn a_matmul_contracts_its_one_axis() {
+        let lhs = space(&[(M, 8), (K, 4)]);
+        let out = space(&[(M, 8), (N, 8)]);
+        assert_eq!(lhs.contracted_extent(&out), 4);
+    }
+
+    /// A convolution contracts its taps and its channels at once; the instruction sees one `k`,
+    /// which is their product.
+    #[test]
+    fn a_convolution_contracts_taps_times_channels() {
+        let lhs = space(&[(M, 8), (R, 3), (K, 4)]);
+        let out = space(&[(M, 8), (N, 8)]);
+        assert_eq!(lhs.contracted_extent(&out), 12);
+    }
+
+    /// An operand spanning only output axes contracts nothing, and an empty product is `1`.
+    #[test]
+    fn contracting_nothing_is_a_unit_depth() {
+        let lhs = space(&[(M, 8), (N, 8)]);
+        let out = space(&[(M, 8), (N, 8)]);
+        assert_eq!(lhs.contracted_extent(&out), 1);
     }
 }

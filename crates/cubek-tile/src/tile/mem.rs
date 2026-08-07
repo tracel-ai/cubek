@@ -1023,29 +1023,10 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The mutable twin of [`masked`](MemData::masked).
-    pub(crate) fn masked_mut<W: Size>(
+    pub(crate) fn masked_mut<W: Size, C: Coordinates, L: TileLayout<C>>(
         &mut self,
-        layout: BatchMatrix,
-    ) -> MatrixViewMut<'_, Vector<T, W>> {
-        if comptime!(self.store.quant.is_some()) {
-            panic!("Tile::matrix_mut: writing a quantized tile requires requantization")
-        }
-        let base = self.base();
-        let window = self.window();
-        let check = comptime!(self.access.overhang.masks());
-        MaskedViewMut::new(
-            self.lines_mut::<W>()
-                .view_mut(base)
-                .view_mut(window)
-                .view_mut(layout),
-            check,
-        )
-    }
-
-    pub(crate) fn masked_mut_projected<W: Size>(
-        &mut self,
-        layout: super::ProjectedBatchMatrix,
-    ) -> MatrixViewMut<'_, Vector<T, W>> {
+        layout: L,
+    ) -> MaskedViewMut<'_, Vector<T, W>, C> {
         if comptime!(self.store.quant.is_some()) {
             panic!("Tile::matrix_mut: writing a quantized tile requires requantization")
         }
@@ -1154,19 +1135,15 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves read.
-    pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
+    /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves
+    /// read. `L` is [`BatchMatrix`] for a direct operand and
+    /// [`ProjectedBatchMatrix`](super::ProjectedBatchMatrix) for a gathered one; both answer the
+    /// same [`Coords2d`] surface.
+    pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size, L: TileLayout<Coords2d>>(
         &self,
-        layout: BatchMatrix,
+        layout: L,
     ) -> MatrixView<'_, Vector<T, W>> {
-        self.transparent::<I, WP, W, Coords2d, BatchMatrix>(layout)
-    }
-
-    pub(crate) fn matrix_transparent_projected<I: Numeric, WP: Size, W: Size>(
-        &self,
-        layout: super::ProjectedBatchMatrix,
-    ) -> MatrixView<'_, Vector<T, W>> {
-        self.transparent::<I, WP, W, Coords2d, super::ProjectedBatchMatrix>(layout)
+        self.transparent::<I, WP, W, Coords2d, L>(layout)
     }
 
     /// [`transparent`](MemData::transparent) over the tile's whole logical box, applying the
@@ -1209,19 +1186,16 @@ impl<T: Numeric> MemData<T> {
             self.projection.is_direct(),
             "MemData::matrix_mut: a gathered operand has no plain 2-D matrix view"
         ));
-        let rank = comptime!(space.rank());
-        let rows = comptime!(space.extent_at(rank - 2));
-        // The `Space` is scalar; `cols` counts lines, so divide the innermost extent by the width.
-        let cols = comptime!(space.extent_at(rank - 1) / self.store.vector_size);
         // Leading (batch) extents are width-invariant; the window extent is the view's shape.
-        let shape = self.extent();
-        let mut batches = CoordsDyn::new();
-        #[unroll]
-        for p in 0..rank - 2 {
-            let weight = shape.fproduct(comptime!(((p + 1)..(rank - 2)).collect::<Vec<_>>()));
-            batches.push(i.fcast::<u32>().fdiv(weight).frem(shape.at(p)));
-        }
-        self.masked_mut::<W>(BatchMatrix::new(batches, rows, cols))
+        let bound = self.extent();
+        let layout = batch_matrix(
+            &bound,
+            space,
+            comptime!(self.projection.clone()),
+            comptime!(self.store.vector_size),
+            i,
+        );
+        self.masked_mut::<W, Coords2d, BatchMatrix>(layout)
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the

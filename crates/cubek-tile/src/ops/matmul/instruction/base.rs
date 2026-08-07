@@ -8,9 +8,9 @@ use cubecl::prelude::*;
 use super::register::mma_register_memory;
 use crate::*;
 
-/// What a plane leaf's 2-D single-`K` deduction rules out.
-const PLANE_2D: &str = "mma: a plane (cmma/mma) leaf reads one contracted axis off a directly \
-                        addressed operand; a gather-reduce runs on the register leaf";
+/// What the cmma leaf's 2-D single-`K` deduction rules out.
+const PLANE_2D: &str = "mma: a cmma leaf reads one contracted axis off a directly addressed \
+                        operand; a gather-reduce runs on the manual-mma or register leaf";
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
 /// storage config
@@ -21,19 +21,23 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
 ) {
     let space = comptime!(acc.space.clone());
-    // A gather-reduce reaches the register leaf only. The plane leaves read a fragment grid whose
-    // shape is deduced 2-D and single-contraction: `Space::contraction` asserts one contracted
-    // axis, `PlanePartition::store` infers the A/B role from where that axis sits in the trailing
-    // two, and `partition_grid` reads the grid off those same two. So both halves of the deduction
-    // are refused here rather than left to fail silently: a wider reduce nest, and an operand
-    // whose buffer a logical coordinate does not address directly. Generalizing the plane leaves
-    // is a phase of its own.
+    // A gather-reduce runs on any leaf that addresses its operands *through a view*: the register
+    // microkernel's N-D nest, and the manual-mma leaf, whose fragment load reads element by element
+    // through `Tile::fragment_matrix` and so takes both a wider reduce nest (the axes flatten into
+    // the `k` edge) and a gathered operand (the compacted stage folds underneath).
+    //
+    // Cmma cannot. It loads a raw strided window (`window_slice` + `row_stride`), which no gather
+    // is expressible in, and its fragment grid is deduced 2-D and single-contraction throughout:
+    // `PlanePartition::store` infers the A/B role from where the contracted axis sits in the
+    // trailing two, and `partition_grid` reads the grid off those same two. Both halves stay
+    // refused for that encoding rather than failing silently further down.
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let plane_2d = comptime!(
-        !lhs_gathered
-            && !rhs_gathered
-            && Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1
+        matches!(acc.leaf, Leaf::Mma { .. })
+            || (!lhs_gathered
+                && !rhs_gathered
+                && Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1)
     );
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
