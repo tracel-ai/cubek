@@ -1042,6 +1042,25 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    pub(crate) fn masked_mut_projected<W: Size>(
+        &mut self,
+        layout: super::ProjectedBatchMatrix,
+    ) -> MatrixViewMut<'_, Vector<T, W>> {
+        if comptime!(self.store.quant.is_some()) {
+            panic!("Tile::matrix_mut: writing a quantized tile requires requantization")
+        }
+        let base = self.base();
+        let window = self.window();
+        let check = comptime!(self.access.overhang.masks());
+        MaskedViewMut::new(
+            self.lines_mut::<W>()
+                .view_mut(base)
+                .view_mut(window)
+                .view_mut(layout),
+            check,
+        )
+    }
+
     /// Re-view this buffer as a flat 1-D [`FlatView`] over its [`Window`] extent,
     /// carrying the `check` flag so a flat scan masks the overhang without being asked.
     pub(crate) fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
@@ -1141,6 +1160,13 @@ impl<T: Numeric> MemData<T> {
         layout: BatchMatrix,
     ) -> MatrixView<'_, Vector<T, W>> {
         self.transparent::<I, WP, W, Coords2d, BatchMatrix>(layout)
+    }
+
+    pub(crate) fn matrix_transparent_projected<I: Numeric, WP: Size, W: Size>(
+        &self,
+        layout: super::ProjectedBatchMatrix,
+    ) -> MatrixView<'_, Vector<T, W>> {
+        self.transparent::<I, WP, W, Coords2d, super::ProjectedBatchMatrix>(layout)
     }
 
     /// [`transparent`](MemData::transparent) over the tile's whole logical box, applying the
