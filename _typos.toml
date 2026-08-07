@@ -1,3 +1,7 @@
 [default.extend-words]
 arange = "arange"
 Cpy = "Cpy"
+# N-dimensional: `Tile::nd`, `nd_transparent`.
+nd = "nd"
+# Unsigned exponent float formats: `QuantParam::UE8M0`, `UE4M3`.
+UE = "UE"
