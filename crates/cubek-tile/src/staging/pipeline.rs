@@ -93,9 +93,7 @@ impl Pipeline {
                     s.stage_into(d, full);
                 }
                 // A strided source under a barrier is a plain synchronous copy.
-                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
-                    d.fill_from(s, space)
-                }
+                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s, space),
                 _ => panic!("Pipeline::fill: unsupported kind pairing"),
             },
             Pipeline::Cube | Pipeline::Solo => dst.copy_from(src),

@@ -270,12 +270,8 @@ impl<T: Numeric> Tile<T> {
     /// [`direct`](Projection::direct) operand, and for a fragment or a tensor map, which have no
     /// buffer to gather from.
     pub fn gathered(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(!g.projection.is_direct()),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
-                comptime!(false)
-            }
-        }
+        let projection = self.projection();
+        comptime!(!projection.is_direct())
     }
 
     /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source
@@ -289,7 +285,6 @@ impl<T: Numeric> Tile<T> {
             }
         }
     }
-
 
     /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
     /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.

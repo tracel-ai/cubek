@@ -26,6 +26,12 @@ use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection};
 /// `{0, 1, 3, 4, …}`, whose step is `1`) stay as padding: they are filled and never read. Sizing
 /// them out exactly is a numeric-semigroup problem, and the step already covers what a stride or a
 /// dilation produces.
+///
+/// A term whose axis does not move (`eᵢ = 1`) sits at a fixed offset the window's origin absorbs,
+/// so its coefficient is unobservable: the only coordinate it is ever multiplied by is `0`. It is
+/// emitted as `1` rather than as `sᵢ/g`, which need not divide, so the compacted projection still
+/// satisfies [`Projection::validate`] (a `0` coefficient would read as "this axis addresses no
+/// physical axis").
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Compaction {
     steps: SmallVec<[usize; MAX_AXES]>,
@@ -53,9 +59,18 @@ impl Compaction {
                 .filter(|t| extent_of(t.axis) > 1)
                 .fold(0, |g, t| gcd(g, t.scale.get()));
             let step = step.max(1);
+            // `step` divides every moving coefficient by construction; a non-moving one need not
+            // divide, and its value is unobservable, so it is pinned rather than truncated.
             let scaled: Vec<(Axis, usize)> = terms
                 .iter()
-                .map(|t| (t.axis, t.scale.get() / step))
+                .map(|t| {
+                    let scale = if extent_of(t.axis) > 1 {
+                        t.scale.get() / step
+                    } else {
+                        1
+                    };
+                    (t.axis, scale)
+                })
                 .collect();
             extents.push(
                 1 + scaled
@@ -67,15 +82,20 @@ impl Compaction {
             physical.push(PhysicalAxisMap::affine(&scaled));
         }
 
+        let projection = Projection::new(projection.logical_axes(), &physical);
+        // The compacted map is what the staged tile is addressed by, so it has to be as legal as
+        // the operand's own: same axes, same innermost identity, still untiled.
+        projection.validate();
+
         Compaction {
             steps,
             extents,
-            projection: Projection::new(projection.logical_axes(), &physical),
+            projection,
         }
     }
 
-    /// How the stage's own logical axes address its cells: `projection` with every coefficient
-    /// divided by its axis's step. This is what the staged tile carries as its
+    /// How the stage's own logical axes address its cells: `projection` with every moving
+    /// coefficient divided by its axis's step. This is what the staged tile carries as its
     /// [`projection`](crate::MemData), so its reads and its [`at`](crate::Tile::at) descents run
     /// through the same machinery a gmem operand's do.
     pub fn projection(&self) -> &Projection {
@@ -191,15 +211,18 @@ mod tests {
     }
 
     /// A single tap at stride 2 reaches only the even offsets, so the stage keeps every second row
-    /// and its projection loses the stride.
+    /// and its projection loses the stride. `Rh` does not move, so its coefficient is the pinned
+    /// `1` whatever the dilation was: the stage's `Rh` coordinate is always `0`.
     #[test]
     fn a_single_tap_at_stride_two_halves_the_stage() {
-        let c = Compaction::of(&conv(2, 1), extents(8, 1, 16));
-        assert!(!c.is_dense());
-        assert_eq!(c.steps(), &[2, 1]);
-        assert_eq!(c.extents(), &[8, 16]);
-        assert_eq!(c.projection().scale(0, OH), 1);
-        assert_eq!(c.projection().scale(0, RH), 0);
+        for dilation in [1, 3] {
+            let c = Compaction::of(&conv(2, dilation), extents(8, 1, 16));
+            assert!(!c.is_dense());
+            assert_eq!(c.steps(), &[2, 1]);
+            assert_eq!(c.extents(), &[8, 16]);
+            assert_eq!(c.projection().scale(0, OH), 1);
+            assert_eq!(c.projection().scale(0, RH), 1);
+        }
     }
 
     /// Stride and dilation sharing a factor: the whole window is on the even lattice, so the stage

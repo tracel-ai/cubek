@@ -588,10 +588,11 @@ fn conv1d_staged_strided_and_dilated() {
     .check_at(2, 2, 1, false, Schedule::Staged);
 }
 
-/// A single tap: the stage is dense, so with one contracted abstract axis the leaf drops back to
-/// the 2-D microkernel. Staging is what makes that legal, and the answer must not move.
+/// A single tap at unit stride: the window is exactly the output's own extent, so the stage is the
+/// smallest it ever gets while the projection stays affine (`Rh` is still a declared axis at
+/// coefficient `1`, so the leaf stays on the N-D nest). The answer must not move.
 #[test]
-fn conv1d_staged_single_tap_is_a_matmul() {
+fn conv1d_staged_single_tap() {
     Conv1d {
         oh: 8,
         co: 4,
@@ -676,8 +677,9 @@ fn conv1d_staged_masked_overhang_strided() {
 }
 
 /// A single tap at stride 2 reaches only every second input position, so the stage keeps half of
-/// the window it spans and the fill steps by two. The only case where the compaction's step is not
-/// `1`, together with its vectorized twin below.
+/// the window it spans and the fill steps by two. One of the three non-unit-step cases, with
+/// `conv1d_staged_vectorized_strided_and_dilated` (`gcd(2, 2) = 2`, above) and
+/// `conv2d_staged_mixed_steps`.
 #[test]
 fn conv1d_staged_single_tap_strided() {
     Conv1d {
@@ -757,4 +759,24 @@ fn conv2d_staged_asymmetric_stride_and_dilation() {
         dw: 2,
     }
     .check_at(2, 3, 2, Schedule::Staged);
+}
+
+/// One compacted physical axis per step: `h` has `gcd(2, 2) = 2`, so its stage keeps every second
+/// row and the fill steps through it, while `w` is dense and steps by one. The only case where
+/// `StepUp` carries more than one distinct step, so a transposed or broadcast step shows up here.
+#[test]
+fn conv2d_staged_mixed_steps() {
+    Conv2d {
+        oh: 4,
+        ow: 4,
+        co: 4,
+        rh: 2,
+        rw: 3,
+        ci: 2,
+        sh: 2,
+        sw: 1,
+        dh: 2,
+        dw: 1,
+    }
+    .check_at(2, 2, 4, Schedule::Staged);
 }

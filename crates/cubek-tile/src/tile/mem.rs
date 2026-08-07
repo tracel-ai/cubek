@@ -384,7 +384,12 @@ impl<T: Numeric> MemData<T> {
         #[comptime] stage: StagePlan,
         #[comptime] projection: Projection,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::gathered(&space, vector_size, &projection));
+        let form = comptime!(StageForm::gathered(
+            &space,
+            vector_size,
+            stage.layout,
+            &projection
+        ));
         MemData::smem_with_form(space, leaf, vector_size, stage, form)
     }
 
@@ -646,9 +651,15 @@ impl<T: Numeric> MemData<T> {
         #[comptime] space: Space,
     ) {
         let check = comptime!(src.access.overhang.masks());
-        let steps = comptime!(stage_steps(&src.projection, &self.projection, &space));
+        let compaction = comptime!(stage_compaction(&src.projection, &self.projection, &space));
+        // Empty exactly when the window has no holes to skip, so the fill reads the source box
+        // straight through and this layer is never built.
+        let steps = comptime!(match &compaction {
+            Some(c) if !c.is_dense() => c.steps().to_vec(),
+            _ => Vec::new(),
+        });
         let shape = self.layout.physical_shape.clone();
-        let s = if comptime!(steps.iter().all(|&g| g == 1)) {
+        let s = if comptime!(steps.is_empty()) {
             MaskedView::new(
                 src.lines_storage::<I2, WP2>()
                     .view(src.base())
@@ -676,6 +687,19 @@ impl<T: Numeric> MemData<T> {
         // stage's shape is static, so it always folds.
         let units = comptime!(self.access.stage.units);
         let total_c = total.constant();
+        // The other half of the fill's contract: the mappings agree ([`stage_compaction`]), and so
+        // do the sizes. A gathered destination is always an smem stage, so its line count folds and
+        // has to be exactly the compacted window's.
+        let w = comptime!(self.store.vector_size);
+        let cells = comptime!(compaction.as_ref().map(|c| c.cells(w)));
+        comptime!(assert!(
+            match cells {
+                Some(n) => matches!(total_c, Some(t) if t as usize == n),
+                None => true,
+            },
+            "MemData::fill_straight: a gathered source fills a destination of {total_c:?} lines, \
+             but its compacted window is {cells:?}"
+        ));
         let straight =
             comptime!(matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8));
         let d = self.lines_storage_mut::<I2, WP2>();
@@ -1434,18 +1458,21 @@ fn smem_scale_grid(
     (nb, strides)
 }
 
-/// What one cell of a stage steps in the source it is filled from, per physical axis, and the one
-/// contract between the two sides of a fill: the destination must be addressed by exactly the
-/// [`Compaction`] of the source's own map, since that is what makes its physical box the window the
-/// source was windowed down to.
+/// How a gathered fill's two sides relate: the [`Compaction`] of the source's own map, which the
+/// destination must be addressed by, since that is what makes its physical box the window the
+/// source was windowed down to. `None` when neither side gathers, which is every fill the engine
+/// ran before compaction existed: there is nothing to compact, and no extent is read, since a
+/// top-level `Dynamic` axis has none to read.
 ///
-/// `space` is the destination's, used here to size the source's window; the assert is what keeps a
-/// caller that does not carry the same space on both sides (`Tile::copy_from` is public) from
-/// mis-addressing silently. A direct pair has nothing to compact and answers without reading an
-/// extent at all, since a top-level `Dynamic` axis has none to read.
-fn stage_steps(src: &Projection, dst: &Projection, space: &Space) -> Vec<usize> {
-    if src.is_direct() && dst.is_direct() {
-        return vec![1; src.physical_rank()];
+/// `space` is the destination's, used here to size the source's window. The assert pins the two
+/// *mappings* together, which is what a caller not carrying the same axes on both sides
+/// (`Tile::copy_from` is public) gets wrong; the two *sizes* are pinned separately, by
+/// [`fill_straight`](MemData::fill_straight) against its own line count.
+fn stage_compaction(src: &Projection, dst: &Projection, space: &Space) -> Option<Compaction> {
+    // Invertible is exactly "no gather", whatever the ranks: a direct pair, and a storage-tiled
+    // one, whose several physical fragments of one axis a compaction would misread as a window.
+    if src.is_invertible() && dst.is_invertible() {
+        return None;
     }
     let compaction = Compaction::of(src, |axis| space.extent(axis));
     assert!(
@@ -1454,7 +1481,7 @@ fn stage_steps(src: &Projection, dst: &Projection, space: &Space) -> Vec<usize> 
          projection, addressed by {:?}, but the destination is addressed by {dst:?}",
         compaction.projection()
     );
-    compaction.steps().to_vec()
+    Some(compaction)
 }
 
 /// A stage's buffer: the physical extents it takes and the two mappings that address them. The one
@@ -1489,7 +1516,19 @@ impl StageForm {
     /// its sub-tile reads, addressed by the operand's own map with the lattice quotiented out.
     /// Always plain row-major, since an affine map cannot also be storage-tiled
     /// ([`Projection::validate`]).
-    fn gathered(space: &Space, vector_size: usize, projection: &Projection) -> StageForm {
+    fn gathered(
+        space: &Space,
+        vector_size: usize,
+        stage: StageStorage,
+        projection: &Projection,
+    ) -> StageForm {
+        // `Tiled` comes from a cmma leaf, which `Staging::new` refuses a gathered operand for. The
+        // nesting has nowhere to go here, so it is refused rather than silently dropped.
+        assert!(
+            matches!(stage, StageStorage::Strided),
+            "StageForm: a gathered operand stages into a plain row-major window, but {stage:?} \
+             storage was asked for"
+        );
         let compaction = Compaction::of(projection, |axis| space.extent(axis));
         let extents = compaction.line_extents(vector_size);
         StageForm {
@@ -1737,6 +1776,7 @@ mod tests {
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
 
     /// `16 -> 8 -> 4` on both axes, so the space, its `divide()`, and its `final_space()` are
     /// three distinct block shapes to nest.
@@ -1749,6 +1789,17 @@ mod tests {
             })
             .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
                 l.axis(M, seq(4)).axis(N, seq(4))
+            })
+            .build()
+    }
+
+    /// [`space`] plus the ungathered innermost axis a gathered projection is required to carry.
+    fn gathered_space() -> Space {
+        let seq = |edge| Cut::sequential(edge);
+        Tiling::new()
+            .extents(&[(M, 16), (N, 16), (K, 8)])
+            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+                l.axis(M, seq(8)).axis(N, seq(8)).axis(K, seq(4))
             })
             .build()
     }
@@ -1797,17 +1848,40 @@ mod tests {
     }
 
     /// A gathered stage is the compacted window, not the logical tile: `M` and `N` here map onto
-    /// one physical axis, so the stage holds their receptive field instead of their product.
+    /// one physical axis, so the stage holds their receptive field instead of their product. `K`
+    /// rides identity innermost, which every gathered projection is required to carry
+    /// ([`Projection::validate`]).
     #[test]
     fn a_gathered_form_is_the_compacted_window() {
-        let space = space().divide();
-        let projection = Projection::new(&[M, N], &[PhysicalAxisMap::affine(&[(M, 1), (N, 1)])]);
-        let form = StageForm::gathered(&space, 1, &projection);
-        // 8 x 8 logical cells over 1 + 7 + 7 physical ones.
-        assert_eq!(form.extents, vec![15]);
-        assert_eq!(form.cells(), 15);
+        let space = gathered_space().divide();
+        let projection = Projection::new(
+            &[M, N, K],
+            &[
+                PhysicalAxisMap::affine(&[(M, 1), (N, 1)]),
+                PhysicalAxisMap::of(K),
+            ],
+        );
+        let form = StageForm::gathered(&space, 1, StageStorage::Strided, &projection);
+        // 8 x 8 logical cells over 1 + 7 + 7 physical ones, times the ungathered 4 of `K`.
+        assert_eq!(form.extents, vec![15, 4]);
+        assert_eq!(form.cells(), 60);
         assert_eq!(form.projection, projection);
         assert!(form.positional.is_direct());
+    }
+
+    /// A gathered operand's stage is plain row-major; a storage-tiled one has nowhere to nest.
+    #[test]
+    #[should_panic(expected = "plain row-major window")]
+    fn a_gathered_form_refuses_tiled_storage() {
+        let space = gathered_space().divide();
+        let projection = Projection::new(
+            &[M, N, K],
+            &[
+                PhysicalAxisMap::affine(&[(M, 1), (N, 1)]),
+                PhysicalAxisMap::of(K),
+            ],
+        );
+        StageForm::gathered(&space, 1, StageStorage::Tiled, &projection);
     }
 
     /// A block that does not divide the one enclosing it has no `[grid…, block…]` split.
