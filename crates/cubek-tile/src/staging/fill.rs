@@ -30,7 +30,9 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         // ([`MemData::smem_gathered`]).
         //
         // What a gathered stage does cost is gmem traffic: sibling windows overlap, so consecutive
-        // regions re-read the halo between them.
+        // regions re-read the halo between them. And the window is only smaller than the logical
+        // box when the taps outrun the stride; past that it is padding the fill still reads
+        // ([`Compaction`]).
         let lhs_gathered = lhs.gathered();
         let rhs_gathered = rhs.gathered();
         let gathered = comptime!(lhs_gathered || rhs_gathered);

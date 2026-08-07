@@ -642,7 +642,7 @@ impl<T: Numeric> MemData<T> {
     /// Both sides are physical boxes of the same rank here, whatever they are logically: the
     /// destination's coordinate is decoded once per line ([`physical_pos`]) and lands on the source
     /// cell it was staged from, so the fill copies and never gathers. A gathered pair differs only
-    /// by the compaction's step ([`stage_steps`]), which is `1` unless the source's window has holes
+    /// by the compaction's step ([`stage_compaction`]), which is `1` unless the source's window has holes
     /// to skip. The [`Window`] sits below either way, so a cell past the source's bound still masks
     /// to zero, and the stage holds that zero rather than re-masking at every read.
     fn fill_straight<I2: Numeric, WP2: Size>(
@@ -1290,8 +1290,9 @@ impl<T: Numeric> MemData<T> {
 
                 origin.push(self.window.origin.at(pa).fadd(advance));
                 extent.push(comptime!(span as u32).runtime());
-                // `Projection::validate` pins a gathered operand to untiled gmem, so one physical
-                // axis step is one stride and the advance passes straight through.
+                // `Projection::validate` pins a gathered operand to untiled storage (bare gmem, or
+                // the row-major compacted stage of one), so one physical axis step is one stride
+                // and the advance passes straight through.
                 advances.push(advance.fmul(self.layout.physical_strides.at(pa)));
             }
         }
@@ -1469,9 +1470,10 @@ fn smem_scale_grid(
 /// (`Tile::copy_from` is public) gets wrong; the two *sizes* are pinned separately, by
 /// [`fill_straight`](MemData::fill_straight) against its own line count.
 fn stage_compaction(src: &Projection, dst: &Projection, space: &Space) -> Option<Compaction> {
-    // Invertible is exactly "no gather", whatever the ranks: a direct pair, and a storage-tiled
-    // one, whose several physical fragments of one axis a compaction would misread as a window.
-    if src.is_invertible() && dst.is_invertible() {
+    // A `MemData` carries the *coordinate*-space map ([`Projection::untiled`]), where storage
+    // tiling has already folded back into the one coordinate its fragments are digits of. Direct
+    // there is exactly "no gather", so a tiled buffer takes this early return like any other.
+    if src.is_direct() && dst.is_direct() {
         return None;
     }
     let compaction = Compaction::of(src, |axis| space.extent(axis));

@@ -711,7 +711,7 @@ fn conv1d_staged_vectorized_masked_overhang() {
 /// Double buffering drives the same fill from two slots on alternating regions, so a gathered
 /// source has to re-window per slot rather than once per walk.
 #[test]
-fn conv1d_double_buffered() {
+fn conv1d_staged_double_buffered() {
     Conv1d {
         oh: 8,
         co: 4,

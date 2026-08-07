@@ -4,8 +4,12 @@
 //!
 //! Under the direct mapping the two coincide and this layout is never built; the matmul leaves keep
 //! reading through [`BatchMatrix`](super::BatchMatrix). Under a gathering mapping they differ in
-//! rank: a 2-D stencil input carries five logical axes over three physical ones, and two logical
-//! coordinates (an output step and a tap) address the same physical axis.
+//! rank: a 2-D convolution input carries five logical axes over three physical ones, and two
+//! logical coordinates (an output step and a tap) address the same physical axis.
+//!
+//! [`StepUp`] is the other half, one level down: physical to physical, undoing the lattice a
+//! [`Compaction`] quotients a gathered window by, so a fill of the compacted stage lands on the
+//! source cells the stage keeps.
 
 use cubecl::{
     prelude::*,
@@ -17,7 +21,8 @@ use crate::*;
 /// The layouts a windowed tile re-views through: any [`Layout`] from a coordinate `C` onto the
 /// window's `CoordsDyn`, cloneable in both worlds so the transparent read can address the values
 /// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
-/// a new concept; [`BatchMatrix`](super::BatchMatrix) and [`AxisProjection`] are the two members.
+/// a new concept; [`BatchMatrix`](super::BatchMatrix) and [`AxisProjection`] are the two the leaves
+/// read through, and [`StepUp`] rides the same bounds under a fill.
 pub trait TileLayout<C: Coordinates>:
     Layout<Coordinates = C, SourceCoordinates = CoordsDyn>
     + Clone

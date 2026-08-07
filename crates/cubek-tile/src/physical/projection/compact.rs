@@ -27,6 +27,12 @@ use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection};
 /// them out exactly is a numeric-semigroup problem, and the step already covers what a stride or a
 /// dilation produces.
 ///
+/// So the compacted box is not always smaller than the logical tile it replaces. It wins when the
+/// taps outrun the stride and the windows overlap (the usual convolution), and loses when the
+/// stride outruns them: `3` output steps of `2` taps at stride `3` are `6` logical cells over a
+/// box of `8`, two of which are padding. A gathered stage is sized by its window either way, so
+/// that case costs both the extra smem and the gmem reads that fill it.
+///
 /// A term whose axis does not move (`eᵢ = 1`) sits at a fixed offset the window's origin absorbs,
 /// so its coefficient is unobservable: the only coordinate it is ever multiplied by is `0`. It is
 /// emitted as `1` rather than as `sᵢ/g`, which need not divide, so the compacted projection still
