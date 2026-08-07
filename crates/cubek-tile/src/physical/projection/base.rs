@@ -400,7 +400,7 @@ mod tests {
     /// line and element units. Carrying it twice is what storage tiling *is*, so the tiling refusal
     /// is what rules the shape out. `A <- A*1 + B*2` over logical `[A, B]` with `B` innermost.
     #[test]
-    #[should_panic(expected = "must be untiled gmem")]
+    #[should_panic(expected = "addresses several physical axes")]
     fn innermost_axis_rides_no_coarser_physical_axis() {
         Projection::new(
             &[A, B],
@@ -426,7 +426,7 @@ mod tests {
     /// while `Ih <- A*2 + R*3` gathers, and one advance cannot be both split into digits and
     /// scaled.
     #[test]
-    #[should_panic(expected = "untiled gmem")]
+    #[should_panic(expected = "addresses several physical axes")]
     fn a_gather_rejects_tiled_storage() {
         Projection::new(
             &[A, R, B],
