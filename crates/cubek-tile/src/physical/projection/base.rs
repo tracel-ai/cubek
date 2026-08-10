@@ -368,7 +368,11 @@ impl Projection {
 
     /// The phase-1 contract for a *gathered* (affine) projection. A plain one, storage-tiled or
     /// not, is unconstrained: it is what the engine has always done.
-    pub fn validate(&self) {
+    ///
+    /// `vector_size` is the width the operand is served at. At `1` there are no vector lines to
+    /// address, so the innermost-identity rule below has nothing to protect and is skipped: a
+    /// scalar operand may gather on its innermost axis. Any wider serving still requires it.
+    pub fn validate(&self, vector_size: usize) {
         // Every physical axis carrying one logical axis at coefficient 1 is exactly "no gather",
         // whatever the ranks: `direct`, and `tiled`, which repeats a label rather than scaling it.
         if self.is_invertible() {
@@ -384,12 +388,14 @@ impl Projection {
         //
         // The other direction, a *coarser* physical axis also scaling that same logical axis,
         // would mix lines into an element count.
-        let innermost = self.axes[self.axes.len() - 1];
-        assert!(
-            self.physical[self.physical.len() - 1].is_identity(innermost),
-            "Projection: the innermost physical axis must be the operand's last logical axis at \
-             coefficient 1 (it is addressed in vector lines)"
-        );
+        if vector_size > 1 {
+            let innermost = self.axes[self.axes.len() - 1];
+            assert!(
+                self.physical[self.physical.len() - 1].is_identity(innermost),
+                "Projection: the innermost physical axis must be the operand's last logical axis \
+                 at coefficient 1 (it is addressed in vector lines)"
+            );
+        }
         for &axis in self.axes.iter() {
             let count = self.physical.iter().filter(|m| m.addresses(axis)).count();
             assert!(
@@ -469,7 +475,7 @@ mod tests {
                 PhysicalAxisMap::of(B),
             ],
         )
-        .validate();
+        .validate(4);
     }
 
     #[test]
@@ -479,7 +485,18 @@ mod tests {
             &[A, R],
             &[PhysicalAxisMap::of(A), PhysicalAxisMap::affine(&[(R, 2)])],
         )
-        .validate();
+        .validate(4);
+    }
+
+    /// At `vector_size == 1` there are no vector lines to protect, so a gather on the innermost
+    /// axis is legal: the shape a scalar 1-D resample needs.
+    #[test]
+    fn innermost_may_gather_when_scalar() {
+        Projection::new(
+            &[A, R],
+            &[PhysicalAxisMap::of(A), PhysicalAxisMap::affine(&[(R, 2)])],
+        )
+        .validate(1);
     }
 
     /// A gather cannot ride a `[grid…, tile…]` buffer: `B` here is storage-tiled (two fragments)
@@ -496,7 +513,7 @@ mod tests {
                 PhysicalAxisMap::of(B),
             ],
         )
-        .validate();
+        .validate(4);
     }
 
     #[test]
@@ -506,7 +523,7 @@ mod tests {
             &[A, R, B],
             &[PhysicalAxisMap::affine(&[(A, 2)]), PhysicalAxisMap::of(B)],
         )
-        .validate();
+        .validate(4);
     }
 
     /// A plain projection is never constrained: storage tiling is exactly what it is for.
@@ -516,7 +533,7 @@ mod tests {
         assert!(!p.is_direct());
         assert!(p.is_tiled());
         assert!(p.is_invertible());
-        p.validate();
+        p.validate(4);
     }
 
     /// A gather has fewer physical axes than logical ones without any axis being split, so the
@@ -531,7 +548,7 @@ mod tests {
             ],
         );
         assert!(!p.is_tiled());
-        p.validate();
+        p.validate(4);
     }
 
     /// `[batch, m_grid, n_grid, m_tile, n_tile]`: a passthrough axis carries one physical axis and
@@ -676,7 +693,7 @@ mod tests {
         assert_eq!(p.digit(4, A), (SmallVec::new(), Some(4)));
         assert_eq!(p.digit(1, B), (SmallVec::from_slice(&[3]), None));
         assert!(p.is_invertible());
-        p.validate();
+        p.validate(4);
     }
 
     /// The fragment counts pin a buffer down only up to the level-major order. A buffer that keeps
@@ -870,6 +887,6 @@ mod tests {
             ],
         );
         assert!(!p.is_invertible());
-        p.validate();
+        p.validate(4);
     }
 }

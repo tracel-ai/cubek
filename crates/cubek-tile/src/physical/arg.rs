@@ -43,8 +43,11 @@ impl TileSpec {
     /// An operand's spec from its mapping alone; the optional halves are the safe defaults
     /// (unchecked, cube size unknown, memory leaf) and are set by [`checked`](Self::checked),
     /// [`units`](Self::units), [`staged`](Self::staged), and [`leaf`](Self::leaf).
+    ///
+    /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
+    /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
+    /// that is where it runs instead.
     pub fn new(projection: Projection) -> Self {
-        projection.validate();
         TileSpec {
             projection,
             check_bounds: false,

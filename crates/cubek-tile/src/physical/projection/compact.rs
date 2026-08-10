@@ -49,8 +49,13 @@ impl Compaction {
     /// Compact `projection`'s window, `extent_of` giving each logical axis's extent over the
     /// sub-tile being staged. A [`direct`](Projection::direct) projection compacts to itself: every
     /// step is `1` and every extent is the axis's own, so a plain operand's stage is the tile it
-    /// always was.
-    pub fn of(projection: &Projection, extent_of: impl Fn(Axis) -> usize) -> Compaction {
+    /// always was. `vector_size` is the width the stage is served at, threaded through to
+    /// [`Projection::validate`].
+    pub fn of(
+        projection: &Projection,
+        vector_size: usize,
+        extent_of: impl Fn(Axis) -> usize,
+    ) -> Compaction {
         // The box below is the smem allocation: both its step (a gcd of coefficients) and its
         // extent are comptime by construction, which a runtime coefficient cannot be.
         assert!(
@@ -98,7 +103,7 @@ impl Compaction {
         let projection = Projection::new(projection.logical_axes(), &physical);
         // The compacted map is what the staged tile is addressed by, so it has to be as legal as
         // the operand's own: same axes, same innermost identity, still untiled.
-        projection.validate();
+        projection.validate(vector_size);
 
         Compaction {
             steps,
@@ -197,7 +202,7 @@ mod tests {
     #[test]
     fn direct_compacts_to_itself() {
         let p = Projection::direct(&[OH, CI]);
-        let c = Compaction::of(&p, extents(8, 1, 16));
+        let c = Compaction::of(&p, 4, extents(8, 1, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[8, 16]);
@@ -208,7 +213,7 @@ mod tests {
     /// `oh * rh` cells the logical stage held.
     #[test]
     fn a_unit_stride_window_is_the_receptive_field() {
-        let c = Compaction::of(&conv(1, 1), extents(8, 3, 16));
+        let c = Compaction::of(&conv(1, 1), 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.extents(), &[10, 16]);
         assert_eq!(c.cells(4), 10 * 4);
@@ -218,7 +223,7 @@ mod tests {
     /// dense and only the extent grows.
     #[test]
     fn a_strided_window_with_adjacent_taps_stays_dense() {
-        let c = Compaction::of(&conv(2, 1), extents(8, 3, 16));
+        let c = Compaction::of(&conv(2, 1), 4, extents(8, 3, 16));
         assert!(c.is_dense());
         // 1 + 7*2 + 2*1
         assert_eq!(c.extents(), &[17, 16]);
@@ -230,7 +235,7 @@ mod tests {
     #[test]
     fn a_single_tap_at_stride_two_halves_the_stage() {
         for dilation in [1, 3] {
-            let c = Compaction::of(&conv(2, dilation), extents(8, 1, 16));
+            let c = Compaction::of(&conv(2, dilation), 4, extents(8, 1, 16));
             assert!(!c.is_dense());
             assert_eq!(c.steps(), &[2, 1]);
             assert_eq!(c.extents(), &[8, 16]);
@@ -243,7 +248,7 @@ mod tests {
     /// stores half of the bounding box and both coefficients halve.
     #[test]
     fn a_shared_factor_quotients_the_window() {
-        let c = Compaction::of(&conv(2, 2), extents(8, 3, 16));
+        let c = Compaction::of(&conv(2, 2), 4, extents(8, 3, 16));
         assert_eq!(c.steps(), &[2, 1]);
         // Bounding box 1 + 7*2 + 2*2 = 19, on the even lattice: 1 + 7 + 2 = 10.
         assert_eq!(c.extents(), &[10, 16]);
@@ -255,7 +260,7 @@ mod tests {
     /// `{0, 1, 3, 4, 6, 7}`, whose gcd is 1, so the box spans the holes.
     #[test]
     fn unreachable_offsets_inside_the_box_stay_as_padding() {
-        let c = Compaction::of(&conv(3, 1), extents(3, 2, 16));
+        let c = Compaction::of(&conv(3, 1), 4, extents(3, 2, 16));
         assert!(c.is_dense());
         assert_eq!(c.extents(), &[8, 16]);
     }
@@ -264,7 +269,18 @@ mod tests {
     #[test]
     #[should_panic(expected = "addressed in 4-wide lines")]
     fn a_ragged_innermost_extent_is_refused() {
-        Compaction::of(&conv(1, 1), extents(8, 3, 6)).line_extents(4);
+        Compaction::of(&conv(1, 1), 4, extents(8, 3, 6)).line_extents(4);
+    }
+
+    /// A 1-D resample gathers its only axis, with no passthrough axis behind it: illegal at any
+    /// vectorized width, but at `vector_size == 1` there are no lines to protect, so the compacted
+    /// window's own innermost axis may stay gathered too.
+    #[test]
+    fn a_scalar_gather_may_compact_its_only_axis() {
+        let p = Projection::new(&[OH, RH], &[PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)])]);
+        let c = Compaction::of(&p, 1, extents(8, 3, 0));
+        assert!(c.is_dense());
+        assert_eq!(c.extents(), &[17]);
     }
 
     /// A constant offset shifts source placement without changing compacted extents.
@@ -277,7 +293,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, extents(8, 3, 16));
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[17, 16]);
@@ -294,7 +310,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, extents(8, 3, 16));
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[17, 16]);
@@ -312,6 +328,6 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        Compaction::of(&p, extents(8, 3, 16));
+        Compaction::of(&p, 4, extents(8, 3, 16));
     }
 }

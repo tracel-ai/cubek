@@ -260,6 +260,9 @@ impl<T: Numeric> Tile<T> {
             ComptimeOption::None => 1usize,
         };
         let vector_size = comptime!(bound_width * pack);
+        // The operand's own contract, checked here rather than at `TileSpec` construction because
+        // it turns on the served width, which only this call, not the spec, ever knows.
+        comptime!(projection.validate(vector_size));
         // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
         // than its logical space has axes, and a storage-tiled one has more.
         let rank = comptime!(projection.physical_rank());
@@ -728,7 +731,13 @@ impl<T: Numeric> MemData<T> {
         #[comptime] space: Space,
     ) {
         let check = comptime!(src.access.overhang.masks());
-        let compaction = comptime!(stage_compaction(&src.projection, &self.projection, &space));
+        let w = comptime!(self.store.vector_size);
+        let compaction = comptime!(stage_compaction(
+            &src.projection,
+            &self.projection,
+            w,
+            &space
+        ));
         // Empty exactly when the window has no holes to skip, so the fill reads the source box
         // straight through and this layer is never built.
         let steps = comptime!(match &compaction {
@@ -767,7 +776,6 @@ impl<T: Numeric> MemData<T> {
         // The other half of the fill's contract: the mappings agree ([`stage_compaction`]), and so
         // do the sizes. A gathered destination is always an smem stage, so its line count folds and
         // has to be exactly the compacted window's.
-        let w = comptime!(self.store.vector_size);
         let cells = comptime!(compaction.as_ref().map(|c| c.cells(w)));
         comptime!(assert!(
             match cells {
@@ -1602,15 +1610,21 @@ fn smem_scale_grid(
 /// `space` is the destination's, used here to size the source's window. The assert pins the two
 /// *mappings* together, which is what a caller not carrying the same axes on both sides
 /// (`Tile::copy_from` is public) gets wrong; the two *sizes* are pinned separately, by
-/// [`fill_straight`](MemData::fill_straight) against its own line count.
-fn stage_compaction(src: &Projection, dst: &Projection, space: &Space) -> Option<Compaction> {
+/// [`fill_straight`](MemData::fill_straight) against its own line count. `vector_size` is the
+/// destination stage's served width, threaded to [`Compaction::of`].
+fn stage_compaction(
+    src: &Projection,
+    dst: &Projection,
+    vector_size: usize,
+    space: &Space,
+) -> Option<Compaction> {
     // A `MemData` carries the *coordinate*-space map ([`Projection::untiled`]), where storage
     // tiling has already folded back into the one coordinate its fragments are digits of. Direct
     // there is exactly "no gather", so a tiled buffer takes this early return like any other.
     if src.is_direct() && dst.is_direct() {
         return None;
     }
-    let compaction = Compaction::of(src, |axis| space.extent(axis));
+    let compaction = Compaction::of(src, vector_size, |axis| space.extent(axis));
     assert!(
         compaction.projection() == dst,
         "MemData::fill_straight: a gathered source fills the compacted stage of its own \
@@ -1665,7 +1679,7 @@ impl StageForm {
             "StageForm: a gathered operand stages into a plain row-major window, but {stage:?} \
              storage was asked for"
         );
-        let compaction = Compaction::of(projection, |axis| space.extent(axis));
+        let compaction = Compaction::of(projection, vector_size, |axis| space.extent(axis));
         let extents = compaction.line_extents(vector_size);
         StageForm {
             positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
