@@ -3,7 +3,10 @@
 //! layout answers `is_in_bounds` with. Kept apart from the layouts themselves so a reshaper and a
 //! projection reach the same `unravel` rather than each spelling one out.
 
-use cubecl::{prelude::*, std::tensor::layout::{Coords2d, CoordsDyn}};
+use cubecl::{
+    prelude::*,
+    std::tensor::layout::{Coords2d, CoordsDyn},
+};
 
 use crate::*;
 
