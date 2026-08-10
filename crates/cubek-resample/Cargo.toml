@@ -24,9 +24,9 @@ cpu-reference = ["cubek-test-utils"]
 [dependencies]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false, optional = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false, optional = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.1", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false }
