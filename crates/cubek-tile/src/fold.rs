@@ -46,6 +46,7 @@ pub trait Fold: Sized {
 
 impl Fold for u32 {}
 impl Fold for usize {}
+impl Fold for i32 {}
 
 /// Folding reductions over the elements at comptime `picks`: a sequence accumulates
 /// by chaining fresh values, where a `let mut` accumulator would land in a mutable

@@ -251,7 +251,7 @@ impl<T: Numeric> Tile<T> {
                     physical_strides,
                     projection: gmem_projection,
                 },
-                window: Window::new(origin, extent, bound),
+                window: Window::new(origin, extent, bound, comptime!(coords.may_underflow())),
                 projection: comptime!(coords),
                 window_start: 0u32,
                 access: comptime!(Access {
@@ -471,7 +471,8 @@ impl<T: Numeric> MemData<T> {
                     physical_strides,
                     projection: gmem_projection,
                 },
-                window: Window::new(origin, extent, bound),
+                // Stage origins are never negative.
+                window: Window::new(origin, extent, bound, false),
                 projection: comptime!(form.projection),
                 window_start: 0u32,
                 access: comptime!(Access {
@@ -1217,7 +1218,7 @@ impl<T: Numeric> MemData<T> {
     /// advance sums one term per contributing axis and its extent is the receptive field
     /// ([`Projection::span`]) rather than a single edge: consecutive sibling windows overlap.
     pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> MemData<T> {
-        let mut origin = Coords::<u32>::new();
+        let mut origin = Coords::<i32>::new();
         let mut extent = Coords::<u32>::new();
         // Per-physical-axis window_start advances, summed below (chained, so constants fold).
         let mut advances = Coords::<u32>::new();
@@ -1246,7 +1247,7 @@ impl<T: Numeric> MemData<T> {
                     self.window
                         .origin
                         .at(p)
-                        .fadd(index.fmul(edge).fcast::<u32>()),
+                        .fadd(index.fmul(edge).fcast::<u32>().fcast::<i32>()),
                 );
                 extent.push(comptime!(edge as u32).runtime());
                 advances.push(index.fcast::<u32>().fmul(step_offset(
@@ -1288,7 +1289,8 @@ impl<T: Numeric> MemData<T> {
                     if pa == last { s / w } else { s }
                 });
 
-                origin.push(self.window.origin.at(pa).fadd(advance));
+                // `advance` only moves forward, so add directly to the signed origin.
+                origin.push(self.window.origin.at(pa).fadd(advance.fcast::<i32>()));
                 extent.push(comptime!(span as u32).runtime());
                 // `Projection::validate` pins a gathered operand to untiled storage (bare gmem, or
                 // the row-major compacted stage of one), so one physical axis step is one stride
@@ -1300,14 +1302,26 @@ impl<T: Numeric> MemData<T> {
             .window_start
             .fadd(advances.fsum(comptime!((0..rank).collect::<Vec<_>>())));
 
-        // Re-window the scales alongside the values (a no-op for per-tensor's zero strides).
+        // Re-window the scales alongside the values.
+        let mut origin_u32 = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            origin_u32.push(origin.at(p).fcast::<u32>());
+        }
         let quant = #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => ComptimeOption::new_Some(info.window(
-                &origin,
-                rank,
-                comptime!(self.store.vector_size),
-            )),
+            ComptimeOption::Some(info) => {
+                comptime!(assert!(
+                    !self.window.signed,
+                    "MemData::at: a quantized operand cannot carry a negative window origin, its \
+                     scale grid is addressed unsigned"
+                ));
+                ComptimeOption::new_Some(info.window(
+                    &origin_u32,
+                    rank,
+                    comptime!(self.store.vector_size),
+                ))
+            }
             ComptimeOption::None => ComptimeOption::new_None(),
         };
 
@@ -1319,7 +1333,12 @@ impl<T: Numeric> MemData<T> {
             },
             // The layout addresses the whole buffer and never narrows; only the window moves.
             layout: self.layout.clone(),
-            window: Window::new(origin, extent, self.window.bound.clone()),
+            window: Window::new(
+                origin,
+                extent,
+                self.window.bound.clone(),
+                comptime!(self.window.signed),
+            ),
             // How the logical axes address the physical ones is a fact about the buffer, invariant
             // down the descent.
             projection: comptime!(proj),
@@ -1336,8 +1355,8 @@ impl<T: Numeric> MemData<T> {
 
 /// The whole-buffer window of a stage: `origin = 0`, `extent =` its own physical extents.
 #[cube]
-fn full_window(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
-    let mut origin = Coords::<u32>::new();
+fn full_window(#[comptime] form: StageForm) -> (Coords<i32>, Coords<u32>) {
+    let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
 
     #[unroll]
@@ -1361,16 +1380,16 @@ fn top_window(
     bound: &Coords<u32>,
     #[comptime] vector_size: usize,
     #[comptime] projection: Projection,
-) -> (Coords<u32>, Coords<u32>) {
-    let mut origin = Coords::<u32>::new();
+) -> (Coords<i32>, Coords<u32>) {
+    let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
     let rank = comptime!(projection.physical_rank());
     let last = comptime!(rank - 1);
 
     #[unroll]
     for pa in 0..rank {
-        origin.push(0);
         let size = if comptime!(projection.is_direct()) {
+            origin.push(0);
             let axis = comptime!(space.axis_at(pa));
             // The innermost (vectorized) axis is a line count, `/ vector_size`. A `Dynamic` axis
             // reads its size from `bound`, already lined from the physical shape.
@@ -1381,6 +1400,8 @@ fn top_window(
                 Extent::Dynamic => bound.at(pa),
             }
         } else {
+            // Gathered axes start at their initial signed offset (e.g. negative padding).
+            origin.push((comptime!(projection.offset(pa) as i32)).runtime());
             bound.at(pa)
         };
         extent.push(size);
@@ -1714,21 +1735,30 @@ impl Layout for GmemLayout {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Window {
-    pub(crate) origin: Coords<u32>,
+    pub(crate) origin: Coords<i32>,
     pub(crate) extent: Coords<u32>,
     /// Absolute logical extent (the valid region). `shape()` stays `extent` (the tile
     /// cell, so loops cover the whole padded tile), but `is_in_bounds` clips against
     /// `bound` so a checked read/write zeroes / skips the overhang.
     pub(crate) bound: Coords<u32>,
+    /// Whether the origin can be negative.
+    #[cube(comptime)]
+    pub(crate) signed: bool,
 }
 
 #[cube]
 impl Window {
-    pub fn new(origin: Coords<u32>, extent: Coords<u32>, bound: Coords<u32>) -> Self {
+    pub fn new(
+        origin: Coords<i32>,
+        extent: Coords<u32>,
+        bound: Coords<u32>,
+        #[comptime] signed: bool,
+    ) -> Self {
         Window {
             origin,
             extent,
             bound,
+            signed,
         }
     }
 }
@@ -1743,7 +1773,14 @@ impl Layout for Window {
 
         #[unroll]
         for i in 0..self.origin.len() {
-            out.push(self.origin.at(i).fadd(pos[i]));
+            let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
+            // Clamp negative coordinates to 0 before bounds masking.
+            let shifted = if comptime!(self.signed) {
+                if abs >= 0i32 { abs.fcast::<u32>() } else { 0u32 }
+            } else {
+                abs.fcast::<u32>()
+            };
+            out.push(shifted);
         }
 
         out
@@ -1761,11 +1798,16 @@ impl Layout for Window {
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let mut valid = true;
 
-        // The cell can overhang the matrix; a position is valid only if its absolute
-        // coordinate (`origin + pos`) is within the logical `bound`.
+        // Check if the absolute coordinate is within [0, bound).
         #[unroll]
         for i in 0..self.bound.len() {
-            valid = valid && self.origin.at(i).fadd(pos[i]) < self.bound.at(i);
+            let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
+            let inside = if comptime!(self.signed) {
+                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
+            } else {
+                abs.fcast::<u32>() < self.bound.at(i)
+            };
+            valid = valid && inside;
         }
 
         valid

@@ -67,8 +67,9 @@ impl<L: LogicalLayout> Layout for Projected<L> {
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
-        let in_bounds = self.is_in_bounds(pos.clone());
-        (self.to_source_pos(pos), in_bounds)
+        let (inner_pos, inner_in_bounds) = self.inner.to_source_pos_checked(pos);
+        let (proj_pos, proj_in_bounds) = self.projection.to_source_pos_checked(inner_pos);
+        (proj_pos, inner_in_bounds && proj_in_bounds)
     }
 
     fn shape(&self) -> Self::Coordinates {
@@ -76,14 +77,15 @@ impl<L: LogicalLayout> Layout for Projected<L> {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        self.inner.is_in_bounds(pos)
+        let (inner_pos, inner_in_bounds) = self.inner.to_source_pos_checked(pos);
+        inner_in_bounds && self.projection.is_in_bounds(inner_pos)
     }
 }
 
 /// A [`Layout`] mapping a tile's logical coordinate to its window's physical one:
 /// `phys[pa] = Σ logical[axis] * scale`. Sits between the [`Window`](crate::Window) and the
 /// element layout, so the window's `bound` still masks the read (an out-of-range stencil tap
-/// reads zero).
+/// reads zero). Constant offsets are handled by [`Window`](crate::Window) and omitted here.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct AxisProjection {
@@ -127,13 +129,15 @@ impl Layout for AxisProjection {
 
         #[unroll]
         for pa in 0..comptime!(self.projection.physical_rank()) {
-            let n = comptime!(self.projection.physical_axis(pa).terms().len());
+            let map = comptime!(self.projection.physical_axis(pa));
+            let n = comptime!(map.terms().len());
+
             // Per-term products, summed below (chained, so a single coefficient-1 term folds to
             // the coordinate itself).
             let mut terms = Coords::<u32>::new();
             #[unroll]
             for t in 0..n {
-                let term = comptime!(self.projection.physical_axis(pa).terms()[t]);
+                let term = comptime!(map.terms()[t]);
                 let p = comptime!(self.space.position(term.axis));
                 terms.push(pos[p].fmul(comptime!(term.scale.get() as u32)));
             }

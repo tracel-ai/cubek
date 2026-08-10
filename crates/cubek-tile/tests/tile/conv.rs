@@ -321,6 +321,159 @@ fn conv1d_single_tile() {
     .check(6, 4);
 }
 
+/// Padded 1-D convolution: taps that underflow physical bounds mask to 0.
+#[test]
+fn conv1d_padded_underflow_masks_to_zero() {
+    let oh = 6;
+    let co = 4;
+    let rh = 3;
+    let ci = 2;
+    let stride = 1;
+    let dilation = 1;
+    let padding = 1;
+    let in_len = 6;
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(OH, Cut::sequential(3))
+                .axis(CO, Cut::sequential(4))
+                .axis(RH, Cut::sequential(rh))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true);
+
+    let (got, input, weight) = run(
+        shape![in_len, ci],
+        shape![rh, ci, co],
+        shape![oh, co],
+        in_spec,
+        &[RH, CI, CO],
+        TileSpec::direct(&[OH, CO]).checked(true),
+        space,
+        1,
+    );
+
+    // Reference with zero padding:
+    let mut want = vec![0.0f32; oh * co];
+    for o in 0..oh {
+        for c in 0..co {
+            let mut acc = 0.0f32;
+            for r in 0..rh {
+                for i in 0..ci {
+                    let h = (o * stride + r * dilation) as isize - padding as isize;
+                    let x = if h >= 0 && (h as usize) < in_len {
+                        input[(h as usize) * ci + i]
+                    } else {
+                        0.0
+                    };
+                    let w = weight[(r * ci + i) * co + c];
+                    acc += x * w;
+                }
+            }
+            want[o * co + c] = acc;
+        }
+    }
+
+    for o in 0..oh {
+        for c in 0..co {
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want[o * co + c],
+                "padded conv1d: wrong at ({o}, {c})"
+            );
+        }
+    }
+}
+
+/// The same padded convolution under a staged schedule.
+#[test]
+fn conv1d_padded_staged_underflow_masks_to_zero() {
+    let oh = 6;
+    let co = 4;
+    let rh = 3;
+    let ci = 2;
+    let stride = 1;
+    let dilation = 1;
+    let padding = 1;
+    let in_len = 6;
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(OH, Cut::sequential(3))
+                .axis(CO, Cut::sequential(4))
+                .axis(RH, Cut::sequential(rh))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true);
+
+    let (got, input, weight) = run(
+        shape![in_len, ci],
+        shape![rh, ci, co],
+        shape![oh, co],
+        in_spec,
+        &[RH, CI, CO],
+        TileSpec::direct(&[OH, CO]).checked(true),
+        space,
+        1,
+    );
+
+    let mut want = vec![0.0f32; oh * co];
+    for o in 0..oh {
+        for c in 0..co {
+            let mut acc = 0.0f32;
+            for r in 0..rh {
+                for i in 0..ci {
+                    let h = (o * stride + r * dilation) as isize - padding as isize;
+                    let x = if h >= 0 && (h as usize) < in_len {
+                        input[(h as usize) * ci + i]
+                    } else {
+                        0.0
+                    };
+                    let w = weight[(r * ci + i) * co + c];
+                    acc += x * w;
+                }
+            }
+            want[o * co + c] = acc;
+        }
+    }
+
+    for o in 0..oh {
+        for c in 0..co {
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want[o * co + c],
+                "padded staged conv1d: wrong at ({o}, {c})"
+            );
+        }
+    }
+}
+
 /// The gathered operand in two-wide lines. Its innermost axis is `CI`, the fastest contracted one,
 /// so the leaf splits each reduce step into the line index it reads and the lane it broadcasts:
 /// the one arithmetic on the gather path that a width of `1` leaves dead.

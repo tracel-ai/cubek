@@ -258,4 +258,21 @@ mod tests {
     fn a_ragged_innermost_extent_is_refused() {
         Compaction::of(&conv(1, 1), extents(8, 3, 6)).line_extents(4);
     }
+
+    /// A constant offset shifts source placement without changing compacted extents.
+    #[test]
+    fn padded_projection_compacts_identically() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(OH, 2), (RH, 1)], -2),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let c = Compaction::of(&p, extents(8, 3, 16));
+        assert!(c.is_dense());
+        assert_eq!(c.steps(), &[1, 1]);
+        assert_eq!(c.extents(), &[17, 16]);
+        assert_eq!(c.projection().offset(0), 0);
+    }
 }

@@ -271,10 +271,20 @@ impl Projection {
         self.physical[pa].scale(axis)
     }
 
+    /// The signed constant offset along physical axis `pa`.
+    pub fn offset(&self, pa: usize) -> isize {
+        self.physical[pa].offset()
+    }
+
+    /// Whether any physical axis carries a negative offset.
+    pub fn may_underflow(&self) -> bool {
+        self.physical.iter().any(|m| m.offset() < 0)
+    }
+
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
     /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
     /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
-    /// overlapping stencil window.
+    /// overlapping stencil window. A constant offset shifts position without changing span.
     pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
         1 + self.physical[pa]
             .terms()
@@ -283,15 +293,16 @@ impl Projection {
             .sum::<usize>()
     }
 
-    /// Whether every physical axis carries exactly one logical axis at coefficient `1`, so the
-    /// physical coordinates uniquely determine the logical ones and
+    /// Whether every physical axis carries exactly one logical axis at coefficient `1` with zero
+    /// offset, so the physical coordinates uniquely determine the logical ones and
     /// [`fold_physical`](crate::fold_physical) can invert `GmemLayout`'s `to_source_pos`. True for
     /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
-    /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell.
+    /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell
+    /// or applies a constant offset.
     pub fn is_invertible(&self) -> bool {
-        self.physical
-            .iter()
-            .all(|m| matches!(m.terms(), [t] if matches!(t.scale, Scale::Static(1))))
+        self.physical.iter().all(|m| {
+            m.offset() == 0 && matches!(m.terms(), [t] if matches!(t.scale, Scale::Static(1)))
+        })
     }
 
     /// The phase-1 contract for a *gathered* (affine) projection. A plain one, storage-tiled or
@@ -687,5 +698,39 @@ mod tests {
         );
         assert!(!p.is_invertible());
         assert!(Projection::direct(&[A, B]).is_invertible());
+
+        let with_offset = Projection::new(
+            &[A, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 1)], -1),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(!with_offset.is_invertible());
+        assert_eq!(with_offset.offset(0), -1);
+        assert_eq!(with_offset.offset(1), 0);
+    }
+
+    /// Only a negative offset arms the window's underflow guard; a forward shift cannot underflow.
+    #[test]
+    fn may_underflow_tracks_negative_offsets_only() {
+        let padded = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], -1),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(padded.may_underflow());
+
+        let shifted = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], 1),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(!shifted.may_underflow());
+        assert!(!Projection::direct(&[A, B]).may_underflow());
     }
 }
