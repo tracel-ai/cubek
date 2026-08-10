@@ -36,8 +36,9 @@ impl Projection {
     /// A storage-tiled logical axis labels several physical axes, which is the whole encoding of
     /// its tiling: the digit each fragment carries follows from that repetition
     /// ([`digit`](Projection::digit)), so no extent is read here and none is baked in. What
-    /// [`TileSpec::from_concrete`](crate::TileSpec::from_concrete) builds every operand's mapping
-    /// from.
+    /// [`StridedTileSource::subspace`](crate::StridedTileSource::subspace) derives a labeled
+    /// operand's mapping from; [`StridedTileSource::gathered`](crate::StridedTileSource::gathered)
+    /// is the entry for one no labeling describes.
     pub fn of_layout(layout: &ConcreteLayout) -> Projection {
         Projection {
             physical: layout
@@ -653,7 +654,7 @@ mod tests {
             PhysicalAxis::new(A, 8),
             PhysicalAxis::new(B, 8),
         ]);
-        let spec = TileSpec::from_concrete(&layout, None, 0);
+        let spec = TileSpec::new(Projection::of_layout(&layout));
 
         assert_eq!(spec.projection.physical_rank(), layout.axes().len());
         assert_eq!(

@@ -612,6 +612,161 @@ fn conv1d_masked_overhang_strided() {
     .check_at(2, 4, 1, true, Schedule::Direct);
 }
 
+// ---- through the Launcher --------------------------------------------------
+
+impl Conv1d {
+    /// [`check_at`](Conv1d::check_at) driven end to end by [`Launcher`]: the input reaches the
+    /// launch through [`StridedTileSource::gathered`] instead of a hand-built [`TileSpec`], so the
+    /// kernel projects from the kernel-form (fully dynamic) space and one compiled kernel serves
+    /// every shape. `padding` shifts the window's origin, which the builder's derived check has to
+    /// arm on by itself.
+    fn check_launched(&self, tile_oh: usize, tile_co: usize, padding: usize, schedule: Schedule) {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let f32_ty = f32::as_type_native_unchecked().storage_type();
+
+        let space = Tiling::new()
+            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+            .level(WalkOrder::RowMajor, schedule, |l| {
+                l.axis(OH, Cut::sequential(tile_oh))
+                    .axis(CO, Cut::sequential(tile_co))
+                    .axis(RH, Cut::sequential(self.rh))
+                    .axis(CI, Cut::sequential(self.ci))
+            })
+            .build();
+
+        // Padding shortens the input by exactly what it shifts the window back by, so the last
+        // output position's last tap still lands on the final row.
+        let in_len = self.in_len() - padding;
+        let in_shape = shape![in_len, self.ci];
+        let w_shape = shape![self.rh, self.ci, self.co];
+        let input = ramp(in_shape.num_elements(), 7);
+        let weight = ramp(w_shape.num_elements(), 5);
+
+        let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+            .dtype(f32_ty)
+            .custom(input.clone())
+            .generate_with_f32_host_data();
+        let (w_handle, _) = TestInput::builder(client.clone(), w_shape)
+            .dtype(f32_ty)
+            .custom(weight.clone())
+            .generate_with_f32_host_data();
+        let out_handle = TestInput::builder(client.clone(), shape![self.oh, self.co])
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data();
+
+        // `OH` and `RH` share the input's gathered dim, whose bound is the receptive field they
+        // reach over rather than either extent, so they reach the kernel static. `CO` no gathered
+        // operand spans and `CI` identity-maps a dim of its own, so both can go runtime.
+        let launch = space.launcher_over(&client, &[CO, CI]);
+        let in_arg = launch
+            .arg(in_handle.binding())
+            .gathered(Projection::new(
+                &[OH, RH, CI],
+                &[
+                    PhysicalAxisMap::affine_with_offset(
+                        &[(OH, self.stride), (RH, self.dilation)],
+                        -(padding as isize),
+                    ),
+                    PhysicalAxisMap::of(CI),
+                ],
+            ))
+            .build();
+        let w_arg = launch
+            .arg(w_handle.binding())
+            .subspace(&[RH, CI, CO])
+            .build();
+        let out_arg = launch
+            .arg(out_handle.clone().binding())
+            .subspace(&[OH, CO])
+            .build();
+
+        conv_kernel::launch::<TestRuntime>(
+            &client,
+            launch.cube_count(),
+            launch.cube_dim(),
+            in_arg.arg(),
+            w_arg.arg(),
+            out_arg.arg(),
+            launch.space().clone(),
+            f32_ty,
+        );
+
+        let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+        let want = self.reference_padded(&input, &weight, in_len, padding);
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                assert_eq!(
+                    got.get_f32(&[o, c]),
+                    want[o * self.co + c],
+                    "launched conv1d {schedule:?} padding {padding}: wrong at ({o}, {c})"
+                );
+            }
+        }
+    }
+}
+
+/// The plainest gather off the builder: nothing overhangs and the origin cannot go negative, so
+/// the derived check is off and the kernel's own extents are all runtime.
+#[test]
+fn conv1d_launched_dense_window() {
+    Conv1d {
+        oh: 8,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_launched(4, 4, 0, Schedule::Direct);
+}
+
+/// Stride and dilation both off `1`, staged: the affine advance and the compaction have to survive
+/// the dynamic space the launcher hands the kernel.
+#[test]
+fn conv1d_launched_staged_strided_and_dilated() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 4,
+        ci: 3,
+        stride: 3,
+        dilation: 2,
+    }
+    .check_launched(2, 2, 0, Schedule::Staged);
+}
+
+/// A padded window with no overhang anywhere: nothing about the tiling says the operand needs a
+/// check, so the mask is armed by the negative origin alone and the padded taps must read zero.
+#[test]
+fn conv1d_launched_padding_arms_the_check() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_launched(3, 4, 1, Schedule::Direct);
+}
+
+/// An output extent the tile edge does not divide, so the overhang arms the check through the
+/// affine map: the tap that runs past the input reads `0` and the row that does not exist is not
+/// written.
+#[test]
+fn conv1d_launched_masked_overhang() {
+    Conv1d {
+        oh: 7,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_launched(4, 4, 0, Schedule::Direct);
+}
+
 // ---- runtime coefficients --------------------------------------------------
 
 /// [`conv_kernel`] with the input's stride and dilation arriving as runtime scalars rather than

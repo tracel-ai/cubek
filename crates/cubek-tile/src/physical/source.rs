@@ -9,8 +9,9 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, QuantTileArgLaunch,
-    Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Extent, Leaf, LoadMethod, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
+    validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -29,6 +30,9 @@ struct TileSourceData<'a, R: Runtime> {
     batch_axes: &'a [Axis],
     /// How the subspace axes are storage-tiled in the binding; `None` is untiled.
     tiling: Option<StorageTiling>,
+    /// The operand's own affine mapping, when it states one ([`gathered`](StridedTileSource::gathered));
+    /// `None` derives it from the labeled dims instead.
+    projection: Option<Projection>,
     v: usize,
     boundary: Option<Option<Boundary>>,
     stage: Option<StageStorage>,
@@ -43,6 +47,8 @@ struct TileSourceData<'a, R: Runtime> {
 /// Typestate builder for a strided tile kernel operand, started with
 /// [`Launcher::arg`](crate::Launcher::arg) or [`StridedOperand::source`]. The `Sp`/`Sub`
 /// markers make [`build`](Self::build) exist only once both required setters are [`Set`];
+/// `Sub` is satisfied by [`subspace`](Self::subspace), which labels the buffer's dims, or by
+/// [`gathered`](Self::gathered), which states the affine mapping outright;
 /// the `Q` marker records whether [`quantized`](Self::quantized) was called, so `build`
 /// returns a [`StridedOperand`] (plain) or a [`QuantOperand`] (quantized) and no call
 /// site ever probes an option.
@@ -61,6 +67,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 subspace: &[],
                 batch_axes: &[],
                 tiling: None,
+                projection: None,
                 v: 1,
                 boundary: None,
                 stage: None,
@@ -83,10 +90,32 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         }
     }
 
-    /// The inner block of axes the operand iterates, its `[row, col]` for a matmul (required,
-    /// non-empty). Complementary to [`batches`](Self::batches), the outer dims.
+    /// The inner block of axes the operand iterates, its `[row, col]` for a matmul (required
+    /// unless [`gathered`](Self::gathered) states the mapping instead, non-empty). Complementary
+    /// to [`batches`](Self::batches), the outer dims.
     pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, Q, R> {
         self.data.subspace = axes;
+        StridedTileSource {
+            data: self.data,
+            _state: PhantomData,
+        }
+    }
+
+    /// Sets an explicit affine [`Projection`] for a gathered operand (e.g. convolution or resample),
+    /// mapping logical axes to buffer dimensions.
+    ///
+    /// This replaces [`subspace`](Self::subspace), [`batches`](Self::batches), and
+    /// [`tiling`](Self::tiling). Setting any of those alongside `gathered` is an error.
+    ///
+    /// # Bounds Checking & Extents
+    /// - If the projection [`may_underflow`](Projection::may_underflow), boundary checking is enabled
+    ///   by default unless overridden with [`checked`](Self::checked).
+    /// - Logical axes sharing a physical dimension must be [`Static`](crate::Extent) in the kernel space
+    ///   ([`Space::launcher_over`](crate::Space::launcher_over)).
+    /// - Dynamic coefficients/offsets ([`Scale::Dynamic`](crate::Scale), [`Offset::Dynamic`](crate::Offset))
+    ///   are passed at runtime via [`TileArg::tile_gathered`](crate::TileArg::tile_gathered).
+    pub fn gathered(mut self, projection: Projection) -> StridedTileSource<'a, Sp, Set, Q, R> {
+        self.data.projection = Some(projection);
         StridedTileSource {
             data: self.data,
             _state: PhantomData,
@@ -119,7 +148,8 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
 
     /// Force the overhang bounds-check on or off (using [`Boundary::Zero`] when checked).
     /// Default: derived from the concrete space when minted by a [`Launcher`](crate::Launcher)
-    /// (checked exactly when a subspace axis [`overhangs`](Space::overhangs)), else `Some(Boundary::Zero)`.
+    /// (checked when an axis this operand addresses [`overhangs`](Space::overhangs), or when a
+    /// [`gathered`](Self::gathered) mapping may underflow), else `Some(Boundary::Zero)`.
     /// A boolean convenience over [`with_boundary`](Self::with_boundary): it unconditionally
     /// overwrites whatever mode was set before it, so a `with_boundary(Some(Boundary::Clamp))`
     /// before this call is silently dropped back to `Zero`. Sequence a `Clamp` override after
@@ -271,7 +301,8 @@ impl<R: Runtime> QuantOperand<R> {
 impl<R: Runtime> StridedOperand<R> {
     /// Start describing a strided tile kernel operand sourced from `binding`: a
     /// [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space)
-    /// and [`subspace`](StridedTileSource::subspace) (`build` won't compile until both are
+    /// and either [`subspace`](StridedTileSource::subspace) or
+    /// [`gathered`](StridedTileSource::gathered) (`build` won't compile until both are
     /// set), then optionally [`batches`](StridedTileSource::batches),
     /// [`tiling`](StridedTileSource::tiling), [`vectorize`](StridedTileSource::vectorize),
     /// or [`checked`](StridedTileSource::checked). Optional defaults are the safe ones, so
@@ -290,9 +321,9 @@ struct Realized<R: Runtime> {
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
-    /// The derivation both builds share: fold the labeled dims into a [`ConcreteLayout`],
-    /// derive the bounds-check from overhang, and mint the comptime [`TileSpec`] via
-    /// [`TileSpec::from_concrete`].
+    /// The derivation both builds share: settle the operand's [`Projection`] (the labeled dims
+    /// folded into a [`ConcreteLayout`], or the [`gathered`](StridedTileSource::gathered) mapping
+    /// as given), derive the bounds-check, and mint the comptime [`TileSpec`].
     fn realize(self) -> Realized<R> {
         let TileSourceData {
             mut binding,
@@ -301,6 +332,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             batch_axes,
             subspace,
             tiling,
+            projection,
             v,
             boundary,
             stage,
@@ -310,92 +342,168 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         } = self.data;
         let space = space.unwrap();
 
-        let rank = binding.shape.len();
-        let tiling = tiling.unwrap_or_else(|| StorageTiling::uniform(subspace.len(), 0));
-        assert_eq!(
-            tiling.rank(),
-            subspace.len(),
-            "StridedTileSource: the tiling describes {} axes but the subspace has {}",
-            tiling.rank(),
-            subspace.len()
-        );
-        // One axis label per buffer dim: the trailing block is the subspace emitted level-major
-        // per `tiling`, and whatever leads it is this operand's batches, labeled by the trailing
-        // (right-aligned) slice of `batch_axes`.
-        let block = tiling.order(subspace);
-        let block_dims = block.len();
-        assert!(
-            rank >= block_dims,
-            "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
-            subspace.len()
-        );
-        let batch_dims = rank - block_dims;
-        assert!(
-            batch_dims <= batch_axes.len(),
-            "StridedTileSource: {batch_dims} batch dims but only {} batch axes given",
-            batch_axes.len()
-        );
-        let mut physical_axes = Vec::with_capacity(rank);
-        physical_axes.extend_from_slice(&batch_axes[batch_axes.len() - batch_dims..]);
-        physical_axes.extend_from_slice(&block);
+        // Use the explicit projection if gathered, or derive it from labeled axes.
+        // `addressed` contains all logical axes used for bounds checking.
+        let (projection, addressed) = match projection {
+            Some(projection) => {
+                check_stated(&binding, space, &projection, subspace, batch_axes, &tiling);
+                let addressed = projection.logical_axes().to_vec();
+                (projection, addressed)
+            }
+            None => labeled(&mut binding, subspace, batch_axes, tiling),
+        };
 
-        // Explicit override wins; a Launcher-minted source derives the check from overhang, and
-        // the free-standing path stays conservatively checked. A dim whose axis is absent from the
-        // space is a broadcast omission (it drops out below): nothing to overhang.
+        // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
         let boundary = boundary.unwrap_or_else(|| match concrete {
             Some(concrete) => {
-                let overhangs = physical_axes
+                let overhangs = addressed
                     .iter()
                     .filter(|&&axis| concrete.contains(axis))
                     .any(|&axis| concrete.overhangs(axis));
-                if overhangs {
-                    Some(Boundary::Zero)
-                } else {
-                    None
-                }
+                (overhangs || projection.may_underflow()).then_some(Boundary::Zero)
             }
             None => Some(Boundary::Zero),
         });
 
-        // A masked access counts its length in lines and would clip valid rows, so a
-        // bounds-checked operand must stay scalar.
+        // Bounds-checked operands cannot be vectorized.
         assert!(
             !(boundary.is_some() && v > 1),
-            "StridedTileSource: a bounds-checked operand cannot be vectorized"
+            "StridedTileSource: a bounds-checked operand cannot be vectorized; serve it scalar or \
+             state `checked(false)` if the launch proves every access in bounds"
         );
+        // Validate projection vector width alignment on the host side.
+        projection.validate(v);
 
-        let mut phys = Vec::new();
-        let mut shape = Vec::new();
-        let mut strides = Vec::new();
-
-        for (i, &axis) in physical_axes.iter().enumerate() {
-            let extent = binding.shape[i];
-            // A size-1 batch dim is a broadcast omission: the dim and its axis both drop out. A
-            // subspace axis never does, however small, since the tile is shaped over it.
-            if batch_axes.contains(&axis) && extent == 1 && !subspace.contains(&axis) {
-                continue;
-            }
-            phys.push(PhysicalAxis::new(axis, extent));
-            shape.push(extent);
-            strides.push(binding.strides[i]);
-        }
-
-        binding.shape = shape[..].into();
-        binding.strides = strides[..].into();
-        let mut spec =
-            TileSpec::from_concrete(&ConcreteLayout::new(&phys), boundary, units).leaf(leaf);
+        let mut spec = TileSpec::new(projection)
+            .with_boundary(boundary)
+            .units(units)
+            .leaf(leaf);
         if let Some(stage) = stage {
             spec = spec.staged(stage);
         }
         if let Some(quant) = &quant {
+            // Quantization is not supported for gathered operands.
+            assert!(
+                spec.projection.untiled().is_direct(),
+                "StridedTileSource::quantized: a gathered operand cannot be quantized; its scale \
+                 grid is shaped over its logical axes, which its buffer's dims no longer match"
+            );
             quant.validate(&space.project(spec.axes()), v, leaf);
         }
+        // Dynamic projection scales cannot be staged to shared memory (requires compile-time extent).
+        assert!(
+            !spec.projection.has_dynamic_scales() || !space.partitioner().stages(),
+            "StridedTileSource: a Dynamic coefficient cannot be staged, its window has no \
+             comptime extent; the schedule must be Direct"
+        );
         Realized {
             tensor: binding.into_tensor_arg(),
             vector_size: v,
             spec,
             quant,
         }
+    }
+}
+
+/// Derives a [`Projection`] from labeled subspace and batch axes.
+///
+/// Leading batch dimensions align with `batch_axes` (size-1 broadcast dims are omitted).
+/// The inner subspace axes are laid out according to `tiling`.
+///
+/// Returns the projection along with all physical axes prior to broadcast omission (for bounds checking).
+fn labeled<R: Runtime>(
+    binding: &mut TensorBinding<R>,
+    subspace: &[Axis],
+    batch_axes: &[Axis],
+    tiling: Option<StorageTiling>,
+) -> (Projection, Vec<Axis>) {
+    let rank = binding.shape.len();
+    let tiling = tiling.unwrap_or_else(|| StorageTiling::uniform(subspace.len(), 0));
+    assert_eq!(
+        tiling.rank(),
+        subspace.len(),
+        "StridedTileSource: the tiling describes {} axes but the subspace has {}",
+        tiling.rank(),
+        subspace.len()
+    );
+    let block = tiling.order(subspace);
+    let block_dims = block.len();
+    assert!(
+        rank >= block_dims,
+        "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
+        subspace.len()
+    );
+    let batch_dims = rank - block_dims;
+    assert!(
+        batch_dims <= batch_axes.len(),
+        "StridedTileSource: {batch_dims} batch dims but only {} batch axes given",
+        batch_axes.len()
+    );
+    let mut physical_axes = Vec::with_capacity(rank);
+    physical_axes.extend_from_slice(&batch_axes[batch_axes.len() - batch_dims..]);
+    physical_axes.extend_from_slice(&block);
+
+    let mut phys = Vec::new();
+    let mut shape = Vec::new();
+    let mut strides = Vec::new();
+
+    for (i, &axis) in physical_axes.iter().enumerate() {
+        let extent = binding.shape[i];
+        // A subspace axis never drops out, however small, since the tile is shaped over it.
+        if batch_axes.contains(&axis) && extent == 1 && !subspace.contains(&axis) {
+            continue;
+        }
+        phys.push(PhysicalAxis::new(axis, extent));
+        shape.push(extent);
+        strides.push(binding.strides[i]);
+    }
+
+    binding.shape = shape[..].into();
+    binding.strides = strides[..].into();
+    (
+        Projection::of_layout(&ConcreteLayout::new(&phys)),
+        physical_axes,
+    )
+}
+
+/// Validates an explicit gathered [`Projection`] against the tensor binding and iteration space.
+/// Ensures mutually exclusive labeling options (`subspace`, `batch_axes`, `tiling`) were not provided.
+fn check_stated<R: Runtime>(
+    binding: &TensorBinding<R>,
+    space: &Space,
+    projection: &Projection,
+    subspace: &[Axis],
+    batch_axes: &[Axis],
+    tiling: &Option<StorageTiling>,
+) {
+    assert!(
+        subspace.is_empty() && batch_axes.is_empty() && tiling.is_none(),
+        "StridedTileSource::gathered: the mapping is stated outright, so `subspace`, `batches` \
+         and `tiling` have nothing left to describe"
+    );
+    assert_eq!(
+        projection.physical_rank(),
+        binding.shape.len(),
+        "StridedTileSource::gathered: the mapping addresses {} dims but the binding has {}",
+        projection.physical_rank(),
+        binding.shape.len()
+    );
+    for &axis in projection.logical_axes() {
+        assert!(
+            space.contains(axis),
+            "StridedTileSource::gathered: the mapping spans {axis:?}, which the launched space \
+             does not have"
+        );
+        // When multiple logical axes share a physical dimension (gathered), individual runtime
+        // extents cannot be recovered from the buffer shape and must be static in the space.
+        let pa = projection.carriers(axis)[0];
+        assert!(
+            projection.physical_axis(pa).is_identity(axis)
+                || matches!(space.extent_raw(axis), Extent::Static(_)),
+            "StridedTileSource::gathered: {axis:?} is gathered, so this operand's buffer holds the \
+             receptive field its axes reach over rather than that axis's own extent; keep it \
+             static in the kernel space (`Space::launcher_over`)"
+        );
     }
 }
 

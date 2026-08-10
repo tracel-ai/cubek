@@ -67,19 +67,6 @@ impl TileSpec {
         self.projection.logical_axes()
     }
 
-    /// Derive an operand's spec from its realized [`ConcreteLayout`]: the [`Projection`] and the
-    /// tiling both read off the layout's repeated axis labels. The one derivation every
-    /// launch site shares.
-    pub fn from_concrete(
-        layout: &ConcreteLayout,
-        boundary: Option<Boundary>,
-        units: usize,
-    ) -> Self {
-        TileSpec::new(Projection::of_layout(layout))
-            .with_boundary(boundary)
-            .units(units)
-    }
-
     /// State what this operand is at the instruction (default [`Leaf::Memory`], the memory form).
     pub fn leaf(mut self, leaf: Leaf) -> Self {
         self.leaf = leaf;

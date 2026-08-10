@@ -5,7 +5,10 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{Axis, CubeAxis, Cut, DequantAt, Schedule, StridedOperand, Tiling, WalkOrder};
+use cubek_tile::{
+    Axis, Boundary, CubeAxis, Cut, DequantAt, Offset, PhysicalAxisMap, Projection, Scale, Schedule,
+    StridedOperand, Tiling, WalkOrder,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -36,6 +39,25 @@ fn launcher_kernel_space_is_dynamic_concrete_is_not() {
         assert!(!launch.concrete().is_dynamic(axis));
     }
     assert_eq!(launch.concrete().extent(M), 64);
+}
+
+#[test]
+fn launcher_over_frees_only_the_listed_axes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M, K]);
+
+    assert!(launch.space().is_dynamic(M));
+    assert!(launch.space().is_dynamic(K));
+    assert!(!launch.space().is_dynamic(N));
+}
+
+/// An axis the space does not have would be dropped silently, leaving the kernel specialized along
+/// the axis the caller meant to free.
+#[test]
+#[should_panic(expected = "is not an axis of this space")]
+fn launcher_over_unknown_axis_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let _ = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[Axis(9)]);
 }
 
 /// The footgun the launcher removes: geometry read after `all_dynamic` has no extents to
@@ -138,6 +160,196 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .build();
     assert!(!broadcast.spec.axes().contains(&B0));
     assert!(!broadcast.spec.axes().contains(&B1));
+}
+
+// ---- StridedTileSource::gathered -------------------------------------------
+
+/// A convolution-shaped input over `batched_space`: output positions `M` at `stride` and taps `K`
+/// at `dilation` share one physical dim, channels `N` ride the other. Three logical axes over a
+/// rank-2 buffer, which no list of dim labels describes.
+fn window(stride: usize, dilation: usize, offset: impl Into<Offset>) -> Projection {
+    Projection::new(
+        &[M, K, N],
+        &[
+            PhysicalAxisMap::affine_with_offset(&[(M, stride), (K, dilation)], offset),
+            PhysicalAxisMap::of(N),
+        ],
+    )
+}
+
+/// The mapping reaches the spec as given: the buffer keeps its two dims and the tile spans the
+/// three logical axes, in the projection's own order.
+#[test]
+fn arg_gathered_states_its_own_mapping() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+
+    let input = launch
+        .arg(binding(&client, &[79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+
+    assert_eq!(input.spec.axes(), &[M, K, N]);
+    assert_eq!(input.spec.projection, window(1, 1, 0));
+    assert_eq!(input.spec.projection.physical_rank(), 2);
+    // Nothing overhangs and the origin cannot go negative, so the gather stays unchecked.
+    assert_eq!(input.spec.boundary, None);
+}
+
+/// An overhanging axis arms the check through the affine map just as it does through a label: the
+/// tap axis `K` is one of the two the gathered dim is addressed by.
+#[test]
+fn arg_gathered_derives_check_from_overhang() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4).
+    let launch = batched_space(1, 1, 64, 64, 18).launcher_over(&client, &[N]);
+
+    let input = launch
+        .arg(binding(&client, &[81, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+    assert_eq!(input.spec.boundary, Some(Boundary::Zero));
+
+    // An explicit override still wins over the derivation.
+    let forced = launch
+        .arg(binding(&client, &[81, 64]))
+        .gathered(window(1, 1, 0))
+        .checked(false)
+        .build();
+    assert_eq!(forced.spec.boundary, None);
+}
+
+/// A padded window reads before the buffer's start whatever the tiling divides, so the derivation
+/// arms on the offset's sign alone. A forward shift cannot underflow and stays unchecked.
+#[test]
+fn arg_gathered_derives_check_from_underflow() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+
+    let padded = launch
+        .arg(binding(&client, &[64, 64]))
+        .gathered(window(1, 1, -1))
+        .build();
+    assert_eq!(padded.spec.boundary, Some(Boundary::Zero));
+
+    // A runtime offset's sign is unknown at launch, so it arms the guard conservatively.
+    let dynamic = launch
+        .arg(binding(&client, &[64, 64]))
+        .gathered(window(1, 1, Offset::Dynamic))
+        .build();
+    assert_eq!(dynamic.spec.boundary, Some(Boundary::Zero));
+
+    let shifted = launch
+        .arg(binding(&client, &[96, 64]))
+        .gathered(window(1, 1, 1))
+        .build();
+    assert_eq!(shifted.spec.boundary, None);
+}
+
+/// The stated mapping replaces the labeling whole, so a leftover `subspace` describes nothing and
+/// is refused rather than silently dropped.
+#[test]
+#[should_panic(expected = "nothing left to describe")]
+fn arg_gathered_alongside_a_subspace_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+    let _ = launch
+        .arg(binding(&client, &[79, 64]))
+        .subspace(&[M, N])
+        .gathered(window(1, 1, 0))
+        .build();
+}
+
+/// One map per buffer dim: a mapping that addresses fewer dims than the binding has would read
+/// every coarser stride as if it were the operand's own.
+#[test]
+#[should_panic(expected = "addresses 2 dims but the binding has 3")]
+fn arg_gathered_rank_mismatch_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+    let _ = launch
+        .arg(binding(&client, &[4, 79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+}
+
+/// The gather contract runs on the caller's thread now that the builder knows the served width:
+/// the innermost dim is addressed in lines, so it must be one logical axis at coefficient 1.
+#[test]
+#[should_panic(expected = "innermost physical axis")]
+fn arg_gathered_validates_the_innermost_dim() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M]);
+    let _ = launch
+        .arg(binding(&client, &[64, 79]))
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::of(M),
+                PhysicalAxisMap::affine(&[(N, 1), (K, 2)]),
+            ],
+        ))
+        .vectorize(4)
+        .checked(false)
+        .build();
+}
+
+/// An axis sharing its dim with another has no extent of its own to read back at runtime, so the
+/// kernel space has to state it. Left [`Dynamic`], it would otherwise reach the kernel and mis-size
+/// the window there, with nothing to report.
+#[test]
+#[should_panic(expected = "keep it static in the kernel space")]
+fn arg_gathered_dynamic_axis_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // `K` shares the gathered dim with `M`, so freeing it leaves neither an extent.
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N, K]);
+    let _ = launch
+        .arg(binding(&client, &[79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+}
+
+/// The axis a gather does identity-map still reads its own extent, so it is free to stay runtime
+/// alongside the two that share a dim.
+#[test]
+fn arg_gathered_identity_axis_may_stay_dynamic() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+
+    let input = launch
+        .arg(binding(&client, &[79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+    assert_eq!(input.spec.axes(), &[M, K, N]);
+    assert!(launch.space().is_dynamic(N));
+    assert!(!launch.space().is_dynamic(M));
+}
+
+/// A runtime coefficient leaves the compacted window with no comptime extent, so the smem it would
+/// be staged into cannot be sized. Reported here rather than at the stage, on the caller's thread.
+#[test]
+#[should_panic(expected = "cannot be staged")]
+fn arg_gathered_dynamic_coefficient_cannot_stage() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::scaled(&[(M, Scale::Dynamic), (K, Scale::Dynamic)]),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
 }
 
 // ---- Launcher::vector_size -------------------------------------------------

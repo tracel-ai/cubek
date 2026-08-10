@@ -191,6 +191,22 @@ pub struct Tile<T: Numeric> {
     pub leaf: Leaf,
 }
 
+/// Returns the physical dimension index in the tile's window bounds corresponding to `axis`.
+///
+/// For direct mappings, each logical axis maps 1:1 to a physical dimension. For gathered operands
+/// sharing dimensions, only identity-mapped axes carry valid runtime extents; other axes must be
+/// static in the space.
+fn bound_position(projection: &Projection, axis: Axis) -> usize {
+    let pa = projection.carriers(axis)[0];
+    assert!(
+        projection.physical_axis(pa).is_identity(axis),
+        "Tile::runtime_extent: {axis:?} is gathered, so this operand's window holds the receptive \
+         field its axes reach over rather than that axis's own extent; a gathered axis must reach \
+         the kernel Static"
+    );
+    pa
+}
+
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
@@ -369,9 +385,11 @@ impl<T: Numeric> Tile<T> {
 
     /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData)
     /// folded from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's
-    /// tile count. A cmma fragment has no buffer extent.
+    /// tile count. A cmma fragment has no buffer extent, and a gathered axis has no bound of its
+    /// own ([`bound_position`]).
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
-        let p = comptime!(self.space.position(axis));
+        let projection = self.projection();
+        let p = comptime!(bound_position(&projection, axis));
         let raw = match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).fcast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
@@ -381,7 +399,7 @@ impl<T: Numeric> Tile<T> {
         };
         // `bound` is a line count on the vectorized innermost axis; the walk divides by
         // conceptual edges, so return line count × width.
-        let last = comptime!(self.space.rank() - 1);
+        let last = comptime!(projection.physical_rank() - 1);
         let w = self.vector_size();
         comptime!(if p == last { w } else { 1usize }) * raw
     }
