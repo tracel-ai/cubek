@@ -93,15 +93,13 @@ impl TileSpec {
         self
     }
 
-    /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`].
+    /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. A boolean
+    /// convenience over [`with_boundary`](Self::with_boundary): it unconditionally overwrites
+    /// whatever mode was set before it, so a `with_boundary(Some(Boundary::Clamp))` before this
+    /// call is silently dropped back to `Zero`. Sequence a `Clamp` override after `checked`, not
+    /// before it.
     pub fn checked(mut self, check: bool) -> Self {
         self.boundary = if check { Some(Boundary::Zero) } else { None };
-        self
-    }
-
-    /// Set the boundary handling mode for out-of-bounds access.
-    pub fn boundary(mut self, boundary: Boundary) -> Self {
-        self.boundary = Some(boundary);
         self
     }
 

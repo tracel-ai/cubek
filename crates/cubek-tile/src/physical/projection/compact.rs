@@ -198,6 +198,15 @@ mod tests {
         }
     }
 
+    /// [`extents`] for a projection with no `CI` axis at all, so there is no third extent to name.
+    fn extents2(oh: usize, rh: usize) -> impl Fn(Axis) -> usize {
+        move |a| match a {
+            OH => oh,
+            RH => rh,
+            _ => unreachable!("axis not spanned by this projection"),
+        }
+    }
+
     /// A direct operand compacts to itself: the stage is the logical tile, as it has always been.
     #[test]
     fn direct_compacts_to_itself() {
@@ -278,7 +287,7 @@ mod tests {
     #[test]
     fn a_scalar_gather_may_compact_its_only_axis() {
         let p = Projection::new(&[OH, RH], &[PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)])]);
-        let c = Compaction::of(&p, 1, extents(8, 3, 0));
+        let c = Compaction::of(&p, 1, extents2(8, 3));
         assert!(c.is_dense());
         assert_eq!(c.extents(), &[17]);
     }

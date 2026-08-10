@@ -499,6 +499,22 @@ mod tests {
         .validate(1);
     }
 
+    /// `vector_size == 1` relaxes only the innermost-identity rule; the storage-tiling refusal
+    /// still fires, pinning the relaxation as narrow rather than a blanket skip of `validate`.
+    #[test]
+    #[should_panic(expected = "addresses several physical axes")]
+    fn a_gather_still_rejects_tiled_storage_when_scalar() {
+        Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine(&[(A, 2), (R, 3)]),
+                PhysicalAxisMap::of(B),
+                PhysicalAxisMap::of(B),
+            ],
+        )
+        .validate(1);
+    }
+
     /// A gather cannot ride a `[grid…, tile…]` buffer: `B` here is storage-tiled (two fragments)
     /// while `Ih <- A*2 + R*3` gathers, and one advance cannot be both split into digits and
     /// scaled.

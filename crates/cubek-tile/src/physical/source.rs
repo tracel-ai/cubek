@@ -120,14 +120,19 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// Force the overhang bounds-check on or off (using [`Boundary::Zero`] when checked).
     /// Default: derived from the concrete space when minted by a [`Launcher`](crate::Launcher)
     /// (checked exactly when a subspace axis [`overhangs`](Space::overhangs)), else `Some(Boundary::Zero)`.
+    /// A boolean convenience over [`with_boundary`](Self::with_boundary): it unconditionally
+    /// overwrites whatever mode was set before it, so a `with_boundary(Some(Boundary::Clamp))`
+    /// before this call is silently dropped back to `Zero`. Sequence a `Clamp` override after
+    /// `checked`, not before it.
     pub fn checked(mut self, check: bool) -> Self {
         self.data.boundary = Some(if check { Some(Boundary::Zero) } else { None });
         self
     }
 
-    /// Set the boundary handling mode for out-of-bounds access.
-    pub fn boundary(mut self, boundary: Boundary) -> Self {
-        self.data.boundary = Some(Some(boundary));
+    /// Set the boundary handling mode for out-of-bounds access explicitly (`None` forces
+    /// unchecked, `Some` forces checked at that mode).
+    pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
+        self.data.boundary = Some(boundary);
         self
     }
 

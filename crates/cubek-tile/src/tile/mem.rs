@@ -46,8 +46,6 @@ pub struct MemData<T: Numeric> {
     /// and this stays a multiply-add. Addressing it from the origin instead would decompose a
     /// runtime coordinate, i.e. integer division per [`window_slice`](MemData::window_slice).
     window_start: u32,
-    #[cube(comptime)]
-    pub(crate) boundary: Option<Boundary>,
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
@@ -99,8 +97,20 @@ pub enum Overhang {
     Never,
     /// Possible in principle, excluded at launch: every shape divides its tiling (unchecked gmem).
     Fits,
-    /// Possible: reads past `bound` serve zero, writes skip (checked gmem).
+    /// Possible: reads/writes past `bound` are masked, per the window's [`Boundary`] (zero for
+    /// reads and skipped for writes under `Zero`, the edge cell under `Clamp`).
     Masked,
+}
+
+/// Boundary handling mode for out-of-bounds reads/writes, carried by [`Window`] (the layer that
+/// owns `origin`/`bound`/`signed` and so is the one that can turn an out-of-range coordinate into
+/// a valid physical one).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Boundary {
+    /// Out-of-bounds reads return zero; writes are skipped.
+    Zero,
+    /// Out-of-bounds reads/writes clamp to the edge cell.
+    Clamp,
 }
 
 impl Overhang {
@@ -265,6 +275,14 @@ impl<T: Numeric> Tile<T> {
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows.
         comptime!(projection.validate(vector_size));
+        // A window clamps in *lines*, so the cell it folds onto is the edge *element* only when a
+        // line is one element. `StridedTileSource::realize` refuses a checked vectorized operand
+        // already; this catches the hand-built spec, which never passes through it.
+        comptime!(assert!(
+            spec.boundary != Some(Boundary::Clamp) || vector_size == 1,
+            "Tile::of: Boundary::Clamp needs a scalar operand, the window clamps to a line index \
+             (served at {vector_size})"
+        ));
         // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
         // than its logical space has axes, and a storage-tiled one has more.
         let rank = comptime!(projection.physical_rank());
@@ -325,12 +343,17 @@ impl<T: Numeric> Tile<T> {
                     physical_strides,
                     projection: gmem_projection,
                 },
-                window: Window::new(origin, extent, bound, comptime!(coords.may_underflow())),
+                window: Window::new(
+                    origin,
+                    extent,
+                    bound,
+                    comptime!(coords.may_underflow()),
+                    comptime!(spec.boundary.unwrap_or(Boundary::Zero)),
+                ),
                 projection: comptime!(coords),
                 coefficients,
                 offsets,
                 window_start: 0u32,
-                boundary: comptime!(spec.boundary),
                 access: comptime!(Access {
                     whole: true,
                     overhang: match spec.boundary {
@@ -547,8 +570,9 @@ impl<T: Numeric> MemData<T> {
                     physical_strides,
                     projection: gmem_projection,
                 },
-                // Stage origins are never negative.
-                window: Window::new(origin, extent, bound, false),
+                // Stage origins are never negative, and smem never overhangs (`Overhang::Never`
+                // below), so the boundary policy is never consulted.
+                window: Window::new(origin, extent, bound, false, Boundary::Zero),
                 projection: comptime!(form.projection),
                 // A stage's own mapping is the compacted one, which is fully `Static`: a Dynamic
                 // coefficient never reaches a stage ([`Compaction::of`] refuses it), and the
@@ -556,7 +580,6 @@ impl<T: Numeric> MemData<T> {
                 coefficients: Coords::<u32>::new(),
                 offsets: Coords::<i32>::new(),
                 window_start: 0u32,
-                boundary: comptime!(None),
                 access: comptime!(Access {
                     whole: true,
                     overhang: Overhang::Never,
@@ -1110,6 +1133,19 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    /// The mask flag a *write* view is built with: [`Overhang::masks`], plus the one policy a
+    /// write cannot honour. [`Boundary::Clamp`] folds an out-of-range coordinate onto the edge
+    /// cell instead of masking it, so several logical cells would write the same physical one;
+    /// that is the aliasing [`matrix_mut`](MemData::matrix_mut) already refuses a gather for,
+    /// arriving by a second route. Refused rather than silently raced.
+    fn write_check(&self) -> comptime_type!(bool) {
+        comptime!(assert!(
+            self.window.boundary != Boundary::Clamp || !self.access.overhang.masks(),
+            "MemData: a Boundary::Clamp operand is read-only, a clamped write aliases the edge cell"
+        ));
+        comptime!(self.access.overhang.masks())
+    }
+
     /// The mutable twin of [`masked`](MemData::masked).
     pub(crate) fn masked_mut<W: Size, C: Coordinates, L: TileLayout<C>>(
         &mut self,
@@ -1120,7 +1156,7 @@ impl<T: Numeric> MemData<T> {
         }
         let base = self.base();
         let window = self.window();
-        let check = comptime!(self.access.overhang.masks());
+        let check = self.write_check();
         MaskedViewMut::new(
             self.lines_mut::<W>()
                 .view_mut(base)
@@ -1251,7 +1287,7 @@ impl<T: Numeric> MemData<T> {
         let base = self.base();
         let window = self.window();
         let extent = self.window.extent.clone();
-        let check = comptime!(self.access.overhang.masks());
+        let check = self.write_check();
         FlatViewMut::new(
             self.lines_mut::<W>()
                 .view_mut(base)
@@ -1453,6 +1489,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 self.window.bound.clone(),
                 comptime!(self.window.signed),
+                comptime!(self.window.boundary),
             ),
             // How the logical axes address the physical ones is a fact about the buffer, invariant
             // down the descent, and so are its runtime coefficients. The offsets only placed the
@@ -1461,7 +1498,6 @@ impl<T: Numeric> MemData<T> {
             coefficients: self.coefficients.clone(),
             offsets: self.offsets.clone(),
             window_start: start,
-            boundary: comptime!(self.boundary),
             // The window no longer covers the buffer, so the straight-through fill is off.
             access: comptime!(Access {
                 whole: false,
@@ -1875,6 +1911,10 @@ pub struct Window {
     /// Whether the origin can be negative.
     #[cube(comptime)]
     pub(crate) signed: bool,
+    /// How a coordinate past `bound` is handled. Only consulted when this window's
+    /// [`Access::overhang`](crate::Access::overhang) masks; harmless otherwise.
+    #[cube(comptime)]
+    pub(crate) boundary: Boundary,
 }
 
 #[cube]
@@ -1884,12 +1924,14 @@ impl Window {
         extent: Coords<u32>,
         bound: Coords<u32>,
         #[comptime] signed: bool,
+        #[comptime] boundary: Boundary,
     ) -> Self {
         Window {
             origin,
             extent,
             bound,
             signed,
+            boundary,
         }
     }
 }
@@ -1915,6 +1957,24 @@ impl Layout for Window {
             } else {
                 abs.fcast::<u32>()
             };
+            // Under `Clamp`, fold a coordinate past `bound` onto the edge cell rather than
+            // leaving it for the mask: the physical address this returns is always valid,
+            // checked or not.
+            let shifted = match comptime!(self.boundary) {
+                Boundary::Clamp => {
+                    let bound_i = self.bound.at(i);
+                    // A zero-extent axis has no edge cell to fold onto, and `bound - 1` would
+                    // wrap into a wild line index; it folds to `0` like an underflow instead.
+                    if bound_i == 0u32 {
+                        0u32
+                    } else if shifted >= bound_i {
+                        bound_i - 1u32
+                    } else {
+                        shifted
+                    }
+                }
+                Boundary::Zero => shifted,
+            };
             out.push(shifted);
         }
 
@@ -1931,21 +1991,28 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut valid = true;
+        match comptime!(self.boundary) {
+            // `to_source_pos` already folds an out-of-range coordinate onto a valid one, so
+            // there is nothing left to mask.
+            Boundary::Clamp => true,
+            Boundary::Zero => {
+                let mut valid = true;
 
-        // Check if the absolute coordinate is within [0, bound).
-        #[unroll]
-        for i in 0..self.bound.len() {
-            let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-            let inside = if comptime!(self.signed) {
-                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
-            } else {
-                abs.fcast::<u32>() < self.bound.at(i)
-            };
-            valid = valid && inside;
+                // Check if the absolute coordinate is within [0, bound).
+                #[unroll]
+                for i in 0..self.bound.len() {
+                    let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
+                    let inside = if comptime!(self.signed) {
+                        abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
+                    } else {
+                        abs.fcast::<u32>() < self.bound.at(i)
+                    };
+                    valid = valid && inside;
+                }
+
+                valid
+            }
         }
-
-        valid
     }
 }
 
