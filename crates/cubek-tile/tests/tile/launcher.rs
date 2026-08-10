@@ -295,7 +295,7 @@ fn arg_gathered_validates_the_innermost_dim() {
 }
 
 /// An axis sharing its dim with another has no extent of its own to read back at runtime, so the
-/// kernel space has to state it. Left [`Dynamic`], it would otherwise reach the kernel and mis-size
+/// kernel space has to state it. Left [`Dynamic`], it would otherwise reach the kernel and wrongly size
 /// the window there, with nothing to report.
 #[test]
 #[should_panic(expected = "keep it static in the kernel space")]
