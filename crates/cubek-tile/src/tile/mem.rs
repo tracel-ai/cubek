@@ -1776,7 +1776,11 @@ impl Layout for Window {
             let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
             // Clamp negative coordinates to 0 before bounds masking.
             let shifted = if comptime!(self.signed) {
-                if abs >= 0i32 { abs.fcast::<u32>() } else { 0u32 }
+                if abs >= 0i32 {
+                    abs.fcast::<u32>()
+                } else {
+                    0u32
+                }
             } else {
                 abs.fcast::<u32>()
             };
