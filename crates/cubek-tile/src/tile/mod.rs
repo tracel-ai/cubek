@@ -228,6 +228,16 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// How out-of-bounds reads/writes are handled on this tile (`None` when unchecked).
+    pub fn boundary(&self) -> comptime_type!(Option<Boundary>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.boundary),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(None)
+            }
+        }
+    }
+
     /// What this tile's cells are to the plane's lanes: whole, or a partial only true once
     /// combined across the plane. A resident form inherits it from the memory it was promoted
     /// from — the split is the space's, not the storage's.

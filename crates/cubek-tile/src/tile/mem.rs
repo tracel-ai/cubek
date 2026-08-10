@@ -46,6 +46,8 @@ pub struct MemData<T: Numeric> {
     /// and this stays a multiply-add. Addressing it from the origin instead would decompose a
     /// runtime coordinate, i.e. integer division per [`window_slice`](MemData::window_slice).
     window_start: u32,
+    #[cube(comptime)]
+    pub(crate) boundary: Option<Boundary>,
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
@@ -328,12 +330,12 @@ impl<T: Numeric> Tile<T> {
                 coefficients,
                 offsets,
                 window_start: 0u32,
+                boundary: comptime!(spec.boundary),
                 access: comptime!(Access {
                     whole: true,
-                    overhang: if spec.check_bounds {
-                        Overhang::Masked
-                    } else {
-                        Overhang::Fits
+                    overhang: match spec.boundary {
+                        None => Overhang::Fits,
+                        Some(Boundary::Zero) | Some(Boundary::Clamp) => Overhang::Masked,
                     },
                     stage,
                 }),
@@ -554,6 +556,7 @@ impl<T: Numeric> MemData<T> {
                 coefficients: Coords::<u32>::new(),
                 offsets: Coords::<i32>::new(),
                 window_start: 0u32,
+                boundary: comptime!(None),
                 access: comptime!(Access {
                     whole: true,
                     overhang: Overhang::Never,
@@ -1458,6 +1461,7 @@ impl<T: Numeric> MemData<T> {
             coefficients: self.coefficients.clone(),
             offsets: self.offsets.clone(),
             window_start: start,
+            boundary: comptime!(self.boundary),
             // The window no longer covers the buffer, so the straight-through fill is off.
             access: comptime!(Access {
                 whole: false,

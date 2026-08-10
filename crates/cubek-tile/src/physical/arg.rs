@@ -22,10 +22,9 @@ use crate::*;
 pub struct TileSpec {
     /// How this operand's logical axes address its buffer's physical ones.
     pub projection: Projection,
-    /// Whether this operand's logical extent can overhang its tile grid, so edge reads/writes must
-    /// be bounds-checked. Set from divisibility at launch; `false` keeps the unchecked (divisible)
-    /// fast path.
-    pub check_bounds: bool,
+    /// How out-of-bounds reads/writes are handled (`None` keeps the unchecked divisible fast path;
+    /// `Some(Boundary::Zero)` returns zero on reads / skips writes; `Some(Boundary::Clamp)` clamps).
+    pub boundary: Option<Boundary>,
     /// The launch's cube size (units per cube), `0` when unknown; carried into the
     /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
     pub units: usize,
@@ -41,8 +40,8 @@ pub struct TileSpec {
 
 impl TileSpec {
     /// An operand's spec from its mapping alone; the optional halves are the safe defaults
-    /// (unchecked, cube size unknown, memory leaf) and are set by [`checked`](Self::checked),
-    /// [`units`](Self::units), [`staged`](Self::staged), and [`leaf`](Self::leaf).
+    /// (unchecked, cube size unknown, memory leaf) and are set by [`boundary`](Self::boundary),
+    /// [`checked`](Self::checked), [`units`](Self::units), [`staged`](Self::staged), and [`leaf`](Self::leaf).
     ///
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
     /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
@@ -50,7 +49,7 @@ impl TileSpec {
     pub fn new(projection: Projection) -> Self {
         TileSpec {
             projection,
-            check_bounds: false,
+            boundary: None,
             units: 0,
             stage: None,
             leaf: Leaf::Memory,
@@ -71,9 +70,13 @@ impl TileSpec {
     /// Derive an operand's spec from its realized [`ConcreteLayout`]: the [`Projection`] and the
     /// tiling both read off the layout's repeated axis labels. The one derivation every
     /// launch site shares.
-    pub fn from_concrete(layout: &ConcreteLayout, check: bool, units: usize) -> Self {
+    pub fn from_concrete(
+        layout: &ConcreteLayout,
+        boundary: Option<Boundary>,
+        units: usize,
+    ) -> Self {
         TileSpec::new(Projection::of_layout(layout))
-            .checked(check)
+            .with_boundary(boundary)
             .units(units)
     }
 
@@ -90,10 +93,27 @@ impl TileSpec {
         self
     }
 
-    /// Set whether edge reads/writes must be bounds-checked.
+    /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`].
     pub fn checked(mut self, check: bool) -> Self {
-        self.check_bounds = check;
+        self.boundary = if check { Some(Boundary::Zero) } else { None };
         self
+    }
+
+    /// Set the boundary handling mode for out-of-bounds access.
+    pub fn boundary(mut self, boundary: Boundary) -> Self {
+        self.boundary = Some(boundary);
+        self
+    }
+
+    /// Set the optional boundary handling mode for out-of-bounds access.
+    pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
+        self.boundary = boundary;
+        self
+    }
+
+    /// Whether this operand has bounds checking enabled.
+    pub fn is_checked(&self) -> bool {
+        self.boundary.is_some()
     }
 
     /// Set the launch's cube size (units per cube).

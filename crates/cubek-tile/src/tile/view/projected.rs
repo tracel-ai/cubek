@@ -287,7 +287,28 @@ impl<T: Numeric> Tile<T> {
     /// axis of its [`Space`](crate::Space) (the innermost a line index). The N-D counterpart of
     /// [`matrix_transparent`](Tile::matrix_transparent), and the only read surface a gathered
     /// operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
-    pub fn nd<I: Numeric, WP: Size, W: Size>(
+    pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                let boundary = comptime!(g.boundary.unwrap_or(Boundary::Zero));
+                let layout = axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    g.coefficients.clone(),
+                    self.vector_size(),
+                    boundary,
+                );
+                g.nd_transparent::<I, WP, W>(layout)
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::nd: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
+        }
+    }
+
+    /// [`nd`](Tile::nd) with an explicit [`Boundary`] override.
+    pub fn nd_with_boundary<I: Numeric, WP: Size, W: Size>(
         &self,
         #[comptime] boundary: Boundary,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {

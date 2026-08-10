@@ -96,13 +96,15 @@ fn arg_derives_check_from_subspace_overhang() {
         .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .build();
-    assert!(touches_k.spec.check_bounds);
+    assert!(touches_k.spec.is_checked());
+    assert_eq!(touches_k.spec.boundary, Some(cubek_tile::Boundary::Zero));
 
     let avoids_k = launch
         .arg(binding(&client, &[64, 64]))
         .subspace(&[M, N])
         .build();
-    assert!(!avoids_k.spec.check_bounds);
+    assert!(!avoids_k.spec.is_checked());
+    assert_eq!(avoids_k.spec.boundary, None);
 
     // An explicit override still wins over the derivation.
     let forced = launch
@@ -110,7 +112,8 @@ fn arg_derives_check_from_subspace_overhang() {
         .subspace(&[M, K])
         .checked(false)
         .build();
-    assert!(!forced.spec.check_bounds);
+    assert!(!forced.spec.is_checked());
+    assert_eq!(forced.spec.boundary, None);
 }
 
 #[test]

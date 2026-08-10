@@ -215,8 +215,8 @@ fn mma_register_gather<
         &lhs.space, &rhs.space, &space, &reduce, lw
     ));
 
-    let lhs_view = lhs.nd::<IL, WPL, L>(Boundary::Zero);
-    let rhs_view = rhs.nd::<IR, WPR, V>(Boundary::Zero);
+    let lhs_view = lhs.nd::<IL, WPL, L>();
+    let rhs_view = rhs.nd::<IR, WPR, V>();
 
     for mat in 0..matrices {
         let batch = unravel(

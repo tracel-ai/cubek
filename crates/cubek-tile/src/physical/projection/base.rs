@@ -637,7 +637,7 @@ mod tests {
             PhysicalAxis::new(A, 8),
             PhysicalAxis::new(B, 8),
         ]);
-        let spec = TileSpec::from_concrete(&layout, false, 0);
+        let spec = TileSpec::from_concrete(&layout, None, 0);
 
         assert_eq!(spec.projection.physical_rank(), layout.axes().len());
         assert_eq!(

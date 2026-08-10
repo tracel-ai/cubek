@@ -242,6 +242,7 @@ pub(crate) fn projected_batch_matrix(
     #[comptime] projection: Projection,
     coefficients: Coords<u32>,
     #[comptime] vector_size: usize,
+    #[comptime] boundary: Boundary,
     i: usize,
 ) -> ProjectedBatchMatrix {
     let gathered = comptime!(!projection.is_direct());
@@ -252,7 +253,7 @@ pub(crate) fn projected_batch_matrix(
             comptime!(projection),
             coefficients,
             vector_size,
-            Boundary::Zero,
+            boundary,
         ),
     )
 }
@@ -267,6 +268,7 @@ pub(crate) fn projected_grouped_matrix(
     #[comptime] vector_size: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
+    #[comptime] boundary: Boundary,
 ) -> ProjectedGroupedMatrix {
     ProjectedGroupedMatrix::new(
         grouped_matrix(comptime!(&space), vector_size, rows, cols),
@@ -275,7 +277,7 @@ pub(crate) fn projected_grouped_matrix(
             comptime!(projection),
             coefficients,
             vector_size,
-            Boundary::Zero,
+            boundary,
         ),
     )
 }
@@ -288,12 +290,14 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let bound = g.extent();
+                let boundary = comptime!(g.boundary.unwrap_or(Boundary::Zero));
                 let layout = projected_batch_matrix(
                     &bound,
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
                     vector_size,
+                    boundary,
                     i,
                 );
                 g.masked::<W, Coords2d, ProjectedBatchMatrix>(layout)
@@ -315,12 +319,14 @@ impl<T: Numeric> Tile<T> {
                     "Tile::matrix_mut: a gathered operand aliases under a write"
                 ));
                 let bound = g.extent();
+                let boundary = comptime!(g.boundary.unwrap_or(Boundary::Zero));
                 let layout = projected_batch_matrix(
                     &bound,
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
                     vector_size,
+                    boundary,
                     i,
                 );
                 g.masked_mut::<W, Coords2d, ProjectedBatchMatrix>(layout)
@@ -345,12 +351,14 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let bound = g.extent();
+                let boundary = comptime!(g.boundary.unwrap_or(Boundary::Zero));
                 let layout = projected_batch_matrix(
                     &bound,
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
                     vector_size,
+                    boundary,
                     i,
                 );
                 g.matrix_transparent::<I, WP, W, ProjectedBatchMatrix>(layout)
@@ -379,6 +387,7 @@ impl<T: Numeric> Tile<T> {
         let vector_size = self.vector_size();
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
+                let boundary = comptime!(g.boundary.unwrap_or(Boundary::Zero));
                 let layout = projected_grouped_matrix(
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
@@ -386,6 +395,7 @@ impl<T: Numeric> Tile<T> {
                     vector_size,
                     rows,
                     cols,
+                    boundary,
                 );
                 g.matrix_transparent::<I, WP, W, ProjectedGroupedMatrix>(layout)
             }
