@@ -130,31 +130,6 @@ impl Layout for GroupedMatrix {
     }
 }
 
-/// Concatenates two coordinate lists into dynamic coordinates.
-#[cube]
-fn concat(leading: &Coords<u32>, trailing: &Coords<u32>) -> CoordsDyn {
-    let mut out = CoordsDyn::new();
-
-    #[unroll]
-    for p in 0..leading.len() {
-        out.push(leading.at(p));
-    }
-    #[unroll]
-    for p in 0..trailing.len() {
-        out.push(trailing.at(p));
-    }
-
-    out
-}
-
-/// Checks if a 2-D coordinate is within bounds.
-#[cube]
-fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
-    let (row, col) = pos;
-    let (rows, cols) = shape;
-    row < rows && col < cols
-}
-
 /// The leading (batch) extents a matrix index unravels over, in the space's axis order.
 ///
 /// A direct operand reads them off the window, which is the only place a
@@ -175,25 +150,6 @@ fn leading_extents(
             out.push(comptime!(space.extent_at(p) as u32));
         } else {
             out.push(bound.at(p));
-        }
-    }
-
-    out
-}
-
-/// Unravels a flat index into coordinates over the given extents.
-#[cube]
-pub(crate) fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
-    let n = extents.len();
-    let mut out = Coords::<u32>::new();
-
-    #[unroll]
-    for p in 0..n {
-        let digit = i.fdiv(extents.fproduct(comptime!(((p + 1)..n).collect::<Vec<_>>())));
-        if comptime!(p == 0) {
-            out.push(digit);
-        } else {
-            out.push(digit.frem(extents.at(p)));
         }
     }
 

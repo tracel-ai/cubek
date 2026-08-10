@@ -16,7 +16,7 @@ pub type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
 /// The mutable twin of [`FlatView`].
 pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 
-/// Maps a flat row-major index to an N-D coordinate over `shape`: the inverse of a
+/// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]): the inverse of a
 /// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it
 /// linearly (`shape()` is the element count) without re-deriving strides in the kernel.
 /// A static window's extents are constant handles, so the decode divides by constants.
@@ -38,21 +38,7 @@ impl Layout for FlatLayout {
     type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        let rank = self.shape.len().comptime();
-        let mut out = CoordsDyn::new();
-        let mut offs = pos as u32;
-
-        // Peel off the least-significant dim each step (row-major), carrying the quotient up.
-        #[unroll]
-        for i in 0..rank {
-            let dim = rank - i - 1;
-            let extent = self.shape.at(dim);
-            out.push(offs % extent);
-            offs /= extent;
-        }
-
-        out.reverse(); // pushed last→first; restore ascending dim order
-        out
+        unravel(&self.shape, pos as u32).to_dyn()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

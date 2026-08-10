@@ -219,19 +219,6 @@ impl Layout for StepUp {
     }
 }
 
-/// Whether every coordinate of `pos` falls inside `shape`.
-#[cube]
-fn within(shape: &Coords<u32>, pos: CoordsDyn) -> bool {
-    let mut valid = true;
-
-    #[unroll]
-    for p in 0..shape.len() {
-        valid = valid && pos[p] < shape.at(p);
-    }
-
-    valid
-}
-
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// This tile's whole logical box as a quantization-transparent read view, one coordinate per
