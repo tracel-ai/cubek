@@ -175,15 +175,8 @@ fn mma_register_direct<
     }
 }
 
-/// [`mma_register_direct`]'s N-D twin, for the two cases a batch matrix does not describe: several
-/// contracted axes, and an operand whose logical coordinate is not a physical one
-/// ([`Projection`]). The register block, the unroll rule, and the rank-1 step are the same; only
-/// the addressing differs, since each read resolves a whole coordinate ([`resolve_nd_coords`])
-/// through [`Tile::nd`] rather than a `(row, col)` pair through a matrix view.
-///
-/// The reduce nest is flattened to one runtime `kc` loop rather than nested loops: the leaf's
-/// contract is one rank-1 update per step, and a nest of comptime-known extents unravels back
-/// ([`unravel_reduce_index`]) for the cost of the div/mod the flat index already implies.
+/// N-D variant of [`mma_register_direct`] for operations with multiple contracted axes
+/// or projected operands.
 #[cube]
 fn mma_register_gather<
     E: Numeric,
@@ -222,29 +215,18 @@ fn mma_register_gather<
         &lhs.space, &rhs.space, &space, &reduce, lw
     ));
 
-    // Built once, outside the walk: the view is over the tile's whole logical box, so it does not
-    // depend on the matrix or the step, unlike the per-matrix views the 2-D kernel takes.
     let lhs_view = lhs.nd::<IL, WPL, L>();
     let rhs_view = rhs.nd::<IR, WPR, V>();
 
     for mat in 0..matrices {
-        // The batch coordinate the flat `mat` index stands for. The accumulator takes `mat` itself
-        // (`matrix_accumulate` unravels it the same way); the operands are addressed per axis, so
-        // they need the coordinates spelled out.
-        let mut batch = Coords::<u32>::new();
-        #[unroll]
-        for p in 0..comptime!(rank - 2) {
-            let stride = comptime!(
-                ((p + 1)..(rank - 2))
-                    .map(|q| space.extent_at(q))
-                    .product::<usize>()
-            );
-            batch.push(
-                mat.fcast::<u32>()
-                    .fdiv(comptime!(stride as u32))
-                    .frem(comptime!(space.extent_at(p) as u32)),
-            );
-        }
+        let batch = unravel(
+            &const_coords(comptime!(
+                (0..rank - 2)
+                    .map(|p| space.extent_at(p))
+                    .collect::<Vec<_>>()
+            )),
+            mat.fcast::<u32>(),
+        );
 
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
@@ -255,10 +237,11 @@ fn mma_register_gather<
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
-        // One rank-1 update per reduce step, as in the 2-D kernel; `p` walks the whole flattened
-        // nest instead of a single `K`.
         for p in 0..kc {
-            let reduce_coords = unravel_reduce_index(p, comptime!(reduce_extents.clone()));
+            let reduce_coords = unravel(
+                &const_coords(comptime!(reduce_extents.clone())),
+                p.fcast::<u32>(),
+            );
             // `lhs` lines along the fastest contracted axis (`assert_operand_shapes`), so that
             // axis's coordinate splits into the line index `resolve_nd_coords` divides out and the
             // lane within it, broadcast below.
@@ -346,29 +329,6 @@ fn store_accumulators<E: Numeric, V: Size>(
             acc.commit((i as u32, n as u32), c[i * nr + n]);
         }
     }
-}
-
-/// The reduce nest's coordinate at flat step `k_step`, row-major over `reduce_extents` (the outer
-/// axis moves slowest). The outermost digit takes the bare quotient: it has no enclosing extent to
-/// wrap against, and `k_step < Π extents` by construction, so a modulo there would only cost an
-/// instruction. Every radix is comptime, so on a static nest this folds to shifts and masks.
-#[cube]
-fn unravel_reduce_index(k_step: usize, #[comptime] reduce_extents: Vec<usize>) -> Coords<u32> {
-    let n = comptime!(reduce_extents.len());
-    let mut reduce_coords = Coords::<u32>::new();
-
-    #[unroll]
-    for j in 0..n {
-        let stride = comptime!(reduce_extents[(j + 1)..].iter().product::<usize>());
-        let axis_coord = k_step.fcast::<u32>().fdiv(comptime!(stride as u32));
-        reduce_coords.push(if comptime!(j == 0) {
-            axis_coord
-        } else {
-            axis_coord.frem(comptime!(reduce_extents[j] as u32))
-        });
-    }
-
-    reduce_coords
 }
 
 /// The coordinate `operand` is read at, one entry per axis of its own space, assembled from the

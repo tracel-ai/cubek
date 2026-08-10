@@ -239,6 +239,21 @@ impl<C: Int> Coords<C> {
     }
 }
 
+/// Converts a comptime list of extents into constant [`Coords<u32>`].
+#[cube]
+// `#[unroll]` needs a range loop; an iterator has no expansion.
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn const_coords(#[comptime] values: Vec<usize>) -> Coords<u32> {
+    let mut out = Coords::<u32>::new();
+
+    #[unroll]
+    for p in 0..comptime!(values.len()) {
+        out.push(comptime!(values[p] as u32).runtime());
+    }
+
+    out
+}
+
 pub struct CoordsExpand<C: Int> {
     values: Vec<NativeExpand<C>>,
 }

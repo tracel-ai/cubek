@@ -75,8 +75,6 @@ impl<L: LogicalLayout> Layout for Projected<L> {
         self.inner.shape()
     }
 
-    /// The inner box alone: the logical box [`AxisProjection`] would re-check is the same one, its
-    /// extents being the space's, which is where the inner layout's bounds come from.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         self.inner.is_in_bounds(pos)
     }
@@ -267,14 +265,24 @@ pub(crate) fn axis_projection(
     #[comptime] vector_size: usize,
 ) -> AxisProjection {
     let rank = comptime!(space.rank());
-    let last = comptime!(rank - 1);
-    let mut shape = Coords::<u32>::new();
-
-    #[unroll]
-    for p in 0..rank {
-        let e = comptime!(space.extent_at(p));
-        shape.push(comptime!((if p == last { e / vector_size } else { e }) as u32).runtime());
-    }
+    let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
 
     AxisProjection::new(shape, space, projection)
+}
+
+/// Returns the extents of `space` in the range `from..to`, with the innermost axis
+/// converted to line count by dividing by `vector_size`.
+pub(crate) fn line_extents(
+    space: &Space,
+    vector_size: usize,
+    from: usize,
+    to: usize,
+) -> Vec<usize> {
+    let last = space.rank() - 1;
+    (from..to)
+        .map(|p| {
+            let e = space.extent_at(p);
+            if p == last { e / vector_size } else { e }
+        })
+        .collect()
 }

@@ -21,8 +21,7 @@ pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct BatchMatrix {
-    /// [`Coords`], not [`CoordsDyn`]: a `Sequence` holder copies its elements into mutable slots,
-    /// which erases the constness the fold arithmetic downstream needs (see [`Coords`](crate::Coords)).
+    /// Leading batch coordinates.
     batches: Coords<u32>,
     tile_shape: Coords2d,
 }
@@ -44,14 +43,10 @@ impl Layout for BatchMatrix {
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (t0, t1) = pos;
-        let mut out = CoordsDyn::new();
-        #[unroll]
-        for p in 0..self.batches.len() {
-            out.push(self.batches.at(p));
-        }
-        out.push(t0);
-        out.push(t1);
-        out
+        let mut exposed = Coords::<u32>::new();
+        exposed.push(t0);
+        exposed.push(t1);
+        concat(&self.batches, &exposed)
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -64,13 +59,11 @@ impl Layout for BatchMatrix {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let (t0, t1) = pos;
-        let (s0, s1) = self.tile_shape;
-        t0 < s0 && t1 < s1
+        within_2d(pos, self.tile_shape)
     }
 }
 
-/// What every 2-D reader of a tile goes through: a [`BatchMatrix`] over the operand's mapping.
+/// A 2-D matrix view over a projected tile with batch dimensions.
 pub type ProjectedBatchMatrix = Projected<BatchMatrix>;
 
 /// What an mma fragment reads its stage through: a [`GroupedMatrix`] over the operand's mapping.
@@ -117,19 +110,10 @@ impl Layout for GroupedMatrix {
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (row, col) = pos;
-        let rows = unravel(&self.row_extents, row);
-        let cols = unravel(&self.col_extents, col);
-
-        let mut out = CoordsDyn::new();
-        #[unroll]
-        for p in 0..rows.len() {
-            out.push(rows.at(p));
-        }
-        #[unroll]
-        for p in 0..cols.len() {
-            out.push(cols.at(p));
-        }
-        out
+        concat(
+            &unravel(&self.row_extents, row),
+            &unravel(&self.col_extents, col),
+        )
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -142,10 +126,33 @@ impl Layout for GroupedMatrix {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let (row, col) = pos;
-        let (s0, s1) = self.tile_shape;
-        row < s0 && col < s1
+        within_2d(pos, self.tile_shape)
     }
+}
+
+/// Concatenates two coordinate lists into dynamic coordinates.
+#[cube]
+fn concat(leading: &Coords<u32>, trailing: &Coords<u32>) -> CoordsDyn {
+    let mut out = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..leading.len() {
+        out.push(leading.at(p));
+    }
+    #[unroll]
+    for p in 0..trailing.len() {
+        out.push(trailing.at(p));
+    }
+
+    out
+}
+
+/// Checks if a 2-D coordinate is within bounds.
+#[cube]
+fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
+    let (row, col) = pos;
+    let (rows, cols) = shape;
+    row < rows && col < cols
 }
 
 /// The leading (batch) extents a matrix index unravels over, in the space's axis order.
@@ -174,12 +181,9 @@ fn leading_extents(
     out
 }
 
-/// Unravel a flat index over `extents`: `out[p] = (i / Π extents[p+1..]) % extents[p]`. Folding
-/// throughout, so comptime extents and a comptime index leave no arithmetic behind. The outermost
-/// digit keeps the bare quotient, for the reason
-/// [`Projection::digit`](crate::Projection::digit)'s outermost fragment carries `None`.
+/// Unravels a flat index into coordinates over the given extents.
 #[cube]
-fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
+pub(crate) fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
     let n = extents.len();
     let mut out = Coords::<u32>::new();
 
@@ -226,6 +230,7 @@ pub(crate) fn matrix_split(space: &Space, rows: usize, cols: usize, vector_size:
     let rank = space.rank();
     let mut split = rank;
     let mut trailing = 1;
+    // Find the split point that matches the column count.
     while split > 0 && trailing < cols {
         split -= 1;
         trailing *= space.extent_at(split);
@@ -264,24 +269,9 @@ pub(crate) fn grouped_matrix(
     let rank = comptime!(space.rank());
     let split = comptime!(matrix_split(space, rows, cols, vector_size));
 
-    let mut row_extents = Coords::<u32>::new();
-    #[unroll]
-    for p in 0..split {
-        row_extents.push(comptime!(space.extent_at(p) as u32));
-    }
-
-    let mut col_extents = Coords::<u32>::new();
-    #[unroll]
-    for p in split..rank {
-        let e = comptime!(space.extent_at(p));
-        col_extents.push(comptime!(
-            (if p == rank - 1 { e / vector_size } else { e }) as u32
-        ));
-    }
-
     GroupedMatrix::new(
-        row_extents,
-        col_extents,
+        const_coords(comptime!(line_extents(space, vector_size, 0, split))),
+        const_coords(comptime!(line_extents(space, vector_size, split, rank))),
         rows,
         comptime!(cols / vector_size),
     )
@@ -344,10 +334,15 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Mutable version of [`matrix`](Tile::matrix). Only supported for direct projections.
     pub fn matrix_mut<W: Size>(&mut self, i: usize) -> MatrixViewMut<'_, Vector<T, W>> {
         let vector_size = self.vector_size();
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
+                comptime!(assert!(
+                    g.projection.is_direct(),
+                    "Tile::matrix_mut: a gathered operand aliases under a write"
+                ));
                 let bound = g.extent();
                 let layout = projected_batch_matrix(
                     &bound,

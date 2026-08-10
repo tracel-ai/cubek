@@ -8,12 +8,6 @@ use cubecl::prelude::*;
 use super::register::mma_register_memory;
 use crate::*;
 
-/// What a strided-window fragment's 2-D single-`K` deduction rules out.
-const STRIDED_2D: &str = "mma: a cmma or plane-register fragment reads one contracted axis off a \
-                          directly addressed operand; a gather or a wider reduce needs the \
-                          manual-mma leaf, or an unpromoted Gmem/Smem accumulator, whose software \
-                          microkernel is the `mma_register_memory` arm below";
-
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
 /// storage config
 #[cube]
@@ -23,16 +17,6 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
 ) {
     let space = comptime!(acc.space.clone());
-    // Both operands flatten their contracted axes into one `k` edge by extent alone
-    // (`matrix_split`), so listing the same axes in different orders would contract mismatched
-    // positions with matching shapes. Vacuous for a single contracted axis.
-    comptime!(assert!(
-        Space::contraction_agrees(&lhs.space, &rhs.space, &space),
-        "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \
-         so their `k` edges do not line up",
-        lhs.space.contracting(&space),
-        rhs.space.contracting(&space)
-    ));
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
@@ -58,8 +42,7 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
 
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
-    /// Contract this plane tile: the only place the encodings' executes diverge, and so the only
-    /// place that knows which of them reads a raw strided window.
+    /// Contract this plane tile.
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -71,9 +54,10 @@ impl<E: Numeric> PlaneTile<E> {
                 strided_2d(lhs, rhs, out);
                 d.mma(lhs, rhs)
             }
-            // Reads its operands element by element through `Tile::fragment_matrix`, so a gather
-            // folds underneath and a wider reduce flattens into the `k` edge.
-            PlaneTile::Mma(d) => d.mma(lhs, rhs),
+            PlaneTile::Mma(d) => {
+                flattened_k(lhs, rhs, out);
+                d.mma(lhs, rhs)
+            }
             PlaneTile::Register(d) => {
                 strided_2d(lhs, rhs, out);
                 d.mma(lhs, rhs)
@@ -82,8 +66,7 @@ impl<E: Numeric> PlaneTile<E> {
     }
 }
 
-/// Refuse what a raw strided window (`window_slice` + `row_stride`) cannot address: a gathered
-/// operand, and a contraction over more than one axis.
+/// Asserts that operands are not gathered and have a single contracted axis.
 #[cube]
 fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
     let lhs_gathered = lhs.gathered();
@@ -92,7 +75,21 @@ fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compti
         !lhs_gathered
             && !rhs_gathered
             && Space::contracted(&[&lhs.space, &rhs.space], &out).len() == 1,
-        "{}",
-        STRIDED_2D
+        "mma: a cmma or plane-register fragment reads one contracted axis off a directly \
+         addressed operand; a gather or a wider reduce needs the manual-mma leaf, or an \
+         unpromoted Gmem/Smem accumulator, whose software microkernel is the \
+         `mma_register_memory` arm of `mma_leaf`"
+    ));
+}
+
+/// Asserts that operands contract their shared axes in the same order.
+#[cube]
+fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
+    comptime!(assert!(
+        Space::contraction_agrees(&lhs.space, &rhs.space, &out),
+        "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \
+         so their `k` edges do not line up",
+        lhs.space.contracting(&out),
+        rhs.space.contracting(&out)
     ));
 }

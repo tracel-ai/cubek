@@ -332,18 +332,14 @@ impl Projection {
                 count > 0,
                 "Projection: logical axis {axis:?} addresses no physical axis"
             );
+            // A gathered operand must be untiled gmem, so each logical axis can map to at most one physical axis.
             assert!(
                 count == 1,
-                "Projection: logical axis {axis:?} addresses several physical axes"
+                "Projection: logical axis {axis:?} addresses several physical axes, so it is \
+                 either storage-tiled (a gathered operand must be untiled gmem) or read off two \
+                 places at once"
             );
         }
-        // A tiled `[grid…, tile…]` buffer splits an advance into two digits, which is not linear
-        // in the edge, so it cannot absorb a scaled one. Projected operands are bare gmem.
-        assert!(
-            !self.is_tiled(),
-            "Projection: a gathered operand must be untiled gmem, but an axis is split across \
-             several physical fragments"
-        );
     }
 }
 #[cfg(test)]

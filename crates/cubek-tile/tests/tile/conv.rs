@@ -814,16 +814,13 @@ fn projected_matrix_kernel<E: Numeric>(
     }
 }
 
+/// The one 2-D convolution both view tests read, strided and dilated on both spatial axes so no
+/// two logical coordinates land on the same input cell by accident.
 struct Conv2dViewSetup {
-    oh: usize,
-    ow: usize,
-    rh: usize,
-    rw: usize,
-    ci: usize,
-    sh: usize,
-    sw: usize,
-    dh: usize,
-    dw: usize,
+    /// `(oh, ow, rh, rw, ci)`, the logical axes in the space's own order.
+    logical: (usize, usize, usize, usize, usize),
+    /// `(sh, sw, dh, dw)`, the strides then the dilations.
+    steps: (usize, usize, usize, usize),
     in_w: usize,
     space: Space,
     in_spec: TileSpec,
@@ -866,15 +863,8 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         .generate_with_f32_host_data();
 
     Conv2dViewSetup {
-        oh,
-        ow,
-        rh,
-        rw,
-        ci,
-        sh,
-        sw,
-        dh,
-        dw,
+        logical: (oh, ow, rh, rw, ci),
+        steps: (sh, sw, dh, dw),
         in_w,
         space,
         in_spec,
@@ -891,10 +881,9 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 #[test]
 fn conv2d_projected_matrix_view() {
     let s = setup_conv2d_view();
-    let (oh, ow, rh, rw, ci) = (s.oh, s.ow, s.rh, s.rw, s.ci);
-    let (sh, sw, dh, dw) = (s.sh, s.sw, s.dh, s.dw);
-    let (in_w, in_data) = (s.in_w, s.in_data);
-    let space = s.space;
+    let (oh, ow, rh, rw, ci) = s.logical;
+    let (sh, sw, dh, dw) = s.steps;
+    let (in_w, in_data, space) = (s.in_w, s.in_data, s.space);
 
     let matrices = oh * ow * rh;
     let (rows, cols) = (rw, ci);
@@ -970,10 +959,9 @@ fn fragment_matrix_kernel<E: Numeric>(
 #[test]
 fn conv2d_fragment_matrix_view() {
     let s = setup_conv2d_view();
-    let (oh, ow, rh, rw, ci) = (s.oh, s.ow, s.rh, s.rw, s.ci);
-    let (sh, sw, dh, dw) = (s.sh, s.sw, s.dh, s.dw);
-    let (in_w, in_data) = (s.in_w, s.in_data);
-    let space = s.space;
+    let (oh, ow, rh, rw, ci) = s.logical;
+    let (sh, sw, dh, dw) = s.steps;
+    let (in_w, in_data, space) = (s.in_w, s.in_data, s.space);
 
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
