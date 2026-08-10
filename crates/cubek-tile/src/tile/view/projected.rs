@@ -18,6 +18,15 @@ use cubecl::{
 
 use crate::*;
 
+/// Boundary handling mode for out-of-bounds reads.
+#[derive(CubeType, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Boundary {
+    /// Out-of-bounds reads return zero.
+    Zero,
+    /// Out-of-bounds reads return the edge cell.
+    Clamp,
+}
+
 /// The layouts a windowed tile re-views through: any [`Layout`] from a coordinate `C` onto the
 /// window's `CoordsDyn`, cloneable in both worlds so the transparent read can address the values
 /// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
@@ -100,6 +109,8 @@ pub struct AxisProjection {
     space: Space,
     #[cube(comptime)]
     projection: Projection,
+    #[cube(comptime)]
+    boundary: Boundary,
 }
 
 #[cube]
@@ -109,6 +120,7 @@ impl AxisProjection {
         coefficients: Coords<u32>,
         #[comptime] space: Space,
         #[comptime] projection: Projection,
+        #[comptime] boundary: Boundary,
     ) -> Self {
         let rank = shape.len();
         comptime!(assert!(
@@ -127,6 +139,7 @@ impl AxisProjection {
             coefficients,
             space,
             projection,
+            boundary,
         }
     }
 }
@@ -137,6 +150,30 @@ impl Layout for AxisProjection {
     type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        let pos = match comptime!(self.boundary) {
+            Boundary::Clamp => {
+                let mut clamped = CoordsDyn::new();
+                #[unroll]
+                for p in 0..comptime!(self.space.rank()) {
+                    let p_val = pos[p];
+                    let shape_p = self.shape.at(p);
+
+                    let clamped_p = if p_val >= shape_p {
+                        if p_val > 2147483647u32 {
+                            0u32
+                        } else {
+                            shape_p - 1u32
+                        }
+                    } else {
+                        p_val
+                    };
+                    clamped.push(clamped_p);
+                }
+                clamped
+            }
+            Boundary::Zero => pos,
+        };
+
         let mut out = CoordsDyn::new();
 
         #[unroll]
@@ -166,6 +203,10 @@ impl Layout for AxisProjection {
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
         let in_bounds = self.is_in_bounds(pos.clone());
+        let in_bounds = match comptime!(self.boundary) {
+            Boundary::Clamp => true,
+            Boundary::Zero => in_bounds,
+        };
         (self.to_source_pos(pos), in_bounds)
     }
 
@@ -246,7 +287,10 @@ impl<T: Numeric> Tile<T> {
     /// axis of its [`Space`](crate::Space) (the innermost a line index). The N-D counterpart of
     /// [`matrix_transparent`](Tile::matrix_transparent), and the only read surface a gathered
     /// operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
-    pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+    pub fn nd<I: Numeric, WP: Size, W: Size>(
+        &self,
+        #[comptime] boundary: Boundary,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let layout = axis_projection(
@@ -254,6 +298,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
                     self.vector_size(),
+                    boundary,
                 );
                 g.nd_transparent::<I, WP, W>(layout)
             }
@@ -273,11 +318,12 @@ pub(crate) fn axis_projection(
     #[comptime] projection: Projection,
     coefficients: Coords<u32>,
     #[comptime] vector_size: usize,
+    #[comptime] boundary: Boundary,
 ) -> AxisProjection {
     let rank = comptime!(space.rank());
     let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
 
-    AxisProjection::new(shape, coefficients, space, projection)
+    AxisProjection::new(shape, coefficients, space, projection, boundary)
 }
 
 /// Returns the extents of `space` in the range `from..to`, with the innermost axis

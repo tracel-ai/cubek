@@ -252,6 +252,7 @@ pub(crate) fn projected_batch_matrix(
             comptime!(projection),
             coefficients,
             vector_size,
+            Boundary::Zero,
         ),
     )
 }
@@ -274,6 +275,7 @@ pub(crate) fn projected_grouped_matrix(
             comptime!(projection),
             coefficients,
             vector_size,
+            Boundary::Zero,
         ),
     )
 }
