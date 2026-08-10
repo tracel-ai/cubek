@@ -551,12 +551,12 @@ fn conv_kernel_dynamic<E: Numeric>(
     #[comptime] space: Space,
     #[define(E)] _dtype: StorageType,
 ) {
-    // In `Projection::dynamic_index` order: physical axis 0's terms, `OH` then `RH`.
+    // In `Projection::dynamic_scale_index` order: physical axis 0's terms, `OH` then `RH`.
     let mut coefficients = Coords::<u32>::new();
     coefficients.push(stride);
     coefficients.push(dilation);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients);
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
@@ -671,6 +671,241 @@ fn conv1d_dynamic_strided_and_dilated() {
         dilation: 2,
     }
     .check_dynamic(2, 2);
+}
+
+/// [`conv_kernel`] with the input's padding arriving as a runtime scalar: the `Offset::Dynamic`
+/// rides the tile as a signed value, while the stride and the dilation stay comptime.
+#[cube(launch)]
+fn conv_kernel_dynamic_padding<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    offset: i32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    out.zero();
+    out.mma(&input, &weight);
+}
+
+/// [`conv_kernel_dynamic`] with the padding runtime too: nothing of the input's affine map is
+/// known when the kernel is compiled.
+#[cube(launch)]
+fn conv_kernel_all_dynamic<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    stride: u32,
+    dilation: u32,
+    offset: i32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(stride);
+    coefficients.push(dilation);
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    out.zero();
+    out.mma(&input, &weight);
+}
+
+impl Conv1d {
+    /// The padded reference: a tap outside `[0, in_len)` reads zero.
+    fn reference_padded(
+        &self,
+        input: &[f32],
+        weight: &[f32],
+        in_len: usize,
+        padding: usize,
+    ) -> Vec<f32> {
+        let mut out = vec![0.0f32; self.oh * self.co];
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                let mut acc = 0.0f32;
+                for r in 0..self.rh {
+                    for i in 0..self.ci {
+                        let h = (o * self.stride + r * self.dilation) as isize - padding as isize;
+                        let x = if h >= 0 && (h as usize) < in_len {
+                            input[(h as usize) * self.ci + i]
+                        } else {
+                            0.0
+                        };
+                        acc += x * weight[(r * self.ci + i) * self.co + c];
+                    }
+                }
+                out[o * self.co + c] = acc;
+            }
+        }
+        out
+    }
+
+    /// A padded convolution whose padding is an `Offset::Dynamic`, so the window origin is placed
+    /// at runtime and the underflow guard is armed without knowing the sign. `dynamic_scales` also
+    /// hands the stride and the dilation over at runtime, which forces `Schedule::Direct`; a
+    /// dynamic offset alone stages, since the compaction drops it.
+    #[allow(clippy::too_many_arguments)]
+    fn check_dynamic_padded(
+        &self,
+        tile_oh: usize,
+        tile_co: usize,
+        padding: usize,
+        in_len: usize,
+        schedule: Schedule,
+        dynamic_scales: bool,
+    ) {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let f32_ty = f32::as_type_native_unchecked().storage_type();
+
+        let space = Tiling::new()
+            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+            .level(WalkOrder::RowMajor, schedule, |l| {
+                l.axis(OH, Cut::sequential(tile_oh))
+                    .axis(CO, Cut::sequential(tile_co))
+                    .axis(RH, Cut::sequential(self.rh))
+                    .axis(CI, Cut::sequential(self.ci))
+            })
+            .build();
+
+        let gathered = if dynamic_scales {
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Dynamic), (RH, Scale::Dynamic)],
+                Offset::Dynamic,
+            )
+        } else {
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, self.stride), (RH, self.dilation)],
+                Offset::Dynamic,
+            )
+        };
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[gathered, PhysicalAxisMap::of(CI)],
+        ))
+        .checked(true);
+
+        let in_shape = shape![in_len, self.ci];
+        let w_shape = shape![self.rh, self.ci, self.co];
+        let input = ramp(in_shape.num_elements(), 7);
+        let weight = ramp(w_shape.num_elements(), 5);
+
+        let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+            .dtype(f32_ty)
+            .custom(input.clone())
+            .generate_with_f32_host_data();
+        let (w_handle, _) = TestInput::builder(client.clone(), w_shape)
+            .dtype(f32_ty)
+            .custom(weight.clone())
+            .generate_with_f32_host_data();
+        let out_handle = TestInput::builder(client.clone(), shape![self.oh, self.co])
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data();
+
+        let in_binding = in_handle.binding();
+        let w_binding = w_handle.binding();
+        let out_binding = out_handle.clone().binding();
+        let offset = -(padding as i32);
+        if dynamic_scales {
+            conv_kernel_all_dynamic::launch::<TestRuntime>(
+                &client,
+                space.cube_count(),
+                space.cube_dim(&client),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
+                TileArgLaunch::new(w_binding.into_tensor_arg(), TileSpec::direct(&[RH, CI, CO])),
+                TileArgLaunch::new(
+                    out_binding.into_tensor_arg(),
+                    TileSpec::direct(&[OH, CO]).checked(true),
+                ),
+                self.stride as u32,
+                self.dilation as u32,
+                offset,
+                space,
+                f32_ty,
+            );
+        } else {
+            conv_kernel_dynamic_padding::launch::<TestRuntime>(
+                &client,
+                space.cube_count(),
+                space.cube_dim(&client),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
+                TileArgLaunch::new(w_binding.into_tensor_arg(), TileSpec::direct(&[RH, CI, CO])),
+                TileArgLaunch::new(
+                    out_binding.into_tensor_arg(),
+                    TileSpec::direct(&[OH, CO]).checked(true),
+                ),
+                offset,
+                space,
+                f32_ty,
+            );
+        }
+
+        let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+        let want = self.reference_padded(&input, &weight, in_len, padding);
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                assert_eq!(
+                    got.get_f32(&[o, c]),
+                    want[o * self.co + c],
+                    "dynamic padded conv1d {schedule:?} padding {padding}: wrong at ({o}, {c})"
+                );
+            }
+        }
+    }
+}
+
+/// A runtime padding under a direct schedule: the taps that underflow must still mask to zero,
+/// though nothing proved at comptime that the origin was negative.
+#[test]
+fn conv1d_dynamic_padding_direct() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_dynamic_padded(3, 4, 1, 6, Schedule::Direct, false);
+}
+
+/// The same padding staged: a dynamic offset costs no comptime window geometry, so unlike a
+/// dynamic coefficient it survives the compaction into smem.
+#[test]
+fn conv1d_dynamic_padding_staged() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_dynamic_padded(3, 4, 1, 6, Schedule::Staged, false);
+}
+
+/// Stride, dilation and padding all runtime at once: the whole affine map arrives with the launch.
+#[test]
+fn conv1d_all_dynamic() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 2,
+        dilation: 1,
+    }
+    .check_dynamic_padded(3, 4, 1, 8, Schedule::Direct, true);
 }
 
 // ---- 2-D -------------------------------------------------------------------

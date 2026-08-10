@@ -54,7 +54,7 @@ impl Compaction {
         // The box below is the smem allocation: both its step (a gcd of coefficients) and its
         // extent are comptime by construction, which a runtime coefficient cannot be.
         assert!(
-            !projection.has_dynamic(),
+            !projection.has_dynamic_scales(),
             "Compaction: a Dynamic coefficient has no comptime window extent, so the operand \
              carrying it cannot be staged (use Schedule::Direct)"
         );
@@ -167,7 +167,7 @@ fn gcd(a: usize, b: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Scale;
+    use crate::{Offset, Scale};
 
     const OH: Axis = Axis(0);
     const RH: Axis = Axis(1);
@@ -281,7 +281,24 @@ mod tests {
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[17, 16]);
-        assert_eq!(c.projection().offset(0), 0);
+        assert_eq!(c.projection().offset(0), Offset::Static(0));
+    }
+
+    /// A dynamic offset shifts source placement without changing compacted extents.
+    #[test]
+    fn dynamic_offset_projection_compacts_identically() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(OH, 2), (RH, 1)], Offset::Dynamic),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let c = Compaction::of(&p, extents(8, 3, 16));
+        assert!(c.is_dense());
+        assert_eq!(c.steps(), &[1, 1]);
+        assert_eq!(c.extents(), &[17, 16]);
+        assert_eq!(c.projection().offset(0), Offset::Static(0));
     }
 
     /// A stage is sized at comptime, which a runtime coefficient cannot be.

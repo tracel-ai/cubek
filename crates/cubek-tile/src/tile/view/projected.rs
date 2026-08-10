@@ -92,8 +92,9 @@ pub struct AxisProjection {
     /// The tile's per-logical-axis extents, in the space's axis order. The innermost is a
     /// line count, matching the window's innermost physical axis.
     shape: Coords<u32>,
-    /// The projection's runtime coefficients, in [`Projection::dynamic_index`] order; empty for a
-    /// fully-`Static` mapping.
+    /// The projection's runtime coefficients, in [`Projection::dynamic_scale_index`] order; empty
+    /// for a fully-`Static` mapping. The constant offsets are not among them: a tap is relative to
+    /// the window, which they placed.
     coefficients: Coords<u32>,
     #[cube(comptime)]
     space: Space,
@@ -117,9 +118,9 @@ impl AxisProjection {
         ));
         let given = coefficients.len();
         comptime!(assert!(
-            given == projection.dynamic_count(),
+            given == projection.dynamic_scale_count(),
             "AxisProjection: the projection has {} Dynamic coefficients but {given} were given",
-            projection.dynamic_count()
+            projection.dynamic_scale_count()
         ));
         AxisProjection {
             shape,
@@ -152,12 +153,9 @@ impl Layout for AxisProjection {
                 let p = comptime!(self.space.position(term.axis));
                 match comptime!(term.scale) {
                     Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                    Scale::Dynamic => terms.push(
-                        pos[p].fmul(
-                            self.coefficients
-                                .at(comptime!(self.projection.dynamic_index(pa, t).unwrap())),
-                        ),
-                    ),
+                    Scale::Dynamic => terms.push(pos[p].fmul(self.coefficients.at(comptime!(
+                        self.projection.dynamic_scale_index(pa, t).unwrap()
+                    )))),
                 }
             }
             out.push(terms.fsum(comptime!((0..n).collect::<Vec<_>>())));

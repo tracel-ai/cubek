@@ -33,10 +33,14 @@ pub struct MemData<T: Numeric> {
     #[cube(comptime)]
     pub(crate) projection: Projection,
     /// The runtime half of [`projection`](Self::projection): one value per
-    /// [`Scale::Dynamic`](crate::Scale) coefficient, in [`Projection::dynamic_index`] order. Empty
-    /// for every fully-`Static` mapping, which is every operand but a runtime-strided gather.
+    /// [`Scale::Dynamic`](crate::Scale) coefficient, in [`Projection::dynamic_scale_index`] order.
+    /// Empty for every fully-`Static` mapping, which is every operand but a runtime-strided gather.
     /// Named apart from the quantization scales in [`Store`], which are a different thing entirely.
     pub(crate) coefficients: Coords<u32>,
+    /// The runtime half of the projection's constant terms: one value per
+    /// [`Offset::Dynamic`](crate::Offset) axis, in [`Projection::dynamic_offset_index`] order.
+    /// Signed, since a padding places the window before the buffer's origin.
+    pub(crate) offsets: Coords<i32>,
     /// The window origin's offset through the layout, accumulated across [`at`](Tile::at)s rather
     /// than re-derived: each descent shifts by a *comptime* edge, so [`step_offset`] folds
     /// and this stays a multiply-add. Addressing it from the origin instead would decompose a
@@ -123,19 +127,22 @@ impl<T: Numeric> Tile<T> {
             spec,
             ComptimeOption::new_None(),
             Coords::<u32>::new(),
+            Coords::<i32>::new(),
         )
     }
 
-    /// [`of`](Tile::of) for a gather whose coefficients are not all comptime: `coefficients` holds
-    /// one value per [`Scale::Dynamic`](crate::Scale) term of the spec's projection, in
-    /// [`Projection::dynamic_index`] order (physical axis major, term order within). A runtime
-    /// stride or dilation is exactly this, and the kernel builds the carrier from its own scalar
-    /// arguments, so nothing about it reaches the launch.
+    /// [`of`](Tile::of) for a gather whose affine map is not all comptime: `coefficients` holds one
+    /// value per [`Scale::Dynamic`](crate::Scale) term in [`Projection::dynamic_scale_index`] order,
+    /// `offsets` one signed value per [`Offset::Dynamic`](crate::Offset) axis in
+    /// [`Projection::dynamic_offset_index`] order. A runtime stride, dilation or padding is exactly
+    /// this, and the kernel builds the carriers from its own scalar arguments, so nothing about
+    /// them reaches the launch.
     pub fn of_gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         coefficients: Coords<u32>,
+        offsets: Coords<i32>,
     ) -> Tile<T> {
         Tile::<T>::of_impl::<E>(
             tensor,
@@ -143,6 +150,7 @@ impl<T: Numeric> Tile<T> {
             spec,
             ComptimeOption::new_None(),
             coefficients,
+            offsets,
         )
     }
 
@@ -188,6 +196,7 @@ impl<T: Numeric> Tile<T> {
             spec,
             ComptimeOption::new_Some(info),
             Coords::<u32>::new(),
+            Coords::<i32>::new(),
         )
     }
 
@@ -200,6 +209,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] spec: TileSpec,
         quant: ComptimeOption<QuantInfo>,
         coefficients: Coords<u32>,
+        offsets: Coords<i32>,
     ) -> Tile<T> {
         // The one projection: the kernel's space narrowed to this operand's axes.
         let space = comptime!(space.project(spec.axes()));
@@ -216,17 +226,23 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
              logical axes, which its buffer's physical axes no longer match"
         ));
-        let given = coefficients.len();
+        let scales_given = coefficients.len();
         comptime!(assert!(
-            given == coords.dynamic_count(),
-            "Tile::of: the projection has {} Dynamic coefficients but {given} were given",
-            coords.dynamic_count()
+            scales_given == coords.dynamic_scale_count(),
+            "Tile::of: the projection has {} Dynamic coefficients but {scales_given} were given",
+            coords.dynamic_scale_count()
+        ));
+        let offsets_given = offsets.len();
+        comptime!(assert!(
+            offsets_given == coords.dynamic_offset_count(),
+            "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
+            coords.dynamic_offset_count()
         ));
         // A staged operand's smem is allocated from its compacted window, whose extent a runtime
         // coefficient makes runtime. `Compaction::of` refuses it too; this is the earlier, clearer
         // report, at the operand rather than at the stage.
         comptime!(assert!(
-            !coords.has_dynamic() || !space.partitioner().stages(),
+            !coords.has_dynamic_scales() || !space.partitioner().stages(),
             "Tile::of: a Dynamic coefficient cannot be staged, its window has no comptime extent; \
              the schedule must be Direct"
         ));
@@ -288,6 +304,7 @@ impl<T: Numeric> Tile<T> {
         let (origin, extent) = top_window(
             comptime!(space.clone()),
             &bound,
+            &offsets,
             vector_size,
             comptime!(coords.clone()),
         );
@@ -306,6 +323,7 @@ impl<T: Numeric> Tile<T> {
                 window: Window::new(origin, extent, bound, comptime!(coords.may_underflow())),
                 projection: comptime!(coords),
                 coefficients,
+                offsets,
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
@@ -528,8 +546,10 @@ impl<T: Numeric> MemData<T> {
                 window: Window::new(origin, extent, bound, false),
                 projection: comptime!(form.projection),
                 // A stage's own mapping is the compacted one, which is fully `Static`: a Dynamic
-                // coefficient never reaches a stage ([`Compaction::of`] refuses it).
+                // coefficient never reaches a stage ([`Compaction::of`] refuses it), and the
+                // compaction drops the offset, the gmem window having already been placed.
                 coefficients: Coords::<u32>::new(),
+                offsets: Coords::<i32>::new(),
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
@@ -1347,7 +1367,7 @@ impl<T: Numeric> MemData<T> {
                         Scale::Dynamic => {
                             let coefficient = self
                                 .coefficients
-                                .at(comptime!(proj.dynamic_index(pa, t).unwrap()));
+                                .at(comptime!(proj.dynamic_scale_index(pa, t).unwrap()));
                             terms.push(
                                 region
                                     .coord(term.axis)
@@ -1363,7 +1383,7 @@ impl<T: Numeric> MemData<T> {
 
                 // The receptive field of the child edges: `1 + Σ (edge - 1) * scale`, which stays
                 // comptime for the mapping that is.
-                let span = if comptime!(proj.physical_axis(pa).dynamic_count() == 0) {
+                let span = if comptime!(proj.physical_axis(pa).dynamic_scale_count() == 0) {
                     comptime!({
                         let s = proj.span(pa, |a| space.partitioner().edge(a));
                         (if pa == last { s / w } else { s }) as u32
@@ -1424,9 +1444,11 @@ impl<T: Numeric> MemData<T> {
                 comptime!(self.window.signed),
             ),
             // How the logical axes address the physical ones is a fact about the buffer, invariant
-            // down the descent, and so are its runtime coefficients.
+            // down the descent, and so are its runtime coefficients. The offsets only placed the
+            // top window, which `origin` above already carries.
             projection: comptime!(proj),
             coefficients: self.coefficients.clone(),
+            offsets: self.offsets.clone(),
             window_start: start,
             // The window no longer covers the buffer, so the straight-through fill is off.
             access: comptime!(Access {
@@ -1463,6 +1485,7 @@ fn full_window(#[comptime] form: StageForm) -> (Coords<i32>, Coords<u32>) {
 fn top_window(
     #[comptime] space: Space,
     bound: &Coords<u32>,
+    offsets: &Coords<i32>,
     #[comptime] vector_size: usize,
     #[comptime] projection: Projection,
 ) -> (Coords<i32>, Coords<u32>) {
@@ -1486,7 +1509,12 @@ fn top_window(
             }
         } else {
             // Gathered axes start at their initial signed offset (e.g. negative padding).
-            origin.push((comptime!(projection.offset(pa) as i32)).runtime());
+            match comptime!(projection.offset(pa)) {
+                Offset::Static(o) => origin.push((comptime!(o as i32)).runtime()),
+                Offset::Dynamic => {
+                    origin.push(offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap())))
+                }
+            }
             bound.at(pa)
         };
         extent.push(size);

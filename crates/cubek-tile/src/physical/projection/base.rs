@@ -3,7 +3,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ConcreteLayout, MAX_AXES, PhysicalAxisMap, Scale, StorageTiling};
+use crate::{Axis, ConcreteLayout, MAX_AXES, Offset, PhysicalAxisMap, Scale, StorageTiling};
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -271,24 +271,31 @@ impl Projection {
         self.physical[pa].scale(axis)
     }
 
-    /// The signed constant offset along physical axis `pa`.
-    pub fn offset(&self, pa: usize) -> isize {
+    /// The signed constant or dynamic offset along physical axis `pa`.
+    pub fn offset(&self, pa: usize) -> Offset {
         self.physical[pa].offset()
     }
 
-    /// Whether any physical axis carries a negative offset.
+    /// Whether any physical axis carries a negative offset or a dynamic offset (whose sign
+    /// cannot be proven non-negative at comptime).
     pub fn may_underflow(&self) -> bool {
-        self.physical.iter().any(|m| m.offset() < 0)
+        self.physical.iter().any(|m| match m.offset() {
+            Offset::Static(o) => o < 0,
+            Offset::Dynamic => true,
+        })
     }
 
     /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
     /// it is [`Static`](Scale::Static). The order is the projection's own, physical axis major and
     /// term order within, so a caller fills the carrier by walking the maps in order.
-    pub fn dynamic_index(&self, pa: usize, t: usize) -> Option<usize> {
+    pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
         if !self.physical[pa].terms()[t].scale.is_dynamic() {
             return None;
         }
-        let before: usize = self.physical[..pa].iter().map(|m| m.dynamic_count()).sum();
+        let before: usize = self.physical[..pa]
+            .iter()
+            .map(|m| m.dynamic_scale_count())
+            .sum();
         let within = self.physical[pa].terms()[..t]
             .iter()
             .filter(|term| term.scale.is_dynamic())
@@ -296,14 +303,42 @@ impl Projection {
         Some(before + within)
     }
 
-    /// How many coefficients are [`Dynamic`](Scale::Dynamic): the length of the runtime carrier.
-    pub fn dynamic_count(&self) -> usize {
-        self.physical.iter().map(|m| m.dynamic_count()).sum()
+    /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
+    /// [`Static`](Offset::Static). Offsets ride their own signed carrier, so this order is
+    /// independent of [`dynamic_scale_index`](Self::dynamic_scale_index)'s.
+    pub fn dynamic_offset_index(&self, pa: usize) -> Option<usize> {
+        if !self.physical[pa].offset().is_dynamic() {
+            return None;
+        }
+        Some(
+            self.physical[..pa]
+                .iter()
+                .filter(|m| m.offset().is_dynamic())
+                .count(),
+        )
+    }
+
+    /// How many coefficients are [`Dynamic`](Scale::Dynamic): the length of the coefficient carrier.
+    pub fn dynamic_scale_count(&self) -> usize {
+        self.physical.iter().map(|m| m.dynamic_scale_count()).sum()
+    }
+
+    /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
+    pub fn dynamic_offset_count(&self) -> usize {
+        self.physical
+            .iter()
+            .filter(|m| m.offset().is_dynamic())
+            .count()
+    }
+
+    /// Whether any coefficient or offset is only known at runtime.
+    pub fn has_dynamic(&self) -> bool {
+        self.has_dynamic_scales() || self.dynamic_offset_count() > 0
     }
 
     /// Whether any coefficient is only known at runtime.
-    pub fn has_dynamic(&self) -> bool {
-        self.dynamic_count() > 0
+    pub fn has_dynamic_scales(&self) -> bool {
+        self.physical.iter().any(|m| m.has_dynamic_scale())
     }
 
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
@@ -326,7 +361,8 @@ impl Projection {
     /// or applies a constant offset.
     pub fn is_invertible(&self) -> bool {
         self.physical.iter().all(|m| {
-            m.offset() == 0 && matches!(m.terms(), [t] if matches!(t.scale, Scale::Static(1)))
+            m.offset() == Offset::Static(0)
+                && matches!(m.terms(), [t] if matches!(t.scale, Scale::Static(1)))
         })
     }
 
@@ -724,11 +760,12 @@ mod tests {
             ],
         );
         assert!(!with_offset.is_invertible());
-        assert_eq!(with_offset.offset(0), -1);
-        assert_eq!(with_offset.offset(1), 0);
+        assert_eq!(with_offset.offset(0), Offset::Static(-1));
+        assert_eq!(with_offset.offset(1), Offset::Static(0));
     }
 
     /// Only a negative offset arms the window's underflow guard; a forward shift cannot underflow.
+    /// A dynamic offset conservatively arms it since its sign is only known at runtime.
     #[test]
     fn may_underflow_tracks_negative_offsets_only() {
         let padded = Projection::new(
@@ -749,9 +786,19 @@ mod tests {
         );
         assert!(!shifted.may_underflow());
         assert!(!Projection::direct(&[A, B]).may_underflow());
+
+        let dynamic_offset = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], Offset::Dynamic),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(dynamic_offset.may_underflow());
     }
 
-    /// The runtime carrier's order: physical axis major, term order within, `Static` terms skipped.
+    /// Each carrier's order: physical axis major, term order within, `Static` skipped. Offsets are
+    /// indexed apart from coefficients, so one does not shift the other.
     #[test]
     fn dynamic_terms_index_in_projection_order() {
         let p = Projection::new(
@@ -762,10 +809,12 @@ mod tests {
             ],
         );
         assert!(p.has_dynamic());
-        assert_eq!(p.dynamic_count(), 2);
-        assert_eq!(p.dynamic_index(0, 0), Some(0));
-        assert_eq!(p.dynamic_index(0, 1), Some(1));
-        assert_eq!(p.dynamic_index(1, 0), None);
+        assert_eq!(p.dynamic_scale_count(), 2);
+        assert_eq!(p.dynamic_offset_count(), 0);
+        assert_eq!(p.dynamic_scale_index(0, 0), Some(0));
+        assert_eq!(p.dynamic_scale_index(0, 1), Some(1));
+        assert_eq!(p.dynamic_offset_index(0), None);
+        assert_eq!(p.dynamic_scale_index(1, 0), None);
 
         let mixed = Projection::new(
             &[A, R, B],
@@ -774,10 +823,39 @@ mod tests {
                 PhysicalAxisMap::of(B),
             ],
         );
-        assert_eq!(mixed.dynamic_count(), 1);
-        assert_eq!(mixed.dynamic_index(0, 0), None);
-        assert_eq!(mixed.dynamic_index(0, 1), Some(0));
+        assert_eq!(mixed.dynamic_scale_count(), 1);
+        assert_eq!(mixed.dynamic_scale_index(0, 0), None);
+        assert_eq!(mixed.dynamic_scale_index(0, 1), Some(0));
+        assert_eq!(mixed.dynamic_offset_index(0), None);
         assert!(!Projection::direct(&[A, B]).has_dynamic());
+
+        let with_dynamic_offset = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::scaled_with_offset(
+                    &[(A, Scale::Dynamic), (R, Scale::Static(1))],
+                    Offset::Dynamic,
+                ),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert_eq!(with_dynamic_offset.dynamic_scale_count(), 1);
+        assert_eq!(with_dynamic_offset.dynamic_offset_count(), 1);
+        assert_eq!(with_dynamic_offset.dynamic_scale_index(0, 0), Some(0));
+        assert_eq!(with_dynamic_offset.dynamic_scale_index(0, 1), None);
+        assert_eq!(with_dynamic_offset.dynamic_offset_index(0), Some(0));
+        assert_eq!(with_dynamic_offset.dynamic_offset_index(1), None);
+
+        let two_offsets = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], Offset::Dynamic),
+                PhysicalAxisMap::scaled_with_offset(&[(B, Scale::Dynamic)], Offset::Dynamic),
+            ],
+        );
+        assert_eq!(two_offsets.dynamic_offset_index(0), Some(0));
+        assert_eq!(two_offsets.dynamic_offset_index(1), Some(1));
+        assert_eq!(two_offsets.dynamic_scale_index(1, 0), Some(0));
     }
 
     /// A runtime coefficient is a gather by construction, so it can never be inverted back into
