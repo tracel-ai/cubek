@@ -537,6 +537,142 @@ fn conv1d_masked_overhang_strided() {
     .check_at(2, 4, 1, true, Schedule::Direct);
 }
 
+// ---- runtime coefficients --------------------------------------------------
+
+/// [`conv_kernel`] with the input's stride and dilation arriving as runtime scalars rather than
+/// baked into its projection: the two `Scale::Dynamic` coefficients ride the tile.
+#[cube(launch)]
+fn conv_kernel_dynamic<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    stride: u32,
+    dilation: u32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    // In `Projection::dynamic_index` order: physical axis 0's terms, `OH` then `RH`.
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(stride);
+    coefficients.push(dilation);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients);
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    out.zero();
+    out.mma(&input, &weight);
+}
+
+impl Conv1d {
+    /// [`check`](Conv1d::check) with both coefficients `Dynamic`, so the same convolution runs off
+    /// a kernel that was compiled without knowing either.
+    /// Only `Schedule::Direct`: staging a runtime coefficient is refused at expansion, since the
+    /// smem it would allocate has no comptime extent.
+    fn check_dynamic(&self, tile_oh: usize, tile_co: usize) {
+        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let f32_ty = f32::as_type_native_unchecked().storage_type();
+
+        let space = Tiling::new()
+            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(OH, Cut::sequential(tile_oh))
+                    .axis(CO, Cut::sequential(tile_co))
+                    .axis(RH, Cut::sequential(self.rh))
+                    .axis(CI, Cut::sequential(self.ci))
+            })
+            .build();
+
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled(&[(OH, Scale::Dynamic), (RH, Scale::Dynamic)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        ));
+
+        let in_shape = shape![self.in_len(), self.ci];
+        let w_shape = shape![self.rh, self.ci, self.co];
+        let input = ramp(in_shape.num_elements(), 7);
+        let weight = ramp(w_shape.num_elements(), 5);
+
+        let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+            .dtype(f32_ty)
+            .custom(input.clone())
+            .generate_with_f32_host_data();
+        let (w_handle, _) = TestInput::builder(client.clone(), w_shape)
+            .dtype(f32_ty)
+            .custom(weight.clone())
+            .generate_with_f32_host_data();
+        let out_handle = TestInput::builder(client.clone(), shape![self.oh, self.co])
+            .dtype(f32_ty)
+            .zeros()
+            .generate_without_host_data();
+
+        conv_kernel_dynamic::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+            TileArgLaunch::new(
+                w_handle.binding().into_tensor_arg(),
+                TileSpec::direct(&[RH, CI, CO]),
+            ),
+            TileArgLaunch::new(
+                out_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[OH, CO]),
+            ),
+            self.stride as u32,
+            self.dilation as u32,
+            space,
+            f32_ty,
+        );
+
+        let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+        let want = self.reference(&input, &weight);
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                assert_eq!(
+                    got.get_f32(&[o, c]),
+                    want[o * self.co + c],
+                    "dynamic conv1d stride {} dilation {}: wrong at ({o}, {c})",
+                    self.stride,
+                    self.dilation
+                );
+            }
+        }
+    }
+}
+
+/// The degenerate coefficients, which a `Static` projection folds away entirely: the runtime path
+/// has to produce the same answer without that folding.
+#[test]
+fn conv1d_dynamic_unit_coefficients() {
+    Conv1d {
+        oh: 8,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_dynamic(4, 4);
+}
+
+/// A stride and a dilation that both exceed one, over several tiles: the window advance and the
+/// receptive field are then runtime values, which is what the descent has to size its window from.
+#[test]
+fn conv1d_dynamic_strided_and_dilated() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 4,
+        ci: 3,
+        stride: 3,
+        dilation: 2,
+    }
+    .check_dynamic(2, 2);
+}
+
 // ---- 2-D -------------------------------------------------------------------
 
 /// `out[oh, ow, co] = Σ_{rh, rw, ci} w[rh, rw, ci, co] · in[oh·sh + rh·dh, ow·sw + rw·dw, ci]`.

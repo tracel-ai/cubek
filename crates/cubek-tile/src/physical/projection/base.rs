@@ -281,6 +281,31 @@ impl Projection {
         self.physical.iter().any(|m| m.offset() < 0)
     }
 
+    /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
+    /// it is [`Static`](Scale::Static). The order is the projection's own, physical axis major and
+    /// term order within, so a caller fills the carrier by walking the maps in order.
+    pub fn dynamic_index(&self, pa: usize, t: usize) -> Option<usize> {
+        if !self.physical[pa].terms()[t].scale.is_dynamic() {
+            return None;
+        }
+        let before: usize = self.physical[..pa].iter().map(|m| m.dynamic_count()).sum();
+        let within = self.physical[pa].terms()[..t]
+            .iter()
+            .filter(|term| term.scale.is_dynamic())
+            .count();
+        Some(before + within)
+    }
+
+    /// How many coefficients are [`Dynamic`](Scale::Dynamic): the length of the runtime carrier.
+    pub fn dynamic_count(&self) -> usize {
+        self.physical.iter().map(|m| m.dynamic_count()).sum()
+    }
+
+    /// Whether any coefficient is only known at runtime.
+    pub fn has_dynamic(&self) -> bool {
+        self.dynamic_count() > 0
+    }
+
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
     /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
     /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
@@ -308,14 +333,6 @@ impl Projection {
     /// The phase-1 contract for a *gathered* (affine) projection. A plain one, storage-tiled or
     /// not, is unconstrained: it is what the engine has always done.
     pub fn validate(&self) {
-        assert!(
-            !self
-                .physical
-                .iter()
-                .any(|m| m.terms().iter().any(|t| t.scale.is_dynamic())),
-            "Projection: Dynamic scales are reserved for a runtime stride/dilation and are not \
-             implemented yet"
-        );
         // Every physical axis carrying one logical axis at coefficient 1 is exactly "no gather",
         // whatever the ranks: `direct`, and `tiled`, which repeats a label rather than scaling it.
         if self.is_invertible() {
@@ -338,7 +355,7 @@ impl Projection {
              coefficient 1 (it is addressed in vector lines)"
         );
         for &axis in self.axes.iter() {
-            let count = self.physical.iter().filter(|m| m.scale(axis) != 0).count();
+            let count = self.physical.iter().filter(|m| m.addresses(axis)).count();
             assert!(
                 count > 0,
                 "Projection: logical axis {axis:?} addresses no physical axis"
@@ -732,5 +749,49 @@ mod tests {
         );
         assert!(!shifted.may_underflow());
         assert!(!Projection::direct(&[A, B]).may_underflow());
+    }
+
+    /// The runtime carrier's order: physical axis major, term order within, `Static` terms skipped.
+    #[test]
+    fn dynamic_terms_index_in_projection_order() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic), (R, Scale::Dynamic)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(p.has_dynamic());
+        assert_eq!(p.dynamic_count(), 2);
+        assert_eq!(p.dynamic_index(0, 0), Some(0));
+        assert_eq!(p.dynamic_index(0, 1), Some(1));
+        assert_eq!(p.dynamic_index(1, 0), None);
+
+        let mixed = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::scaled(&[(A, Scale::Static(2)), (R, Scale::Dynamic)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert_eq!(mixed.dynamic_count(), 1);
+        assert_eq!(mixed.dynamic_index(0, 0), None);
+        assert_eq!(mixed.dynamic_index(0, 1), Some(0));
+        assert!(!Projection::direct(&[A, B]).has_dynamic());
+    }
+
+    /// A runtime coefficient is a gather by construction, so it can never be inverted back into
+    /// logical digits.
+    #[test]
+    fn a_dynamic_coefficient_is_not_invertible() {
+        let p = Projection::new(
+            &[A, B],
+            &[
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(!p.is_invertible());
+        p.validate();
     }
 }

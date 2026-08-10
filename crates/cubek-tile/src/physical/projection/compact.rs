@@ -51,6 +51,13 @@ impl Compaction {
     /// step is `1` and every extent is the axis's own, so a plain operand's stage is the tile it
     /// always was.
     pub fn of(projection: &Projection, extent_of: impl Fn(Axis) -> usize) -> Compaction {
+        // The box below is the smem allocation: both its step (a gcd of coefficients) and its
+        // extent are comptime by construction, which a runtime coefficient cannot be.
+        assert!(
+            !projection.has_dynamic(),
+            "Compaction: a Dynamic coefficient has no comptime window extent, so the operand \
+             carrying it cannot be staged (use Schedule::Direct)"
+        );
         let rank = projection.physical_rank();
         let mut steps = SmallVec::new();
         let mut extents = SmallVec::new();
@@ -160,6 +167,7 @@ fn gcd(a: usize, b: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Scale;
 
     const OH: Axis = Axis(0);
     const RH: Axis = Axis(1);
@@ -274,5 +282,19 @@ mod tests {
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[17, 16]);
         assert_eq!(c.projection().offset(0), 0);
+    }
+
+    /// A stage is sized at comptime, which a runtime coefficient cannot be.
+    #[test]
+    #[should_panic(expected = "cannot be staged")]
+    fn a_dynamic_coefficient_is_refused() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled(&[(OH, Scale::Dynamic), (RH, Scale::Static(1))]),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        Compaction::of(&p, extents(8, 3, 16));
     }
 }

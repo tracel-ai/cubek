@@ -8,9 +8,11 @@ use crate::{Axis, MAX_AXES};
 
 /// How far one unit of a logical axis's coordinate moves along one physical axis. Mirrors
 /// [`Extent`](crate::Extent): `Static` is a comptime constant so the advance folds the way
-/// [`window_start`](crate::MemData) needs, `Dynamic` is reserved for a runtime stride/dilation
-/// and is rejected by [`Projection::validate`](crate::Projection::validate) until the runtime
-/// half exists.
+/// [`window_start`](crate::MemData) needs, `Dynamic` is a runtime stride or dilation whose value
+/// rides the tile ([`Tile::of_gathered`](crate::Tile::of_gathered)) instead of the kernel.
+///
+/// A `Dynamic` coefficient costs the comptime window geometry: the receptive field it spans is a
+/// runtime value, so the operand cannot be staged.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Scale {
     Static(usize),
@@ -74,13 +76,25 @@ impl PhysicalAxisMap {
     /// An affine combination with a signed constant offset, e.g.
     /// `affine_with_offset(&[(Oh, stride), (Rh, dilation)], -padding)`.
     pub fn affine_with_offset(terms: &[(Axis, usize)], offset: isize) -> Self {
+        let terms: SmallVec<[(Axis, Scale); MAX_AXES]> = terms
+            .iter()
+            .map(|&(axis, scale)| (axis, Scale::Static(scale)))
+            .collect();
+        Self::scaled_with_offset(&terms, offset)
+    }
+
+    /// [`affine`](Self::affine) over explicit [`Scale`]s, which is how a coefficient only known at
+    /// runtime is spelled: `scaled(&[(Oh, Scale::Dynamic), (Rh, Scale::Static(1))])`.
+    pub fn scaled(terms: &[(Axis, Scale)]) -> Self {
+        Self::scaled_with_offset(terms, 0)
+    }
+
+    /// [`scaled`](Self::scaled) with a signed constant offset.
+    pub fn scaled_with_offset(terms: &[(Axis, Scale)], offset: isize) -> Self {
         PhysicalAxisMap {
             terms: terms
                 .iter()
-                .map(|&(axis, scale)| AxisTerm {
-                    axis,
-                    scale: Scale::Static(scale),
-                })
+                .map(|&(axis, scale)| AxisTerm { axis, scale })
                 .collect(),
             offset,
         }
@@ -95,7 +109,20 @@ impl PhysicalAxisMap {
         self.offset
     }
 
-    /// `axis`'s coefficient, `0` when it does not address this physical axis.
+    /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
+    pub fn dynamic_count(&self) -> usize {
+        self.terms.iter().filter(|t| t.scale.is_dynamic()).count()
+    }
+
+    /// Whether `axis` addresses this physical axis at all, whatever its coefficient is and whether
+    /// or not it is comptime. [`scale`](Self::scale)'s question minus the value.
+    pub fn addresses(&self, axis: Axis) -> bool {
+        self.terms.iter().any(|t| t.axis == axis)
+    }
+
+    /// `axis`'s coefficient, `0` when it does not address this physical axis. Panics when the
+    /// coefficient is [`Dynamic`](Scale::Dynamic); [`addresses`](Self::addresses) is the question
+    /// that survives one.
     pub fn scale(&self, axis: Axis) -> usize {
         self.terms
             .iter()

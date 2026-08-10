@@ -107,6 +107,17 @@ impl Partitioner {
         self.level().schedule
     }
 
+    /// Whether any level from here down stages its operands into smem, so their window geometry
+    /// has to be comptime (an allocation size is).
+    pub fn stages(&self) -> bool {
+        match self {
+            Partitioner::Final => false,
+            Partitioner::Level(level) => {
+                !matches!(level.schedule, Schedule::Direct) || level.next.stages()
+            }
+        }
+    }
+
     /// Resolve every level's deferred [`PlaneLanes`](super::Coverage::PlaneLanes) count to
     /// `Instances(plane_size)`. The launch's single stamping pass, so geometry and the walk
     /// only ever see concrete instance counts.
