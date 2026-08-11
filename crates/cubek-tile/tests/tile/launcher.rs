@@ -352,6 +352,33 @@ fn arg_gathered_dynamic_coefficient_cannot_stage() {
         .build();
 }
 
+/// A rational axis advances one physical cell on some outputs and none on others, so its window is
+/// not a lattice and has no compacted step to stage through.
+#[test]
+#[should_panic(expected = "not a lattice")]
+fn arg_gathered_rational_cannot_stage() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(4),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
+}
+
 // ---- Launcher::vector_size -------------------------------------------------
 
 #[test]

@@ -241,6 +241,7 @@ pub(crate) fn projected_batch_matrix(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
     coefficients: Coords<u32>,
+    residues: Coords<u32>,
     #[comptime] vector_size: usize,
     i: usize,
 ) -> ProjectedBatchMatrix {
@@ -251,6 +252,7 @@ pub(crate) fn projected_batch_matrix(
             comptime!(space),
             comptime!(projection),
             coefficients,
+            residues,
             vector_size,
         ),
     )
@@ -263,6 +265,7 @@ pub(crate) fn projected_grouped_matrix(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
     coefficients: Coords<u32>,
+    residues: Coords<u32>,
     #[comptime] vector_size: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
@@ -273,6 +276,7 @@ pub(crate) fn projected_grouped_matrix(
             comptime!(space),
             comptime!(projection),
             coefficients,
+            residues,
             vector_size,
         ),
     )
@@ -291,6 +295,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
+                    g.residues.clone(),
                     vector_size,
                     i,
                 );
@@ -318,6 +323,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
+                    g.residues.clone(),
                     vector_size,
                     i,
                 );
@@ -348,6 +354,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
+                    g.residues.clone(),
                     vector_size,
                     i,
                 );
@@ -381,6 +388,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
+                    g.residues.clone(),
                     vector_size,
                     rows,
                     cols,

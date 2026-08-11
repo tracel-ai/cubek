@@ -399,6 +399,12 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             "StridedTileSource: a Dynamic coefficient cannot be staged, its window has no \
              comptime extent; the schedule must be Direct"
         );
+        // Reported here rather than at `Compaction::of`, on the caller's thread.
+        assert!(
+            !spec.projection.is_rational() || !space.partitioner().stages(),
+            "StridedTileSource: a rational axis's window is not a lattice, so it has no compacted \
+             step; the schedule must be Direct"
+        );
         Realized {
             tensor: binding.into_tensor_arg(),
             vector_size: v,

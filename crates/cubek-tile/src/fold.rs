@@ -240,6 +240,17 @@ impl<C: Int> Coords<C> {
     }
 }
 
+/// `n / d` rounded toward minus infinity, for a numerator that may sit below the buffer's origin
+/// (a padded or fractionally placed window). The stock `/` truncates toward zero, which lands one
+/// cell too high there. Only reached for a genuinely runtime numerator or divisor: a comptime pair
+/// divides on the host, where [`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin) is the
+/// same floor.
+#[cube]
+pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
+    let q = n / d;
+    select(n % d < 0, q - 1, q)
+}
+
 /// Converts a comptime list of extents into constant [`Coords<u32>`].
 #[cube]
 // `#[unroll]` needs a range loop; an iterator has no expansion.

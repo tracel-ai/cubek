@@ -3,7 +3,9 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ConcreteLayout, MAX_AXES, Offset, PhysicalAxisMap, Scale, StorageTiling};
+use crate::{
+    Axis, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale, StorageTiling,
+};
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -277,6 +279,17 @@ impl Projection {
         self.physical[pa].offset()
     }
 
+    /// What physical axis `pa`'s combination is divided by, [`Static(1)`](Divisor::Static) for
+    /// every integer mapping.
+    pub fn divisor(&self, pa: usize) -> Divisor {
+        self.physical[pa].divisor()
+    }
+
+    /// Whether any physical axis is [rational](PhysicalAxisMap::is_rational).
+    pub fn is_rational(&self) -> bool {
+        self.physical.iter().any(|m| m.is_rational())
+    }
+
     /// Whether any physical axis carries a negative offset or a dynamic offset (whose sign
     /// cannot be proven non-negative at comptime).
     pub fn may_underflow(&self) -> bool {
@@ -288,20 +301,47 @@ impl Projection {
 
     /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
     /// it is [`Static`](Scale::Static). The order is the projection's own, physical axis major and
-    /// term order within, so a caller fills the carrier by walking the maps in order.
+    /// term order within, each axis's [`Dynamic`](Divisor::Dynamic) divisor last, so a caller fills
+    /// the carrier by walking the maps in order.
     pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
         if !self.physical[pa].terms()[t].scale.is_dynamic() {
             return None;
         }
-        let before: usize = self.physical[..pa]
-            .iter()
-            .map(|m| m.dynamic_scale_count())
-            .sum();
         let within = self.physical[pa].terms()[..t]
             .iter()
             .filter(|term| term.scale.is_dynamic())
             .count();
-        Some(before + within)
+        Some(self.coefficient_base(pa) + within)
+    }
+
+    /// Where physical axis `pa`'s divisor sits in the runtime coefficient carrier, or `None` when
+    /// it is [`Static`](Divisor::Static). Divisors share the carrier with coefficients: both are
+    /// unsigned values of the same combination, and an axis's divisor follows its own terms.
+    pub fn dynamic_divisor_index(&self, pa: usize) -> Option<usize> {
+        if !self.physical[pa].divisor().is_dynamic() {
+            return None;
+        }
+        Some(self.coefficient_base(pa) + self.physical[pa].dynamic_scale_count())
+    }
+
+    /// Where physical axis `pa`'s entries start in the runtime coefficient carrier; at the physical
+    /// rank, the carrier's whole length.
+    fn coefficient_base(&self, pa: usize) -> usize {
+        self.physical[..pa]
+            .iter()
+            .map(|m| m.dynamic_scale_count() + m.divisor().is_dynamic() as usize)
+            .sum()
+    }
+
+    /// The length of the runtime coefficient carrier: every [`Dynamic`](Scale::Dynamic) coefficient
+    /// and every [`Dynamic`](Divisor::Dynamic) divisor.
+    pub fn dynamic_coefficient_count(&self) -> usize {
+        self.coefficient_base(self.physical.len())
+    }
+
+    /// Whether any physical axis's divisor is only known at runtime.
+    pub fn has_dynamic_divisors(&self) -> bool {
+        self.physical.iter().any(|m| m.divisor().is_dynamic())
     }
 
     /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
@@ -319,11 +359,6 @@ impl Projection {
         )
     }
 
-    /// How many coefficients are [`Dynamic`](Scale::Dynamic): the length of the coefficient carrier.
-    pub fn dynamic_scale_count(&self) -> usize {
-        self.physical.iter().map(|m| m.dynamic_scale_count()).sum()
-    }
-
     /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
     pub fn dynamic_offset_count(&self) -> usize {
         self.physical
@@ -332,9 +367,9 @@ impl Projection {
             .count()
     }
 
-    /// Whether any coefficient or offset is only known at runtime.
+    /// Whether any coefficient, offset or divisor is only known at runtime.
     pub fn has_dynamic(&self) -> bool {
-        self.has_dynamic_scales() || self.dynamic_offset_count() > 0
+        self.has_dynamic_scales() || self.dynamic_offset_count() > 0 || self.has_dynamic_divisors()
     }
 
     /// Whether any coefficient is only known at runtime.
@@ -343,26 +378,40 @@ impl Projection {
     }
 
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
-    /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
-    /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
-    /// overlapping stencil window. A constant offset shifts position without changing span.
+    /// the receptive field `1 + (Σ (extent - 1) * scale + residue) / divisor`. A single
+    /// coefficient-`1` term collapses to `extent`, so a direct operand's window is its sub-tile
+    /// edge as before; two terms give the overlapping stencil window.
+    ///
+    /// A constant offset shifts position without changing span, *except* under a division, where
+    /// the [`residue`](PhysicalAxisMap::residue) decides whether the numerator's last step crosses
+    /// into one more physical cell.
     pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
-        1 + self.physical[pa]
+        let map = &self.physical[pa];
+        let field: usize = map
             .terms()
             .iter()
             .map(|t| (extent_of(t.axis) - 1) * t.scale.get())
-            .sum::<usize>()
+            .sum();
+        if !map.is_rational() {
+            return 1 + field;
+        }
+        let residue = map.residue().expect(
+            "Projection::span: a rational axis with a Dynamic offset or divisor has no comptime \
+             receptive field; its window extent is a runtime value",
+        );
+        1 + (field + residue) / map.divisor().get()
     }
 
     /// Whether every physical axis carries exactly one logical axis at coefficient `1` with zero
-    /// offset, so the physical coordinates uniquely determine the logical ones and
+    /// offset and no division, so the physical coordinates uniquely determine the logical ones and
     /// [`fold_physical`](crate::fold_physical) can invert `GmemLayout`'s `to_source_pos`. True for
     /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
-    /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell
-    /// or applies a constant offset.
+    /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell,
+    /// applies a constant offset, or divides.
     pub fn is_invertible(&self) -> bool {
         self.physical.iter().all(|m| {
             m.offset() == Offset::Static(0)
+                && m.divisor().is_unit()
                 && matches!(m.terms(), [t] if matches!(t.scale, Scale::Static(1)))
         })
     }
@@ -843,7 +892,7 @@ mod tests {
             ],
         );
         assert!(p.has_dynamic());
-        assert_eq!(p.dynamic_scale_count(), 2);
+        assert_eq!(p.dynamic_coefficient_count(), 2);
         assert_eq!(p.dynamic_offset_count(), 0);
         assert_eq!(p.dynamic_scale_index(0, 0), Some(0));
         assert_eq!(p.dynamic_scale_index(0, 1), Some(1));
@@ -857,7 +906,7 @@ mod tests {
                 PhysicalAxisMap::of(B),
             ],
         );
-        assert_eq!(mixed.dynamic_scale_count(), 1);
+        assert_eq!(mixed.dynamic_coefficient_count(), 1);
         assert_eq!(mixed.dynamic_scale_index(0, 0), None);
         assert_eq!(mixed.dynamic_scale_index(0, 1), Some(0));
         assert_eq!(mixed.dynamic_offset_index(0), None);
@@ -873,7 +922,7 @@ mod tests {
                 PhysicalAxisMap::of(B),
             ],
         );
-        assert_eq!(with_dynamic_offset.dynamic_scale_count(), 1);
+        assert_eq!(with_dynamic_offset.dynamic_coefficient_count(), 1);
         assert_eq!(with_dynamic_offset.dynamic_offset_count(), 1);
         assert_eq!(with_dynamic_offset.dynamic_scale_index(0, 0), Some(0));
         assert_eq!(with_dynamic_offset.dynamic_scale_index(0, 1), None);
@@ -905,5 +954,48 @@ mod tests {
         );
         assert!(!p.is_invertible());
         p.validate(4);
+    }
+
+    #[test]
+    fn rational_projection_properties() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(133),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert!(p.is_rational());
+        assert_eq!(p.divisor(0), Divisor::Static(133));
+        assert_eq!(p.divisor(1), Divisor::Static(1));
+        // span: 1 + ( (4 - 1)*100 + (2 - 1)*133 + residue ) / 133
+        // field = 300 + 133 = 433
+        // residue = (-50).rem_euclid(133) = 83
+        // span = 1 + (433 + 83) / 133 = 1 + 516 / 133 = 1 + 3 = 4
+        let extent_of = |a| match a {
+            A => 4,
+            R => 2,
+            _ => 1,
+        };
+        assert_eq!(p.span(0, extent_of), 4);
+    }
+
+    #[test]
+    fn dynamic_divisor_indexing() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic), (R, Scale::Static(1))])
+                    .over(Divisor::Dynamic),
+                PhysicalAxisMap::scaled(&[(B, Scale::Dynamic)]),
+            ],
+        );
+        assert!(p.has_dynamic());
+        assert!(p.has_dynamic_divisors());
+        assert_eq!(p.dynamic_coefficient_count(), 3);
+        assert_eq!(p.dynamic_scale_index(0, 0), Some(0));
+        assert_eq!(p.dynamic_scale_index(0, 1), None);
+        assert_eq!(p.dynamic_divisor_index(0), Some(1));
+        assert_eq!(p.dynamic_scale_index(1, 0), Some(2));
     }
 }

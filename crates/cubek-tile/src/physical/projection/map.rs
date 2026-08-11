@@ -75,6 +75,52 @@ impl From<isize> for Offset {
     }
 }
 
+/// What one physical axis's whole affine combination is divided by, floored: the denominator of a
+/// *rational* mapping, `(Σ digit * scale + offset) / divisor`. `Static(1)` is the integer mapping
+/// every operand but a fractionally scaled one carries, and is the identity everywhere below.
+///
+/// One per physical axis rather than one per term, because the floor does not distribute over the
+/// sum: `Σ ⌊tᵢ⌋` is not `⌊Σ tᵢ⌋`, and it is the whole numerator (the offset included) the resample
+/// mapping `⌊(o·Wᵢₙ + offset) / Wₒᵤₜ⌋` divides. A term meant to stay integral is spelled by giving
+/// it the divisor as its coefficient, which the division then cancels exactly.
+///
+/// Like [`Scale::Dynamic`], a `Dynamic` divisor costs the comptime window geometry: the receptive
+/// field it spans is a runtime value, so the operand cannot be staged. It also costs an in-kernel
+/// integer division per read, where a `Static` one folds.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Divisor {
+    Static(usize),
+    Dynamic,
+}
+
+impl Divisor {
+    /// The comptime divisor; panics on `Dynamic`.
+    pub fn get(self) -> usize {
+        match self {
+            Divisor::Static(n) => n,
+            Divisor::Dynamic => {
+                panic!("Divisor::get: this divisor is Dynamic; its value is only known at runtime")
+            }
+        }
+    }
+
+    pub fn is_dynamic(self) -> bool {
+        matches!(self, Divisor::Dynamic)
+    }
+
+    /// Whether this divides by `1`, i.e. the mapping is integer and every rational path below is
+    /// the identity.
+    pub fn is_unit(self) -> bool {
+        self == Divisor::Static(1)
+    }
+}
+
+impl From<usize> for Divisor {
+    fn from(n: usize) -> Self {
+        Divisor::Static(n)
+    }
+}
+
 /// One logical axis's contribution to one physical axis: `digit * scale`, where the digit is the
 /// whole coordinate unless the axis is spread over several physical axes, which
 /// [`Projection::digit`](crate::Projection::digit) reads off the map's own shape rather than off a
@@ -86,11 +132,14 @@ pub struct AxisTerm {
 }
 
 /// One [`PhysicalAxis`](crate::PhysicalAxis) as an affine combination of logical axes' digits
-/// plus a constant term: `physical = Σ digit(axis) * scale + offset`.
+/// plus a constant term, over a divisor: `physical = (Σ digit(axis) * scale + offset) / divisor`,
+/// floored. The divisor is `1` for every mapping but a [rational](Divisor) one, which is the only
+/// case any of the arithmetic below is not the plain affine sum.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PhysicalAxisMap {
     terms: SmallVec<[AxisTerm; MAX_AXES]>,
     offset: Offset,
+    divisor: Divisor,
 }
 
 impl PhysicalAxisMap {
@@ -103,6 +152,7 @@ impl PhysicalAxisMap {
                 scale: Scale::Static(1),
             }]),
             offset: Offset::Static(0),
+            divisor: Divisor::Static(1),
         }
     }
 
@@ -136,7 +186,22 @@ impl PhysicalAxisMap {
                 .map(|&(axis, scale)| AxisTerm { axis, scale })
                 .collect(),
             offset: offset.into(),
+            divisor: Divisor::Static(1),
         }
+    }
+
+    /// The same combination read as a fraction: `(Σ digit * scale + offset) / divisor`, floored.
+    /// The rational spelling of a fractional scale, e.g. resizing `w_in` cells to `w_out` is
+    /// `affine_with_offset(&[(O, w_in), (R, w_out)], offset).over(w_out)`, where `R`'s coefficient
+    /// is the divisor precisely so the tap index survives the division whole.
+    pub fn over(mut self, divisor: impl Into<Divisor>) -> Self {
+        let divisor = divisor.into();
+        assert!(
+            divisor != Divisor::Static(0),
+            "PhysicalAxisMap::over: a divisor of 0 does not map anywhere"
+        );
+        self.divisor = divisor;
+        self
     }
 
     pub fn terms(&self) -> &[AxisTerm] {
@@ -146,6 +211,38 @@ impl PhysicalAxisMap {
     /// The signed constant or dynamic offset of this physical axis.
     pub fn offset(&self) -> Offset {
         self.offset
+    }
+
+    /// What this axis's affine combination is divided by, [`Static(1)`](Divisor::Static) unless
+    /// [`over`](Self::over) made it rational.
+    pub fn divisor(&self) -> Divisor {
+        self.divisor
+    }
+
+    /// Whether this axis divides by anything but `1`, so the plain affine sum is not the physical
+    /// coordinate and every path below has to carry the division.
+    pub fn is_rational(&self) -> bool {
+        !self.divisor.is_unit()
+    }
+
+    /// The physical cell this axis's logical origin lands on: `⌊offset / divisor⌋`, the part of the
+    /// offset a [`Window`](crate::Window) origin can absorb. `None` when either side is only known
+    /// at runtime, which is the launch's to compute rather than the kernel's.
+    pub fn origin(&self) -> Option<isize> {
+        match (self.offset, self.divisor) {
+            (Offset::Static(o), Divisor::Static(d)) => Some(o.div_euclid(d as isize)),
+            _ => None,
+        }
+    }
+
+    /// The phase the division starts at: `offset - divisor * origin`, in `0..divisor`. What the
+    /// window origin cannot absorb, since `⌊(x + offset) / divisor⌋` is `⌊offset / divisor⌋ +
+    /// ⌊(x + residue) / divisor⌋` and no further. `None` when either side is dynamic.
+    pub fn residue(&self) -> Option<usize> {
+        match (self.offset, self.divisor) {
+            (Offset::Static(o), Divisor::Static(d)) => Some(o.rem_euclid(d as isize) as usize),
+            _ => None,
+        }
     }
 
     /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
@@ -174,11 +271,12 @@ impl PhysicalAxisMap {
             .map_or(0, |t| t.scale.get())
     }
 
-    /// Whether this physical axis is exactly `axis` at coefficient `1` with zero offset.
-    /// Says nothing about digit extraction, which is a property of the whole
+    /// Whether this physical axis is exactly `axis` at coefficient `1` with zero offset and no
+    /// division. Says nothing about digit extraction, which is a property of the whole
     /// [`Projection`](crate::Projection) (how many physical axes carry `axis`), not of one map.
     pub fn is_identity(&self, axis: Axis) -> bool {
         self.offset == Offset::Static(0)
+            && self.divisor.is_unit()
             && matches!(
                 self.terms.as_slice(),
                 [AxisTerm {
@@ -227,5 +325,27 @@ mod tests {
         assert!(with_dynamic_offset.offset().is_dynamic());
         assert!(!with_dynamic_offset.has_dynamic_scale());
         assert_eq!(with_dynamic_offset.dynamic_scale_count(), 0);
+    }
+
+    #[test]
+    fn rational_axis_map_properties() {
+        let map = PhysicalAxisMap::affine_with_offset(&[(A, 100)], -50).over(133);
+        assert!(map.is_rational());
+        assert_eq!(map.divisor(), Divisor::Static(133));
+        assert_eq!(map.offset(), Offset::Static(-50));
+        assert_eq!(map.origin(), Some((-50isize).div_euclid(133)));
+        assert_eq!(map.residue(), Some((-50isize).rem_euclid(133) as usize));
+
+        let dynamic_div = PhysicalAxisMap::affine(&[(A, 100)]).over(Divisor::Dynamic);
+        assert!(dynamic_div.is_rational());
+        assert!(dynamic_div.divisor().is_dynamic());
+        assert_eq!(dynamic_div.origin(), None);
+        assert_eq!(dynamic_div.residue(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "divisor of 0 does not map anywhere")]
+    fn divisor_zero_panics() {
+        PhysicalAxisMap::affine(&[(A, 1)]).over(0);
     }
 }

@@ -83,20 +83,27 @@ impl<L: LogicalLayout> Layout for Projected<L> {
 }
 
 /// A [`Layout`] mapping a tile's logical coordinate to its window's physical one:
-/// `phys[pa] = Σ logical[axis] * scale`. Sits between the [`Window`](crate::Window) and the
-/// element layout: this only folds axes, it never decides what an out-of-range tap does, so the
-/// window's own [`Boundary`](crate::Boundary) (zero or the edge cell) still governs the read.
-/// Constant offsets are handled by [`Window`](crate::Window) and omitted here.
+/// `phys[pa] = (Σ logical[axis] * scale + residue) / divisor`. Sits between the
+/// [`Window`](crate::Window) and the element layout: this only folds axes, it never decides what an
+/// out-of-range tap does, so the window's own [`Boundary`](crate::Boundary) (zero or the edge cell)
+/// still governs the read.
+///
+/// Constant offsets are handled by [`Window`](crate::Window) and omitted here, all but the part a
+/// window origin cannot absorb: under a division the offset sets the phase the floor starts at, and
+/// that phase ([`residues`](Self::residues)) has to be inside the numerator.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct AxisProjection {
     /// The tile's per-logical-axis extents, in the space's axis order. The innermost is a
     /// line count, matching the window's innermost physical axis.
     shape: Coords<u32>,
-    /// The projection's runtime coefficients, in [`Projection::dynamic_scale_index`] order; empty
-    /// for a fully-`Static` mapping. The constant offsets are not among them: a tap is relative to
-    /// the window, which they placed.
+    /// The projection's runtime coefficients, in [`Projection::dynamic_scale_index`] and
+    /// [`Projection::dynamic_divisor_index`] order; empty for a fully-`Static` mapping. The
+    /// constant offsets are not among them: a tap is relative to the window, which they placed.
     coefficients: Coords<u32>,
+    /// The window origin's phase within its divisor, one per physical axis, in `0..divisor`.
+    /// Constant `0` for every integer mapping, where the origin absorbs the offset whole.
+    residues: Coords<u32>,
     #[cube(comptime)]
     space: Space,
     #[cube(comptime)]
@@ -108,6 +115,7 @@ impl AxisProjection {
     pub fn new(
         shape: Coords<u32>,
         coefficients: Coords<u32>,
+        residues: Coords<u32>,
         #[comptime] space: Space,
         #[comptime] projection: Projection,
     ) -> Self {
@@ -119,15 +127,33 @@ impl AxisProjection {
         ));
         let given = coefficients.len();
         comptime!(assert!(
-            given == projection.dynamic_scale_count(),
-            "AxisProjection: the projection has {} Dynamic coefficients but {given} were given",
-            projection.dynamic_scale_count()
+            given == projection.dynamic_coefficient_count(),
+            "AxisProjection: the projection has {} Dynamic coefficients and divisors but {given} \
+             were given",
+            projection.dynamic_coefficient_count()
+        ));
+        let phases = residues.len();
+        comptime!(assert!(
+            phases == projection.physical_rank(),
+            "AxisProjection: the projection has {} physical axes but {phases} residues were given",
+            projection.physical_rank()
         ));
         AxisProjection {
             shape,
             coefficients,
+            residues,
             space,
             projection,
+        }
+    }
+
+    /// This axis's divisor as a kernel value: the comptime constant, or the carried one.
+    fn divisor(&self, #[comptime] pa: usize) -> u32 {
+        match comptime!(self.projection.divisor(pa)) {
+            Divisor::Static(d) => comptime!(d as u32).runtime(),
+            Divisor::Dynamic => self.coefficients.at(comptime!(
+                self.projection.dynamic_divisor_index(pa).unwrap()
+            )),
         }
     }
 }
@@ -146,8 +172,12 @@ impl Layout for AxisProjection {
             let n = comptime!(map.terms().len());
 
             // Per-term products, summed below (chained, so a single coefficient-1 term folds to
-            // the coordinate itself).
+            // the coordinate itself). Under a division the sum is the numerator, and it starts at
+            // the phase the window origin could not absorb.
             let mut terms = Coords::<u32>::new();
+            if comptime!(map.is_rational()) {
+                terms.push(self.residues.at(pa));
+            }
             #[unroll]
             for t in 0..n {
                 let term = comptime!(map.terms()[t]);
@@ -159,7 +189,15 @@ impl Layout for AxisProjection {
                     )))),
                 }
             }
-            out.push(terms.fsum(comptime!((0..n).collect::<Vec<_>>())));
+            let sum = terms.fsum(comptime!(
+                (0..n + map.is_rational() as usize).collect::<Vec<_>>()
+            ));
+
+            if comptime!(map.is_rational()) {
+                out.push(sum.fdiv(self.divisor(pa)));
+            } else {
+                out.push(sum);
+            }
         }
 
         out
@@ -254,6 +292,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
                     g.coefficients.clone(),
+                    g.residues.clone(),
                     self.vector_size(),
                 );
                 g.nd_transparent::<I, WP, W>(layout)
@@ -273,12 +312,13 @@ pub(crate) fn axis_projection(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
     coefficients: Coords<u32>,
+    residues: Coords<u32>,
     #[comptime] vector_size: usize,
 ) -> AxisProjection {
     let rank = comptime!(space.rank());
     let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
 
-    AxisProjection::new(shape, coefficients, space, projection)
+    AxisProjection::new(shape, coefficients, residues, space, projection)
 }
 
 /// Returns the extents of `space` in the range `from..to`, with the innermost axis

@@ -1926,3 +1926,245 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         }
     }
 }
+
+// ---- rational (fractional scale) -------------------------------------------
+
+/// `out[o, co] = Σ_{r, ci} w[r, ci, co] · in[⌊(o·scale + r·tap + offset) / divisor⌋, ci]`: the
+/// continuous-resize mapping, where an output position lands between input cells so the window
+/// steps a whole cell on some outputs and stays put on others.
+struct Resize1d {
+    oh: usize,
+    co: usize,
+    rh: usize,
+    ci: usize,
+    in_len: usize,
+    scale: usize,
+    tap: usize,
+    offset: isize,
+    divisor: usize,
+}
+
+impl Resize1d {
+    /// The input cell tap `r` of output `o` reads, `None` outside the buffer, where
+    /// [`Boundary::Zero`] contributes nothing.
+    fn source(&self, o: usize, r: usize) -> Option<usize> {
+        let numerator = (o * self.scale + r * self.tap) as isize + self.offset;
+        let h = numerator.div_euclid(self.divisor as isize);
+        (h >= 0 && (h as usize) < self.in_len).then_some(h as usize)
+    }
+
+    fn reference(&self, input: &[f32], weight: &[f32]) -> Vec<f32> {
+        let mut out = vec![0.0f32; self.oh * self.co];
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                let mut acc = 0.0f32;
+                for r in 0..self.rh {
+                    for i in 0..self.ci {
+                        let x = self.source(o, r).map_or(0.0, |h| input[h * self.ci + i]);
+                        acc += x * weight[(r * self.ci + i) * self.co + c];
+                    }
+                }
+                out[o * self.co + c] = acc;
+            }
+        }
+        out
+    }
+
+    /// One level per entry, each cutting `OH` at that edge and keeping the other axes whole: two
+    /// entries nest a second descent, which is where a rational window's leftover phase has to
+    /// accumulate rather than restart.
+    fn space(&self, oh_edges: &[usize]) -> Space {
+        let mut tiling =
+            Tiling::new().extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        for &edge in oh_edges {
+            tiling = tiling.level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(OH, Cut::sequential(edge))
+                    .axis(CO, Cut::sequential(self.co))
+                    .axis(RH, Cut::sequential(self.rh))
+                    .axis(CI, Cut::sequential(self.ci))
+            });
+        }
+        tiling.build()
+    }
+
+    fn check(&self, oh_edges: &[usize]) {
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine_with_offset(
+                    &[(OH, self.scale), (RH, self.tap)],
+                    self.offset,
+                )
+                .over(self.divisor),
+                PhysicalAxisMap::of(CI),
+            ],
+        ))
+        .checked(true);
+
+        let (got, input, weight) = run(
+            shape![self.in_len, self.ci],
+            shape![self.rh, self.ci, self.co],
+            shape![self.oh, self.co],
+            in_spec,
+            &[RH, CI, CO],
+            TileSpec::direct(&[OH, CO]).checked(true),
+            self.space(oh_edges),
+            1,
+        );
+
+        let want = self.reference(&input, &weight);
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                assert_eq!(
+                    got.get_f32(&[o, c]),
+                    want[o * self.co + c],
+                    "resize1d {}/{} offset {} edges {oh_edges:?}: wrong at ({o}, {c})",
+                    self.scale,
+                    self.divisor,
+                    self.offset
+                );
+            }
+        }
+    }
+}
+
+/// The tap axis carries the divisor as its coefficient, so it survives the division whole: the
+/// resample shape, `⌊(o·4 - 2) / 6⌋ + r`. The last outputs read past the input, which
+/// `Boundary::Zero` masks.
+#[test]
+fn resize1d_rational_static() {
+    Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check(&[2]);
+}
+
+/// A tap coefficient the divisor does not cancel: the window itself is fractionally dilated, so
+/// two taps can land on one input cell. Walked over two levels, where the second descent starts
+/// from the phase the first left over instead of from the projection's own offset.
+#[test]
+fn resize1d_rational_fractional_taps() {
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 3,
+        ci: 2,
+        in_len: 8,
+        scale: 5,
+        tap: 2,
+        offset: -2,
+        divisor: 3,
+    };
+    resize.check(&[3]);
+    resize.check(&[3, 1]);
+}
+
+/// A rational gathered operand whose divisor and offset arrive at runtime.
+#[cube(launch)]
+fn conv_kernel_rational_dynamic<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    divisor: u32,
+    offset: i32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: StorageType,
+) {
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(divisor);
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    out.zero();
+    out.mma(&input, &weight);
+}
+
+#[test]
+fn resize1d_rational_dynamic() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::as_type_native_unchecked().storage_type();
+
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    };
+    let space = resize.space(&[2]);
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
+                Offset::Dynamic,
+            )
+            .over(Divisor::Dynamic),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true);
+
+    let in_data = ramp(resize.in_len * resize.ci, 7);
+    let w_data = ramp(resize.rh * resize.ci * resize.co, 5);
+
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let (w_handle, _) = TestInput::builder(client.clone(), shape![resize.rh, resize.ci, resize.co])
+        .dtype(f32_ty)
+        .custom(w_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![resize.oh, resize.co])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    conv_kernel_rational_dynamic::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            w_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[RH, CI, CO]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[OH, CO]).checked(true),
+        ),
+        resize.divisor as u32,
+        resize.offset as i32,
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    let want = resize.reference(&in_data, &w_data);
+    for o in 0..resize.oh {
+        for c in 0..resize.co {
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want[o * resize.co + c],
+                "resize1d dynamic: wrong at ({o}, {c})"
+            );
+        }
+    }
+}
