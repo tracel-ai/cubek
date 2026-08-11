@@ -1,8 +1,4 @@
-use cubecl::{
-    CubeDim, Runtime,
-    client::ComputeClient,
-    prelude::Scalar,
-};
+use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::Scalar};
 use cubek_matmul::{
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
     routines::find_instruction_size,

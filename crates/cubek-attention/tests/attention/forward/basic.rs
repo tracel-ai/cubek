@@ -5,10 +5,7 @@
 //! forced-blueprint tiling-scheme sweep lives in the `extended` tier.
 
 use crate::attention::forward::launcher::test_launch;
-use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, ir::AddressType,
-    prelude::Scalar,
-};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, prelude::Scalar};
 use cubek_attention::{
     forward::definition::{
         AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionOptions,

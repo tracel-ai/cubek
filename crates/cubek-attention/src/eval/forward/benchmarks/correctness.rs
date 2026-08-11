@@ -1,7 +1,4 @@
-use cubecl::{
-    Runtime, TestRuntime,
-    prelude::Scalar,
-};
+use cubecl::{Runtime, TestRuntime, prelude::Scalar};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::eval::forward::cpu_reference::{cpu_reference_result, strategy_result};

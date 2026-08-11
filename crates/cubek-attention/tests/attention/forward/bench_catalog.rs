@@ -7,10 +7,7 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubecl::{
-    Runtime, TestRuntime,
-    prelude::Scalar,
-};
+use cubecl::{Runtime, TestRuntime, prelude::Scalar};
 use cubek_attention::eval::forward::benchmarks::{AttentionCorrectness, strategies};
 use cubek_attention::eval::forward::cpu_reference::attention_epsilon;
 use cubek_attention::eval::problem::{AttentionSpec, problems};

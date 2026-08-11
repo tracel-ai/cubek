@@ -10,12 +10,7 @@
 
 #![cfg(feature = "cpu-reference")]
 
-use cubecl::{
-    Runtime, TestRuntime,
-    client::ComputeClient,
-    prelude::Scalar,
-    zspace::Shape,
-};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     backward::{
         BackwardConfig, flash_attention_backward, flash_attention_backward_dkdv,
