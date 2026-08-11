@@ -77,6 +77,11 @@ jobs:
       - name: Lint
         run: cargo xtask check lint
       # --------------------------------------------------------------------------------
+      # The test job only runs the light tier, so nothing else ever compiles the
+      # `heavy` reduce tests.
+      - name: Lint heavy tests
+        run: cargo clippy -p cubek-reduce --tests --features heavy -- -D warnings
+      # --------------------------------------------------------------------------------
       - name: Typos
         uses: tracel-ai/github-actions/check-typos@v5
 

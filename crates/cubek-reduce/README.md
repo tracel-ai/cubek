@@ -14,8 +14,9 @@ Test behavior is controlled by the shared `CUBE_TEST_MODE` env var (see `cubek-t
 
 ### Important Feature Flags
 
-- `extended`: enables the `Cube` reduction-routine strategy tests. These are slow on CPU and can stall CI, so they're opt-in.
-- `full`: alias for `extended` (room for future growth).
+- `heavy`: enables the `Cube` reduction-routine strategy tests, plus the full breadth of the `reduce_dim` matrix: both dtypes, both output-vectorization settings, both forced plane dims, every shape configuration and the whole `k` sweep. All of it is slow on CPU and can stall CI, so the default (light) suite keeps one point per collapsed axis and one shape per layout class. CI never compiles the `heavy` tier while testing, so `cargo clippy -p cubek-reduce --tests --features heavy` guards it separately.
+- `extended`: implies `heavy` (room for future growth).
+- `full`: implies `extended`, and enables the benchmark catalogue.
 
 #### Examples
 
