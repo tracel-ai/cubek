@@ -3,9 +3,12 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
-    std::tensor::{
-        View, ViewMut, into_contiguous,
-        layout::linear::{LinearView, LinearViewMut, linear_view},
+    std::{
+        quant::round::round_up_to_param,
+        tensor::{
+            View, ViewMut, into_contiguous,
+            layout::linear::{LinearView, LinearViewMut, linear_view},
+        },
     },
     tensor_vector_size_parallel,
 };
@@ -16,7 +19,7 @@ use crate::{
 };
 use crate::{
     layout::{ScalesView, scales_layout},
-    scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
+    scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 
 #[cube]
@@ -87,8 +90,12 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     scale: View<F, usize>,
     mut out_scale: ViewMut<FS, usize>,
     scales_layout: ScalesLayout,
+    #[comptime] param: QuantParam,
 ) -> FS {
-    let scale = FS::cast_from(scale.read(in_pos));
+    // Rounded up rather than cast to nearest, which can land below the scale calibration asked for
+    // and clip every value at the block maximum. The CPU backends round up too, and both have to,
+    // or a tensor quantized on one reconstructs differently on the other.
+    let scale = FS::cast_from(round_up_to_param::<F>(scale.read(in_pos), param));
 
     // Write the scale into the output buffer
     if scales_layout.is_block_start(in_pos) {
@@ -107,6 +114,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
     scales_layout: ScalesLayout,
+    #[comptime] param: QuantParam,
     #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -115,7 +123,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 
     let native_packing = Q::packing_factor();
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
-    let scale = write_scale(in_pos, scale, out_scale, scales_layout);
+    let scale = write_scale(in_pos, scale, out_scale, scales_layout, param);
 
     output.write(
         ABSOLUTE_POS,
@@ -147,7 +155,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
 
     let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
-    let scale = write_scale(packed_pos, scale, out_scale, scales_layout);
+    let scale = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
 
     if input.vector_size().comptime() == num_quants {
         output.write(
@@ -191,6 +199,14 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
+    // Refused here rather than during kernel expansion, where the caller can no longer read the
+    // scheme off the error.
+    assert!(
+        scheme.param.round_up(1.0).is_some(),
+        "{:?} scales have no round-up rule, which quantization requires",
+        scheme.param
+    );
+
     let scale_dtype = ElemType::from_quant_param(scheme.param);
 
     match scheme {
@@ -304,6 +320,7 @@ fn quantize_native<R: Runtime>(
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
                     scales_layout,
+                    scheme.param,
                     [input_dtype, scale_dtype, output_dtype],
                 )
             }
