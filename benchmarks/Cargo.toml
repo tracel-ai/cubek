@@ -33,7 +33,7 @@ path = "src/lib.rs"
 
 [dependencies]
 cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
-cubek = { path = "../crates/cubek", version = "=0.3.0-pre.1", default-features = false, features = [
+cubek = { path = "../crates/cubek", version = "=0.3.0-pre.2", default-features = false, features = [
     "stdlib",
     "random",
     "reduce",
@@ -45,31 +45,31 @@ cubek = { path = "../crates/cubek", version = "=0.3.0-pre.1", default-features =
     "fft",
     "quantization",
 ] }
-cubek-attention = { path = "../crates/cubek-attention", version = "=0.3.0-pre.1", features = [
+cubek-attention = { path = "../crates/cubek-attention", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-convolution = { path = "../crates/cubek-convolution", version = "=0.3.0-pre.1", features = [
+cubek-convolution = { path = "../crates/cubek-convolution", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-fft = { path = "../crates/cubek-fft", version = "=0.3.0-pre.1", features = [
+cubek-fft = { path = "../crates/cubek-fft", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.3.0-pre.1", features = [
+cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.1", features = [
+cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-pool = { path = "../crates/cubek-pool", version = "=0.3.0-pre.1", features = [
+cubek-pool = { path = "../crates/cubek-pool", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.3.0-pre.1", features = [
+cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-std = { path = "../crates/cubek-std", version = "=0.3.0-pre.1", features = [
+cubek-std = { path = "../crates/cubek-std", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
-cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.3.0-pre.1" }
+cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.3.0-pre.2" }
 half = { workspace = true }
 
 [[bench]]

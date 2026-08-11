@@ -81,6 +81,9 @@ impl Pipeline {
     /// stages under its `full` mbarrier; a `Cube` slot is a plain blocking
     /// [`copy_from`](Tile::copy_from).
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
+        // Bound before the match, which borrows the kind: the fill needs the logical space both
+        // sides carry (a gathered source is addressed per axis).
+        let space = comptime!(dst.space.clone());
         match self {
             Pipeline::Barrier { full, .. } => match (&mut dst.tile_kind, &src.tile_kind) {
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => {
@@ -90,7 +93,7 @@ impl Pipeline {
                     s.stage_into(d, full);
                 }
                 // A strided source under a barrier is a plain synchronous copy.
-                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s),
+                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s, space),
                 _ => panic!("Pipeline::fill: unsupported kind pairing"),
             },
             Pipeline::Cube | Pipeline::Solo => dst.copy_from(src),

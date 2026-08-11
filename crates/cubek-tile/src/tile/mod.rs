@@ -78,6 +78,22 @@ impl<T: Numeric> TileKind<T> {
     }
 }
 
+/// Where an operand's quantized form is decoded: the one site that turns stored values into served
+/// ones. Stated at launch, once, since the quantized form ends at exactly one boundary. Which sites
+/// are available is fixed by what the operand's transports can decode, never by preference, so a
+/// stated value is either the one that was left (which
+/// [`build`](crate::StridedTileSource::build) enforces) or a genuine fork between stage size and
+/// per-read cost.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum DequantAt {
+    /// The load into the stage decodes; the stage holds served values, so it inflates by the
+    /// served-to-stored ratio and the achievable stage depth drops with it.
+    Load,
+    /// The stage keeps the quantized values and their scales; the instruction's read decodes,
+    /// amortized over whatever reuse the leaf has.
+    Read,
+}
+
 /// Quantization a tile's store carries, so reads dequantize on their own. Holds the scale `buffer`
 /// plus what walks the scales in step with the values: a per-axis `strides`, a running
 /// `window_start`, and comptime `block` sizes. [`ScaleLayout`] turns those into an address ([`MemData::at`]).
@@ -90,6 +106,10 @@ pub struct QuantInfo {
     pub(crate) window_start: u32,
     #[cube(comptime)]
     pub(crate) block: Vec<usize>,
+    /// Where this operand's quantized form ends. Read by [`MemData::smem_like`], which is why no
+    /// call site asks an operand whether it is quantized before staging it.
+    #[cube(comptime)]
+    pub(crate) dequant_at: DequantAt,
     /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
     /// ([`MemData::smem_quant`]): the values stage as packed words and their scales stage compactly
     /// beside them, so the fill knows how many blocks to copy. Empty for a gmem operand, which reads
@@ -147,20 +167,29 @@ impl QuantInfo {
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
+            dequant_at: comptime!(self.dequant_at),
             scale_shape: comptime!(self.scale_shape.clone()),
             scheme: comptime!(self.scheme),
         }
     }
 }
 
-/// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it projects.
-/// `T` is the element the tile serves and computes in; its physical vector width is a storage detail
-/// inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
+/// One operand's data: a runtime [`TileKind`] backing store, the comptime [`Space`] it projects,
+/// and what it is at the instruction ([`Leaf`]). `T` is the element the tile serves and computes in;
+/// its physical vector width is a storage detail inside the [`TileKind`], read back with
+/// [`vector_size`](Tile::vector_size).
+///
+/// The leaf rides here, not on the [`Space`]: it is a format decision, and formats belong to the
+/// operand whose format they are. The partitioning says how the problem is cut and nothing about
+/// what the pieces become. Operands that disagree meet the kind-pairing panics at the instruction,
+/// which is the same way every other mismatched pair is caught.
 #[derive(CubeType)]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
+    #[cube(comptime)]
+    pub leaf: Leaf,
 }
 
 #[cube]
@@ -212,6 +241,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// This operand's decode site ([`DequantAt`]). A tile with nothing to decode answers
+    /// [`DequantAt::Load`]: served and stored are the same element, so its load already delivers
+    /// what the read wants and the stage takes that element. A tma source is never quantized, so it
+    /// answers the same for the same reason, not because a bulk copy could decode: it cannot.
+    pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.dequant_at(),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(DequantAt::Load)
+            }
+        }
+    }
+
     /// Comptime quant dispatch for a leaf read (`0` = plain, `1` = native i8, `>1` = packed u32);
     /// see [`MemData::quant_pack`]. A resident fragment and a tma source are never quantized.
     pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
@@ -219,6 +261,28 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
             TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 comptime!(0usize)
+            }
+        }
+    }
+
+    /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
+    /// coordinate is not a physical one, so the only read surface that describes the tile is the
+    /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a
+    /// [`direct`](Projection::direct) operand, and for a fragment or a tensor map, which have no
+    /// buffer to gather from.
+    pub fn gathered(&self) -> comptime_type!(bool) {
+        let projection = self.projection();
+        comptime!(!projection.is_direct())
+    }
+
+    /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source
+    /// have no buffer to project onto, so they answer [`direct`](Projection::direct) over their own
+    /// space, which is what every non-gather operand carries anyway.
+    pub(crate) fn projection(&self) -> comptime_type!(Projection) {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(g.projection.clone()),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                comptime!(Projection::direct_over(&self.space))
             }
         }
     }
@@ -300,6 +364,7 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
+            leaf: comptime!(self.leaf),
         }
     }
 
@@ -351,7 +416,7 @@ impl<T: Numeric> Tile<T> {
     /// output takes the unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
         match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final(_) => match &mut self.tile_kind {
+            Partitioner::Final => match &mut self.tile_kind {
                 TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
                 TileKind::PlaneTile(t) => t.zero(),
                 TileKind::PlanePartition(p) => p.zero(),
@@ -396,6 +461,9 @@ impl<T: Numeric> Tile<T> {
     /// transport leaf. A partition source is matched first: it needs the whole
     /// destination tile, which the pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
+        // Bound before the match, which borrows the kind: a memory fill needs the logical space
+        // both sides carry (a gathered source is addressed per axis).
+        let space = comptime!(self.space.clone());
         match &src.tile_kind {
             TileKind::PlanePartition(s) => s.drain_into(self),
             TileKind::Gmem(_)
@@ -405,13 +473,15 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::PlanePartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
                     d.fill_from(src)
                 }
-                (TileKind::PlaneTile(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                (TileKind::PlaneTile(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
+                    d.load_window(src)
+                }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
                     s.store_window(d)
                 }
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
-                    d.fill_from(s)
+                    d.fill_from(s, space)
                 }
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")

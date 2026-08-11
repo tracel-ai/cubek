@@ -1,6 +1,6 @@
 //! The concrete physical layout of a stored buffer: its axes in major-to-minor order, with a
 //! storage-tiled axis contributing several fragments. Built from a real tensor and its
-//! [`Storage`](crate::Storage) at realization; constructed directly in tests.
+//! [`Projection`](crate::Projection) at realization; constructed directly in tests.
 
 use cubecl::zspace::SmallVec;
 
@@ -10,7 +10,7 @@ use crate::{Axis, MAX_AXES};
 /// its extent. Storage tiling is *not* an annotation here; a tiled logical axis contributes
 /// several `PhysicalAxis` entries (one per nesting level, outer grid to inner leaf), so tiling
 /// is just higher physical rank with the label repeated, mirroring the `[grid…, tile…]` buffer
-/// the tile engine ([`Storage`](crate::Storage)) actually launches.
+/// the tile engine ([`Projection`](crate::Projection)) actually launches.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PhysicalAxis {
     axis: Axis,
@@ -34,7 +34,7 @@ impl PhysicalAxis {
 /// A concrete physical layout: its axes in major (outer) to minor (inner) order, the last
 /// being innermost/contiguous. A storage-tiled axis appears as several entries, level-major
 /// (coarse grid outer, leaf inner), so the rank can exceed the number of logical axes. Built
-/// from a real tensor and its [`Storage`](crate::Storage) at realization; constructed directly
+/// from a real tensor and its [`Projection`](crate::Projection) at realization; constructed directly
 /// in tests.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ConcreteLayout {
@@ -64,29 +64,5 @@ impl ConcreteLayout {
             }
         }
         out
-    }
-
-    /// Storage-tiling nesting depth: the deepest logical axis splits into `levels + 1` physical
-    /// fragments. `0` when untiled (every axis is one fragment).
-    pub fn levels(&self) -> usize {
-        let deepest = self
-            .axes
-            .iter()
-            .map(|a| self.axes.iter().filter(|b| b.axis == a.axis).count())
-            .max()
-            .unwrap_or(1);
-        deepest - 1
-    }
-
-    /// The leading passthrough (untiled) axes before the first storage-tiled one; the batch
-    /// prefix. `0` when untiled, so the whole buffer is one tiled block.
-    pub fn passthrough(&self) -> usize {
-        if self.levels() == 0 {
-            return 0;
-        }
-        self.axes
-            .iter()
-            .position(|a| self.axes.iter().filter(|b| b.axis == a.axis).count() > 1)
-            .unwrap_or(0)
     }
 }

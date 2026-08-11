@@ -14,7 +14,10 @@ use cubecl::{
     TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
     quant::scheme::QuantScheme, zspace::Shape,
 };
-use cubek_tile::{QuantTileArgLaunch, Space, Storage, TileArgLaunch, TileSpec as CubekTileSpec};
+use cubek_tile::{
+    DequantAt, Leaf, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
+    TileSpec as CubekTileSpec,
+};
 
 use crate::{TestInput, TestInputBuilder};
 
@@ -25,6 +28,7 @@ pub struct TileInput {
     handle: TensorHandle<TestRuntime>,
     space: Space,
     levels: usize,
+    leaf: Leaf,
 }
 
 impl TileInput {
@@ -39,6 +43,7 @@ impl TileInput {
             client: client.clone(),
             space,
             levels: None,
+            leaf: Leaf::Memory,
         }
     }
 
@@ -123,12 +128,6 @@ impl TileInput {
         .into_tensor_arg()
     }
 
-    /// The tensor's physical [`Storage`] — derived from the buffer's rank vs the
-    /// logical space's rank, so the launch never hand-writes tile levels.
-    pub fn storage(&self) -> Storage {
-        Storage::of(self.handle.shape().len(), self.space.rank())
-    }
-
     /// The tile as one launch argument: its scalar-unit tensor paired with its
     /// [`spec`](Self::spec). The kernel's element type carries the width.
     pub fn arg<E: Numeric, V: Size>(&self) -> TileArgLaunch<'static, E, V, TestRuntime> {
@@ -141,7 +140,9 @@ impl TileInput {
         let axes: Vec<_> = (0..self.space.rank())
             .map(|i| self.space.axis_at(i))
             .collect();
-        CubekTileSpec::new(&axes, self.storage())
+        let levels = self.handle.shape().len() / self.space.rank() - 1;
+        let tiling = StorageTiling::uniform(self.space.rank(), levels);
+        CubekTileSpec::new(Projection::tiled(&axes, tiling)).leaf(self.leaf)
     }
 
     /// The semantic space the tile lives in.
@@ -172,9 +173,16 @@ pub struct TileInputBuilder {
     client: ComputeClient<TestRuntime>,
     space: Space,
     levels: Option<Vec<TileLevel>>,
+    leaf: Leaf,
 }
 
 impl TileInputBuilder {
+    /// What this operand is at the instruction (default [`Leaf::Memory`], the memory form).
+    pub fn leaf(mut self, leaf: Leaf) -> Self {
+        self.leaf = leaf;
+        self
+    }
+
     /// Divide the current tile into `counts[axis]` sub-tiles per axis — a finer
     /// level. Chain for recursion: `.split(&[4, 4]).split(&[2, 2])`.
     pub fn split(mut self, counts: &[usize]) -> Self {
@@ -224,7 +232,7 @@ impl TileInputBuilder {
     /// [`arange`](QuantizedTileInputBuilder::arange)), which also mints the scales — a
     /// quantized tensor is one thing (data + scales + scheme). Untiled only: packed storage
     /// has no physically tiled layout.
-    pub fn packed(self, scheme: &QuantScheme) -> QuantizedTileInputBuilder {
+    pub fn packed(self, scheme: &QuantScheme, dequant_at: DequantAt) -> QuantizedTileInputBuilder {
         let levels = self
             .levels
             .expect("TileInput: set .untiled() before .packed");
@@ -236,6 +244,8 @@ impl TileInputBuilder {
             client: self.client,
             space: self.space,
             scheme: *scheme,
+            leaf: self.leaf,
+            dequant_at,
         }
     }
 
@@ -293,6 +303,7 @@ impl TileInputBuilder {
             handle: fill(builder).generate_without_host_data(),
             space: self.space,
             levels: levels.len(),
+            leaf: self.leaf,
         }
     }
 }
@@ -302,6 +313,8 @@ impl TileInputBuilder {
 /// finalizer fills it and mints the values tile and its scales together — a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
+    leaf: Leaf,
+    dequant_at: DequantAt,
     client: ComputeClient<TestRuntime>,
     space: Space,
     scheme: QuantScheme,
@@ -345,9 +358,11 @@ impl QuantizedTileInputBuilder {
                 ),
                 space: self.space,
                 levels: 0,
+                leaf: self.leaf,
             },
             scales,
             scheme: self.scheme,
+            dequant_at: self.dequant_at,
             q,
             scale_values,
         }
@@ -358,6 +373,8 @@ impl QuantizedTileInputBuilder {
 /// scheme), so the [`quantized builder`](QuantizedTileInputBuilder) mints the pair together,
 /// plus the exact numbers behind both for host references.
 pub struct QuantizedTileInput {
+    /// How far this operand's quantized form travels, stated when it was declared quantized.
+    pub dequant_at: DequantAt,
     pub tile: TileInput,
     scales: TensorHandle<TestRuntime>,
     scheme: QuantScheme,
@@ -373,13 +390,15 @@ impl QuantizedTileInput {
         self.scales.clone().binding().into_tensor_arg()
     }
 
-    /// The quantized tile as one launch argument: values, scales, spec and scheme.
+    /// The quantized tile as one launch argument: values, scales, spec, scheme, and how far the
+    /// quantized form travels.
     pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V, TestRuntime> {
         QuantTileArgLaunch::new(
             self.tile.tensor_arg(1),
             self.scales_arg(),
             self.tile.spec(),
             self.scheme,
+            self.dequant_at,
         )
     }
 }

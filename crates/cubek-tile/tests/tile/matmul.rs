@@ -234,8 +234,8 @@ fn matmul_cpu_dynamic_k() {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
-        TileArgLaunch::new(b.tensor_arg(1), TileSpec::new(&[K, N], b.storage())),
+        a.arg(),
+        b.arg(),
         c.arg(),
         space.with_dynamic(&[K]),
         dtype,
@@ -728,7 +728,7 @@ fn matmul_staged_invariant_lhs() {
         .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
             l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -789,7 +789,7 @@ fn register_matmul_unit_spread_n() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(m)).axis(N, Cut::unit(nr)).axis(K, seq(k))
         })
-        .leaf(Leaf::Register)
+        .build()
         // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
         .resolve_lanes(lanes);
 
@@ -852,7 +852,7 @@ fn register_matmul_unit_split_k() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, Cut::unit(slice))
         })
-        .leaf(Leaf::Register)
+        .build()
         // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
         .resolve_lanes(lanes);
 
@@ -914,6 +914,7 @@ fn cmma_matmul_staged_n_walk_partition() {
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let seq = |edge| Cut::sequential(edge);
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
@@ -938,16 +939,19 @@ fn cmma_matmul_staged_n_walk_partition() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
-        .leaf(Leaf::Cmma { k: i });
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1127,7 +1131,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote();
+    let mut acc = c.promote(&a);
     acc.zero();
     acc.mma(&a, &b);
     c.copy_from(&acc);
@@ -1149,7 +1153,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote();
+    let mut acc = c.promote(&a);
     acc.zero();
     acc.mma(&a, &b);
     c.copy_from(&acc);
@@ -1188,7 +1192,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote::<EA>();
+    let mut acc = c.promote::<EA, _>(&a);
     acc.zero();
     acc.mma(&a, &b);
     acc.drain_cast_into(&mut c);
@@ -1278,7 +1282,7 @@ fn register_matmul_promoted_cube_plane() {
                 .axis(N, Cut::plane(leaf_n))
                 .axis(K, seq(leaf_k))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1377,8 +1381,9 @@ fn cmma_roundtrip<E: Numeric>(
 
     let mut a_smem = MemData::smem(
         comptime!(space.clone()),
+        comptime!(a.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&space)),
+        comptime!(StagePlan::for_leaf(a.leaf)),
     );
     a_smem.copy_from(&a);
     sync_cube();
@@ -1395,8 +1400,9 @@ fn cmma_roundtrip<E: Numeric>(
 
     let mut c_smem = MemData::smem(
         comptime!(space.clone()),
+        comptime!(a.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&space)),
+        comptime!(StagePlan::for_leaf(a.leaf)),
     );
     c_smem.copy_from(&frag);
     sync_cube();
@@ -1497,7 +1503,6 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         .zeros();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a_storage = Storage::of(2, 2);
     let e_dtype = f32::as_type_native_unchecked().storage_type();
 
     cmma_matmul_quant::launch::<TestRuntime>(
@@ -1507,8 +1512,9 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -1564,6 +1570,70 @@ fn cmma_matmul_staged_k_walk_strided_stage() {
     check_cmma_matmul_k_walk_v(16, Schedule::Staged, 1, StageStorage::Strided);
 }
 
+/// The leaf stated by the *operands* rather than by the partitioning, and the partitioning made to
+/// say the opposite so that reading it cannot pass unnoticed: the space declares `Cmma`, every
+/// operand declares `Register`, and the memory-accumulator microkernel is what must run.
+///
+/// `mma_leaf` refuses a memory accumulator under a cmma leaf ("promote it first"), reading the
+/// accumulator's own projected space. So this test fails loudly if the operand's declaration is
+/// dropped, rather than quietly running the other correct path. That check is exactly the
+/// duplicated decision the move deletes: once the format belongs to the operand, there are no two
+/// statements left to disagree.
+#[test]
+fn matmul_leaf_stated_by_operands() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (8usize, 8usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    // The partitioning's leaf is the wrong one on purpose: nothing may read it.
+    let leaf = Leaf::Cmma;
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4))
+        })
+        .build();
+
+    let dtype = f32::as_type_native_unchecked().storage_type();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        TileArgLaunch::new(a.tensor_arg(1), a.spec().leaf(Leaf::Memory)),
+        TileArgLaunch::new(b.tensor_arg(1), b.spec().leaf(Leaf::Memory)),
+        TileArgLaunch::new(c.tensor_arg(1), c.spec().leaf(Leaf::Memory)),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
     check_cmma_matmul_k_walk_v(k, schedule, 1, StageStorage::Tiled)
 }
@@ -1579,6 +1649,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, schedule, |l| {
@@ -1586,16 +1657,19 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma { k: edge });
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1646,6 +1720,9 @@ fn mma_matmul_8x8x8() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
+    let leaf = Leaf::Mma {
+        io: MmaIOConfig::manual(),
+    };
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
@@ -1653,19 +1730,19 @@ fn mma_matmul_8x8x8() {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Mma {
-            k: edge,
-            io: MmaIOConfig::manual(),
-        });
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1714,6 +1791,7 @@ fn cmma_matmul_plane_partitioned_stage() {
     }
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
@@ -1728,16 +1806,19 @@ fn cmma_matmul_plane_partitioned_stage() {
                 .axis(N, Cut::plane(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma { k: edge });
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1788,6 +1869,7 @@ fn cmma_matmul_multi_fragment_partition() {
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let seq = |edge| Cut::sequential(edge);
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
@@ -1804,16 +1886,19 @@ fn cmma_matmul_multi_fragment_partition() {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
-        .leaf(Leaf::Cmma { k: i });
+        .build();
 
     let dtype = f32::as_type_native_unchecked().storage_type();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1862,22 +1947,25 @@ fn cmma_matmul<E: Numeric>(
 
     let mut a_smem_tile = MemData::smem(
         comptime!(a.space.clone()),
+        comptime!(a.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&a.space)),
+        comptime!(StagePlan::for_leaf(a.leaf)),
     );
     a_smem_tile.copy_from(&a);
 
     let mut b_smem_tile = MemData::smem(
         comptime!(b.space.clone()),
+        comptime!(b.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&b.space)),
+        comptime!(StagePlan::for_leaf(b.leaf)),
     );
     b_smem_tile.copy_from(&b);
 
     let mut c_smem_tile = MemData::smem(
         comptime!(c.space.clone()),
+        comptime!(c.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&c.space)),
+        comptime!(StagePlan::for_leaf(c.leaf)),
     );
     c_smem_tile.copy_from(&c);
     sync_cube();
@@ -1937,22 +2025,25 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
 
     let mut a_smem = MemData::smem(
         comptime!(a.space.clone()),
+        comptime!(a.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&a.space)),
+        comptime!(StagePlan::for_leaf(a.leaf)),
     );
     a_smem.copy_from(&a);
 
     let mut b_smem = MemData::smem(
         comptime!(b.space.clone()),
+        comptime!(b.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&b.space)),
+        comptime!(StagePlan::for_leaf(b.leaf)),
     );
     b_smem.copy_from(&b);
 
     let mut c_smem = MemData::smem(
         comptime!(c.space.clone()),
+        comptime!(c.leaf),
         1usize,
-        comptime!(StagePlan::for_space(&c.space)),
+        comptime!(StagePlan::for_leaf(c.leaf)),
     );
     c_smem.copy_from(&c);
     sync_cube();
@@ -2033,7 +2124,6 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a_storage = Storage::of(2, 2);
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
         .untiled()
@@ -2050,8 +2140,9 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2118,7 +2209,6 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let a_storage = Storage::of(2, 2);
 
     let b = TileInput::builder(&client, Space::new(&[(K, 8), (N, 8)]))
         .untiled()
@@ -2135,8 +2225,9 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2178,6 +2269,105 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
     check_cmma_matmul_quant_k_walk(32, Schedule::DoubleBuffered);
 }
 
+/// The manual-mma leaf decoding at the *read*: `DequantAt::Read` keeps `A`'s stage in its stored `i8`,
+/// and the fragment load decodes each element through the quant-transparent matrix view. The cmma
+/// twin of this test has no choice but `DequantAt::Load`, because its fragment load takes a raw window;
+/// the manual transport addresses one element at a time, so it can decode. Same numbers, a stage
+/// that is a quarter the size.
+#[test]
+fn mma_matmul_quant_until_read() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if client.properties().features.matmul.mma.is_empty() {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no manual mma (features.matmul.mma) support".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
+    let leaf = Leaf::Mma {
+        io: MmaIOConfig::manual(),
+    };
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(edge))
+                .axis(N, Cut::sequential(edge))
+                .axis(K, Cut::sequential(edge))
+        })
+        .build();
+
+    let scale = 0.05f32;
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::Tensor)
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+
+    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let (lo, hi) = scheme.value.range();
+    let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(a_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), shape![1, 1])
+        .custom(vec![scale])
+        .generate_without_host_data();
+
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
+        .untiled()
+        .zeros();
+    let e_dtype = f32::as_type_native_unchecked().storage_type();
+
+    launch_resident_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        QuantTileArgLaunch::new(
+            a_input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]).leaf(leaf),
+            scheme,
+            DequantAt::Read,
+        ),
+        b.arg(),
+        c.arg(),
+        space,
+        a_dtype,
+        e_dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a_host.get_f32(&[i, p]) * scale) * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if client.properties().features.matmul.cmma.is_empty() {
@@ -2194,6 +2384,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize); // K walked in `edge`-deep stages
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, schedule, |l| {
@@ -2201,7 +2392,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma { k: edge });
+        .build();
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
@@ -2220,13 +2411,13 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
     let scales = TestInput::builder(client.clone(), shape![1, 1])
         .custom(vec![scale])
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         .zeros();
     let e_dtype = f32::as_type_native_unchecked().storage_type();
@@ -2239,8 +2430,9 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2288,6 +2480,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
     }
 
     let (m, n, k, edge, bm) = (8usize, 8usize, 16usize, 8usize, 4usize); // 2 M-blocks
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
@@ -2295,7 +2488,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma { k: edge });
+        .build();
 
     // One scale per M-block, over the full K: block `[bm, k]`, scales shaped (m/bm, 1).
     let scheme = QuantScheme::default()
@@ -2314,13 +2507,13 @@ fn cmma_matmul_quant_block_m_k_walk() {
     let scales = TestInput::builder(client.clone(), shape![m / bm, 1])
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         .zeros();
     let e_dtype = f32::as_type_native_unchecked().storage_type();
@@ -2333,8 +2526,9 @@ fn cmma_matmul_quant_block_m_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2382,6 +2576,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
     }
 
     let (m, n, k, edge, bk) = (8usize, 8usize, 16usize, 8usize, 4usize); // 4 K-blocks, 2 per stage
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
@@ -2389,7 +2584,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma { k: edge });
+        .build();
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
@@ -2408,13 +2603,13 @@ fn cmma_matmul_quant_block_k_k_walk() {
     let scales = TestInput::builder(client.clone(), shape![1, k / bk])
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         .zeros();
     let e_dtype = f32::as_type_native_unchecked().storage_type();
@@ -2427,8 +2622,9 @@ fn cmma_matmul_quant_block_k_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2476,6 +2672,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     }
 
     let (m, n, k, edge, bk, v) = (8usize, 8usize, 16usize, 8usize, 4usize, 2usize);
+    let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
@@ -2483,7 +2680,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
         })
-        .leaf(Leaf::Cmma { k: edge });
+        .build();
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
@@ -2502,13 +2699,13 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     let scales = TestInput::builder(client.clone(), shape![1, k / bk])
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let a_space = space.project(&[M, K]);
-    let a_storage = Storage::of(2, a_space.rank());
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
         .untiled()
         .zeros();
     let e_dtype = f32::as_type_native_unchecked().storage_type();
@@ -2521,8 +2718,9 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, K], a_storage),
+            TileSpec::direct(&[M, K]).leaf(leaf),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2821,7 +3019,7 @@ fn run_register_matmul_quant_packed(
 
     let a = TileInput::builder(&client, Space::new(&[(M, m), (K, k)]))
         .untiled()
-        .packed(&scheme)
+        .packed(&scheme, DequantAt::Read)
         .arange();
 
     let a_dtype = u32::as_type_native_unchecked().storage_type();
@@ -2874,8 +3072,9 @@ fn run_register_matmul_quant(
         QuantTileArgLaunch::new(
             a_arg,
             scales_arg,
-            TileSpec::new(&[M, K], Storage::of(2, 2)),
+            TileSpec::direct(&[M, K]),
             scheme,
+            DequantAt::Load,
         ),
         b.arg(),
         c.arg(),
@@ -2935,6 +3134,7 @@ fn register_matmul_quant_rhs_packed_q8() {
         register_staged_partitioner(4, 4, 4),
         QuantValue::Q8S,
         4,
+        DequantAt::Read,
     );
 }
 
@@ -2948,6 +3148,7 @@ fn register_matmul_quant_rhs_packed_q4() {
         register_staged_partitioner(4, 8, 4),
         QuantValue::Q4S,
         8,
+        DequantAt::Read,
     );
 }
 
@@ -2962,6 +3163,7 @@ fn register_matmul_quant_rhs_gemv_row() {
         register_staged_partitioner(1, 4, 4),
         QuantValue::Q8S,
         4,
+        DequantAt::Read,
     );
 }
 
@@ -2977,10 +3179,17 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
                 .axis(N, Cut::cube(CubeAxis::X, 4))
                 .axis(K, Cut::sequential(4))
         })
-        .leaf(Leaf::Register)
+        .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (1, 16, 8), plan, QuantValue::Q8S, 4);
+    run_register_matmul_quant_rhs(
+        client,
+        (1, 16, 8),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Read,
+    );
 }
 
 /// Direct-serve the quantized RHS weight (Keystone K): a `Direct` schedule stages nothing, so the
@@ -2998,10 +3207,10 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
         })
-        .leaf(Leaf::Register)
+        .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (1, 8, 8), plan, QuantValue::Q8S, 4);
+    run_register_matmul_quant_rhs(client, (1, 8, 8), plan, QuantValue::Q8S, 4, DequantAt::Read);
 }
 
 /// The Goal path: a `.staged()` packed weight whose smem stage holds the *packed u32 words*, not a
@@ -3020,10 +3229,85 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
         })
-        .leaf(Leaf::Register)
+        .build()
         .partitioner()
         .clone();
-    run_register_matmul_quant_rhs(client, (4, 8, 16), plan, QuantValue::Q8S, 4);
+    run_register_matmul_quant_rhs(
+        client,
+        (4, 8, 16),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Read,
+    );
+}
+
+/// The same staged packed weight, decoded by the load instead of the read (`DequantAt::Load`): the
+/// stage holds served values, so it costs the served-to-stored ratio in shared memory and the
+/// decode happens once per element rather than per read. The fork a register leaf may take and a
+/// cmma leaf is forced into; same numbers either way, which is the point of checking it.
+#[test]
+fn register_matmul_quant_rhs_staged_dequantized_smem() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        .build()
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(
+        client,
+        (4, 8, 16),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Load,
+    );
+}
+
+/// A cmma leaf loads fragments at one element type, so it cannot decode as it reads: an operand
+/// asking to stay quantized that far is refused where it says so, by the operand alone, before any
+/// kernel is built. Both facts are the operand's own, so nothing else is consulted. Host-side, so
+/// it runs on every backend.
+#[test]
+#[should_panic(expected = "cannot decode as it reads")]
+fn quant_until_read_refused_by_a_cmma_leaf() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let scheme = QuantScheme::default()
+        .with_level(QuantLevel::block([1, 4]))
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32);
+    let leaf = Leaf::Cmma;
+    let plan = Tiling::new()
+        .extents(&[(M, 8), (N, 8), (K, 8)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(8))
+        })
+        .build()
+        .partitioner()
+        .clone();
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]).with_partitioner(plan);
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .leaf(leaf)
+        .untiled()
+        .packed(&scheme, DequantAt::Load)
+        .arange();
+
+    let launcher = space.launcher(&client);
+    launcher
+        .arg(b.tile.handle().binding())
+        .subspace(&[K, N])
+        .vectorize(scheme.num_quants())
+        .leaf(leaf)
+        .quantized(b.scales_arg(), scheme, DequantAt::Read)
+        .build();
 }
 
 /// Drive [`launch_staged_matmul_quant_rhs`] and check
@@ -3034,6 +3318,7 @@ fn run_register_matmul_quant_rhs(
     plan: Partitioner,
     value: QuantValue,
     bn: usize,
+    dequant_at: DequantAt,
 ) {
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::block([1, bn as u8]))
@@ -3059,7 +3344,7 @@ fn run_register_matmul_quant_rhs(
     // The weight and its per-(k, N-group) scales, minted together.
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
-        .packed(&scheme)
+        .packed(&scheme, dequant_at)
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
@@ -3075,7 +3360,7 @@ fn run_register_matmul_quant_rhs(
         .arg(b.tile.handle().binding())
         .subspace(&[K, N])
         .vectorize(pack)
-        .quantized(b.scales_arg(), scheme)
+        .quantized(b.scales_arg(), scheme, dequant_at)
         .build();
     // The register microkernel lines the accumulator at the RHS's served width.
     let c_op = launcher

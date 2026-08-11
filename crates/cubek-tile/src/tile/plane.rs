@@ -32,19 +32,20 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] leaf: Leaf,
         #[comptime] m: usize,
         #[comptime] n: usize,
+        #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
     ) -> PlaneTile<T> {
         match comptime!(leaf) {
-            Leaf::Cmma { k } => {
+            Leaf::Cmma => {
                 PlaneTile::new_Cmma(CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k))
             }
-            Leaf::Mma { k, io } => {
+            Leaf::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             // `vector_size` is the promoting tile's, so the block's lines match the memory it
             // will drain into; the hardware encodings above have no say in their layout.
-            Leaf::Register => {
+            Leaf::Memory => {
                 PlaneTile::new_Register(RegisterData::<T>::alloc(m, n, vector_size, lane_share))
             }
         }
@@ -60,8 +61,8 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] k: usize,
     ) -> PlaneTile<T> {
         match comptime!(leaf) {
-            Leaf::Cmma { .. } => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
-            Leaf::Mma { io, .. } => match comptime!(ident) {
+            Leaf::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
+            Leaf::Mma { io } => match comptime!(ident) {
                 MatrixIdent::A => {
                     PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, MatrixLayout::RowMajor, io))
                 }
@@ -72,7 +73,7 @@ impl<T: Numeric> PlaneTile<T> {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
             },
-            Leaf::Register => panic!("PlaneTile::operand: the register leaf has no plane tile"),
+            Leaf::Memory => panic!("PlaneTile::operand: the memory leaf has no plane tile"),
         }
     }
 
@@ -84,10 +85,18 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    pub(crate) fn load_window(&mut self, mem: &MemData<T>) {
+    /// Fill this fragment from a memory `src`. Takes the whole tile, not its store: the manual-mma
+    /// transport reads element by element through the quant-transparent matrix view, so it needs
+    /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
+    pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         match self {
-            PlaneTile::Cmma(d) => d.load_window(mem),
-            PlaneTile::Mma(d) => d.load_window(mem),
+            PlaneTile::Cmma(d) => match &src.tile_kind {
+                TileKind::Gmem(m) | TileKind::Smem(m) => d.load_window(m),
+                TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                    panic!("PlaneTile::load_window: a cmma fragment loads from memory")
+                }
+            },
+            PlaneTile::Mma(d) => d.load_window(src),
             // Only an accumulator takes this encoding, and an accumulator is filled by
             // `zero` or by contracting into it — never by loading an operand window.
             PlaneTile::Register(_) => {
@@ -164,10 +173,11 @@ impl<T: Numeric> PlanePartition<T> {
     /// tiles uninitialized. `promote` is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
+        #[comptime] leaf: Leaf,
+        #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
     ) -> Tile<T> {
-        let leaf = comptime!(space.partitioner().leaf());
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
         let m = comptime!(fin.extent_at(fin.rank() - 2));
@@ -178,7 +188,7 @@ impl<T: Numeric> PlanePartition<T> {
         for _mi in 0..m_tiles {
             #[unroll]
             for _ni in 0..n_tiles {
-                frags.push(PlaneTile::<T>::acc(leaf, m, n, vector_size, lane_share));
+                frags.push(PlaneTile::<T>::acc(leaf, m, n, k, vector_size, lane_share));
             }
         }
         Tile::<T> {
@@ -187,6 +197,7 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
             }),
+            leaf: comptime!(leaf),
             // The fragments above were sized from the partitioner alone (`partition_shape`
             // and `final_space` read edges, never extents), so the tile carries the space it
             // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
@@ -198,8 +209,11 @@ impl<T: Numeric> PlanePartition<T> {
 
     /// The staging store for one region of an operand under `out`'s contraction: a partition
     /// mirroring the region's grid, tiles uninitialized; [`copy_from`](Tile::copy_from) fills it.
-    pub(crate) fn store(#[comptime] window: Space, #[comptime] out: Space) -> Tile<T> {
-        let leaf = comptime!(out.partitioner().leaf());
+    pub(crate) fn store(
+        #[comptime] window: Space,
+        #[comptime] leaf: Leaf,
+        #[comptime] out: Space,
+    ) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
         let a1 = comptime!(window.axis_at(window.rank() - 1));
         let t0 = comptime!(window.count(a0));
@@ -236,6 +250,7 @@ impl<T: Numeric> PlanePartition<T> {
                 n_tiles: t1,
             }),
             space: comptime!(window),
+            leaf: comptime!(leaf),
         }
     }
 
@@ -247,12 +262,7 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
                 let window = src.fragment_window(mi, ni);
-                match &window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.load_window(g),
-                    TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
-                        panic!("PlanePartition::fill_from: the source must be memory")
-                    }
-                }
+                frag.load_window(&window);
             }
         }
     }
@@ -317,7 +327,7 @@ impl<T: Numeric> Tile<T> {
         let space = comptime!(self.space.clone());
         match comptime!(space.partitioner().clone()) {
             // The recursion always terminates at a final store below, never by descending into one.
-            Partitioner::Final(_) => {
+            Partitioner::Final => {
                 panic!("Tile::fragment_window: a final tile has no partition level to descend")
             }
             Partitioner::Level(level) => match comptime!(level.role()) {
@@ -326,7 +336,7 @@ impl<T: Numeric> Tile<T> {
                     let walk = Walk::over(self.runtime_space());
                     let sub = self.at(&walk.region(0));
                     match comptime!(sub.space.partitioner()) {
-                        Partitioner::Final(_) => sub,
+                        Partitioner::Final => sub,
                         Partitioner::Level(_) => sub.fragment_window(mi, ni),
                     }
                 }
@@ -341,7 +351,7 @@ impl<T: Numeric> Tile<T> {
                     );
                     let sub = self.at(&region);
                     match comptime!(sub.space.partitioner()) {
-                        Partitioner::Final(_) => sub,
+                        Partitioner::Final => sub,
                         Partitioner::Level(_) => {
                             sub.fragment_window(comptime!(mi % bm), comptime!(ni % bn))
                         }

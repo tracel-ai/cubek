@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, ByAxis, Distribution, Partitioner, QuantTileArg, QuantTileArgLaunch, Space, Storage,
-    TileArg, TileArgLaunch, TileSpec,
+    Axis, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space, StridedOperand,
+    TileArg,
 };
 
 // Input axes
@@ -41,26 +41,40 @@ pub fn launch_ref<R: Runtime>(
     // One space for the whole kernel; both operands span all of it. Geometry reads the
     // concrete extents; the kernel gets the dynamic form, so m and n resolve in-kernel
     // from the tensor's own shape and never fork the compiled kernel.
+    // The space is read off the first two dims, so a deeper buffer would be described by its grid
+    // dims rather than its extents. Both operands are plain 2-D tensors: every axis untiled, one
+    // physical axis apiece, which is what the source builder derives below.
+    assert!(
+        input.shape.len() == 2 && output.shape.len() == 2,
+        "dequantize_tiled: both operands must be plain 2-D tensors, got {:?} and {:?}",
+        input.shape,
+        output.shape
+    );
     let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
-    let input_storage = Storage::of(input.shape.len(), space.rank());
-    let output_storage = Storage::of(output.shape.len(), space.rank());
     let cube_count = space.cube_count();
     let cube_dim = space.cube_dim(client);
     let input_dtype = ElemType::from_quant_value(scheme.value).into();
+    // Both operands through the source builder, which derives the storage from the binding's own
+    // dims and validates the scheme against this space. One tile covers each axis, so nothing
+    // overhangs and the checks stay off.
+    let input_op = StridedOperand::source(input)
+        .space(&space)
+        .subspace(&[M, N])
+        .checked(false)
+        // Nothing stages this operand, so its read is what decodes it.
+        .quantized(scales.into_tensor_arg(), *scheme, DequantAt::Read)
+        .build();
+    let output_op = StridedOperand::source(output)
+        .space(&space)
+        .subspace(&[M, N])
+        .checked(false)
+        .build();
     dequantize::launch(
         client,
         cube_count,
         cube_dim,
-        QuantTileArgLaunch::new(
-            input.into_tensor_arg(),
-            scales.into_tensor_arg(),
-            TileSpec::new(&[M, N], input_storage),
-            *scheme,
-        ),
-        TileArgLaunch::new(
-            output.into_tensor_arg(),
-            TileSpec::new(&[M, N], output_storage),
-        ),
+        input_op.arg(),
+        output_op.arg(),
         space.all_dynamic(),
         input_dtype,
         output_dtype,

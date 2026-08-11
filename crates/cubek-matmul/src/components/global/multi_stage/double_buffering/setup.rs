@@ -147,6 +147,13 @@ where
             plane_dim: blueprint.plane_dim,
         };
 
+        // Checked here — where a violation is a recoverable setup error —
+        // rather than only at the kernel's comptime re-check, whose failure
+        // surfaces as an asynchronous compile error no caller can recover
+        // from. See the same block in the ordered family's `expand_config`.
+        LL::validate_with_config(device_props, &lhs_reader_config)?;
+        RL::validate_with_config(device_props, &rhs_reader_config)?;
+
         Ok(SharedGlobalMatmulConfig {
             stage_config,
             num_planes: plane_flow_config.counts.total_count(),

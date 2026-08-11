@@ -5,7 +5,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, StridedOperand, Tiling, WalkOrder};
+use cubek_tile::{Axis, CubeAxis, Cut, DequantAt, Schedule, StridedOperand, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -83,7 +83,7 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
                 .axis(N, Cut::plane(8))
                 .axis(K, Cut::sequential(4))
         })
-        .leaf(Leaf::Register)
+        .build()
 }
 
 #[test]
@@ -96,13 +96,13 @@ fn arg_derives_check_from_subspace_overhang() {
         .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .build();
-    assert!(touches_k.spec.storage.check_bounds);
+    assert!(touches_k.spec.check_bounds);
 
     let avoids_k = launch
         .arg(binding(&client, &[64, 64]))
         .subspace(&[M, N])
         .build();
-    assert!(!avoids_k.spec.storage.check_bounds);
+    assert!(!avoids_k.spec.check_bounds);
 
     // An explicit override still wins over the derivation.
     let forced = launch
@@ -110,7 +110,7 @@ fn arg_derives_check_from_subspace_overhang() {
         .subspace(&[M, K])
         .checked(false)
         .build();
-    assert!(!forced.spec.storage.check_bounds);
+    assert!(!forced.spec.check_bounds);
 }
 
 #[test]
@@ -124,8 +124,8 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(one_batch.spec.axes.contains(&B1));
-    assert!(!one_batch.spec.axes.contains(&B0));
+    assert!(one_batch.spec.axes().contains(&B1));
+    assert!(!one_batch.spec.axes().contains(&B0));
 
     // A size-1 dim drops out entirely (broadcast omission).
     let broadcast = launch
@@ -133,8 +133,8 @@ fn arg_right_aligns_batches_and_drops_size_one() {
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(!broadcast.spec.axes.contains(&B0));
-    assert!(!broadcast.spec.axes.contains(&B1));
+    assert!(!broadcast.spec.axes().contains(&B0));
+    assert!(!broadcast.spec.axes().contains(&B1));
 }
 
 // ---- Launcher::vector_size -------------------------------------------------
@@ -242,7 +242,11 @@ fn quantize(v: usize, scheme: QuantScheme) {
         .subspace(&[M, K])
         .vectorize(v)
         .checked(false)
-        .quantized(binding(&client, &[1, 8]).into_tensor_arg(), scheme)
+        .quantized(
+            binding(&client, &[1, 8]).into_tensor_arg(),
+            scheme,
+            DequantAt::Read,
+        )
         .build();
 }
 

@@ -9,7 +9,7 @@ use cubecl::{
 };
 use cubek_matmul::definition::MatmulSetupError;
 use cubek_std::MatrixLayout;
-use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, Storage};
+use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, StorageTiling};
 
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,21 +154,22 @@ impl InnerLayout {
         }
     }
 
-    /// The raw [`TensorArg`] (strides preserved) plus the physical [`Storage`] a launch pairs
-    /// with the operand's axes into the `TileSpec` of its `TileArg`. `vector_size > 1` lines the
-    /// innermost (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
+    /// The raw [`TensorArg`] (strides preserved) plus the [`StorageTiling`] a launch pairs with the
+    /// operand's axes into the `TileSpec` of its `TileArg`. `vector_size > 1` lines the innermost
+    /// (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
     pub fn tensor_arg<R: Runtime>(
         &self,
         mut binding: TensorBinding<R>,
         vector_size: usize,
-    ) -> (TensorArg<R>, Storage) {
+    ) -> (TensorArg<R>, StorageTiling) {
         match self {
             InnerLayout::Tiled { tiles } => {
+                // Only the trailing matrix pair is split; the batch dims ahead of it pass through.
                 let levels = tiles.len();
                 let num_batch = binding.shape.len() - 2 * (levels + 1);
                 (
                     binding.into_tensor_arg(),
-                    Storage::passthrough(num_batch, levels),
+                    StorageTiling::suffix(num_batch + 2, num_batch, levels),
                 )
             }
             _ => {
@@ -181,7 +182,8 @@ impl InnerLayout {
                 }
                 binding.shape = shape[..].into();
                 binding.strides = strides[..].into();
-                (binding.into_tensor_arg(), Storage::passthrough(0, 0))
+                let rank = binding.shape.len();
+                (binding.into_tensor_arg(), StorageTiling::uniform(rank, 0))
             }
         }
     }

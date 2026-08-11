@@ -10,10 +10,12 @@ mod arg;
 mod axis;
 mod delivery;
 mod layout;
+mod projection;
 mod source;
 
 pub use arg::*;
 pub use axis::*;
 pub use delivery::*;
 pub use layout::*;
+pub use projection::*;
 pub use source::*;

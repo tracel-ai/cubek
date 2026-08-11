@@ -9,17 +9,9 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, ConcreteLayout, PhysicalAxis, QuantTileArgLaunch, Space, StageStorage, Storage,
-    TileArgLaunch, TileSpec, validate_scheme,
+    Axis, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, QuantTileArgLaunch, Space,
+    StageStorage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
-
-/// A realized physical layout maps straight to a tile [`Storage`]: its passthrough (batch) prefix
-/// is `start_axis`, its storage-tiling depth is `levels`.
-impl From<&ConcreteLayout> for Storage {
-    fn from(layout: &ConcreteLayout) -> Self {
-        Storage::passthrough(layout.passthrough(), layout.levels())
-    }
-}
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
 pub struct Set;
@@ -35,15 +27,17 @@ struct TileSourceData<'a, R: Runtime> {
     concrete: Option<&'a Space>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
-    levels: usize,
+    /// How the subspace axes are storage-tiled in the binding; `None` is untiled.
+    tiling: Option<StorageTiling>,
     v: usize,
     check: Option<bool>,
     stage: Option<StageStorage>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
-    /// Quantization side-channel: the scales plus the scheme saying how to fold them back in.
-    /// [`build`](StridedTileSource::build) validates the scheme and carries the pair through.
-    quant: Option<(TensorArg<R>, QuantScheme)>,
+    /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
+    quant: Option<Quantization<R>>,
+    /// What this operand is at the instruction; default [`Leaf::Memory`], the memory form.
+    leaf: Leaf,
 }
 
 /// Typestate builder for a strided tile kernel operand, started with
@@ -66,12 +60,13 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 concrete: None,
                 subspace: &[],
                 batch_axes: &[],
-                levels: 0,
+                tiling: None,
                 v: 1,
                 check: None,
                 stage: None,
                 units: 0,
                 quant: None,
+                leaf: Leaf::Memory,
             },
             _state: PhantomData,
         }
@@ -106,10 +101,12 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
-    /// Storage-tiling depth: `levels` nested `[grid…, leaf]` splits per subspace axis, so the
-    /// trailing block is `subspace × (levels + 1)` buffer dims. Default `0` (plain strided).
-    pub fn levels(mut self, levels: usize) -> Self {
-        self.data.levels = levels;
+    /// How this binding storage-tiles the [`subspace`](Self::subspace) axes: one fragment count
+    /// per subspace axis, laid out level-major behind the batch dims. Default untiled (one
+    /// physical dim per axis). Only labels the dims, so the tiling is read back off the
+    /// [`ConcreteLayout`](crate::ConcreteLayout) rather than declared twice.
+    pub fn tiling(mut self, tiling: StorageTiling) -> Self {
+        self.data.tiling = Some(tiling);
         self
     }
 
@@ -128,8 +125,16 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
+    /// What this operand is at the instruction: a memory window ([`Leaf::Memory`], the default)
+    /// or a plane fragment in one of the two encodings. The partitioning says nothing about it;
+    /// operands that disagree meet the kind-pairing panics at the instruction.
+    pub fn leaf(mut self, leaf: Leaf) -> Self {
+        self.data.leaf = leaf;
+        self
+    }
+
     /// The [`StageStorage`] layout of the smem stages derived from this operand. Default
-    /// [`StageStorage::for_space`]: storage-tiled for a cmma leaf, plain strided otherwise.
+    /// [`StageStorage::for_leaf`]: storage-tiled for a cmma leaf, plain strided otherwise.
     pub fn stage(mut self, stage: StageStorage) -> Self {
         self.data.stage = Some(stage);
         self
@@ -153,18 +158,55 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
     /// **in values**; a packed store's buffer is narrower than its shape by the packing
     /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
-    /// [`vectorize`](Self::vectorize) still names the *served* width. Flips the typestate:
-    /// [`build`](Self::build) now yields a [`QuantOperand`].
+    /// [`vectorize`](Self::vectorize) still names the *served* width. `dequant_at` says how far the
+    /// quantized form travels; it rides here rather than in its own setter because the quantized
+    /// form ends at exactly one boundary, so one call says it once by construction. Which values
+    /// are available is a capability of this operand's transports, and [`build`](Self::build)
+    /// refuses one nothing can honour. Flips the typestate: `build` now yields a [`QuantOperand`].
     pub fn quantized(
         mut self,
         scales: TensorArg<R>,
         scheme: QuantScheme,
+        dequant_at: DequantAt,
     ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
-        self.data.quant = Some((scales, scheme));
+        self.data.quant = Some(Quantization::new(scales, scheme, dequant_at));
         StridedTileSource {
             data: self.data,
             _state: PhantomData,
         }
+    }
+}
+
+/// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
+/// back in, and how far the quantized form travels before something decodes it. One thing, because
+/// none of the three says anything on its own — a scheme without scales cannot be applied, and an
+/// [`DequantAt`] without a scheme has nothing to bound.
+pub struct Quantization<R: Runtime> {
+    pub scales: TensorArg<R>,
+    pub scheme: QuantScheme,
+    pub dequant_at: DequantAt,
+}
+
+impl<R: Runtime> Quantization<R> {
+    pub fn new(scales: TensorArg<R>, scheme: QuantScheme, dequant_at: DequantAt) -> Self {
+        Quantization {
+            scales,
+            scheme,
+            dequant_at,
+        }
+    }
+
+    /// Values per stored element: `1` unless the scheme packs several into each.
+    pub fn num_quants(&self) -> usize {
+        self.scheme.num_quants()
+    }
+
+    /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
+    /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
+    /// it. Both rules live here because both are facts about this quantization and nothing else.
+    pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
+        validate_scheme(space, vector_size, self.scheme);
+        validate_dequant_at(self.dequant_at, leaf);
     }
 }
 
@@ -190,8 +232,7 @@ pub struct QuantOperand<R: Runtime> {
     /// Served width (values per line); the binding is narrower by the packing factor.
     pub vector_size: usize,
     pub spec: TileSpec,
-    pub scales: TensorArg<R>,
-    pub scheme: QuantScheme,
+    pub quant: Quantization<R>,
 }
 
 impl<R: Runtime> QuantOperand<R> {
@@ -199,14 +240,20 @@ impl<R: Runtime> QuantOperand<R> {
     /// generic. A packed store's buffer is narrower than the served width by the packing
     /// factor ([`tile_dequant`](crate::TileArg::tile_dequant) serves binding width × pack).
     pub fn bound_width(&self) -> usize {
-        self.vector_size / self.scheme.num_quants()
+        self.vector_size / self.quant.num_quants()
     }
 
     /// The operand as the kernel's [`QuantTileArg`](crate::QuantTileArg) launch argument:
     /// values, scales, spec and scheme as one thing. Read
     /// [`bound_width`](Self::bound_width) before consuming.
     pub fn arg<E: Numeric, V: Size>(self) -> QuantTileArgLaunch<'static, E, V, R> {
-        QuantTileArgLaunch::new(self.tensor, self.scales, self.spec, self.scheme)
+        QuantTileArgLaunch::new(
+            self.tensor,
+            self.quant.scales,
+            self.spec,
+            self.quant.scheme,
+            self.quant.dequant_at,
+        )
     }
 }
 
@@ -215,7 +262,7 @@ impl<R: Runtime> StridedOperand<R> {
     /// [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space)
     /// and [`subspace`](StridedTileSource::subspace) (`build` won't compile until both are
     /// set), then optionally [`batches`](StridedTileSource::batches),
-    /// [`levels`](StridedTileSource::levels), [`vectorize`](StridedTileSource::vectorize),
+    /// [`tiling`](StridedTileSource::tiling), [`vectorize`](StridedTileSource::vectorize),
     /// or [`checked`](StridedTileSource::checked). Optional defaults are the safe ones, so
     /// a forgotten optional setter degrades performance, never correctness.
     pub fn source<'a>(binding: TensorBinding<R>) -> StridedTileSource<'a, Unset, Unset, Unset, R> {
@@ -228,7 +275,7 @@ struct Realized<R: Runtime> {
     tensor: TensorArg<R>,
     vector_size: usize,
     spec: TileSpec,
-    quant: Option<(TensorArg<R>, QuantScheme)>,
+    quant: Option<Quantization<R>>,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -242,23 +289,34 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             concrete,
             batch_axes,
             subspace,
-            levels,
+            tiling,
             v,
             check,
             stage,
             units,
             quant,
+            leaf,
         } = self.data;
         let space = space.unwrap();
 
-        // The trailing block is `subspace × (levels + 1)` buffer dims; whatever leads it is this
-        // operand's batches, labeled by the trailing (right-aligned) slice of `batch_axes`.
-        let n = subspace.len();
         let rank = binding.shape.len();
-        let block_dims = n * (levels + 1);
+        let tiling = tiling.unwrap_or_else(|| StorageTiling::uniform(subspace.len(), 0));
+        assert_eq!(
+            tiling.rank(),
+            subspace.len(),
+            "StridedTileSource: the tiling describes {} axes but the subspace has {}",
+            tiling.rank(),
+            subspace.len()
+        );
+        // One axis label per buffer dim: the trailing block is the subspace emitted level-major
+        // per `tiling`, and whatever leads it is this operand's batches, labeled by the trailing
+        // (right-aligned) slice of `batch_axes`.
+        let block = tiling.order(subspace);
+        let block_dims = block.len();
         assert!(
             rank >= block_dims,
-            "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({n} axes, levels = {levels})"
+            "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
+            subspace.len()
         );
         let batch_dims = rank - block_dims;
         assert!(
@@ -266,18 +324,21 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             "StridedTileSource: {batch_dims} batch dims but only {} batch axes given",
             batch_axes.len()
         );
-        let batch_axes = &batch_axes[batch_axes.len() - batch_dims..];
+        let mut physical_axes = Vec::with_capacity(rank);
+        physical_axes.extend_from_slice(&batch_axes[batch_axes.len() - batch_dims..]);
+        physical_axes.extend_from_slice(&block);
 
         // Explicit override wins; a Launcher-minted source derives the check from overhang, and
-        // the free-standing path stays conservatively checked.
+        // the free-standing path stays conservatively checked. A dim whose axis is absent from the
+        // space is a broadcast omission (it drops out below): nothing to overhang.
         let check = check.unwrap_or_else(|| match concrete {
-            Some(concrete) => (subspace.iter().chain(batch_axes))
-                // A batch axis absent from the space is a broadcast omission (its size-1
-                // dim drops out below): nothing to overhang.
+            Some(concrete) => physical_axes
+                .iter()
                 .filter(|&&axis| concrete.contains(axis))
                 .any(|&axis| concrete.overhangs(axis)),
             None => true,
         });
+
         // A masked access counts its length in lines and would clip valid rows, so a
         // bounds-checked operand must stay scalar.
         assert!(
@@ -289,34 +350,27 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         let mut shape = Vec::new();
         let mut strides = Vec::new();
 
-        for (i, &axis) in batch_axes.iter().enumerate() {
+        for (i, &axis) in physical_axes.iter().enumerate() {
             let extent = binding.shape[i];
-            if extent == 1 {
-                continue; // broadcast omission: the dim and its axis both drop out
+            // A size-1 batch dim is a broadcast omission: the dim and its axis both drop out. A
+            // subspace axis never does, however small, since the tile is shaped over it.
+            if batch_axes.contains(&axis) && extent == 1 && !subspace.contains(&axis) {
+                continue;
             }
             phys.push(PhysicalAxis::new(axis, extent));
             shape.push(extent);
             strides.push(binding.strides[i]);
         }
 
-        let block = binding.shape[batch_dims..]
-            .iter()
-            .zip(&binding.strides[batch_dims..])
-            .enumerate();
-        for (i, (&extent, &stride)) in block {
-            phys.push(PhysicalAxis::new(subspace[i % n], extent));
-            shape.push(extent);
-            strides.push(stride);
-        }
-
         binding.shape = shape[..].into();
         binding.strides = strides[..].into();
-        let mut spec = TileSpec::from_concrete(&ConcreteLayout::new(&phys), check, units);
+        let mut spec =
+            TileSpec::from_concrete(&ConcreteLayout::new(&phys), check, units).leaf(leaf);
         if let Some(stage) = stage {
             spec = spec.staged(stage);
         }
-        if let Some((_, scheme)) = &quant {
-            validate_scheme(&space.project(&spec.axes), v, *scheme);
+        if let Some(quant) = &quant {
+            quant.validate(&space.project(spec.axes()), v, leaf);
         }
         Realized {
             tensor: binding.into_tensor_arg(),
@@ -345,23 +399,59 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
     }
 }
 
-impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
-    /// Build the quantized operand: the same derivation plus the validated scheme, with
-    /// the scales and scheme as first-class fields.
-    pub fn build(self) -> QuantOperand<R> {
+impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
+    /// Build the quantized operand: the plain derivation plus its validated [`Quantization`].
+    fn build_quant(self) -> QuantOperand<R> {
         let Realized {
             tensor,
             vector_size,
             spec,
             quant,
         } = self.realize();
-        let (scales, scheme) = quant.unwrap();
         QuantOperand {
             tensor,
             vector_size,
             spec,
-            scales,
-            scheme,
+            quant: quant.unwrap(),
         }
+    }
+}
+
+impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
+    /// Build the quantized operand.
+    pub fn build(self) -> QuantOperand<R> {
+        self.build_quant()
+    }
+}
+
+/// Refuse a [`DequantAt`] nothing can honour. Called by [`build`](StridedTileSource::build) so a bad
+/// plan fails on the caller's thread, and again by [`Tile::of_dequant`](crate::Tile::of_dequant),
+/// which every launch path reaches including the raw
+/// [`QuantTileArgLaunch`](crate::QuantTileArgLaunch) one.
+///
+/// Both transports constrain, but only the leaf can differ here: this operand is
+/// [`Delivery::Strided`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
+/// and a strided load runs code per element, so it decodes whatever it moves. Only the leaf is left:
+/// a fragment load takes a raw window at one element type, so a leaf that loads fragments needs its
+/// values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this — a bulk
+/// copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the only site
+/// it can honour — but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)), so a
+/// quantized TMA operand is not expressible and the rule has no site to fire at yet.
+pub(crate) fn validate_dequant_at(dequant_at: DequantAt, leaf: Leaf) {
+    match (dequant_at, leaf) {
+        (DequantAt::Load, _) => {}
+        // The memory leaf reads through a matrix view; so does the manual-mma fragment load, which
+        // addresses one element at a time. Only the intrinsic transports are opaque.
+        (DequantAt::Read, Leaf::Memory) => {}
+        (DequantAt::Read, Leaf::Mma { io, .. }) => assert!(
+            matches!(io.lhs_load_method, LoadMethod::Manual)
+                && matches!(io.rhs_load_method, LoadMethod::Manual),
+            "DequantAt::Read: the ldmatrix transport copies raw lanes, so it cannot decode as it \
+             reads; such an operand must be served by its load (DequantAt::Load)"
+        ),
+        (DequantAt::Read, other) => panic!(
+            "DequantAt::Read: {other:?} loads fragments at one element type, so it cannot decode as \
+             it reads; such an operand must be served by its load (DequantAt::Load)"
+        ),
     }
 }

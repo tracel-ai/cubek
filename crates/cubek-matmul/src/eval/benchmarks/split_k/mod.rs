@@ -46,9 +46,7 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
-};
+use cubek_tile::{Axis, CubeAxis, Cut, Schedule, Space, TileArg, TileArgLaunch, Tiling, WalkOrder};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -123,7 +121,7 @@ impl Mapping {
                         .axis(N, Cut::cube(CubeAxis::X, 1))
                         .axis(K, seq(k))
                 })
-                .leaf(Leaf::Register),
+                .build(),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
@@ -135,7 +133,7 @@ impl Mapping {
                 .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
                     l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
                 })
-                .leaf(Leaf::Register),
+                .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *space* — only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
@@ -145,7 +143,7 @@ impl Mapping {
                         .axis(N, Cut::cube(CubeAxis::X, cols))
                         .axis(K, Cut::unit(k / lanes))
                 })
-                .leaf(Leaf::Register),
+                .build(),
         }
         .resolve_lanes(lanes)
     }
@@ -249,9 +247,9 @@ fn run(
         client,
         space.cube_count(),
         mapping.cube_dim(&space, client),
-        TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
-        TileArgLaunch::new(rhs_arg(&b, mapping), TileSpec::new(&[K, N], b.storage())),
-        TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+        TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
+        TileArgLaunch::new(c.tensor_arg(1), c.spec()),
         space,
         dtype,
     );
@@ -288,12 +286,9 @@ impl Benchmark for SplitKBench {
             &self.client,
             self.cube_count.clone(),
             self.cube_dim,
-            TileArgLaunch::new(a.tensor_arg(1), TileSpec::new(&[M, K], a.storage())),
-            TileArgLaunch::new(
-                rhs_arg(b, self.mapping),
-                TileSpec::new(&[K, N], b.storage()),
-            ),
-            TileArgLaunch::new(c.tensor_arg(1), TileSpec::new(&[M, N], c.storage())),
+            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+            TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
             self.space.clone(),
             dtype,
         );

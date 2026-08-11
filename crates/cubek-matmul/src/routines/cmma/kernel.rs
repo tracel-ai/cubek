@@ -33,7 +33,7 @@ pub fn cmma_kernel<
     let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote::<EA>();
+    let mut acc = c.promote::<EA, _>(&a);
     // The matmul contract is `out = A·B` and `mma` accumulates, so start at zero.
     acc.zero();
     acc.mma(&a, &b);

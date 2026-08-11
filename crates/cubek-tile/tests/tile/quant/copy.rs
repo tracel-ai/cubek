@@ -5,7 +5,7 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, Leaf, QuantTileArg, QuantTileArgLaunch, Schedule, Space, Storage, TileArg,
+    Axis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg,
     TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
@@ -71,7 +71,6 @@ fn copy_quantized_per_tensor_matches_reference() {
         .generate_with_f32_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let storage = Storage::of(2, 2);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
     let scales = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
         .custom(vec![scale])
@@ -86,8 +85,9 @@ fn copy_quantized_per_tensor_matches_reference() {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, N], storage),
+            TileSpec::direct(&[M, N]),
             scheme,
+            DequantAt::Read,
         ),
         output.arg(),
         space,
@@ -172,7 +172,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let space = Space::new(&[(M, m), (N, n)]);
     let input = TileInput::builder(&client, space.clone())
         .untiled()
-        .packed(&scheme)
+        .packed(&scheme, DequantAt::Read)
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
@@ -273,10 +273,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
             l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
         })
-        .leaf(Leaf::Register);
+        .build();
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
-    let storage = Storage::of(2, space.rank()).checked(check);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     // One distinct scale per block, row-major over the block grid; a partial block still has one.
@@ -295,13 +294,11 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::new(&[M, N], storage),
+            TileSpec::direct(&[M, N]),
             scheme,
+            DequantAt::Read,
         ),
-        TileArgLaunch::new(
-            output.tensor_arg(1),
-            TileSpec::new(&[M, N], output.storage().checked(check)),
-        ),
+        TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
         space,
         input_dtype,
         out_dtype,

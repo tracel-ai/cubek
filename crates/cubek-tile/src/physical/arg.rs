@@ -1,4 +1,4 @@
-//! The launch-side operand vocabulary: the [`Storage`] mapping, the comptime [`TileSpec`]
+//! The launch-side operand vocabulary: the [`Projection`] mapping, the comptime [`TileSpec`]
 //! a kernel feeds [`Tile::of`](crate::Tile::of), and the TMA argument [`TmaTileArg`]
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
@@ -12,94 +12,90 @@ use cubecl::std::tensor::{
 
 use crate::*;
 
-/// How a launched tensor's `[pre…, grid…, tile…]` buffer maps to the logical
-/// [`Space`]. A property of the tensor, distinct from the space's partitioner.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Storage {
-    pub start_axis: usize,
-    pub levels: usize,
-    /// Whether this operand's logical extent can overhang its tile grid, so edge
-    /// reads/writes must be bounds-checked. Set from divisibility at launch; `false`
-    /// keeps the unchecked (divisible) fast path.
-    pub check_bounds: bool,
-    /// The launch's cube size (units per cube), `0` when unknown; carried into the
-    /// [`StagePlan`] of every stage derived from this operand.
-    pub units: usize,
-}
-
-impl Storage {
-    /// Every axis tiled, no passthrough; `levels` read off the tensor's rank.
-    pub fn of(physical_rank: usize, logical_rank: usize) -> Self {
-        Storage {
-            start_axis: 0,
-            levels: physical_rank / logical_rank - 1,
-            check_bounds: false,
-            units: 0,
-        }
-    }
-
-    pub fn passthrough(start_axis: usize, levels: usize) -> Self {
-        Storage {
-            start_axis,
-            levels,
-            check_bounds: false,
-            units: 0,
-        }
-    }
-
-    /// Set whether edge reads/writes must be bounds-checked.
-    pub fn checked(mut self, check_bounds: bool) -> Self {
-        self.check_bounds = check_bounds;
-        self
-    }
-
-    /// Set the launch's cube size (units per cube).
-    pub fn units(mut self, units: usize) -> Self {
-        self.units = units;
-        self
-    }
-}
-
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer
-/// spans, and how ([`Storage`]). What a kernel feeds [`Tile::of`](crate::Tile::of)
-/// alongside that space; `of` projects the space onto `axes`, so no operand ever carries
-/// its own copy of the space. The launch-side builder derives it
+/// spans and how they address its physical axes ([`Projection`], which carries the buffer's
+/// storage tiling in its own repetition). What a kernel feeds [`Tile::of`](crate::Tile::of)
+/// alongside that space; `of` projects the space onto the projection's logical axes, so no operand
+/// ever carries its own copy of the space. The launch-side builder derives it
 /// ([`build`](crate::StridedTileSource::build)).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileSpec {
-    /// The axes this operand spans, in its buffer's dim order.
-    pub axes: Vec<Axis>,
-    pub storage: Storage,
+    /// How this operand's logical axes address its buffer's physical ones.
+    pub projection: Projection,
+    /// Whether this operand's logical extent can overhang its tile grid, so edge reads/writes must
+    /// be bounds-checked. Set from divisibility at launch; `false` keeps the unchecked (divisible)
+    /// fast path.
+    pub check_bounds: bool,
+    /// The launch's cube size (units per cube), `0` when unknown; carried into the
+    /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
+    pub units: usize,
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
     pub stage: Option<StageStorage>,
+    /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
+    /// two encodings. A format decision, so it belongs to the operand rather than to the
+    /// partitioning; [`Tile::of`](crate::Tile::of) carries it onto the tile. Operands that disagree
+    /// meet the kind-pairing panics at the instruction.
+    pub leaf: Leaf,
 }
 
 impl TileSpec {
-    /// Pair an operand's spanned axes with its storage; the stage layout stays derived
-    /// ([`staged`](Self::staged) overrides it).
-    pub fn new(axes: &[Axis], storage: Storage) -> Self {
+    /// An operand's spec from its mapping alone; the optional halves are the safe defaults
+    /// (unchecked, cube size unknown, memory leaf) and are set by [`checked`](Self::checked),
+    /// [`units`](Self::units), [`staged`](Self::staged), and [`leaf`](Self::leaf).
+    pub fn new(projection: Projection) -> Self {
+        projection.validate();
         TileSpec {
-            axes: axes.to_vec(),
-            storage,
+            projection,
+            check_bounds: false,
+            units: 0,
             stage: None,
+            leaf: Leaf::Memory,
         }
     }
 
-    /// Derive an operand's spec from its realized [`ConcreteLayout`]: the spanned axes
-    /// and the tiling [`Storage`] both read off the layout. The one derivation every
+    /// [`new`](Self::new) over the [`direct`](Projection::direct) mapping: one logical axis per
+    /// physical axis, which is every non-gather, untiled operand.
+    pub fn direct(axes: &[Axis]) -> Self {
+        Self::new(Projection::direct(axes))
+    }
+
+    /// The axes this operand spans, in its logical order.
+    pub fn axes(&self) -> &[Axis] {
+        self.projection.logical_axes()
+    }
+
+    /// Derive an operand's spec from its realized [`ConcreteLayout`]: the [`Projection`] and the
+    /// tiling both read off the layout's repeated axis labels. The one derivation every
     /// launch site shares.
     pub fn from_concrete(layout: &ConcreteLayout, check: bool, units: usize) -> Self {
-        TileSpec::new(
-            &layout.distinct_axes(),
-            Storage::from(layout).checked(check).units(units),
-        )
+        TileSpec::new(Projection::of_layout(layout))
+            .checked(check)
+            .units(units)
+    }
+
+    /// State what this operand is at the instruction (default [`Leaf::Memory`], the memory form).
+    pub fn leaf(mut self, leaf: Leaf) -> Self {
+        self.leaf = leaf;
+        self
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
     /// [`StageStorage::for_space`]).
     pub fn staged(mut self, layout: StageStorage) -> Self {
         self.stage = Some(layout);
+        self
+    }
+
+    /// Set whether edge reads/writes must be bounds-checked.
+    pub fn checked(mut self, check: bool) -> Self {
+        self.check_bounds = check;
+        self
+    }
+
+    /// Set the launch's cube size (units per cube).
+    pub fn units(mut self, units: usize) -> Self {
+        self.units = units;
         self
     }
 }
@@ -118,7 +114,7 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 #[cube]
 impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`]: the kernel's one `space` projected onto this
-    /// operand's `spec.axes`.
+    /// operand's `spec` axes.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
         Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
     }
@@ -137,17 +133,21 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub spec: TileSpec,
     #[cube(comptime)]
     pub scheme: QuantScheme,
+    /// How far this operand stays quantized; stated at launch, where what can decode is known.
+    #[cube(comptime)]
+    pub dequant_at: DequantAt,
 }
 
 #[cube]
 impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`] of the served type `O`: the kernel's one `space`
-    /// projected onto this operand's `spec.axes`, reads dequantizing per the scheme.
+    /// projected onto this operand's `spec` axes, reads dequantizing per the scheme.
     pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
         Tile::<O>::of_dequant(
             self.values,
             self.scales,
             comptime!(self.scheme),
+            comptime!(self.dequant_at),
             space,
             comptime!(self.spec.clone()),
         )
@@ -170,7 +170,11 @@ impl<E: Numeric> TmaTileArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
     /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
-        TmaData::from_tensor_map(self.view.clone(), comptime!(space.project(&self.spec.axes)))
+        TmaData::from_tensor_map(
+            self.view.clone(),
+            comptime!(space.project(self.spec.axes())),
+            comptime!(self.spec.leaf),
+        )
     }
 }
 
@@ -255,6 +259,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         axes: &[Axis],
         dims: (u32, u32, u32),
         transposed: bool,
+        leaf: Leaf,
     ) -> Self {
         let batched = match axes.len() {
             2 => false,
@@ -265,10 +270,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(
-            view,
-            TileSpec::new(axes, Storage::of(axes.len(), axes.len())),
-        )
+        Self::new(view, TileSpec::direct(axes).leaf(leaf))
     }
 }
 
