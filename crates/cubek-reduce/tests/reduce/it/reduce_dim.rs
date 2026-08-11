@@ -12,13 +12,13 @@ pub fn test_argmin() {
 
 // `k` only changes how many accumulator slices the routine keeps, which does
 // not interact with the layout this matrix varies, so the light suite runs one
-// `k` per operation and `heavy` restores the sweep.
+// `k` per operation and `extended` restores the sweep.
 #[test]
 pub fn test_argtopk_3() {
     test_case().test_argtopk(3);
 }
 
-#[cfg(feature = "heavy")]
+#[cfg(feature = "extended")]
 #[test]
 pub fn test_argtopk_5() {
     test_case().test_argtopk(5);
@@ -29,13 +29,13 @@ pub fn test_topk_3() {
     test_case().test_topk(3);
 }
 
-#[cfg(feature = "heavy")]
+#[cfg(feature = "extended")]
 #[test]
 pub fn test_topk_5() {
     test_case().test_topk(5);
 }
 
-#[cfg(feature = "heavy")]
+#[cfg(feature = "extended")]
 #[test]
 pub fn test_topk_with_indices_1() {
     test_case().test_topk_with_indices(1);
@@ -46,7 +46,7 @@ pub fn test_topk_with_indices_3() {
     test_case().test_topk_with_indices(3);
 }
 
-#[cfg(feature = "heavy")]
+#[cfg(feature = "extended")]
 #[test]
 pub fn test_topk_with_indices_5() {
     test_case().test_topk_with_indices(5);

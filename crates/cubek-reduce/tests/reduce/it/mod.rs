@@ -1,8 +1,9 @@
 //! The `reduce_dim` matrix below is a cross product of shape configurations,
 //! dtypes, output-vectorization settings, forced plane dims and routines, so
-//! its size multiplies fast. Tests with no `cfg` are the light subset CI runs
-//! on the CPU runtime; `#[cfg(feature = "heavy")]` restores the whole cross
-//! product, and so do `extended` and `full`.
+//! its size multiplies fast. Tests with no `cfg` are the light subset the base
+//! suite runs, `#[cfg(feature = "heavy")]` adds the `Cube` routines over that
+//! same subset, and `#[cfg(feature = "extended")]` restores the whole cross
+//! product.
 //!
 //! The light subset keeps one point per collapsed axis and one shape per
 //! layout class. A shape earns its own light slot when it changes how the
@@ -92,7 +93,7 @@ macro_rules! testgen_reduce {
             );
         }
 
-        #[cfg(feature = "heavy")]
+        #[cfg(feature = "extended")]
         mod parallel_vectorization_disabled {
             use cubek_reduce::launch::VectorizationStrategy;
 
@@ -120,7 +121,7 @@ macro_rules! testgen_reduce {
         use cubecl::config::autotune::AutotuneLevel;
 
         /// Cube-routine tests are expensive on CPU and can stall CI, so they
-        /// are excluded from light test suite
+        /// are excluded from the light test suite.
         #[cfg(feature = "heavy")]
         mod full_cube {
             use super::*;
@@ -224,7 +225,7 @@ macro_rules! testgen_reduce {
                 );
             }
 
-            #[cfg(feature = "heavy")]
+            #[cfg(feature = "extended")]
             mod plane_size_64 {
                 use super::*;
 
@@ -319,7 +320,7 @@ macro_rules! testgen_reduce {
                 axis: $axis,
             );
         }
-        #[cfg(feature = "heavy")]
+        #[cfg(feature = "extended")]
         mod f16 {
             testgen_reduce!(
                 dtype: half::f16,
@@ -352,7 +353,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod vector_large {
         testgen_reduce!(
             shape: shape![1024],
@@ -380,7 +381,7 @@ mod reduce_dim {
     // `*_large_odd_batch` below already reduces an axis long enough to need
     // more than one cube and plane, so `large` through `xxlarge` only scale
     // that same count.
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod parallel_matrix_large {
         testgen_reduce!(
             shape: shape![8, 256],
@@ -389,7 +390,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod perpendicular_matrix_large {
         testgen_reduce!(
             shape: shape![8, 256],
@@ -398,7 +399,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod parallel_matrix_xlarge {
         testgen_reduce!(
             shape: shape![64, 1024],
@@ -407,7 +408,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod perpendicular_matrix_xlarge {
         testgen_reduce!(
             shape: shape![64, 1024],
@@ -416,7 +417,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod parallel_matrix_xxlarge {
         testgen_reduce!(
             shape: shape![64*4, 1024*4],
@@ -425,7 +426,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod perpendicular_matrix_xxlarge {
         testgen_reduce!(
             shape: shape![64*4, 1024*4],
@@ -479,7 +480,7 @@ mod reduce_dim {
 
     // The permuted layout these two reduce is already light at rank three, and
     // `decreasing_rank_four_tensor` covers rank four contiguously.
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod parallel_rank_four_tensor {
         testgen_reduce!(
             shape: shape![4, 4, 4, 4],
@@ -488,7 +489,7 @@ mod reduce_dim {
         );
     }
 
-    #[cfg(feature = "heavy")]
+    #[cfg(feature = "extended")]
     mod perpendicular_rank_four_tensor {
         testgen_reduce!(
             shape: shape![4, 4, 4, 4],
@@ -534,8 +535,8 @@ mod reduce_dim {
 
     // One small point per axis the light suite collapses, so that the halves it
     // drops (`f16`, unvectorized output, a 64-lane plane) stay covered. Under
-    // `heavy` the full cross product already contains all three.
-    #[cfg(not(feature = "heavy"))]
+    // `extended` the full cross product already contains all three.
+    #[cfg(not(feature = "extended"))]
     mod collapsed_axis_coverage {
         mod f16_vectorized {
             use cubek_reduce::launch::VectorizationStrategy;
