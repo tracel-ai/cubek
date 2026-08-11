@@ -629,7 +629,7 @@ impl Conv1d {
         dynamic: Option<&[Axis]>,
     ) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
-        let f32_ty = f32::as_type_native_unchecked().storage_type();
+        let f32_ty = f32::elem_type_native();
 
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
