@@ -120,8 +120,9 @@ impl std::hash::Hash for Space {
 }
 
 /// Comptime tiling spec read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
-/// `Space`, so only [`Walk::over`](crate::Walk), which takes the runtime operation space built by
-/// [`merge_with`](Space::merge_with), needs these; everything else calls the host methods directly.
+/// `Space`, so only [`Walk::over`](crate::Walk), which takes the runtime operation space
+/// [`witnessed_space`](crate::witnessed_space) builds from an op's operands, needs these;
+/// everything else calls the host methods directly.
 impl SpaceExpand {
     fn comptime(&self) -> Space {
         Space {
@@ -160,39 +161,6 @@ impl Space {
                 sizes,
             },
             partitioner: comptime!(space.partitioner.clone()),
-        }
-    }
-
-    /// Merge two already-sized runtime spaces into the operation space: the comptime structure is
-    /// the host [`merge`](Space::merge) of their specs, and each merged axis takes its runtime size
-    /// from whichever input spans it. A fully-`Static` merge carries no runtime sizes.
-    pub fn merge_with(&self, other: &Space) -> Space {
-        let merged = comptime!(Space::merge(&[&self.clone(), &other.clone()]));
-        let mut sizes = Sequence::<usize>::new();
-        if comptime!(!merged.is_static()) {
-            #[unroll]
-            for p in 0..comptime!(merged.rank()) {
-                let axis = comptime!(merged.axis_at(p));
-                if comptime!(self.clone().contains(axis)) {
-                    sizes.push(self.size(axis));
-                } else {
-                    sizes.push(other.size(axis));
-                }
-            }
-        }
-        Space::with_sizes(merged, sizes)
-    }
-
-    /// This space's runtime size along `axis`: a `Static` axis folds to its comptime extent
-    /// (so a fully-static operand needs no `sizes` at all), a `Dynamic` one reads the
-    /// per-axis `sizes`, valid only once filled.
-    fn size(&self, #[comptime] axis: Axis) -> usize {
-        match comptime!(self.clone().extent_raw(axis)) {
-            Extent::Static(n) => comptime!(n).runtime(),
-            Extent::Dynamic => *self
-                .extents
-                .sizes
-                .index(comptime!(self.clone().position(axis))),
         }
     }
 }

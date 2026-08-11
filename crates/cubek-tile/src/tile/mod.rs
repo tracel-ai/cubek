@@ -191,20 +191,27 @@ pub struct Tile<T: Numeric> {
     pub leaf: Leaf,
 }
 
-/// Returns the physical dimension index in the tile's window bounds corresponding to `axis`.
-///
-/// For direct mappings, each logical axis maps 1:1 to a physical dimension. For gathered operands
-/// sharing dimensions, only identity-mapped axes carry valid runtime extents; other axes must be
-/// static in the space.
+/// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
+/// coefficient `1`. `None` otherwise, which is either of the two ways a bound stops being that
+/// extent: a gather, where the dim holds the receptive field several axes reach over, and storage
+/// tiling, where the extent is the product over the dims the axis is split across.
+fn bound_states(projection: &Projection, axis: Axis) -> Option<usize> {
+    match projection.carriers(axis)[..] {
+        [pa] if projection.physical_axis(pa).is_identity(axis) => Some(pa),
+        _ => None,
+    }
+}
+
+/// The physical dim in this tile's window bounds that `axis`'s runtime extent is read off. A
+/// direct operand maps each axis 1:1; anything else has to be answered by an operand of the same
+/// operation that does ([`Tile::witnesses`]).
 fn bound_position(projection: &Projection, axis: Axis) -> usize {
-    let pa = projection.carriers(axis)[0];
-    assert!(
-        projection.physical_axis(pa).is_identity(axis),
-        "Tile::runtime_extent: {axis:?} is gathered, so this operand's window holds the receptive \
-         field its axes reach over rather than that axis's own extent; a gathered axis must reach \
-         the kernel Static"
-    );
-    pa
+    bound_states(projection, axis).unwrap_or_else(|| {
+        panic!(
+            "Tile::runtime_extent: no bound of this operand is {axis:?}'s own extent (it gathers \
+             over it, or splits it across storage fragments); ask an operand that witnesses it"
+        )
+    })
 }
 
 #[cube]
@@ -288,6 +295,27 @@ impl<T: Numeric> Tile<T> {
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
         comptime!(!projection.is_direct())
+    }
+
+    /// Whether this tile can state `axis`'s runtime size for the operation it takes part in: it
+    /// spans the axis [`Dynamic`](crate::Extent), has a buffer to read a bound off, and that bound
+    /// is the axis's own extent ([`bound_states`]). Each clause rules out an operand that spans the
+    /// axis without being able to answer for it: a `Static` one knows its size at comptime already
+    /// (and a broadcast `1` is not the operation's extent), a fragment has no bound, and a gathered
+    /// axis's bound is the receptive field its axes reach over.
+    ///
+    /// Spanning an axis and having to supply it are therefore separate questions: an operation
+    /// sizes each `Dynamic` axis from whichever of its operands witnesses it and lets the others
+    /// pass ([`witnessed_space`]).
+    pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
+        let bounded = self.bounded();
+        let projection = self.projection();
+        comptime!(
+            bounded
+                && self.space.contains(axis)
+                && self.space.is_dynamic(axis)
+                && bound_states(&projection, axis).is_some()
+        )
     }
 
     /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source
@@ -383,10 +411,21 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether this tile has a buffer bound to read an extent off: memory and a tensor map carry
+    /// the tensor's shape, a resident fragment carries nothing but its cells. The kinds
+    /// [`runtime_extent`](Tile::runtime_extent) can answer for, so the two match the same way.
+    fn bounded(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => comptime!(true),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(false),
+        }
+    }
+
     /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData)
     /// folded from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's
-    /// tile count. A cmma fragment has no buffer extent, and a gathered axis has no bound of its
-    /// own ([`bound_position`]).
+    /// tile count. Only an axis this tile [`witnesses`](Tile::witnesses) has one: a fragment has no
+    /// buffer extent ([`bounded`](Tile::bounded)), and a gathered or storage-tiled axis no bound of
+    /// its own ([`bound_position`]).
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let projection = self.projection();
         let p = comptime!(bound_position(&projection, axis));
@@ -404,27 +443,12 @@ impl<T: Numeric> Tile<T> {
         comptime!(if p == last { w } else { 1usize }) * raw
     }
 
-    /// The runtime space to walk this tile: its comptime tiling spec plus the runtime sizes of any
-    /// `Dynamic` axes, read off the tile. A fully-`Static` tile short-circuits to no runtime sizes.
+    /// The runtime space to walk this tile *alone*: [`witnessed_space`] with no other operand to
+    /// ask, so every `Dynamic` axis must be one this tile itself
+    /// [`witnesses`](Tile::witnesses). An operation over several operands sizes its space from all
+    /// of them instead, which is what lets a gathered operand ride an axis it cannot answer for.
     pub fn runtime_space(&self) -> Space {
-        let space = comptime!(self.space.clone());
-        let mut sizes = Sequence::<usize>::new();
-        if comptime!(!space.is_static()) {
-            #[unroll]
-            for p in 0..comptime!(space.rank()) {
-                let axis = comptime!(space.axis_at(p));
-                // `sizes` is positional, so every axis pushes — but only a `Dynamic` one is
-                // ever read back ([`Extents::count`] folds a `Static` axis to its comptime
-                // extent). Fold it here too rather than asking the tile: a plane tile has no
-                // buffer bound to answer with, and one `Dynamic` axis elsewhere in the space
-                // must not make its `Static` axes unreadable.
-                sizes.push(match comptime!(space.extent_raw(axis)) {
-                    Extent::Static(n) => comptime!(n).runtime(),
-                    Extent::Dynamic => self.runtime_extent(axis),
-                });
-            }
-        }
-        Space::with_sizes(space, sizes)
+        witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
     /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
@@ -522,5 +546,80 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
         }
+    }
+}
+
+/// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
+/// [`witnesses`](Tile::witnesses) it, which is how an operation turns its comptime space into the
+/// runtime one [`Walk::over`](crate::Walk) takes. A fully-`Static` space short-circuits to no
+/// runtime sizes. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
+#[cube]
+pub fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
+    #[comptime] space: Space,
+    a: &Tile<A>,
+    b: &Tile<B>,
+    c: &Tile<C>,
+) -> Space {
+    let mut sizes = Sequence::<usize>::new();
+    if comptime!(!space.is_static()) {
+        #[unroll]
+        for p in 0..comptime!(space.rank()) {
+            let axis = comptime!(space.axis_at(p));
+            // `sizes` is positional, so every axis pushes, but only a `Dynamic` one is ever read
+            // back ([`Extents::count`] folds a `Static` axis to its comptime extent). Fold it here
+            // too rather than asking an operand: one `Dynamic` axis must not make the `Static`
+            // ones unreadable on a tile that has no bound to answer with.
+            let size = match comptime!(space.extent_raw(axis)) {
+                Extent::Static(n) => comptime!(n).runtime(),
+                Extent::Dynamic => {
+                    let by_a = a.witnesses(axis);
+                    let by_b = b.witnesses(axis);
+                    let by_c = c.witnesses(axis);
+                    if comptime!(by_a) {
+                        a.runtime_extent(axis)
+                    } else if comptime!(by_b) {
+                        b.runtime_extent(axis)
+                    } else if comptime!(by_c) {
+                        c.runtime_extent(axis)
+                    } else {
+                        panic!(
+                            "witnessed_space: {axis:?} is Dynamic and no operand states its size; \
+                             every operand spanning it gathers over it, holds it Static, or is a \
+                             fragment. Keep it Static in the kernel space, or give the operation \
+                             an operand that maps it identically"
+                        )
+                    }
+                }
+            };
+            sizes.push(size);
+        }
+    }
+    Space::with_sizes(space, sizes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: Axis = Axis(0);
+    const B: Axis = Axis(1);
+
+    /// The discrimination the operation space rests on: a bound is an axis's own extent only when
+    /// one dim carries that axis alone. The two ways it stops being one are a gather, whose dim
+    /// holds the receptive field its axes reach over, and storage tiling, which splits the extent
+    /// across dims so no single bound is it.
+    #[test]
+    fn bound_states_wants_one_dim_carrying_the_axis_alone() {
+        let direct = Projection::direct(&[A, B]);
+        assert_eq!(bound_states(&direct, A), Some(0));
+        assert_eq!(bound_states(&direct, B), Some(1));
+
+        let gathered = Projection::new(&[A, B], &[PhysicalAxisMap::affine(&[(A, 1), (B, 1)])]);
+        assert_eq!(bound_states(&gathered, A), None);
+        assert_eq!(bound_states(&gathered, B), None);
+
+        let tiled = Projection::tiled(&[A, B], StorageTiling::per_axis(&[1, 2]));
+        assert_eq!(bound_states(&tiled, A), Some(0));
+        assert_eq!(bound_states(&tiled, B), None);
     }
 }

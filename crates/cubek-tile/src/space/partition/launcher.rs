@@ -31,9 +31,9 @@ impl Space {
     /// Creates a [`Launcher`] where only the specified `dynamic` axes have dynamic extents in
     /// the kernel space; all other axes remain compile-time static.
     ///
-    /// Useful for gathered operands whose shared dimensions cannot provide individual runtime
-    /// extents, or to specialize kernel loops along specific axes. Passing `&[]` creates a
-    /// fully static launch.
+    /// Useful to specialize kernel loops along specific axes, or for an axis no operand can state
+    /// the size of at runtime ([`Tile::witnesses`](crate::Tile::witnesses)). Passing `&[]` creates
+    /// a fully static launch.
     pub fn launcher_over<'c, R: Runtime>(
         self,
         client: &'c ComputeClient<R>,

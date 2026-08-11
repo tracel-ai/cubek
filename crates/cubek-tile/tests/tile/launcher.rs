@@ -294,14 +294,14 @@ fn arg_gathered_validates_the_innermost_dim() {
         .build();
 }
 
-/// An axis sharing its dim with another has no extent of its own to read back at runtime, so the
-/// kernel space has to state it. Left [`Dynamic`], it would otherwise reach the kernel and wrongly size
-/// the window there, with nothing to report.
+/// An axis sharing its dim with another has no extent of its own to read back here, but the
+/// operand is free to ride it [`Dynamic`] anyway: whoever maps it identically states its size when
+/// the op walks it. The builder sees one operand, so it is not the place to rule on that; an axis
+/// no operand answers for is reported by `witnessed_space`, at expansion.
 #[test]
-#[should_panic(expected = "keep it static in the kernel space")]
-fn arg_gathered_dynamic_axis_panics() {
+fn arg_gathered_dynamic_axis_is_accepted() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    // `K` shares the gathered dim with `M`, so freeing it leaves neither an extent.
+    // `K` shares the gathered dim with `M`, so neither reads an extent off *this* operand.
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N, K]);
     let _ = launch
         .arg(binding(&client, &[79, 64]))

@@ -9,7 +9,7 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Extent, Leaf, LoadMethod, PhysicalAxis, Projection,
+    Axis, Boundary, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, Projection,
     QuantTileArgLaunch, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
     validate_scheme,
 };
@@ -104,15 +104,18 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// Sets an explicit affine [`Projection`] for a gathered operand (e.g. convolution or resample),
     /// mapping logical axes to buffer dimensions.
     ///
-    /// This replaces [`subspace`](Self::subspace), [`batches`](Self::batches), and
-    /// [`tiling`](Self::tiling). Setting any of those alongside `gathered` is an error.
+    /// Mutually exclusive with [`subspace`](Self::subspace), [`batches`](Self::batches), and
+    /// [`tiling`](Self::tiling).
     ///
     /// # Bounds Checking & Extents
-    /// - If the projection [`may_underflow`](Projection::may_underflow), boundary checking is enabled
-    ///   by default unless overridden with [`checked`](Self::checked).
-    /// - Logical axes sharing a physical dimension must be [`Static`](crate::Extent) in the kernel space
-    ///   ([`Space::launcher_over`](crate::Space::launcher_over)).
-    /// - Dynamic coefficients/offsets ([`Scale::Dynamic`](crate::Scale), [`Offset::Dynamic`](crate::Offset))
+    /// - Boundary checking is enabled by default if the projection [`may_underflow`](Projection::may_underflow)
+    ///   (override with [`checked`](Self::checked)).
+    /// - An axis sharing a physical dim with another has no extent of its own here (the buffer holds
+    ///   the receptive field they reach over), so if it is [`Dynamic`](crate::Extent) some other
+    ///   operand of the operation must state its size ([`Tile::witnesses`](crate::Tile::witnesses)).
+    ///   Nothing here can see the other operands, so an axis no operand answers for is reported at
+    ///   expansion, by the op that walks it.
+    /// - Dynamic scale and offset coefficients ([`Scale::Dynamic`](crate::Scale), [`Offset::Dynamic`](crate::Offset))
     ///   are passed at runtime via [`TileArg::tile_gathered`](crate::TileArg::tile_gathered).
     pub fn gathered(mut self, projection: Projection) -> StridedTileSource<'a, Sp, Set, Q, R> {
         self.data.projection = Some(projection);
@@ -493,16 +496,6 @@ fn check_stated<R: Runtime>(
             space.contains(axis),
             "StridedTileSource::gathered: the mapping spans {axis:?}, which the launched space \
              does not have"
-        );
-        // When multiple logical axes share a physical dimension (gathered), individual runtime
-        // extents cannot be recovered from the buffer shape and must be static in the space.
-        let pa = projection.carriers(axis)[0];
-        assert!(
-            projection.physical_axis(pa).is_identity(axis)
-                || matches!(space.extent_raw(axis), Extent::Static(_)),
-            "StridedTileSource::gathered: {axis:?} is gathered, so this operand's buffer holds the \
-             receptive field its axes reach over rather than that axis's own extent; keep it \
-             static in the kernel space (`Space::launcher_over`)"
         );
     }
 }

@@ -617,10 +617,17 @@ fn conv1d_masked_overhang_strided() {
 impl Conv1d {
     /// [`check_at`](Conv1d::check_at) driven end to end by [`Launcher`]: the input reaches the
     /// launch through [`StridedTileSource::gathered`] instead of a hand-built [`TileSpec`], so the
-    /// kernel projects from the kernel-form (fully dynamic) space and one compiled kernel serves
-    /// every shape. `padding` shifts the window's origin, which the builder's derived check has to
-    /// arm on by itself.
-    fn check_launched(&self, tile_oh: usize, tile_co: usize, padding: usize, schedule: Schedule) {
+    /// kernel projects from the kernel-form space and one compiled kernel serves every shape.
+    /// `padding` shifts the window's origin, which the builder's derived check has to arm on by
+    /// itself. `dynamic` is the axis set the kernel takes at runtime, `None` for all of them.
+    fn check_launched_over(
+        &self,
+        tile_oh: usize,
+        tile_co: usize,
+        padding: usize,
+        schedule: Schedule,
+        dynamic: Option<&[Axis]>,
+    ) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::as_type_native_unchecked().storage_type();
 
@@ -655,10 +662,13 @@ impl Conv1d {
             .zeros()
             .generate_without_host_data();
 
-        // `OH` and `RH` share the input's gathered dim, whose bound is the receptive field they
-        // reach over rather than either extent, so they reach the kernel static. `CO` no gathered
-        // operand spans and `CI` identity-maps a dim of its own, so both can go runtime.
-        let launch = space.launcher_over(&client, &[CO, CI]);
+        // Every axis here can go runtime, including the two the input gathers over: `OH` is stated
+        // by the output, which maps it identically, and `RH` by the weight. Only an axis no
+        // operand witnesses has to stay static, which is what `dynamic` narrows to.
+        let launch = match dynamic {
+            Some(axes) => space.launcher_over(&client, axes),
+            None => space.launcher(&client),
+        };
         let in_arg = launch
             .arg(in_handle.binding())
             .gathered(Projection::new(
@@ -704,6 +714,44 @@ impl Conv1d {
             }
         }
     }
+
+    /// [`check_launched_over`](Conv1d::check_launched_over) with every axis runtime.
+    fn check_launched(&self, tile_oh: usize, tile_co: usize, padding: usize, schedule: Schedule) {
+        self.check_launched_over(tile_oh, tile_co, padding, schedule, None);
+    }
+}
+
+/// The two axes the input gathers over, `OH` and `RH`, kept static while the rest goes runtime:
+/// the launch a gathered operand was restricted to before any operand could state a gathered axis'
+/// size. It has to keep working, since an axis no operand witnesses still has to reach the kernel
+/// static.
+#[test]
+fn conv1d_launched_static_window() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 2,
+        dilation: 1,
+    }
+    .check_launched_over(3, 4, 0, Schedule::Direct, Some(&[CO, CI]));
+}
+
+/// The same convolution with `OH` and `RH` runtime as well, at a tiling neither divides: the walk
+/// counts are `div_ceil`s of sizes read off the output (`OH`) and the weight (`RH`), and the
+/// trailing partial tile is masked exactly as the static form's is.
+#[test]
+fn conv1d_launched_dynamic_window_masked_overhang() {
+    Conv1d {
+        oh: 7,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 2,
+        dilation: 2,
+    }
+    .check_launched(4, 4, 1, Schedule::Direct);
 }
 
 /// The plainest gather off the builder: nothing overhangs and the origin cannot go negative, so
