@@ -1078,6 +1078,9 @@ impl<T: Numeric> MemData<T> {
                             comptime!(self.store.vector_size),
                         ))
                         .view(FlatLayout::new(self.window.extent.clone())),
+                    // The tile path takes no per-tensor scale; `block_edges` refuses a level
+                    // that has one.
+                    ComptimeOption::new_None(),
                     comptime!(info.scheme),
                 )
                 .view(),
@@ -1126,6 +1129,9 @@ impl<T: Numeric> MemData<T> {
                             comptime!(self.store.vector_size),
                         ))
                         .view(layout),
+                    // The tile path takes no per-tensor scale; `block_edges` refuses a level
+                    // that has one.
+                    ComptimeOption::new_None(),
                     comptime!(info.scheme),
                 )
                 .view(),

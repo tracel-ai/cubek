@@ -206,6 +206,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: BatchMatmulR
             InputBinding::Quantized {
                 data,
                 scale,
+                global,
                 shape,
                 scheme,
                 ..
@@ -225,7 +226,15 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: BatchMatmulR
                     scale.into_tensor_arg(),
                     scales_layout,
                 );
-                ViewArg::new_quantized(data_view, scales_view, scheme)
+                match global {
+                    None => ViewArg::new_quantized(data_view, scales_view, scheme),
+                    Some(global) => ViewArg::new_quantized_two_level(
+                        data_view,
+                        scales_view,
+                        global.into_buffer_arg(),
+                        scheme,
+                    ),
+                }
             }
         };
         let batch_layout = |handle: &InputBinding<R>| match handle {

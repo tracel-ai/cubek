@@ -26,6 +26,9 @@ use crate::test_tensor::{
 pub struct QuantizationInfo {
     /// The scale tensor on the device.
     pub scale: TensorHandle<TestRuntime>,
+    /// The one-element per-tensor scale the block scales are normalized against, for the levels
+    /// that have one. Always f32, whatever the block scales are stored at.
+    pub global: Option<TensorHandle<TestRuntime>>,
     /// The quantization scheme (e.g., Symmetric, Tensor-wise, etc.)
     pub scheme: QuantScheme,
     /// The original unquantized shape of the tensor.

@@ -4,6 +4,8 @@ use cubecl_common::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
 };
 
+/// `scales` is what a reader reconstructs a value with, one per block. A two-level scheme stores
+/// something narrower than that, so its caller folds the per-tensor scale in first.
 pub fn quantize(
     values: &[f32],
     shape: &[usize],
@@ -179,11 +181,10 @@ fn quant_mask(size_quant: usize) -> u32 {
     }
 }
 
-/// Refuse a scheme this reference cannot stand in for.
+/// Refuse a scheme whose scales a caller states directly rather than deriving from a tensor.
 ///
-/// It quantizes with one scale per value, so a two-level scheme would give a reference that
-/// ignores the global factor. A kernel that drops it too would then agree with the reference, and
-/// the test would pass with both of them wrong.
+/// A two-level scheme's stored block scales are not what a reader reconstructs with, so scales
+/// invented for a fixture would be short by the per-tensor factor.
 pub(crate) fn assert_supported(scheme: &QuantScheme) {
     assert!(
         scheme.level.global_param().is_none(),
@@ -194,8 +195,6 @@ pub(crate) fn assert_supported(scheme: &QuantScheme) {
 
 /// The scheme's per-axis block edges over `shape`.
 pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    assert_supported(scheme);
-
     crate::quant_layout::block_dims(scheme, shape)
 }
 

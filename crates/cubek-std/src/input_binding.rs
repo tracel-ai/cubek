@@ -8,7 +8,10 @@ use cubecl::{
 };
 use cubecl::{
     quant::scheme::{BlockSize, QuantLevel},
-    std::tensor::{into_contiguous_packed, into_contiguous_pitched},
+    std::{
+        quant::check_global_bindings,
+        tensor::{into_contiguous_packed, into_contiguous_pitched},
+    },
 };
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
@@ -21,6 +24,10 @@ pub enum InputBinding<R: Runtime> {
         data_dtype: StorageType,
         scale: TensorBinding<R>,
         scale_dtype: StorageType,
+        /// The per-tensor scale the block scales are normalized against, present exactly for the
+        /// levels that have one. It binds as f32 and carries no dtype of its own: one scalar per
+        /// tensor, so a narrower type saves nothing and only reintroduces rounding error.
+        global: Option<TensorBinding<R>>,
         /// Unpacked shape, excluding padding
         shape: Shape,
         scheme: QuantScheme,
@@ -36,6 +43,7 @@ impl<R: Runtime> Clone for InputBinding<R> {
                 data_dtype,
                 scale,
                 scale_dtype,
+                global,
                 shape,
                 scheme,
             } => Self::Quantized {
@@ -43,6 +51,7 @@ impl<R: Runtime> Clone for InputBinding<R> {
                 data_dtype: *data_dtype,
                 scale: scale.clone(),
                 scale_dtype: *scale_dtype,
+                global: global.clone(),
                 shape: shape.clone(),
                 scheme: *scheme,
             },
@@ -66,6 +75,8 @@ impl<R: Runtime> InputBinding<R> {
                 scale,
                 shape,
                 scheme,
+                // One scalar for the whole tensor: no axes to swap.
+                global: _,
                 data_dtype: _,
                 scale_dtype: _,
             } => {
@@ -109,19 +120,46 @@ impl<R: Runtime> InputBinding<R> {
         data_dtype: StorageType,
         scale_dtype: StorageType,
     ) -> Self {
-        // The variant carries one scale binding, so it cannot hand a consumer the per-tensor scale
-        // a two-level scheme needs. Accepting the scheme here would produce a binding that looks
-        // well formed and reaches the kernels missing a factor.
-        assert!(
-            scheme.level.global_param().is_none(),
-            "InputBinding::quantized: two-level quantization needs a per-tensor scale binding, \
-             which this binding does not carry, got {:?}",
-            scheme.level
-        );
+        Self::with_global(data, scale, None, shape, scheme, data_dtype, scale_dtype)
+    }
+
+    /// A quantized binding whose block scales are normalized against `global`, the tensor's one
+    /// per-tensor scale.
+    pub fn quantized_two_level(
+        data: TensorBinding<R>,
+        scale: TensorBinding<R>,
+        global: TensorBinding<R>,
+        shape: Shape,
+        scheme: QuantScheme,
+        data_dtype: StorageType,
+        scale_dtype: StorageType,
+    ) -> Self {
+        Self::with_global(
+            data,
+            scale,
+            Some(global),
+            shape,
+            scheme,
+            data_dtype,
+            scale_dtype,
+        )
+    }
+
+    fn with_global(
+        data: TensorBinding<R>,
+        scale: TensorBinding<R>,
+        global: Option<TensorBinding<R>>,
+        shape: Shape,
+        scheme: QuantScheme,
+        data_dtype: StorageType,
+        scale_dtype: StorageType,
+    ) -> Self {
+        check_global_bindings(scheme.level, global.is_some());
 
         Self::Quantized {
             data,
             scale,
+            global,
             shape,
             scheme,
             data_dtype,
@@ -187,6 +225,7 @@ impl<R: Runtime> InputBinding<R> {
             Self::Quantized {
                 data,
                 scale,
+                global,
                 shape,
                 scheme,
                 data_dtype,
@@ -227,6 +266,7 @@ impl<R: Runtime> InputBinding<R> {
                 Self::Quantized {
                     data: data.binding(),
                     scale,
+                    global,
                     shape,
                     scheme,
                     data_dtype,

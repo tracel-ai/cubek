@@ -74,6 +74,19 @@ fn block_scheme(value: QuantValue, block_size: impl AsRef<[u8]>) -> QuantScheme 
     tensor_scheme(value).with_level(QuantLevel::block(block_size))
 }
 
+/// Block scales normalized by one per-tensor scale. The block param has to be narrower than f32,
+/// which is what the per-tensor scale buys: normalizing against `f32::MAX` puts the per-tensor
+/// scale among the subnormals and spends the range on nothing.
+fn block_tensor_scheme(
+    value: QuantValue,
+    block_size: impl AsRef<[u8]>,
+    param: QuantParam,
+) -> QuantScheme {
+    tensor_scheme(value)
+        .with_level(QuantLevel::block_tensor(block_size, QuantParam::F32))
+        .with_param(param)
+}
+
 /// Skips a test when the runtime lacks `i8` conversion support, which
 /// `cubek_quant::quantize_native` currently requires for `QuantStore::Native`.
 /// Returns `true` if the caller should proceed.
@@ -440,6 +453,37 @@ pub fn test_matmul_quantized_both_q8s_block16() {
 }
 
 #[test]
+pub fn test_matmul_quantized_lhs_q8s_block32_two_level() {
+    run_quantized_matmul(QuantizedMatmulCase {
+        lhs_scheme: Some(block_tensor_scheme(
+            QuantValue::Q8S,
+            [32u8],
+            QuantParam::F16,
+        )),
+        strategy: Strategy::Auto,
+        ..Default::default()
+    });
+}
+
+#[test]
+pub fn test_matmul_quantized_both_q8s_block32_two_level() {
+    run_quantized_matmul(QuantizedMatmulCase {
+        lhs_scheme: Some(block_tensor_scheme(
+            QuantValue::Q8S,
+            [32u8],
+            QuantParam::F16,
+        )),
+        rhs_scheme: Some(block_tensor_scheme(
+            QuantValue::Q8S,
+            [32u8],
+            QuantParam::F16,
+        )),
+        strategy: Strategy::Auto,
+        ..Default::default()
+    });
+}
+
+#[test]
 pub fn test_matmul_quantized_lhs_q4s_block32() {
     run_quantized_matmul(QuantizedMatmulCase {
         lhs_scheme: Some(block_scheme(QuantValue::Q4S, [32u8])),
@@ -478,14 +522,24 @@ pub fn test_matmul_quantized_rhs_gemv() {
 /// Helper to convert TestTensor (which may be marked as quantized) to InputBinding.
 fn test_tensor_to_binding(tensor: TestTensor) -> InputBinding<TestRuntime> {
     match tensor.quantization {
-        Some(q) => InputBinding::Quantized {
-            data: tensor.handle.clone().binding(),
-            data_dtype: tensor.handle.dtype,
-            scale: q.scale.clone().binding(),
-            scale_dtype: q.scale.dtype,
-            shape: q.shape,
-            scheme: q.scheme,
-        },
+        Some(q) => {
+            let (data, data_dtype) = (tensor.handle.clone().binding(), tensor.handle.dtype);
+            let (scale, scale_dtype) = (q.scale.clone().binding(), q.scale.dtype);
+            match q.global {
+                None => {
+                    InputBinding::quantized(data, scale, q.shape, q.scheme, data_dtype, scale_dtype)
+                }
+                Some(global) => InputBinding::quantized_two_level(
+                    data,
+                    scale,
+                    global.binding(),
+                    q.shape,
+                    q.scheme,
+                    data_dtype,
+                    scale_dtype,
+                ),
+            }
+        }
         None => InputBinding::Normal(tensor.handle.clone().binding(), tensor.handle.dtype),
     }
 }

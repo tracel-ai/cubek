@@ -257,7 +257,12 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
             match scheme.level {
                 QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
-                QuantLevel::Block(block_size) => {
+                // A two-level scheme grids its block scales exactly like a one-level one; its
+                // per-tensor scale is a scalar with no layout to resolve.
+                QuantLevel::Block(block_size)
+                | QuantLevel::BlockTensor {
+                    block: block_size, ..
+                } => {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =
@@ -268,10 +273,6 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                         (block_row as u32, block_col as u32),
                     ))
                 }
-                QuantLevel::BlockTensor { .. } => unimplemented!(
-                    "two-level quantization is not supported by the quantized matmul, got {:?}",
-                    scheme.level
-                ),
             }
         };
 

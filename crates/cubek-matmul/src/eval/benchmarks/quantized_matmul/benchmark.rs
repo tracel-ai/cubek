@@ -103,6 +103,7 @@ impl Operand {
                 data_dtype: q.data.dtype,
                 scale: q.scale.clone().binding(),
                 scale_dtype: q.scale.dtype,
+                global: None,
                 shape: q.shape,
                 scheme: q.scheme,
             },
