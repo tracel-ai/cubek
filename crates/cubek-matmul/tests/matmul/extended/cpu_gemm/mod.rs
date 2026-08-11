@@ -312,6 +312,73 @@ fn many_tiles_inferred_size() {
     );
 }
 
+/// A col-major (transposed) lhs — the layout the gemm routine's Col-Row variant used to
+/// claim on CPU, and got wrong whenever `m` was not a multiple of the vector size
+/// (burn#5304, `a.transpose().matmul(b)`). `m` here divides nothing.
+#[test]
+fn transposed_lhs_m_not_vector_multiple() {
+    let (batch, m, n, k) = (1, 7, 8, 8);
+    let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![batch],
+        shape![batch],
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+    );
+}
+
+/// The same transposed lhs at a size that actually tiles, batched.
+#[test]
+fn transposed_lhs_batched() {
+    let (batch, m, n, k, tile_size) = (2, 33, 64, 64, 8);
+    let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![batch],
+        shape![batch],
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
+            planes: PlaneGrid { m: 2, n: 2 },
+        })),
+    );
+}
+
 #[test]
 fn batched_small() {
     let Dims {
