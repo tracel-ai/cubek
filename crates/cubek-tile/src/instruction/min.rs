@@ -40,7 +40,3 @@ pub fn plane<E: Numeric>(val: E, #[comptime] lanes: usize) -> E {
         val
     }
 }
-
-pub use array as min_array_leaf;
-pub use plane as plane_min_leaf;
-pub use vector as min_leaf;

@@ -40,7 +40,3 @@ pub fn plane<E: Numeric>(val: E, #[comptime] lanes: usize) -> E {
         val
     }
 }
-
-pub use array as max_array_leaf;
-pub use plane as plane_max_leaf;
-pub use vector as max_leaf;

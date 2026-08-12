@@ -17,5 +17,3 @@ pub fn step<E: Float>(m_curr: E, l_curr: E, score: E) -> (E, E, E, E) {
     let l_new = l_curr * correction + weight;
     (m_new, l_new, correction, weight)
 }
-
-pub use step as logsumexp_leaf_step;

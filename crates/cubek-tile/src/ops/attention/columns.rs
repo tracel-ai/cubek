@@ -173,4 +173,4 @@ impl<EA: Float> Tile<EA> {
     }
 }
 
-pub(super) use crate::instruction::sum::hsum;
+pub(super) use crate::instruction::sum::vector as hsum;
