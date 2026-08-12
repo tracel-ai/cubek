@@ -19,7 +19,7 @@ use crate::{
 pub fn rfft<R: Runtime>(
     signal: TensorHandle<R>,
     dim: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> (TensorHandle<R>, TensorHandle<R>) {
     assert!(
         dim < signal.shape().len(),
@@ -67,7 +67,7 @@ pub fn rfft_launch<R: Runtime>(
     spectrum_re: TensorBinding<R>,
     spectrum_im: TensorBinding<R>,
     dim: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let signal_len = signal.shape[dim];
     rfft_launch_padded::<R>(
@@ -89,7 +89,7 @@ pub fn rfft_launch_padded<R: Runtime>(
     spectrum_im: TensorBinding<R>,
     dim: usize,
     signal_len: usize,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), LaunchError> {
     assert!(
         spectrum_re.shape == spectrum_im.shape,

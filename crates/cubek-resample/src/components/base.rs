@@ -19,7 +19,7 @@ pub fn resample_kernel<F: Float, N: Size>(
     args: ResampleArgs,
     #[comptime] config: Resample,
     #[comptime] vectorized_axis: usize,
-    #[define(F)] _dtype: StorageType,
+    #[define(F)] _dtype: ElemType,
 ) {
     let vector_size = N::value();
 

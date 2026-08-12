@@ -1,4 +1,4 @@
-use cubecl::ir::MatrixLayout;
+use cubecl::cmma::MatrixLayout;
 use cubek_test_utils::CatalogEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

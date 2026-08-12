@@ -230,7 +230,7 @@ pub fn interleaved_load_from_shared<E: Numeric, ES: Size, N: Numeric>(
                     ));
                     let vector_start = i * contiguous_dim_count + j * vector_size;
                     for l in 0..vector_size {
-                        arr[vector_start + l] = vector.extract(l);
+                        arr[vector_start + l] = vector.extract_dynamic(l);
                     }
                 }
             }

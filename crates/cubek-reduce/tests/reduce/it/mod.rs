@@ -1,8 +1,21 @@
+//! The `reduce_dim` matrix below is a cross product of shape configurations,
+//! dtypes, output-vectorization settings, forced plane dims and routines, so
+//! its size multiplies fast. Tests with no `cfg` are the light subset the base
+//! suite runs, `#[cfg(feature = "heavy")]` adds the `Cube` routines over that
+//! same subset, and `#[cfg(feature = "extended")]` restores the whole cross
+//! product.
+//!
+//! The light subset keeps one point per collapsed axis and one shape per
+//! layout class. A shape earns its own light slot when it changes how the
+//! reduce axis sits in memory, not when it only changes how many cubes and
+//! planes the same layout needs.
+
 mod test_case;
 
 mod argtopk_shared_memory;
 mod logical;
 mod nan_extrema;
+mod plane_reduction;
 mod topk_with_indices_cube;
 mod with_indices_validation;
 
@@ -80,6 +93,7 @@ macro_rules! testgen_reduce {
             );
         }
 
+        #[cfg(feature = "extended")]
         mod parallel_vectorization_disabled {
             use cubek_reduce::launch::VectorizationStrategy;
 
@@ -107,7 +121,7 @@ macro_rules! testgen_reduce {
         use cubecl::config::autotune::AutotuneLevel;
 
         /// Cube-routine tests are expensive on CPU and can stall CI, so they
-        /// are excluded from light test suite
+        /// are excluded from the light test suite.
         #[cfg(feature = "heavy")]
         mod full_cube {
             use super::*;
@@ -211,6 +225,7 @@ macro_rules! testgen_reduce {
                 );
             }
 
+            #[cfg(feature = "extended")]
             mod plane_size_64 {
                 use super::*;
 
@@ -305,6 +320,7 @@ macro_rules! testgen_reduce {
                 axis: $axis,
             );
         }
+        #[cfg(feature = "extended")]
         mod f16 {
             testgen_reduce!(
                 dtype: half::f16,
@@ -337,6 +353,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod vector_large {
         testgen_reduce!(
             shape: shape![1024],
@@ -361,6 +378,10 @@ mod reduce_dim {
         );
     }
 
+    // `*_large_odd_batch` below already reduces an axis long enough to need
+    // more than one cube and plane, so `large` through `xxlarge` only scale
+    // that same count.
+    #[cfg(feature = "extended")]
     mod parallel_matrix_large {
         testgen_reduce!(
             shape: shape![8, 256],
@@ -369,6 +390,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod perpendicular_matrix_large {
         testgen_reduce!(
             shape: shape![8, 256],
@@ -377,6 +399,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod parallel_matrix_xlarge {
         testgen_reduce!(
             shape: shape![64, 1024],
@@ -385,6 +408,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod perpendicular_matrix_xlarge {
         testgen_reduce!(
             shape: shape![64, 1024],
@@ -393,6 +417,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod parallel_matrix_xxlarge {
         testgen_reduce!(
             shape: shape![64*4, 1024*4],
@@ -401,6 +426,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod perpendicular_matrix_xxlarge {
         testgen_reduce!(
             shape: shape![64*4, 1024*4],
@@ -425,6 +451,9 @@ mod reduce_dim {
         );
     }
 
+    // The only light shape whose reduce axis is contiguous without being the
+    // innermost one, which is where parallel vectorization has to read a
+    // permuted layout rather than a row.
     mod parallel_rank_three_tensor {
         testgen_reduce!(
             shape: shape![16, 16, 16],
@@ -449,6 +478,9 @@ mod reduce_dim {
         );
     }
 
+    // The permuted layout these two reduce is already light at rank three, and
+    // `decreasing_rank_four_tensor` covers rank four contiguously.
+    #[cfg(feature = "extended")]
     mod parallel_rank_four_tensor {
         testgen_reduce!(
             shape: shape![4, 4, 4, 4],
@@ -457,6 +489,7 @@ mod reduce_dim {
         );
     }
 
+    #[cfg(feature = "extended")]
     mod perpendicular_rank_four_tensor {
         testgen_reduce!(
             shape: shape![4, 4, 4, 4],
@@ -473,6 +506,9 @@ mod reduce_dim {
         );
     }
 
+    // Padded rows leave gaps between the reductions, so this is the only light
+    // shape where a vectorized read of the reduce axis must stop at the row
+    // rather than at the end of the allocation.
     mod parallel_matrix_with_jumps {
         testgen_reduce!(
             shape: shape![256, 256],
@@ -495,6 +531,73 @@ mod reduce_dim {
             strides: strides![0, 1],
             axis: Some(0),
         );
+    }
+
+    // One small point per axis the light suite collapses, so that the halves it
+    // drops (`f16`, unvectorized output, a 64-lane plane) stay covered. Under
+    // `extended` the full cross product already contains all three.
+    #[cfg(not(feature = "extended"))]
+    mod collapsed_axis_coverage {
+        mod f16_vectorized {
+            use cubek_reduce::launch::VectorizationStrategy;
+
+            testgen_reduce!(
+                dtype: half::f16,
+                shape: shape![4, 8],
+                strides: strides![8, 1],
+                axis: Some(1),
+                vectorization_strategy: VectorizationStrategy {
+                    parallel_output_vectorization: true,
+                },
+            );
+        }
+
+        mod f32_unvectorized {
+            use cubek_reduce::launch::VectorizationStrategy;
+
+            testgen_reduce!(
+                dtype: f32,
+                shape: shape![4, 8],
+                strides: strides![8, 1],
+                axis: Some(1),
+                vectorization_strategy: VectorizationStrategy {
+                    parallel_output_vectorization: false,
+                },
+            );
+        }
+
+        mod plane_size_64 {
+            use cubecl::{config::autotune::AutotuneLevel, prelude::CubeDim};
+            use cubek_reduce::{
+                BoundChecks, IdleMode, ReduceStrategy,
+                launch::{RoutineStrategy, VectorizationStrategy},
+                routines::{BlueprintStrategy, PlaneMergeStrategy, PlaneReduceBlueprint},
+            };
+
+            testgen_reduce!(
+                dtype: f32,
+                shape: shape![4, 8],
+                strides: strides![8, 1],
+                axis: Some(1),
+                strategy: ReduceStrategy {
+                    autotune_level: AutotuneLevel::Full,
+                    vectorization: VectorizationStrategy {
+                        parallel_output_vectorization: true,
+                    },
+                    routine: RoutineStrategy::Plane(
+                        BlueprintStrategy::Forced(
+                            PlaneReduceBlueprint {
+                                plane_idle: IdleMode::Terminate,
+                                bound_checks: BoundChecks::Mask,
+                                plane_merge_strategy: PlaneMergeStrategy::Lazy,
+                                plane_dim_ceil: true,
+                            },
+                            CubeDim::new_2d(64, 2),
+                        )
+                    ),
+                },
+            );
+        }
     }
 }
 

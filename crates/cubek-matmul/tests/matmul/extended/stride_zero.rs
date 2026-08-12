@@ -11,7 +11,7 @@
 //! while the plane strategies still reject it. The `gemm_*` and
 //! `reported_m_broadcast` tests pin that behaviour.
 
-use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
+use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     routines::BlueprintStrategy,
@@ -25,7 +25,7 @@ use crate::matmul::launcher_strategy::run_with_strides;
 type TestRuntime = cubecl::TestRuntime;
 
 fn f32_elems() -> MatmulGlobalElems {
-    MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
+    MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems()
 }
 
 /// Which logical axis carries the stride-0 broadcast, and on which operand.

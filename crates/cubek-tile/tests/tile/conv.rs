@@ -35,7 +35,7 @@ fn conv_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
@@ -53,7 +53,7 @@ fn conv_kernel_lined<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
@@ -80,7 +80,7 @@ fn run(
     in_v: usize,
 ) -> (HostData, Vec<f32>, Vec<f32>) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
 
     let in_data = ramp(in_shape.num_elements(), 7);
     let w_data = ramp(w_shape.num_elements(), 5);
@@ -629,7 +629,7 @@ impl Conv1d {
         dynamic: Option<&[Axis]>,
     ) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
-        let f32_ty = f32::as_type_native_unchecked().storage_type();
+        let f32_ty = f32::elem_type_native();
 
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
@@ -827,7 +827,7 @@ fn conv_kernel_dynamic<E: Numeric>(
     stride: u32,
     dilation: u32,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     // In `Projection::dynamic_scale_index` order: physical axis 0's terms, `OH` then `RH`.
     let mut coefficients = Coords::<u32>::new();
@@ -848,7 +848,7 @@ impl Conv1d {
     /// smem it would allocate has no comptime extent.
     fn check_dynamic(&self, tile_oh: usize, tile_co: usize) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
-        let f32_ty = f32::as_type_native_unchecked().storage_type();
+        let f32_ty = f32::elem_type_native();
 
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
@@ -960,7 +960,7 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     out: &TileArg<'_, E, Const<1>>,
     offset: i32,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
@@ -983,7 +983,7 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     dilation: u32,
     offset: i32,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
     coefficients.push(stride);
@@ -1043,7 +1043,7 @@ impl Conv1d {
         dynamic_scales: bool,
     ) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
-        let f32_ty = f32::as_type_native_unchecked().storage_type();
+        let f32_ty = f32::elem_type_native();
 
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
@@ -1597,7 +1597,7 @@ fn projected_matrix_kernel<E: Numeric>(
     #[comptime] matrices: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(space);
     let size!(W) = input.vector_size();
@@ -1657,7 +1657,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     ));
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
     let in_data = ramp(in_h * in_w * ci, 7);
     let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
         .dtype(f32_ty)
@@ -1691,7 +1691,7 @@ fn conv2d_projected_matrix_view() {
     let (rows, cols) = (rw, ci);
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![matrices, rows, cols])
         .dtype(f32_ty)
         .zeros()
@@ -1739,7 +1739,7 @@ fn fragment_matrix_kernel<E: Numeric>(
     #[comptime] space: Space,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(space);
     let size!(W) = input.vector_size();
@@ -1768,7 +1768,7 @@ fn conv2d_fragment_matrix_view() {
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![rows, cols])
         .dtype(f32_ty)
         .zeros()
@@ -1815,7 +1815,7 @@ fn conv_mma_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
@@ -1874,7 +1874,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     ))
     .leaf(leaf);
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
     let in_data = ramp(in_len * ci, 7);
     let w_data = ramp(rh * ci * co, 5);
 

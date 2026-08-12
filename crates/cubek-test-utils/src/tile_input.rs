@@ -6,13 +6,16 @@
 #![allow(dead_code)]
 
 use cubecl::prelude::{Numeric, Size};
-use cubecl::std::tensor::{
-    TensorHandle,
-    layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
+use cubecl::{
+    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg,
+    quant::scheme::QuantScheme, zspace::Shape,
 };
 use cubecl::{
-    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::CubePrimitive, prelude::TensorArg,
-    quant::scheme::QuantScheme, zspace::Shape,
+    frontend::Scalar,
+    std::tensor::{
+        TensorHandle,
+        layout::tiled_view::{TileSpec, TiledViewLaunch, TiledViewLayout},
+    },
 };
 use cubek_tile::{
     DequantAt, Leaf, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
@@ -351,11 +354,7 @@ impl QuantizedTileInputBuilder {
 
         QuantizedTileInput {
             tile: TileInput {
-                handle: TensorHandle::new_contiguous(
-                    shape,
-                    handle,
-                    u32::as_type_native_unchecked().storage_type(),
-                ),
+                handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
                 leaf: self.leaf,

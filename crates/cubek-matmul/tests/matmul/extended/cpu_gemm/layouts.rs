@@ -3,7 +3,7 @@
 use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive,
+    CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::Scalar,
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
@@ -33,7 +33,7 @@ fn copy_logical<E: Numeric>(
     src: &TileArg<'_, E, Const<1>>,
     dst: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(comptime!(space.clone()));
     let mut dst = dst.tile(space);
@@ -133,7 +133,7 @@ fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
         tile_arg(src),
         tile_arg(dst),
         src.space.clone(),
-        f32::as_type_native_unchecked().storage_type(),
+        f32::elem_type_native(),
     );
 }
 
@@ -184,7 +184,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     if skip_unless_cpu(&client) {
         return;
     }
-    let dtypes = MatmulElems::from_single_dtype(f32::as_type_native_unchecked());
+    let dtypes = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     // Logical inputs (row-major) via cubek-test-utils, with host data for the
     // reference. The `problem` describes the *logical* matmul (the physical inner

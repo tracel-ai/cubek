@@ -31,7 +31,7 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
     #[comptime] kernel_size_0: i32,
     #[comptime] kernel_size_1: i32,
     #[comptime] count_include_pad: bool,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     if ABSOLUTE_POS >= working_units {
         terminate!();
@@ -127,7 +127,7 @@ pub(crate) fn avg_pool2d_backward_launch<R: Runtime>(
     out_grad: TensorBinding<R>,
     output: TensorBinding<R>,
     options: AvgPoolOptions<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     let dilation = 1;
 

@@ -45,9 +45,7 @@ impl Display for GemmStrategy {
 fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -> (usize, usize) {
     match variant {
         Variant::Dot => (problem.m, problem.n),
-        Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
-            (problem.m, problem.n / vector_size)
-        }
+        Variant::OuterN => (problem.m, problem.n / vector_size),
         Variant::OuterM => (problem.m / vector_size, problem.n),
     }
 }
@@ -132,8 +130,7 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                     None => num_concurrent_planes(&properties.hardware),
                 };
 
-                let kind = MatmulOperandLayouts::from_problem(problem)?;
-                let variant = kind.variant();
+                let variant = MatmulOperandLayouts::from_problem(problem)?.variant()?;
                 let planes_split = variant.planes_split();
                 let vector_size = device_settings.vector_sizes.lhs;
 
@@ -157,7 +154,7 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
                         .build(),
-                    kind,
+                    variant,
                     planes_split,
                     check_bounds,
                 };
@@ -186,7 +183,7 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
             GemmFamily::cubedim_resource(&blueprint, &dtypes, &device_settings.vector_sizes)?
                 .to_cube_dim(device_settings.plane_dim)?;
 
-        let variant = blueprint.kind.variant();
+        let variant = blueprint.variant;
         let vector_size = device_settings.vector_sizes.lhs;
         let (m_units, n_units) = output_units(problem, variant, vector_size);
         let (m_cubes, n_cubes) = match blueprint.planes_split {

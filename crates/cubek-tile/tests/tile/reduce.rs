@@ -31,7 +31,7 @@ fn reduce_matmul_kernel<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -59,7 +59,7 @@ fn run(
     space: Space,
 ) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
 
     let (a_len, b_len) = (a_shape.num_elements(), b_shape.num_elements());
 

@@ -6,20 +6,16 @@ use crate::components::batch::{
     gemm::io::{read, write},
 };
 
-/// Outer-product CPU kernel covering the three non-Dot variants —
-/// `OuterM` (Col-Col), `OuterNLhsContig` (Row-Row), and
-/// `OuterNLhsStrided` (Col-Row) — by comptime knobs:
+/// Outer-product CPU kernel covering the two non-Dot variants —
+/// `OuterM` (Col-Col) and `OuterN` (Row-Row) — by one comptime knob:
 ///
 /// * `vec_axis_is_n`: which output axis the accumulator is vectorized along.
 ///   `true` → vec axis is N (`Vector<AccR, NR>` accumulator, vec-side is rhs,
 ///   K-side is lhs); `false` → vec axis is M (lhs is vec-side, rhs is K-side).
 ///   The "scalar axis" is the other one — held fixed per plane.
 ///
-/// * `scalar_side_strided`: whether the K-side operand has K as a strided
-///   axis (only true for `OuterNLhsStrided`: lhs is M-contig, so each K
-///   position is a separate vector load and we pick this plane's lane).
-///   When `false`, the K-side is K-contig and a single K-vector load per
-///   tile yields `vs` scalars.
+/// The K-side operand is K-contig either way, so one K-vector load per tile
+/// yields the `vs` scalars.
 ///
 /// `m_pos` / `n_pos` semantics depend on `vec_axis_is_n`: the vec-axis
 /// coord is the block base (incremented at write time), the scalar-axis
@@ -43,7 +39,6 @@ pub(super) fn execute_outer_product<
     k_dim: u32,
     #[comptime] vector_size: u32,
     #[comptime] vec_axis_is_n: bool,
-    #[comptime] scalar_side_strided: bool,
     #[comptime] check_bounds: CheckBounds,
 ) {
     if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
@@ -61,16 +56,7 @@ pub(super) fn execute_outer_product<
 
         // Gather `vs` scalars from the K-axis side into an AccR-typed array.
         let mut scalars = Array::new(vector_size as usize);
-        if comptime!(scalar_side_strided) {
-            // Col-Row: lhs is M-contig (strided in K). Each read returns a
-            // Vector along M; pick this plane's row by `m_pos % vs`.
-            let lane = m_pos % vector_size;
-            #[unroll]
-            for i in 0..vector_size {
-                let v = read(&lhs, (m_pos, k_base + i), check_bounds);
-                scalars[i as usize] = AccR::cast_from(v.extract(lane as usize));
-            }
-        } else if comptime!(vec_axis_is_n) {
+        if comptime!(vec_axis_is_n) {
             // Row-Row: lhs is K-contig. One K-vec load per tile.
             let k_vec = read(&lhs, (m_pos, k_base), check_bounds);
             #[unroll]

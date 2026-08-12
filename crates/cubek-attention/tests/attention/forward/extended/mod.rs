@@ -31,12 +31,12 @@ mod unit {
 
     mod f16_ty {
         use super::*;
-        use cubecl::frontend::CubePrimitive;
+        use cubecl::frontend::Scalar;
         use cubek_attention::forward::definition::AttentionGlobalTypes;
 
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
-                half::f16::as_type_native_unchecked(),
+                half::f16::elem_type_native(),
                 AttentionGlobalTypes::mask_dtype(client),
             )
         }
@@ -47,12 +47,12 @@ mod unit {
 
     mod f32_ty {
         use super::*;
-        use cubecl::frontend::CubePrimitive;
+        use cubecl::frontend::Scalar;
         use cubek_attention::forward::definition::AttentionGlobalTypes;
 
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
-                f32::as_type_native_unchecked(),
+                f32::elem_type_native(),
                 AttentionGlobalTypes::mask_dtype(client),
             )
         }
@@ -112,12 +112,12 @@ mod blackbox_accelerated {
 
     mod f16_ty {
         use super::*;
-        use cubecl::frontend::CubePrimitive;
+        use cubecl::frontend::Scalar;
         use cubek_attention::forward::definition::AttentionGlobalTypes;
 
         fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
-                half::f16::as_type_native_unchecked(),
+                half::f16::elem_type_native(),
                 AttentionGlobalTypes::mask_dtype(client),
             )
         }

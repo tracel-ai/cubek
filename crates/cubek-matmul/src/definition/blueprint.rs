@@ -1,4 +1,4 @@
-use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::CubePrimitive, tf32};
+use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::Scalar, tf32};
 use cubek_std::{
     MatrixLayout, SwizzleModes,
     cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
@@ -86,10 +86,10 @@ pub fn adjust_dtypes<R: Runtime>(
     dtypes: &mut MatmulElems,
     requires_accelerator: bool,
 ) {
-    let f32_dtype = f32::as_type_native_unchecked().storage_type();
-    let flex_dtype = flex32::as_type_native_unchecked().storage_type();
-    let tf32_dtype = tf32::as_type_native_unchecked().storage_type();
-    let f16_dtype = half::f16::as_type_native_unchecked().storage_type();
+    let f32_dtype = f32::elem_type_native();
+    let flex_dtype = flex32::elem_type_native();
+    let tf32_dtype = tf32::elem_type_native();
+    let f16_dtype = half::f16::elem_type_native();
 
     if requires_accelerator {
         if dtypes.lhs_global == f32_dtype
@@ -330,7 +330,7 @@ mod tests {
             MatrixLayout::RowMajor,
             None,
             None,
-            MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+            MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
             AddressType::default(),
         );
 

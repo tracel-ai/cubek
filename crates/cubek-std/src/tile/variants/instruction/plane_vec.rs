@@ -223,6 +223,7 @@ pub fn planevec_write_to_shared<A: Numeric, E: Numeric, ES: Size>(
                 let n_idx = out_vector_iter * out_vector_size + within_vector;
                 let acc_vec = arr[n_idx];
                 let mut sum = A::from_int(0);
+                #[unroll]
                 for i in 0..reduce_vec {
                     sum += acc_vec.extract(i);
                 }

@@ -229,7 +229,7 @@ fn matmul_cpu_dynamic_k() {
         .tile(&[edge, edge])
         .uniform(4242, 10., 100.);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     launch_cpu_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
@@ -433,7 +433,7 @@ fn check_matmul_batched(
 ) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let vector_size = 1;
 
     let partitioner = Partitioner::row_major(
@@ -509,7 +509,7 @@ fn check_matmul_batched(
 fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partitioner]) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let vector_size = 1;
 
     // The one operation space: both batch axes plus a single `t×t` matrix per axis,
@@ -567,7 +567,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
     let tile_edge = partitioner.edge(M);
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
@@ -730,7 +730,7 @@ fn matmul_staged_invariant_lhs() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -793,7 +793,7 @@ fn register_matmul_unit_spread_n() {
         // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
         .resolve_lanes(lanes);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -856,7 +856,7 @@ fn register_matmul_unit_split_k() {
         // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
         .resolve_lanes(lanes);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -941,7 +941,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
         .untiled()
@@ -1015,7 +1015,7 @@ fn check_matmul_multilevel(
 ) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let final_edge = l1.edge(M);
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let space = Space::new(&[(M, m), (N, n), (K, k)])
         .with_partitioner(l0.clone())
         .with_partitioner(l1.clone());
@@ -1061,7 +1061,7 @@ fn check_matmul_multilevel(
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tile_edge = partitioner.edge(M);
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1109,7 +1109,7 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -1126,7 +1126,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -1147,8 +1147,8 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(I)] _idtype: StorageType,
-    #[define(E)] _edtype: StorageType,
+    #[define(I)] _idtype: ElemType,
+    #[define(E)] _edtype: ElemType,
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -1169,7 +1169,7 @@ fn launch_cpu_matmul<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -1186,8 +1186,8 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
-    #[define(EA)] _acc_dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -1229,7 +1229,7 @@ fn register_matmul_promoted_accumulator() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     launch_promoted_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
@@ -1284,7 +1284,7 @@ fn register_matmul_promoted_cube_plane() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -1343,7 +1343,7 @@ fn cmma_fragment_roundtrip() {
         return;
     }
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let space = Space::new(&[(M, 8), (N, 8)]);
 
     let input = TileInput::builder(&client, space.clone())
@@ -1374,7 +1374,7 @@ fn cmma_roundtrip<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = input.tile(space);
     let space = comptime!(a.space.clone());
@@ -1425,7 +1425,7 @@ fn cmma_matmul_8x8x8() {
         return;
     }
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
@@ -1484,7 +1484,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         .with_param(QuantParam::F32);
 
     // A: i8 quantized, with host values to build the reference.
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
         .dtype(a_dtype)
@@ -1503,7 +1503,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         .zeros();
 
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     cmma_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -1593,7 +1593,7 @@ fn matmul_leaf_stated_by_operands() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
         .untiled()
@@ -1659,7 +1659,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
         .untiled()
@@ -1732,7 +1732,7 @@ fn mma_matmul_8x8x8() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
         .untiled()
@@ -1808,7 +1808,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
         .untiled()
@@ -1888,7 +1888,7 @@ fn cmma_matmul_multi_fragment_partition() {
         })
         .build();
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
         .untiled()
@@ -1939,7 +1939,7 @@ fn cmma_matmul<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -2016,8 +2016,8 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(I)] _idtype: StorageType,
-    #[define(E)] _edtype: StorageType,
+    #[define(I)] _idtype: ElemType,
+    #[define(E)] _edtype: ElemType,
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -2111,7 +2111,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .with_value(QuantValue::Q8S)
         .with_param(QuantParam::F32);
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
         .dtype(a_dtype)
@@ -2131,7 +2131,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
     let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     cmma_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2196,7 +2196,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .with_value(QuantValue::Q8S)
         .with_param(QuantParam::F32);
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![8, 8])
         .dtype(a_dtype)
@@ -2216,7 +2216,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
     let c = TileInput::builder(&client, Space::new(&[(M, 8), (N, 8)]))
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     cmma_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2312,7 +2312,7 @@ fn mma_matmul_quant_until_read() {
         .with_value(QuantValue::Q8S)
         .with_param(QuantParam::F32);
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -2330,7 +2330,7 @@ fn mma_matmul_quant_until_read() {
         .leaf(leaf)
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     launch_resident_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2402,7 +2402,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         .with_param(QuantParam::F32);
 
     // A: i8 quantized (m×k), with host values for the reference.
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -2420,7 +2420,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         .leaf(leaf)
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     launch_resident_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2498,7 +2498,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .with_param(QuantParam::F32);
     let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -2516,7 +2516,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .leaf(leaf)
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     launch_resident_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2594,7 +2594,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .with_param(QuantParam::F32);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -2612,7 +2612,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .leaf(leaf)
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     launch_resident_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2690,7 +2690,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .with_param(QuantParam::F32);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -2708,7 +2708,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .leaf(leaf)
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     launch_resident_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -2779,7 +2779,7 @@ fn check_matmul_vectorized(schedule: Schedule) {
     };
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -2842,8 +2842,8 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[define(I)] _a_dtype: StorageType,
-    #[define(E)] _e_dtype: StorageType,
+    #[define(I)] _a_dtype: ElemType,
+    #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
@@ -2898,7 +2898,7 @@ fn register_matmul_quant_native_block_m() {
         .with_value(QuantValue::Q8S)
         .with_param(QuantParam::F32);
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -2949,7 +2949,7 @@ fn register_matmul_quant_native_direct_serve() {
         .with_value(QuantValue::Q8S)
         .with_param(QuantParam::F32);
 
-    let a_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
     let (a_input, a_host) = TestInput::builder(client.clone(), shape![m, k])
         .dtype(a_dtype)
@@ -3022,7 +3022,7 @@ fn run_register_matmul_quant_packed(
         .packed(&scheme, DequantAt::Read)
         .arange();
 
-    let a_dtype = u32::as_type_native_unchecked().storage_type();
+    let a_dtype = u32::elem_type_native();
     let q: Vec<f32> = a.q.iter().map(|&v| v as f32).collect();
     run_register_matmul_quant(
         client,
@@ -3048,7 +3048,7 @@ fn run_register_matmul_quant(
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     a_arg: TensorArg<TestRuntime>,
-    a_dtype: StorageType,
+    a_dtype: ElemType,
     scheme: QuantScheme,
     scales_arg: TensorArg<TestRuntime>,
     scale_vals: Vec<f32>,
@@ -3063,7 +3063,7 @@ fn run_register_matmul_quant(
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let e_dtype = f32::elem_type_native();
 
     launch_staged_matmul_quant::launch::<TestRuntime>(
         &client,
@@ -3114,8 +3114,8 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     b: &QuantTileArg<'_, I, Const<1>>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
-    #[define(I)] _b_dtype: StorageType,
-    #[define(E)] _e_dtype: StorageType,
+    #[define(I)] _b_dtype: ElemType,
+    #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
@@ -3349,8 +3349,8 @@ fn run_register_matmul_quant_rhs(
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
-    let b_dtype = u32::as_type_native_unchecked().storage_type();
-    let e_dtype = f32::as_type_native_unchecked().storage_type();
+    let b_dtype = u32::elem_type_native();
+    let e_dtype = f32::elem_type_native();
 
     // Routine-like: the launcher derives geometry and argument wiring from the plan; the
     // quantized RHS goes through the source builder, which binds it at the storage width.

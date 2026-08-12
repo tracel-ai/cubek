@@ -22,7 +22,7 @@ pub fn launch_ref<R: Runtime>(
     output: TensorBinding<R>,
     scales: TensorBinding<R>,
     scheme: &QuantScheme,
-    output_dtype: StorageType,
+    output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     assert!(
         scheme.store == QuantStore::Native,
@@ -53,7 +53,7 @@ pub fn launch_ref<R: Runtime>(
     let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
     let cube_count = space.cube_count();
     let cube_dim = space.cube_dim(client);
-    let input_dtype = ElemType::from_quant_value(scheme.value).into();
+    let input_dtype = ElemType::from_quant_value(scheme.value);
     // Both operands through the source builder, which derives the storage from the binding's own
     // dims and validates the scheme against this space. One tile covers each axis, so nothing
     // overhangs and the checks stay off.
@@ -123,8 +123,8 @@ pub fn dequantize<I: Numeric, O: Numeric>(
     input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, Const<1>>,
     #[comptime] space: Space,
-    #[define(I)] _input_dtype: StorageType,
-    #[define(O)] _output_dtype: StorageType,
+    #[define(I)] _input_dtype: ElemType,
+    #[define(O)] _output_dtype: ElemType,
 ) {
     let input = input.tile::<O>(comptime!(space.clone()));
     let mut output = output.tile(space);

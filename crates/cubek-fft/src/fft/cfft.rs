@@ -89,7 +89,7 @@ pub fn cfft<R: Runtime>(
     input_re: TensorHandle<R>,
     input_im: TensorHandle<R>,
     dim: usize,
-    dtype: StorageType,
+    dtype: ElemType,
     fft_mode: FftMode,
 ) -> (TensorHandle<R>, TensorHandle<R>) {
     assert!(
@@ -143,7 +143,7 @@ pub fn cfft_launch_any_size<R: Runtime>(
     client: &ComputeClient<R>,
     bindings: CfftBindings<R>,
     dim: usize,
-    dtype: StorageType,
+    dtype: ElemType,
     fft_mode: FftMode,
 ) -> Result<(), LaunchError> {
     let n_fft = bindings.input_re.shape[dim];
@@ -272,7 +272,7 @@ fn cfft_shared_kernel<F: Float>(
 fn cfft_four_step_launch<R: Runtime>(
     client: &ComputeClient<R>,
     bindings: CfftBindings<R>,
-    dtype: StorageType,
+    dtype: ElemType,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
     let max_n = max_shared_fft_n(client);

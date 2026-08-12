@@ -5,13 +5,12 @@ use crate::{
     definition::{InterpolateOptions, InterpolateProblem},
     launch::InterpolateStrategy,
 };
-use cubecl::ir::StorageType;
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
 use cubek_test_utils::{HostData, Progress, TestInput};
 
-pub(crate) fn f32_storage_type() -> StorageType {
-    f32::as_type_native_unchecked().storage_type()
+pub(crate) fn f32_elem_type() -> ElemType {
+    f32::elem_type_native()
 }
 
 pub(crate) fn make_random_f32_host(
@@ -27,7 +26,7 @@ pub(crate) fn make_random_f32_host(
 pub(crate) fn make_zero_handle(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)

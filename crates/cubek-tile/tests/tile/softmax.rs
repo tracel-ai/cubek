@@ -99,7 +99,7 @@ fn softmax_walk_kernel(
                     let mut pos = CoordsDyn::new();
                     pos.push(r as u32);
                     pos.push(c as u32);
-                    acc[ri] += p_view.read(pos).extract(0) * values[blk * cols + c];
+                    acc[ri] += p_view.read(pos).extract(0usize) * values[blk * cols + c];
                 }
             }
         }
@@ -129,8 +129,8 @@ fn run(
     // a consistent unit count, so clamp (rows_per_unit grows to compensate).
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
 
     // Deterministic host-built data so device and host math see identical bits.
     let wobble =
@@ -379,7 +379,7 @@ fn softmax_smem_acc_kernel(
                 let mut ppos = CoordsDyn::new();
                 ppos.push(r as u32);
                 ppos.push(c as u32);
-                let prob = p_view.read(ppos).extract(0);
+                let prob = p_view.read(ppos).extract(0usize);
                 cell += Vector::cast_from(prob * values[(blk * cols + c) * val_dim + v]);
             }
             acc_view.write(pos, cell);
@@ -406,7 +406,7 @@ fn softmax_smem_acc_kernel(
         let mut pos = CoordsDyn::new();
         pos.push((i / val_dim) as u32);
         pos.push((i % val_dim) as u32);
-        out[i] = acc_view.read(pos).extract(0);
+        out[i] = acc_view.read(pos).extract(0usize);
         i += workers;
     }
     for ri in 0..rpu {
@@ -428,8 +428,8 @@ fn run_smem_acc(
     let scale = 0.125f32;
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
 
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;

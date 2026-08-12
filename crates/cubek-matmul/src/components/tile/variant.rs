@@ -8,11 +8,7 @@
 //! selector consulted *before* an instance is built (e.g. `expand`,
 //! `validate_blueprint`, `cubedim_resource`).
 
-use cubecl::{
-    features::MmaConfig,
-    ir::{DeviceProperties, StorageType},
-    prelude::*,
-};
+use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
 use cubek_std::{CubeDimResource, InvalidConfigError, TileSize};
 
 use crate::definition::{BatchMatmulBlueprint, MatmulElems, MatmulSetupError, MatmulVectorSizes};
@@ -37,9 +33,9 @@ pub trait TileVariant: Sized {
     /// All sizes supported for the given element-type triple, if any.
     fn supported_sizes<R: Runtime>(
         client: &ComputeClient<R>,
-        lhs_ty: StorageType,
-        rhs_ty: StorageType,
-        acc_ty: StorageType,
+        lhs_ty: ElemType,
+        rhs_ty: ElemType,
+        acc_ty: ElemType,
     ) -> Vec<TileSize>;
 
     /// Build the per-kind config from the matmul-flow inputs.

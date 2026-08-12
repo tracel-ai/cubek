@@ -95,13 +95,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let mut max = P::EA::from_int(0);
         let accumulator = accumulator.elements.item();
         #[unroll]
-        for k in 0..accumulator.size() {
+        for k in 0..accumulator.vector_size() {
             let candidate = accumulator.extract(k);
             max = select_max(
                 Vector::<P::EA, Const<1>>::new(candidate),
                 Vector::<P::EA, Const<1>>::new(max),
             )
-            .extract(0);
+            .extract(0usize);
         }
         (Value::new_single(Out::cast_from(max)), Value::new_None())
     }

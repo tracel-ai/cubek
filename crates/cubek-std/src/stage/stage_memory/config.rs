@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hash::Hash};
 
-use cubecl::ir::StorageType;
+use cubecl::ir::ElemType;
 
 use crate::{MatrixLayout, stage::stage_memory::swizzle::SwizzleMode};
 
@@ -18,7 +18,7 @@ pub struct StageMemoryConfig {
     pub matrix_layout: MatrixLayout,
     pub swizzle: SwizzleMode,
     pub num_stages: u32,
-    pub dtype: StorageType,
+    pub dtype: ElemType,
 }
 
 impl StageMemoryConfig {

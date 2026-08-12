@@ -1,6 +1,6 @@
 //! Shared helpers for the extended (forced-blueprint) tier.
 
-use cubecl::prelude::CubePrimitive;
+use cubecl::prelude::Scalar;
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, TilingScheme};
 use cubek_std::{PartitionSize, StageSize, TileSize};
 
@@ -9,7 +9,7 @@ use crate::convolution::launcher_strategy::ConvolutionSize;
 /// `MatmulElems` with f16 globals (and the f32 accumulator picked by
 /// `from_globals`).
 pub(crate) fn f16_dtypes() -> MatmulElems {
-    let f16 = half::f16::as_type_native_unchecked().storage_type();
+    let f16 = half::f16::elem_type_native();
     MatmulElems::from_globals(&MatmulGlobalElems {
         lhs: f16,
         rhs: f16,

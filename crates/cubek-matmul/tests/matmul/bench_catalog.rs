@@ -182,8 +182,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
 
     // The legacy engine forced to the DSL selector's point: partition 2x8x4 per plane,
     // 4x2 planes (256 units), stage 64x128, stage_k 32.
-    let f16 =
-        cubecl::ir::StorageType::Scalar(cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16));
+    let f16 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16);
     let matmul_problem = MatmulProblem::from_parameters(
         4096,
         4096,

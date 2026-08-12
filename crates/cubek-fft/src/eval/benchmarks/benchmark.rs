@@ -59,7 +59,7 @@ struct FftInput {
 fn make_uniform(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::from(shape))
@@ -72,7 +72,7 @@ fn make_uniform(
 fn empty_handle(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    elem: cubecl::ir::Type,
+    elem: impl Into<Type>,
 ) -> TensorHandle<TestRuntime> {
     TensorHandle::empty(client, shape, elem)
 }
@@ -83,8 +83,7 @@ impl<E: Float> Benchmark for FftBench<E> {
 
     fn prepare(&self) -> Self::Input {
         let client = <TestRuntime as Runtime>::client(&self.device);
-        let elem = E::as_type_native_unchecked();
-        let storage = elem.storage_type();
+        let elem = E::elem_type_native();
 
         let mut shape_out = self.shape.clone();
         let dim = self.shape.len() - 1;
@@ -92,7 +91,7 @@ impl<E: Float> Benchmark for FftBench<E> {
 
         match self.mode {
             FftMode::Forward => {
-                let signal = make_uniform(&client, self.shape.clone(), storage, 0);
+                let signal = make_uniform(&client, self.shape.clone(), elem, 0);
                 let spectrum_re = empty_handle(&client, shape_out.clone(), elem);
                 let spectrum_im = empty_handle(&client, shape_out, elem);
                 FftInput {
@@ -103,8 +102,8 @@ impl<E: Float> Benchmark for FftBench<E> {
             }
             FftMode::Inverse => {
                 let signal = empty_handle(&client, self.shape.clone(), elem);
-                let spectrum_re = make_uniform(&client, shape_out.clone(), storage, 0);
-                let spectrum_im = make_uniform(&client, shape_out, storage, 1);
+                let spectrum_re = make_uniform(&client, shape_out.clone(), elem, 0);
+                let spectrum_im = make_uniform(&client, shape_out, elem, 1);
                 FftInput {
                     signal,
                     spectrum_re,
@@ -123,7 +122,7 @@ impl<E: Float> Benchmark for FftBench<E> {
                 input.spectrum_re.binding(),
                 input.spectrum_im.binding(),
                 dim,
-                E::as_type_native_unchecked().storage_type(),
+                E::elem_type_native(),
             )
             .map_err(|err| format!("{err}"))?,
             FftMode::Inverse => irfft_launch(
@@ -132,7 +131,7 @@ impl<E: Float> Benchmark for FftBench<E> {
                 input.spectrum_im.binding(),
                 input.signal.binding(),
                 dim,
-                E::as_type_native_unchecked().storage_type(),
+                E::elem_type_native(),
             )
             .map_err(|err| format!("{err}"))?,
         }
@@ -146,7 +145,7 @@ impl<E: Float> Benchmark for FftBench<E> {
     fn name(&self) -> String {
         format!(
             "fft-{}-{:?}-{:?}",
-            E::as_type_native_unchecked(),
+            E::elem_type_native(),
             self.shape,
             self.mode,
         )

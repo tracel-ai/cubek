@@ -1,8 +1,6 @@
-use cubecl::CubeElement;
+use cubecl::{CubeElement, ir::ElemType, prelude::Scalar};
 use cubecl::{
     client::ComputeClient,
-    frontend::CubePrimitive,
-    prelude::StorageType,
     std::tensor::TensorHandle,
     {Runtime, TestRuntime},
 };
@@ -17,7 +15,7 @@ use cubek_test_utils::{
 use cubek_fft::eval::cpu_reference::rfft_ref;
 
 fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim: usize) {
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let mut spectrum_shape = signal_shape.clone();
     spectrum_shape[dim] = signal_shape[dim] / 2 + 1;
 
@@ -66,7 +64,7 @@ fn test_launch_padded(
     signal_len: usize,
     n_fft: usize,
 ) {
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let n_freq = n_fft / 2 + 1;
 
     let mut spectrum_shape = signal_shape.clone();
@@ -229,7 +227,7 @@ fn tensor_from_data(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
     data: &[f32],
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     TensorHandle::<TestRuntime>::new_contiguous(
         shape,
@@ -241,7 +239,7 @@ fn tensor_from_data(
 fn empty_tensor(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     let elems = shape.iter().product::<usize>();
     TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
@@ -382,7 +380,7 @@ fn rfft_large_virtual_padding_matches_materialized_zero_padding() {
 #[cfg(feature = "heavy")]
 fn rfft_nyquist_bin_large_sizes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     for &n_fft in &[8192usize, 16384] {
         let batch = 2;

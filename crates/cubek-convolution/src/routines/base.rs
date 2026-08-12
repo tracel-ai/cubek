@@ -32,7 +32,7 @@ pub trait Routine {
     fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
         handle: TensorBinding<R>,
-        dtype: StorageType,
+        dtype: ElemType,
         operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError>;
 
@@ -44,7 +44,7 @@ pub trait Routine {
 pub(crate) fn contiguous_pitched_layout<R: Runtime>(
     client: &ComputeClient<R>,
     binding: TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<TensorBinding<R>, LaunchError> {
     let binding = if has_valid_layout(&binding) {
         binding
@@ -65,7 +65,7 @@ const TMA_STRIDE_ALIGN: usize = 16;
 pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     client: &ComputeClient<R>,
     handle: TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
     operation: ConvolutionOperation,
 ) -> Result<TensorBinding<R>, LaunchError> {
     let binding = if has_valid_layout_tma(&handle, dtype, operation) {
@@ -78,7 +78,7 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
 
 pub(crate) fn has_valid_layout_tma<R: Runtime>(
     binding: &TensorBinding<R>,
-    dtype: StorageType,
+    dtype: ElemType,
     operation: ConvolutionOperation,
 ) -> bool {
     let stride_align = TMA_STRIDE_ALIGN / dtype.size();

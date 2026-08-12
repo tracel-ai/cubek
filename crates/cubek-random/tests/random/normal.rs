@@ -36,18 +36,14 @@ fn get_random_normal_data(shape: &[usize], mean: f32, std: f32) -> Vec<TestDType
     seed(0);
 
     let client = TestRuntime::client(&Default::default());
-    let output = TensorHandle::empty(
-        &client,
-        shape.to_vec(),
-        TestDType::as_type_native_unchecked(),
-    );
+    let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
     random_normal(
         &client,
         mean,
         std,
         output.clone().binding(),
-        TestDType::as_type_native_unchecked().storage_type(),
+        TestDType::elem_type_native(),
     )
     .unwrap();
 

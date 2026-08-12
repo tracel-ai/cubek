@@ -10,7 +10,7 @@ use crate::BaseInputSpec;
 #[cube(launch)]
 fn eye_launch<T: Numeric, N: Size>(
     tensor: &mut Tensor<Vector<T, N>>,
-    #[define(T)] _types: StorageType,
+    #[define(T)] _types: ElemType,
 ) {
     let batch = CUBE_POS_Z as usize;
     let i = ABSOLUTE_POS_X as usize;
@@ -36,7 +36,7 @@ fn new_eyed(
     rows: usize,
     cols: usize,
     total_batches: usize,
-    dtype: StorageType,
+    dtype: ElemType,
     strides: Strides,
 ) -> TensorHandle<TestRuntime> {
     // Performance is not important here and this simplifies greatly the problem

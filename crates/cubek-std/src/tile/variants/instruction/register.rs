@@ -401,7 +401,7 @@ fn load_plain<E: Numeric, ES: Size, N: Numeric>(
     #[comptime] num_segments: u32,
     #[comptime] segment_size: u32,
 ) {
-    let line_size = ES::value() as u32;
+    let line_size = ES::value().comptime() as u32;
     let num_lines_per_segment = segment_size / line_size;
 
     #[unroll(UNROLL)]
@@ -425,7 +425,7 @@ fn load_transposed<E: Numeric, ES: Size, N: Numeric>(
     #[comptime] num_segments: u32,
     #[comptime] segment_size: u32,
 ) {
-    let line_size = ES::value() as u32;
+    let line_size = ES::value().comptime() as u32;
     let num_lines_per_segment = segment_size / line_size;
 
     #[unroll(UNROLL)]

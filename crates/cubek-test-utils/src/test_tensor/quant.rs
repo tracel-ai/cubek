@@ -1,7 +1,7 @@
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    ir::{ElemType, StorageType},
+    ir::ElemType,
     quant::scheme::{QuantLevel, QuantStore},
     std::tensor::TensorHandle,
     zspace::Shape,
@@ -33,9 +33,9 @@ pub(crate) fn apply_quantization(
 
     // Determine the correct storage type for the quantized output buffer.
     let output_storage_type = match &scheme.store {
-        QuantStore::PackedU32(_) => StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)),
+        QuantStore::PackedU32(_) => ElemType::UInt(cubecl::ir::UIntKind::U32),
         QuantStore::PackedNative(_) | QuantStore::Native => {
-            StorageType::Scalar(ElemType::from_quant_value(scheme.value))
+            ElemType::from_quant_value(scheme.value)
         }
     };
 
@@ -64,7 +64,7 @@ pub(crate) fn apply_quantization(
         output_storage_type,
     );
 
-    let scale_dtype = StorageType::Scalar(ElemType::from_quant_param(scheme.param));
+    let scale_dtype = ElemType::from_quant_param(scheme.param);
     let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
     let out_scale_handle = TensorHandle::new_contiguous(
         scales_shape,

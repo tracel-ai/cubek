@@ -1,9 +1,8 @@
 use cubecl::features::Plane;
 use cubecl::frontend::CompilationArg;
-use cubecl::frontend::CubePrimitive;
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, cube, ir::StorageType, prelude::*,
-    std::tensor::TensorHandle, zspace::Shape,
+    CubeCount, CubeDim, Runtime, TestRuntime, cube, prelude::*, std::tensor::TensorHandle,
+    zspace::Shape,
 };
 use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
 use cubek_reduce::eval::cpu_reference::contiguous_strides;
@@ -25,7 +24,7 @@ fn test_topk_plane_reduce_inplace() {
     let shape = Shape::new([total_vectors]);
     let stride = contiguous_strides(&shape);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let input_dtype = InputDataType::Standard(dtype);
 
     #[rustfmt::skip]
@@ -44,7 +43,7 @@ fn test_topk_plane_reduce_inplace() {
         .custom(data.clone())
         .generate_with_f32_host_data();
 
-    let storage_type = f32::as_type_native_unchecked().storage_type();
+    let storage_type = f32::elem_type_native();
 
     let output_handle = build_output_tensor(&client, storage_type, &shape);
 
@@ -66,7 +65,7 @@ fn test_topk_plane_reduce_inplace() {
 
 fn build_output_tensor(
     client: &cubecl::client::ComputeClient<TestRuntime>,
-    output_dtype: StorageType,
+    output_dtype: ElemType,
     output_shape: &Shape,
 ) -> TensorHandle<TestRuntime> {
     let strides = contiguous_strides(output_shape);
@@ -82,7 +81,7 @@ fn launch_plane_reduce_inplace<N: Numeric, S: Size>(
     input: &Tensor<Vector<N, S>>,
     output: &mut Tensor<Vector<N, S>>,
     #[comptime] k: usize,
-    #[define(N)] _dtype: StorageType,
+    #[define(N)] _dtype: ElemType,
     #[define(S)] _vector_size: usize,
 ) {
     let mut elements = Array::new(k);
@@ -165,7 +164,7 @@ fn test_topk_plane_topk_insert() {
     let item_shape = Shape::new([num_threads * vector_size]);
     let item_stride = contiguous_strides(&item_shape);
 
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let input_dtype = InputDataType::Standard(dtype);
 
     let (acc_handle, _acc_host) = TestInput::builder(client.clone(), acc_shape.clone())
@@ -184,7 +183,7 @@ fn test_topk_plane_topk_insert() {
         .custom(item_data.clone())
         .generate_with_f32_host_data();
 
-    let storage_type = f32::as_type_native_unchecked().storage_type();
+    let storage_type = f32::elem_type_native();
 
     launch_plane_topk_insert::launch::<TestRuntime>(
         &client,
@@ -208,7 +207,7 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     accumulator: &mut Tensor<Vector<N, S>>,
     new_item: &Tensor<Vector<N, S>>,
     #[comptime] k: usize,
-    #[define(N)] _dtype: StorageType,
+    #[define(N)] _dtype: ElemType,
     #[define(S)] _vector_size: usize,
 ) {
     let mut elements = Array::new(k);

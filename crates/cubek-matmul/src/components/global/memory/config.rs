@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hash::Hash};
 
-use cubecl::ir::{StorageType, VectorSize};
+use cubecl::ir::{ElemType, VectorSize};
 use cubek_std::MatrixLayout;
 
 use crate::components::global::memory::{GlobalLayoutConfig, ViewDirection};
@@ -12,7 +12,7 @@ pub struct GlobalMemoryConfig {
     pub check_col_bounds: bool,
     pub matrix_layout: MatrixLayout,
     pub view_direction: ViewDirection,
-    pub dtype: StorageType,
+    pub dtype: ElemType,
 }
 
 impl GlobalMemoryConfig {
@@ -23,7 +23,7 @@ impl GlobalMemoryConfig {
         check_col_bounds: bool,
         matrix_layout: MatrixLayout,
         view_direction: ViewDirection,
-        dtype: StorageType,
+        dtype: ElemType,
     ) -> Self {
         GlobalMemoryConfig {
             vector_size,

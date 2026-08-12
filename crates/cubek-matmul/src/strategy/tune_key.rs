@@ -1,8 +1,10 @@
 use cubecl::{
+    AutotuneKey, Runtime,
+    client::ComputeClient,
+    ir::ElemType,
+    quant::scheme::QuantScheme,
     tune::anchor,
     zspace::{Shape, Strides},
-    {AutotuneKey, Runtime, quant::scheme::QuantScheme},
-    {client::ComputeClient, ir::StorageType},
 };
 use cubek_std::MatmulProblemSize;
 use serde::{Deserialize, Serialize};
@@ -36,9 +38,9 @@ pub struct MatmulProblemDefinition {
     pub rhs_pow2_factor: u8,
     /// Power of two that rhs strides are aligned to
     pub rhs_stride_factor: u8,
-    pub elem_lhs: StorageType,
-    pub elem_rhs: StorageType,
-    pub elem_out: StorageType,
+    pub elem_lhs: ElemType,
+    pub elem_rhs: ElemType,
+    pub elem_out: ElemType,
     pub matrix_layout_lhs: MatrixBatchLayout,
     pub matrix_layout_rhs: MatrixBatchLayout,
 }
@@ -88,9 +90,9 @@ impl MatmulAutotuneKey {
         rhs_shape: &Shape,
         lhs_strides: &Strides,
         rhs_strides: &Strides,
-        elem_lhs: StorageType,
-        elem_rhs: StorageType,
-        elem_out: StorageType,
+        elem_lhs: ElemType,
+        elem_rhs: ElemType,
+        elem_out: ElemType,
         lhs_scheme: Option<&QuantScheme>,
         rhs_scheme: Option<&QuantScheme>,
     ) -> MatmulAutotuneKey {
@@ -115,9 +117,9 @@ impl MatmulAutotuneKey {
         rhs_shape: &Shape,
         lhs_strides: &Strides,
         rhs_strides: &Strides,
-        elem_lhs: StorageType,
-        elem_rhs: StorageType,
-        elem_out: StorageType,
+        elem_lhs: ElemType,
+        elem_rhs: ElemType,
+        elem_out: ElemType,
         lhs_scheme: Option<&QuantScheme>,
         rhs_scheme: Option<&QuantScheme>,
     ) -> MatmulAutotuneKey {
@@ -219,7 +221,7 @@ impl MatmulAutotuneKey {
 
 /// Stride alignment (in powers of two of bytes) of the canonical row stride
 /// `cols` — the tightest non-contiguous stride of the layout.
-fn stride_factor(cols: usize, elem: StorageType) -> u8 {
+fn stride_factor(cols: usize, elem: ElemType) -> u8 {
     let bytes = (cols * elem.size_bits()) / 8;
     bytes.trailing_zeros().min(MAX_STRIDE_FACTOR) as u8
 }
@@ -234,7 +236,7 @@ mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
 
-    const F32: StorageType = StorageType::Scalar(ElemType::Float(FloatKind::F32));
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
 
     /// A contiguous `[batch, rows, cols]` problem pair, as the attention
     /// fallback produces: `scores[b, seq_q, kv] @ value[b, kv, head_dim]`.

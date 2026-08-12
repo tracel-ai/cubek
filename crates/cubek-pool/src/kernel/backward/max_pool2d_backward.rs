@@ -18,7 +18,7 @@ fn max_pool2d_with_indices_backward_kernel<E: Numeric, I: Int, N: Size>(
     args: &PoolBackwardArgs,
     #[comptime] kernel_size_0: i32,
     #[comptime] kernel_size_1: i32,
-    #[define(E, I)] _dtypes: [StorageType; 2],
+    #[define(E, I)] _dtypes: [ElemType; 2],
 ) {
     if ABSOLUTE_POS >= working_units {
         terminate!();
@@ -100,8 +100,8 @@ pub(crate) fn max_pool2d_with_indices_backward_launch<R: Runtime>(
     indices: TensorBinding<R>,
     output: TensorBinding<R>,
     options: MaxPoolOptions<2>,
-    dtype: StorageType,
-    indices_dtype: StorageType,
+    dtype: ElemType,
+    indices_dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),

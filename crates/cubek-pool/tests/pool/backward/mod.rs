@@ -3,7 +3,7 @@ mod avg_pool2d;
 mod max_pool2d;
 
 use super::{
-    build_output_tensor, indices_storage_type, output_host_f32, output_host_i32, validate_indices,
+    build_output_tensor, indices_elem_type, output_host_f32, output_host_i32, validate_indices,
     validate_test,
 };
 use cubecl::{TestRuntime, client::ComputeClient, zspace::Shape};
@@ -56,7 +56,7 @@ pub fn run_pool_backward_test(
         Some(build_output_tensor(
             &client,
             problem.out_grad_shape.to_vec(),
-            indices_storage_type(),
+            indices_elem_type(),
         ))
     } else {
         None

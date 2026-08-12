@@ -5,7 +5,6 @@ use cubecl::{
     benchmark::{Benchmark, TimingMethod},
     client::ComputeClient,
     future,
-    ir::StorageType,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::Shape,
@@ -146,7 +145,7 @@ fn quantize_operand(
     let shape: Shape = input.shape().clone();
     let scale_shape_vec = scales_shape(scheme, &shape);
 
-    let f32_dtype = f32::as_type_native_unchecked().storage_type();
+    let f32_dtype = f32::elem_type_native();
     let (q_min, q_max) = scheme.value.range();
     let max_abs_q = q_max.abs().max(q_min.abs());
     let base = 1.0 / max_abs_q;
@@ -158,7 +157,7 @@ fn quantize_operand(
     let scale_out = TensorHandle::empty(client, scale_shape_vec, f32_dtype);
 
     let output_dtype = match &scheme.store {
-        QuantStore::PackedU32(_) => u32::as_type_native_unchecked().storage_type(),
+        QuantStore::PackedU32(_) => u32::elem_type_native(),
         other => panic!("benchmark only exercises PackedU32, got {other:?}"),
     };
 
@@ -170,10 +169,7 @@ fn quantize_operand(
     }
     let data = TensorHandle::empty(client, quant_shape, output_dtype);
 
-    let input_elem = match input.dtype {
-        StorageType::Scalar(e) => e,
-        other => panic!("unexpected input storage type {other:?}"),
-    };
+    let input_elem = input.dtype;
 
     quantize::launch_ref(
         client,
@@ -197,7 +193,7 @@ fn quantize_operand(
 fn float_operand(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::from(shape))
@@ -316,7 +312,7 @@ impl Benchmark for QuantMatmulBench {
 }
 
 fn matmul_elems<E: cubecl::frontend::Float>() -> MatmulElems {
-    let dtype = E::as_type_native_unchecked().storage_type();
+    let dtype = E::elem_type_native();
     MatmulElems::from_globals(&MatmulGlobalElems {
         lhs: dtype,
         rhs: dtype,

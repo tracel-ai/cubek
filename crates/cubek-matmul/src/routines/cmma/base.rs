@@ -15,8 +15,8 @@
 
 use std::fmt::Display;
 
-use cubecl::features::Tma as TmaFeature;
-use cubecl::{Runtime, features::MmaConfig, ir::StorageType};
+use cubecl::{Runtime, features::MmaConfig};
+use cubecl::{features::Tma as TmaFeature, ir::ElemType};
 use cubek_tile::Delivery;
 
 use crate::{
@@ -153,7 +153,7 @@ impl CmmaRoutine {
         strategy: &BlueprintStrategy<(), CmmaRoutine>,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        acc: StorageType,
+        acc: ElemType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
@@ -214,7 +214,7 @@ impl CmmaRoutine {
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
         delivery: Delivery,
-        acc: StorageType,
+        acc: ElemType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let client = &device_settings.client;
         let plane_dim = client.properties().hardware.plane_size_max as usize;

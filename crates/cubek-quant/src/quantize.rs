@@ -64,7 +64,7 @@ fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
 fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: QuantValue) -> QS {
     let size_quant = quant.size_bits();
 
-    let size_store = QS::type_size_bits().comptime();
+    let size_store = QS::size_bits().comptime();
     let num_quants = size_store / size_quant;
 
     let mask = (1 << size_quant) - 1;
@@ -107,7 +107,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
     scales_layout: ScalesLayout,
-    #[define(F, FS, Q)] _dtypes: [StorageType; 3],
+    #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -139,7 +139,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
     out_scale: ScalesViewMut<'_, FS>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
-    #[define(F, FS, QS)] _dtypes: [StorageType; 3],
+    #[define(F, FS, QS)] _dtypes: [ElemType; 3],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -166,7 +166,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
         let mut values = Vector::<F, NQ>::empty();
         #[unroll]
         for i in 0..num_quants {
-            values.insert(i, input.read(packed_pos + i).extract(0));
+            values.insert(i, input.read(packed_pos + i).extract(0usize));
         }
         output.write(
             ABSOLUTE_POS,
@@ -304,7 +304,7 @@ fn quantize_native<R: Runtime>(
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
                     scales_layout,
-                    [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
+                    [input_dtype, scale_dtype, output_dtype],
                 )
             }
         }
@@ -346,7 +346,7 @@ fn quantize_packed<R: Runtime>(
     let num_quants = scheme.num_quants();
     let input = if !can_vectorize && num_elems >= 2048 {
         can_vectorize = true;
-        into_contiguous(client, input, input_dtype.into()).binding()
+        into_contiguous(client, input, input_dtype).binding()
     } else {
         input
     };
@@ -385,7 +385,7 @@ fn quantize_packed<R: Runtime>(
             scales_view(output, out_scale, 1, scheme),
             scales_layout,
             *scheme,
-            [input_dtype.into(), scale_dtype.into(), output_dtype.into()],
+            [input_dtype, scale_dtype, output_dtype],
         )
     };
 

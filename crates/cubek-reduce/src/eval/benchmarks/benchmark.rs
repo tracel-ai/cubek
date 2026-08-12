@@ -92,11 +92,10 @@ impl<E: Float> Benchmark for ReduceBench<E> {
 
     fn prepare(&self) -> Self::Input {
         let client = <TestRuntime as Runtime>::client(&self.device);
-        let elem = E::as_type_native_unchecked();
-        let storage = elem.storage_type();
+        let elem = E::elem_type_native();
 
         let input = TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
-            .dtype(storage)
+            .dtype(elem)
             .uniform(0, 0., 1.)
             .generate_without_host_data();
         let mut shape_out = self.shape.clone();
@@ -107,15 +106,15 @@ impl<E: Float> Benchmark for ReduceBench<E> {
         };
         shape_out[self.axis] = reduce_len;
         let out = TensorHandle::empty(&client, shape_out.clone(), elem);
-        let indices = TensorHandle::empty(&client, shape_out, u32::as_type_native_unchecked());
+        let indices = TensorHandle::empty(&client, shape_out, u32::elem_type_native());
 
         (input, out, indices)
     }
 
     fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
-        let value_dtype = E::as_type_native_unchecked().storage_type();
-        let index_dtype = u32::as_type_native_unchecked().storage_type();
-        let acc_dtype = f32::as_type_native_unchecked().storage_type();
+        let value_dtype = E::elem_type_native();
+        let index_dtype = u32::elem_type_native();
+        let acc_dtype = f32::elem_type_native();
 
         match self.kind {
             ReduceBenchKind::Single => {
@@ -213,7 +212,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
         format!(
             "reduce-axis({})-{}-{:?}-{:?}-{:?}-{:?}",
             self.axis,
-            E::as_type_native_unchecked(),
+            E::elem_type_native(),
             self.shape,
             self.strategy,
             self.config,

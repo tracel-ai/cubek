@@ -24,11 +24,7 @@ pub use plane_vec::PlaneVecMatInnerProduct;
 pub use register::RegisterMatmul;
 pub use variant::TileVariant;
 
-use cubecl::{
-    features::MmaConfig,
-    ir::{DeviceProperties, StorageType},
-    prelude::*,
-};
+use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
 use cubek_std::{
     CubeDimResource, InvalidConfigError, MatrixLayout, TileSize,
     tile::{
@@ -153,9 +149,9 @@ impl TileMatmulKind {
     pub fn supported_sizes<R: Runtime>(
         &self,
         client: &ComputeClient<R>,
-        lhs_ty: StorageType,
-        rhs_ty: StorageType,
-        acc_ty: StorageType,
+        lhs_ty: ElemType,
+        rhs_ty: ElemType,
+        acc_ty: ElemType,
     ) -> Vec<TileSize> {
         match self {
             TileMatmulKind::Cmma => CmmaMatmul::supported_sizes(client, lhs_ty, rhs_ty, acc_ty),

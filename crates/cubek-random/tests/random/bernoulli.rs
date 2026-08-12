@@ -35,17 +35,13 @@ fn get_random_bernoulli_data(shape: &[usize], prob: f32) -> Vec<TestDType> {
     seed(0);
 
     let client = TestRuntime::client(&Default::default());
-    let output = TensorHandle::empty(
-        &client,
-        shape.to_vec(),
-        TestDType::as_type_native_unchecked(),
-    );
+    let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
     random_bernoulli(
         &client,
         prob,
         output.clone().binding(),
-        TestDType::as_type_native_unchecked().storage_type(),
+        TestDType::elem_type_native(),
     )
     .unwrap();
 

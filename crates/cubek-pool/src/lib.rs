@@ -28,7 +28,7 @@ pub fn pool2d<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     mode: PoolMode<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
@@ -51,7 +51,7 @@ pub fn pool2d_with_indices<R: Runtime>(
     output: TensorBinding<R>,
     indices: TensorBinding<R>,
     mode: PoolMode<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_rank(input.shape.len(), indices.shape.len())?;
@@ -77,7 +77,7 @@ pub fn pool2d_backward<R: Runtime>(
     out_grad: TensorBinding<R>,
     in_grad: TensorBinding<R>,
     mode: PoolMode<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     validate_rank(input.shape.len(), out_grad.shape.len())?;
     validate_rank(input.shape.len(), in_grad.shape.len())?;
@@ -113,8 +113,8 @@ pub fn pool2d_with_indices_backward<R: Runtime>(
     indices: TensorBinding<R>,
     in_grad: TensorBinding<R>,
     mode: PoolMode<2>,
-    dtype: StorageType,
-    indices_dtype: StorageType,
+    dtype: ElemType,
+    indices_dtype: ElemType,
 ) -> Result<(), PoolError> {
     validate_rank(input.shape.len(), out_grad.shape.len())?;
     validate_rank(input.shape.len(), in_grad.shape.len())?;

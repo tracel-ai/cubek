@@ -1,5 +1,5 @@
 use crate::matmul::test_matmul_strategy;
-use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
+use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{routines::BlueprintStrategy, strategy::Strategy};
 
 use cubek_matmul::{
@@ -73,7 +73,7 @@ mod f16_ty {
     use super::*;
 
     fn elems() -> MatmulGlobalElems {
-        MatmulElems::from_single_dtype(half::f16::as_type_native_unchecked()).as_global_elems()
+        MatmulElems::from_single_dtype(half::f16::elem_type_native()).as_global_elems()
     }
 
     include!("unit_perpendicular.rs");
@@ -83,7 +83,7 @@ mod f32_ty {
     use super::*;
 
     fn elems() -> MatmulGlobalElems {
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems()
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems()
     }
 
     include!("unit_perpendicular.rs");

@@ -33,7 +33,6 @@ pub use topk::reference_topk;
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    ir::StorageType,
     prelude::*,
     zspace::{Shape, Strides},
 };
@@ -57,9 +56,9 @@ pub fn strategy_result(
     config: ReduceOperationConfig,
     seed: u64,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::as_type_native_unchecked().storage_type();
+    let input_dtype = f32::elem_type_native();
     let output_dtype = output_dtype_for(&config, input_dtype);
-    let accumulation_dtype = f32::as_type_native_unchecked().storage_type();
+    let accumulation_dtype = f32::elem_type_native();
 
     let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
@@ -115,9 +114,9 @@ pub fn strategy_result_with_indices(
     config: ReduceOperationConfig,
     seed: u64,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::as_type_native_unchecked().storage_type();
-    let index_dtype = u32::as_type_native_unchecked().storage_type();
-    let accumulation_dtype = f32::as_type_native_unchecked().storage_type();
+    let input_dtype = f32::elem_type_native();
+    let index_dtype = u32::elem_type_native();
+    let accumulation_dtype = f32::elem_type_native();
 
     let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
@@ -176,7 +175,7 @@ pub fn cpu_reference_result(
     seed: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::as_type_native_unchecked().storage_type();
+    let input_dtype = f32::elem_type_native();
 
     if let Some(p) = progress {
         let out_shape = output_shape_for(&shape, axis, &config);
@@ -230,11 +229,11 @@ fn output_shape_for(shape: &[usize], axis: usize, config: &ReduceOperationConfig
     out
 }
 
-fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: StorageType) -> StorageType {
+fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: ElemType) -> ElemType {
     match config {
         ReduceOperationConfig::ArgMax
         | ReduceOperationConfig::ArgMin
-        | ReduceOperationConfig::ArgTopK(_) => u32::as_type_native_unchecked().storage_type(),
+        | ReduceOperationConfig::ArgTopK(_) => u32::elem_type_native(),
         _ => input_dtype,
     }
 }

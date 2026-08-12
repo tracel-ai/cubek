@@ -39,7 +39,7 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
         0.0, 1.0, 0.0, 0.0, // any = 1, all = 0
     ];
 
-    let input_dtype = f32::as_type_native_unchecked().storage_type();
+    let input_dtype = f32::elem_type_native();
     let (input_handle, _) = TestInput::builder(client.clone(), shape.clone())
         .dtype(input_dtype)
         .layout(StridedLayout::Explicit(vec![4, 1]))

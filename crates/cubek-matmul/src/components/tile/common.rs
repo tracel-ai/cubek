@@ -2,7 +2,7 @@
 
 use cubecl::{
     features::{Plane as PlaneFeature, TypeUsage},
-    ir::{ElemType, FloatKind, StorageType},
+    ir::{ElemType, FloatKind},
     prelude::*,
 };
 
@@ -53,11 +53,9 @@ pub(super) fn check_types_available<R: Runtime>(
     Ok(())
 }
 
-fn normalize_flex32(ty: StorageType) -> StorageType {
+fn normalize_flex32(ty: ElemType) -> ElemType {
     match ty {
-        StorageType::Scalar(ElemType::Float(FloatKind::Flex32)) => {
-            ElemType::Float(FloatKind::F32).into()
-        }
+        ElemType::Float(FloatKind::Flex32) => ElemType::Float(FloatKind::F32),
         _ => ty,
     }
 }

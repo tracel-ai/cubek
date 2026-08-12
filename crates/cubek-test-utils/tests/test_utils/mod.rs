@@ -219,7 +219,7 @@ fn builder_matches_constructor() {
     let from_new = TestInput::new(
         client.clone(),
         shape![2, 3],
-        f32::as_type_native_unchecked().storage_type(),
+        f32::elem_type_native(),
         StridedLayout::RowMajor,
         DataKind::Arange { scale: None },
     )
@@ -243,7 +243,7 @@ fn builder_overrides_stride_and_dtype() {
     let from_new = TestInput::new(
         client.clone(),
         shape![2, 3],
-        f32::as_type_native_unchecked().storage_type(),
+        f32::elem_type_native(),
         StridedLayout::ColMajor,
         DataKind::Arange { scale: None },
     )

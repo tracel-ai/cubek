@@ -91,9 +91,9 @@ impl ReduceOperationConfig {
             | ReduceOperationConfig::TopK(_)
             | ReduceOperationConfig::Min => {
                 return ReduceDtypes {
-                    input: input.into(),
-                    output: input.into(),
-                    accumulation: input.into(),
+                    input,
+                    output: input,
+                    accumulation: input,
                 };
             }
             // The output is not a value of the input but an index (Arg*) or a
@@ -107,11 +107,10 @@ impl ReduceOperationConfig {
             | ReduceOperationConfig::Any
             | ReduceOperationConfig::All => {
                 return ReduceDtypes {
-                    input: input.into(),
+                    input,
                     output: output
-                        .expect("ArgMax, ArgMin, ArgTopK, Any and All must specify output type")
-                        .into(),
-                    accumulation: input.into(),
+                        .expect("ArgMax, ArgMin, ArgTopK, Any and All must specify output type"),
+                    accumulation: input,
                 };
             }
         };
@@ -119,40 +118,45 @@ impl ReduceOperationConfig {
         match input {
             ElemType::Float(kind) => {
                 let acc = match kind {
-                    FloatKind::F64 => f64::as_type_native_unchecked(),
-                    _ => f32::as_type_native_unchecked(),
+                    FloatKind::F64 => f64::elem_type_native(),
+                    _ => f32::elem_type_native(),
                 };
 
                 ReduceDtypes {
-                    input: input.into(),
-                    output: input.into(),
-                    accumulation: acc.storage_type(),
+                    input,
+                    output: input,
+                    accumulation: acc,
                 }
             }
             ElemType::Int(kind) => {
                 let acc = match kind {
-                    IntKind::I64 => i64::as_type_native_unchecked(),
-                    _ => i32::as_type_native_unchecked(),
+                    IntKind::I64 => i64::elem_type_native(),
+                    _ => i32::elem_type_native(),
                 };
 
                 ReduceDtypes {
-                    input: input.into(),
-                    output: input.into(),
-                    accumulation: acc.storage_type(),
+                    input,
+                    output: input,
+                    accumulation: acc,
                 }
             }
             ElemType::UInt(kind) => {
                 let acc = match kind {
-                    UIntKind::U64 => u64::as_type_native_unchecked(),
-                    _ => u32::as_type_native_unchecked(),
+                    UIntKind::U64 => u64::elem_type_native(),
+                    _ => u32::elem_type_native(),
                 };
 
                 ReduceDtypes {
-                    input: input.into(),
-                    output: input.into(),
-                    accumulation: acc.storage_type(),
+                    input,
+                    output: input,
+                    accumulation: acc,
                 }
             }
+            ElemType::Index => ReduceDtypes {
+                input,
+                output: input,
+                accumulation: ElemType::Index,
+            },
             ElemType::Bool => panic!("Can't reduce on booleans"),
         }
     }
@@ -600,11 +604,10 @@ mod tests {
         for config in [ReduceOperationConfig::Any, ReduceOperationConfig::All] {
             for input in inputs {
                 let dtypes = config.precision(input, Some(output));
-                let expected: StorageType = input.into();
+                let expected: ElemType = input;
                 assert_eq!(dtypes.input, expected, "input for {input:?}");
                 assert_eq!(
-                    dtypes.output,
-                    output.into(),
+                    dtypes.output, output,
                     "output must follow the requested flag storage for {input:?}"
                 );
                 assert_eq!(

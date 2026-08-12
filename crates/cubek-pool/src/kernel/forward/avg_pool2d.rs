@@ -94,7 +94,7 @@ pub(crate) fn avg_pool2d_launch<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: AvgPoolOptions<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     let [_, in_h, in_w, _] = input.shape.dims();
     let dilation = 1;

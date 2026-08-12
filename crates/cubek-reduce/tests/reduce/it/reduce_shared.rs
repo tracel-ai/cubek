@@ -36,11 +36,13 @@ impl TestCase {
         }
 
         let client = TestRuntime::client(&Default::default());
-        let input_dtype = TestDType::as_type_native_unchecked().storage_type();
+        let input_dtype = TestDType::elem_type_native();
 
         let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(input_dtype)
-            .layout(StridedLayout::Explicit(self.stride.iter().copied().collect()))
+            .layout(StridedLayout::Explicit(
+                self.stride.iter().copied().collect(),
+            ))
             .custom(self.input_raw_data())
             .generate_with_f32_host_data();
 
@@ -58,7 +60,7 @@ impl TestCase {
             input_handle.binding(),
             output_handle.clone().binding(),
             cube_count,
-            TestDType::as_type_native_unchecked().elem_type(),
+            TestDType::elem_type_native(),
         );
 
         let outcome = match ExecutionOutcome::from(result) {

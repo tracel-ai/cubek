@@ -17,9 +17,9 @@ pub fn cpu_gemm_kernel<E: Numeric, EL: Numeric, ER: Numeric, VA: Size, VB: Size,
     b: &TileArg<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
     #[comptime] space: Space,
-    #[define(EL)] _lhs_dtype: StorageType,
-    #[define(ER)] _rhs_dtype: StorageType,
-    #[define(E)] _acc_dtype: StorageType,
+    #[define(EL)] _lhs_dtype: ElemType,
+    #[define(ER)] _rhs_dtype: ElemType,
+    #[define(E)] _acc_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));

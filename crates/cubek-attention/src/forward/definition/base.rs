@@ -1,8 +1,8 @@
 use cubecl::{
     Runtime,
     client::ComputeClient,
-    frontend::CubePrimitive,
-    ir::{AddressType, ElemType, FloatKind, StorageType, Type},
+    ir::{AddressType, ElemType, FloatKind},
+    prelude::Scalar,
 };
 
 #[derive(Clone, Debug)]
@@ -77,19 +77,18 @@ impl AttentionDims {
 
 #[derive(Clone, Debug)]
 pub struct AttentionGlobalTypes {
-    pub query: StorageType,
-    pub key: StorageType,
-    pub value: StorageType,
-    pub mask: StorageType,
-    pub out: StorageType,
+    pub query: ElemType,
+    pub key: ElemType,
+    pub value: ElemType,
+    pub mask: ElemType,
+    pub out: ElemType,
 }
 
 impl AttentionGlobalTypes {
     pub fn from_single_float_dtype(
-        float_dtype: Type,
-        mask_dtype: StorageType,
+        float_dtype: ElemType,
+        mask_dtype: ElemType,
     ) -> AttentionGlobalTypes {
-        let float_dtype = float_dtype.storage_type();
         Self {
             query: float_dtype,
             key: float_dtype,
@@ -99,10 +98,10 @@ impl AttentionGlobalTypes {
         }
     }
 
-    pub fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> StorageType {
+    pub fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> ElemType {
         let props = client.properties();
-        let u8_ty = u8::as_type_native_unchecked().storage_type();
-        let u32_ty = u32::as_type_native_unchecked().storage_type();
+        let u8_ty = u8::elem_type_native();
+        let u32_ty = u32::elem_type_native();
 
         if props.supports_type(u8_ty) {
             u8_ty
@@ -116,14 +115,14 @@ impl AttentionGlobalTypes {
 
 #[derive(Copy, Clone, Debug)]
 pub enum AccumulatorPrecision {
-    Strict(StorageType),
+    Strict(ElemType),
     // Let algorithm decide
     Loose,
 }
 
 impl AccumulatorPrecision {
-    pub fn default_accumulator_type() -> StorageType {
-        StorageType::Scalar(ElemType::Float(FloatKind::F32))
+    pub fn default_accumulator_type() -> ElemType {
+        ElemType::Float(FloatKind::F32)
     }
 }
 

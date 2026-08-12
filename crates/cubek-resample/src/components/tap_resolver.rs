@@ -48,7 +48,7 @@ impl TapResolver {
                 let extract_idx = in_coord[vectorized_axis] as usize % vector_size;
 
                 let lane_values = input.read(in_coord);
-                let lane_value = lane_values.extract(extract_idx);
+                let lane_value = lane_values.extract_dynamic(extract_idx);
 
                 weight.insert(lane, lane_weight);
                 value.insert(lane, lane_value);

@@ -10,7 +10,7 @@
 
 #![cfg(feature = "cpu-reference")]
 
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::CubePrimitive, zspace::Shape};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     backward::{
         BackwardConfig, flash_attention_backward, flash_attention_backward_dkdv,
@@ -57,7 +57,7 @@ fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> Atte
         },
         masked: false,
         global_dtypes: AttentionGlobalTypes::from_single_float_dtype(
-            f32::as_type_native_unchecked(),
+            f32::elem_type_native(),
             AttentionGlobalTypes::mask_dtype(&client),
         ),
         options: AttentionOptions {
@@ -137,7 +137,7 @@ fn seed_inputs(client: &ComputeClient<TestRuntime>, problem: &AttentionProblem) 
 fn zeros_like(
     client: &ComputeClient<TestRuntime>,
     shape: [usize; 4],
-    dtype: cubecl::ir::StorageType,
+    dtype: cubecl::ir::ElemType,
 ) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
@@ -148,7 +148,7 @@ fn zeros_like(
 fn zeros_row(
     client: &ComputeClient<TestRuntime>,
     shape: [usize; 3],
-    dtype: cubecl::ir::StorageType,
+    dtype: cubecl::ir::ElemType,
 ) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
@@ -200,11 +200,7 @@ fn run_prepass(problem: AttentionProblem) {
         .custom(o_data_to_vec(&dbg))
         .generate_without_host_data();
 
-    let d = zeros_row(
-        &client,
-        row_shape,
-        f32::as_type_native_unchecked().storage_type(),
-    );
+    let d = zeros_row(&client, row_shape, f32::elem_type_native());
     let d_handle = d.clone();
 
     let outcome = launch_and_capture_outcome(&client, |c| {
@@ -494,7 +490,7 @@ fn upload_row(
         _ => unreachable!("reference produces fp32 rowwise tensors"),
     };
     TestInput::builder(client.clone(), Shape::new(shape))
-        .dtype(f32::as_type_native_unchecked().storage_type())
+        .dtype(f32::elem_type_native())
         .custom(values)
         .generate_without_host_data()
 }

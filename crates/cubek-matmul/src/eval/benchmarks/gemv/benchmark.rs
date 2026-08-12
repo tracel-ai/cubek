@@ -2,8 +2,8 @@ use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
     client::ComputeClient,
+    cmma::MatrixLayout,
     future,
-    ir::MatrixLayout,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::Shape,
@@ -35,7 +35,7 @@ pub fn bench(
         strategy: strategy.clone(),
         device,
         client,
-        dtypes: MatmulElems::from_single_dtype(f32::as_type_native_unchecked()),
+        dtypes: MatmulElems::from_single_dtype(f32::elem_type_native()),
         samples: num_samples,
     };
 
@@ -72,7 +72,7 @@ fn make_tensor_with_layout(
     client: &ComputeClient<TestRuntime>,
     row_major_shape: [usize; 3],
     layout: MatrixLayout,
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     match layout {

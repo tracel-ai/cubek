@@ -65,7 +65,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullCyclicLoading<TO> {
         tiles_per_stage: u32,
         vector_size: VectorSize,
         plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         let elements_per_stage = elements_per_tile * tiles_per_stage;
         let num_vectors = elements_per_stage / vector_size as u32;
@@ -199,7 +199,7 @@ pub(crate) fn load_and_store_vector<
     let slice = stage.as_slice_mut::<NS>();
 
     let vector_read = view.read_checked((tile, pos_within_tile));
-    let stage_offs = swizzle.apply(unit_position, ES::type_size());
+    let stage_offs = swizzle.apply(unit_position, ES::size());
 
     slice[stage_offs as usize / NS::value()] = Vector::cast_from(vector_read);
 }

@@ -28,7 +28,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let half = num_elems as f32 / 2.0;
     let data: Vec<_> = (0..num_elems).map(|v| v as f32 - half).collect();
     let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
+        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), size_of::<f32>());
 
     let (q_min, q_max) = value.range();
     // input data range is not affected by quant range symmetry
@@ -36,21 +36,21 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let data_scale = vec![scale_f32];
 
     let scale_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data_scale), shape![1], f32::type_size());
+        client.create_tensor_from_slice(f32::as_bytes(&data_scale), shape![1], size_of::<f32>());
 
     let input = TensorHandle::new(
         input_alloc.memory,
         shape.clone(),
         input_alloc.strides,
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
     );
     let scale = TensorHandle::new(
         scale_alloc.memory,
         shape![1],
         scale_alloc.strides,
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
     );
-    let output_f = TensorHandle::zeros(&client, shape, f32::as_type_native_unchecked());
+    let output_f = TensorHandle::zeros(&client, shape, f32::elem_type_native());
 
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::Tensor)
@@ -68,12 +68,12 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
             cubecl::server::MemoryLayoutDescriptor {
                 strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
                 shape: shape_out.clone(),
-                elem_size: u32::type_size(),
+                elem_size: size_of::<u32>(),
             },
             cubecl::server::MemoryLayoutDescriptor {
                 strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
                 shape: shape![1],
-                elem_size: f32::type_size(),
+                elem_size: size_of::<f32>(),
             },
         ])
         .try_into()
@@ -82,13 +82,13 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         output_alloc.memory,
         shape_out,
         output_alloc.strides,
-        u32::as_type_native_unchecked(),
+        u32::elem_type_native(),
     );
     let output_scale = TensorHandle::new(
         output_scale_alloc.memory,
         shape![1],
         output_scale_alloc.strides,
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
     );
 
     cubek_quant::quantize::launch_ref(
@@ -110,7 +110,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
         output_f.clone().binding(),
         output_scale.clone().binding(),
         &scheme,
-        f32::as_type_native_unchecked().storage_type(),
+        f32::elem_type_native(),
     )
     .unwrap();
 
@@ -146,7 +146,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         .map(|v| (v as f32 - half) / num_elems as f32)
         .collect();
     let input_alloc =
-        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), f32::type_size());
+        client.create_tensor_from_slice(f32::as_bytes(&data), shape.clone(), size_of::<f32>());
 
     let (q_min, q_max) = value.range();
 
@@ -176,22 +176,22 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
     let scale_alloc = client.create_tensor_from_slice(
         f32::as_bytes(&scales),
         shape_scale.clone(),
-        f32::type_size(),
+        size_of::<f32>(),
     );
 
     let input = TensorHandle::new(
         input_alloc.memory,
         shape.clone(),
         input_alloc.strides,
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
     );
     let scale = TensorHandle::new(
         scale_alloc.memory,
         shape_scale.clone(),
         scale_alloc.strides,
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
     );
-    let output_f = TensorHandle::zeros(&client, shape, f32::as_type_native_unchecked());
+    let output_f = TensorHandle::zeros(&client, shape, f32::elem_type_native());
 
     let scheme = QuantScheme::default()
         .with_level(QuantLevel::block([block_size as u8]))
@@ -209,12 +209,12 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
             cubecl::server::MemoryLayoutDescriptor {
                 strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
                 shape: shape_out.clone(),
-                elem_size: u32::type_size(),
+                elem_size: size_of::<u32>(),
             },
             cubecl::server::MemoryLayoutDescriptor {
                 strategy: cubecl::server::MemoryLayoutStrategy::Contiguous,
                 shape: shape_scale.clone(),
-                elem_size: f32::type_size(),
+                elem_size: size_of::<f32>(),
             },
         ])
         .try_into()
@@ -223,13 +223,13 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         output_alloc.memory,
         shape_out,
         output_alloc.strides,
-        u32::as_type_native_unchecked(),
+        u32::elem_type_native(),
     );
     let output_scale = TensorHandle::new(
         output_scale_alloc.memory,
         shape_scale.clone(),
         output_scale_alloc.strides,
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
     );
 
     cubek_quant::quantize::launch_ref(
@@ -251,7 +251,7 @@ fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, bloc
         output_f.clone().binding(),
         output_scale.binding(),
         &scheme,
-        f32::as_type_native_unchecked().storage_type(),
+        f32::elem_type_native(),
     )
     .unwrap();
 

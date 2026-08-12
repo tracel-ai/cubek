@@ -2,8 +2,10 @@
 use std::cmp::min;
 
 use cubecl::{
-    {Runtime, client::ComputeClient, ir::StorageType},
-    {features::MmaConfig, ir::VectorSize},
+    Runtime,
+    client::ComputeClient,
+    features::MmaConfig,
+    ir::{ElemType, VectorSize},
 };
 use cubek_std::{
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
@@ -235,11 +237,7 @@ pub fn infer_blueprint_plane<R: Runtime>(
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
 
-pub fn select_swizzle(
-    swizzle_dim: usize,
-    elem: StorageType,
-    vector_size: VectorSize,
-) -> SwizzleMode {
+pub fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSize) -> SwizzleMode {
     // Vector size exceeds swizzle atom
     if elem.size() * vector_size > SWIZZLE_ATOM {
         return SwizzleMode::None;
@@ -297,7 +295,7 @@ fn select_size(
 #[allow(clippy::type_complexity)]
 pub fn find_instruction_size<R, IsSupported, SupportedSizes>(
     client: &ComputeClient<R>,
-    elems: (StorageType, StorageType, StorageType),
+    elems: (ElemType, ElemType, ElemType),
     problem_size: MatmulProblemSize,
     forced: (Option<u32>, Option<u32>, Option<u32>),
     is_supported: IsSupported,
@@ -306,7 +304,7 @@ pub fn find_instruction_size<R, IsSupported, SupportedSizes>(
 where
     R: Runtime,
     IsSupported: Fn(&ComputeClient<R>, MmaConfig) -> bool,
-    SupportedSizes: Fn(&ComputeClient<R>, StorageType, StorageType, StorageType) -> Vec<TileSize>,
+    SupportedSizes: Fn(&ComputeClient<R>, ElemType, ElemType, ElemType) -> Vec<TileSize>,
 {
     let (lhs, rhs, acc) = elems;
     cubek_std::find_instruction_size(

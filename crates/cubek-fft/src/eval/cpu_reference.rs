@@ -7,7 +7,7 @@ use std::f32::consts::PI;
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    frontend::CubePrimitive,
+    prelude::Scalar,
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
@@ -28,7 +28,7 @@ pub fn kernel_result(
     seed_lhs: u64,
     seed_rhs: u64,
 ) -> Result<HostData, String> {
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     match mode {
         FftMode::Forward => {
@@ -125,7 +125,7 @@ pub fn cpu_reference_result(
     seed_rhs: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     match mode {
         FftMode::Forward => {

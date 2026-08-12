@@ -8,8 +8,7 @@
 use crate::attention::forward::assert_result;
 use crate::attention::forward::launcher::test_launch;
 use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive, ir::AddressType,
-    zspace::Shape,
+    Runtime, TestRuntime, client::ComputeClient, ir::AddressType, prelude::Scalar, zspace::Shape,
 };
 use cubek_attention::forward::definition::{
     AccumulatorPrecision, AttentionDims, AttentionElems, AttentionGlobalTypes, AttentionIdent,
@@ -23,7 +22,7 @@ use cubek_test_utils::{
 
 fn f16_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
-        half::f16::as_type_native_unchecked(),
+        half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
     )
 }
@@ -342,7 +341,7 @@ fn fully_masked_rows(strategy: Strategy) {
                 out_handle,
                 AttentionElems::from_global_types(
                     &problem.global_dtypes,
-                    half::f16::as_type_native_unchecked().storage_type(),
+                    half::f16::elem_type_native(),
                     &problem.options.accumulator_precision,
                 ),
             )
@@ -463,7 +462,7 @@ fn broadcast_mask(strategy: Strategy) {
             out_handle,
             AttentionElems::from_global_types(
                 &problem.global_dtypes,
-                half::f16::as_type_native_unchecked().storage_type(),
+                half::f16::elem_type_native(),
                 &problem.options.accumulator_precision,
             ),
         )

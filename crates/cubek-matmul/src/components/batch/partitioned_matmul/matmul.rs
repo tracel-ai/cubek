@@ -41,7 +41,7 @@ pub(crate) fn matmul_entry<
     cube_mapping: CubeMapping,
     #[comptime] blueprint: BatchMatmulBlueprint,
     #[comptime] dtypes: MatmulElems,
-    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [ElemType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(

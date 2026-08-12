@@ -1,5 +1,5 @@
 use crate::attention::forward::assert_result;
-use cubecl::{TestRuntime, prelude::CubePrimitive as _, zspace::Shape};
+use cubecl::{TestRuntime, prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     eval::forward::cpu_reference::assert_result_with_epsilon,
     forward::definition::{AttentionElems, AttentionIdent, AttentionOptions, AttentionProblem},
@@ -161,7 +161,7 @@ fn test_launch_with_layouts(
                 out_handle,
                 AttentionElems::from_global_types(
                     &problem.global_dtypes,
-                    half::f16::as_type_native_unchecked().storage_type(),
+                    half::f16::elem_type_native(),
                     &problem.options.accumulator_precision,
                 ),
             )

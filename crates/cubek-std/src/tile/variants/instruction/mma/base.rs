@@ -1,7 +1,7 @@
 use cubecl::{
-    cmma::MmaDefinition,
+    cmma::{MatrixIdent, MmaDefinition},
     define_size,
-    ir::{DeviceProperties, MatrixIdent, StorageType},
+    ir::DeviceProperties,
     prelude::*,
 };
 
@@ -69,9 +69,9 @@ pub enum StoreMethod {
 impl MmaIOConfig {
     pub fn new(
         device_props: &DeviceProperties,
-        lhs_stage: StorageType,
-        rhs_stage: StorageType,
-        acc_stage: StorageType,
+        lhs_stage: ElemType,
+        rhs_stage: ElemType,
+        acc_stage: ElemType,
     ) -> Self {
         Self {
             lhs_load_method: load_method(device_props, lhs_stage),
@@ -94,20 +94,16 @@ impl MmaIOConfig {
     }
 }
 
-fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.matmul.ldmatrix.contains(&dtype)
-    {
+fn load_method(device_props: &DeviceProperties, dtype: ElemType) -> LoadMethod {
+    if device_props.features.matmul.ldmatrix.contains(&dtype) {
         LoadMethod::LoadMatrix
     } else {
         LoadMethod::Manual
     }
 }
 
-fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.matmul.stmatrix.contains(&dtype)
-    {
+fn store_method(device_props: &DeviceProperties, dtype: ElemType) -> StoreMethod {
+    if device_props.features.matmul.stmatrix.contains(&dtype) {
         StoreMethod::StoreMatrix
     } else {
         StoreMethod::Manual
