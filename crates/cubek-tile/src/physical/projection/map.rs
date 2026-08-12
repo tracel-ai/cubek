@@ -252,7 +252,7 @@ impl PhysicalAxisMap {
     /// division, and its uncompacted window carries a conservative extent. Reduced here, a fractionally
     /// *spelled* but integrally *stepping* mapping keeps both compact step and exact extent.
     ///
-    /// Only a fully comptime numerator reduces. A [`Dynamic`](Scale::Dynamic { max: 2 }) coefficient cannot be
+    /// Only a fully comptime numerator reduces. A [`Dynamic`](Scale::Dynamic) coefficient cannot be
     /// shown divisible; a [`Dynamic`](Offset::Dynamic) offset could still cancel, but the carrier
     /// holds the offset itself and the reduced map would need its quotient, which is the caller's
     /// to pass ([`Tile::of_gathered`](crate::Tile::of_gathered)) and not this one's to rewrite.
@@ -318,12 +318,12 @@ impl PhysicalAxisMap {
         }
     }
 
-    /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic { max: 2 }).
+    /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
     pub fn dynamic_scale_count(&self) -> usize {
         self.terms.iter().filter(|t| t.scale.is_dynamic()).count()
     }
 
-    /// Whether any of this axis's coefficients are [`Dynamic`](Scale::Dynamic { max: 2 }).
+    /// Whether any of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
     pub fn has_dynamic_scale(&self) -> bool {
         self.terms.iter().any(|t| t.scale.is_dynamic())
     }
@@ -335,7 +335,7 @@ impl PhysicalAxisMap {
     }
 
     /// `axis`'s coefficient, `0` when it does not address this physical axis. Panics when the
-    /// coefficient is [`Dynamic`](Scale::Dynamic { max: 2 }); [`addresses`](Self::addresses) is the question
+    /// coefficient is [`Dynamic`](Scale::Dynamic); [`addresses`](Self::addresses) is the question
     /// that survives one.
     pub fn scale(&self, axis: Axis) -> usize {
         self.terms
