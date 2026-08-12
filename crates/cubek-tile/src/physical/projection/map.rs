@@ -11,12 +11,15 @@ use crate::{Axis, MAX_AXES};
 /// [`window_start`](crate::MemData) needs, `Dynamic` is a runtime stride or dilation whose value
 /// rides the tile ([`Tile::of_gathered`](crate::Tile::of_gathered)) instead of the kernel.
 ///
-/// A `Dynamic` coefficient costs the comptime window geometry: the receptive field it spans is a
-/// runtime value, so the operand cannot be staged.
+/// A `Dynamic` coefficient still declares `max`, the largest value the launch may pass. The exact
+/// receptive field is then a runtime value but its *bound* is not, which is all a stage needs: the
+/// smem box is sized at `max` and the fill occupies as much of it as the runtime coefficient
+/// reaches. Overshoot is dead space, so keep `max` tight; it is part of the kernel's identity, so a
+/// loose one only costs occupancy, never correctness.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Scale {
     Static(usize),
-    Dynamic,
+    Dynamic { max: usize },
 }
 
 impl Scale {
@@ -24,7 +27,7 @@ impl Scale {
     pub fn get(self) -> usize {
         match self {
             Scale::Static(n) => n,
-            Scale::Dynamic => {
+            Scale::Dynamic { .. } => {
                 panic!(
                     "Scale::get: this coefficient is Dynamic; its value is only known at runtime"
                 )
@@ -32,8 +35,18 @@ impl Scale {
         }
     }
 
+    /// The largest value this coefficient can take: itself when `Static`, the declared `max` when
+    /// `Dynamic`. What [`span`](crate::Projection::span) and [`Compaction`](crate::Compaction) size
+    /// a window by, since a receptive field grows with its coefficients.
+    pub fn bound(self) -> usize {
+        match self {
+            Scale::Static(n) => n,
+            Scale::Dynamic { max } => max,
+        }
+    }
+
     pub fn is_dynamic(self) -> bool {
-        matches!(self, Scale::Dynamic)
+        matches!(self, Scale::Dynamic { .. })
     }
 }
 
@@ -42,9 +55,9 @@ impl Scale {
 /// is negative, `Dynamic` is a runtime padding or placement whose value rides the tile's signed
 /// offset carrier instead of the kernel.
 ///
-/// Unlike [`Scale::Dynamic`], an `Offset::Dynamic` costs no comptime window geometry: `span` is
-/// offset-invariant, and [`Compaction`](crate::Compaction) drops the offset entirely, so an
-/// operand carrying one can still be staged. The only cost is that
+/// Unlike [`Scale::Dynamic`], an `Offset::Dynamic` needs no bound to be staged: `span` is
+/// offset-invariant, and [`Compaction`](crate::Compaction) drops the offset entirely, so it costs
+/// no window geometry at all rather than merely a conservative one. The only cost is that
 /// [`may_underflow`](crate::Projection::may_underflow) cannot prove non-negativity and
 /// conservatively arms the signed guard.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -88,23 +101,34 @@ impl From<isize> for Offset {
 /// [`over`](PhysicalAxisMap::over) reduces it away rather than carrying it: `⌊(2o + 4r)/2⌋` is
 /// spelled as a fraction but steps like the integer map `o + 2r`, and is stored as one.
 ///
-/// Like [`Scale::Dynamic`], a `Dynamic` divisor costs the comptime window geometry: the receptive
-/// field it spans is a runtime value, so the operand cannot be staged (must use `Schedule::Direct`).
-/// It also costs an in-kernel integer division per read, where a `Static` one folds. A static
-/// rational mapping stages uncompacted (step 1) with conservative comptime extent.
+/// Like [`Scale::Dynamic`], a `Dynamic` divisor declares a bound rather than a value, and it is a
+/// *lower* one: a window shrinks as its divisor grows, so the widest field is the one the smallest
+/// divisor spans and `min` is what sizes the stage. It still costs an in-kernel integer division
+/// per read, where a `Static` one folds. Any rational mapping stages uncompacted (step 1) with a
+/// conservative comptime extent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Divisor {
     Static(usize),
-    Dynamic,
+    Dynamic { min: usize },
 }
 
 impl Divisor {
     pub fn is_dynamic(self) -> bool {
-        matches!(self, Divisor::Dynamic)
+        matches!(self, Divisor::Dynamic { .. })
+    }
+
+    /// The smallest value this divisor can take, which is the one spanning the widest window:
+    /// itself when `Static`, the declared `min` when `Dynamic`.
+    pub fn bound(self) -> usize {
+        match self {
+            Divisor::Static(d) => d,
+            Divisor::Dynamic { min } => min,
+        }
     }
 
     /// Whether this divides by `1`, i.e. the mapping is integer and every rational path below is
-    /// the identity.
+    /// the identity. A `Dynamic` divisor is never unit whatever its bound: the launch may still
+    /// pass anything at or above it, so the division has to stay.
     pub fn is_unit(self) -> bool {
         self == Divisor::Static(1)
     }
@@ -168,13 +192,22 @@ impl PhysicalAxisMap {
     }
 
     /// [`affine`](Self::affine) over explicit [`Scale`]s, which is how a coefficient only known at
-    /// runtime is spelled: `scaled(&[(Oh, Scale::Dynamic), (Rh, Scale::Static(1))])`.
+    /// runtime is spelled: `scaled(&[(Oh, Scale::Dynamic { max: 2 }), (Rh, Scale::Static(1))])`.
     pub fn scaled(terms: &[(Axis, Scale)]) -> Self {
         Self::scaled_with_offset(terms, 0)
     }
 
     /// [`scaled`](Self::scaled) with a signed constant or dynamic offset.
     pub fn scaled_with_offset(terms: &[(Axis, Scale)], offset: impl Into<Offset>) -> Self {
+        for &(axis, scale) in terms {
+            // A coefficient that can only ever be 0 addresses nothing, which `Projection::validate`
+            // reads as the axis being absent rather than as a degenerate term.
+            assert!(
+                scale.bound() > 0,
+                "PhysicalAxisMap: {axis:?}'s coefficient is bounded at 0, so it addresses no cell; \
+                 drop the term instead"
+            );
+        }
         PhysicalAxisMap {
             terms: terms
                 .iter()
@@ -196,7 +229,7 @@ impl PhysicalAxisMap {
     pub fn over(mut self, divisor: impl Into<Divisor>) -> Self {
         let divisor = divisor.into();
         assert!(
-            divisor != Divisor::Static(0),
+            divisor.bound() > 0,
             "PhysicalAxisMap::over: a divisor of 0 does not map anywhere"
         );
         // Setting, not composing: a second `over` would drop a divisor the first could not reduce
@@ -219,7 +252,7 @@ impl PhysicalAxisMap {
     /// division, and its uncompacted window carries a conservative extent. Reduced here, a fractionally
     /// *spelled* but integrally *stepping* mapping keeps both compact step and exact extent.
     ///
-    /// Only a fully comptime numerator reduces. A [`Dynamic`](Scale::Dynamic) coefficient cannot be
+    /// Only a fully comptime numerator reduces. A [`Dynamic`](Scale::Dynamic { max: 2 }) coefficient cannot be
     /// shown divisible; a [`Dynamic`](Offset::Dynamic) offset could still cancel, but the carrier
     /// holds the offset itself and the reduced map would need its quotient, which is the caller's
     /// to pass ([`Tile::of_gathered`](crate::Tile::of_gathered)) and not this one's to rewrite.
@@ -229,7 +262,7 @@ impl PhysicalAxisMap {
         };
         let common = self.terms.iter().try_fold(0, |g, t| match t.scale {
             Scale::Static(s) => Some(super::gcd(g, s)),
-            Scale::Dynamic => None,
+            Scale::Dynamic { .. } => None,
         });
         // `gcd(0, s)` seeds from the first coefficient, so an all-`0` combination (or none at all)
         // reports `0`, which every divisor divides: it has no digit to step by either way.
@@ -285,12 +318,12 @@ impl PhysicalAxisMap {
         }
     }
 
-    /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
+    /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic { max: 2 }).
     pub fn dynamic_scale_count(&self) -> usize {
         self.terms.iter().filter(|t| t.scale.is_dynamic()).count()
     }
 
-    /// Whether any of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
+    /// Whether any of this axis's coefficients are [`Dynamic`](Scale::Dynamic { max: 2 }).
     pub fn has_dynamic_scale(&self) -> bool {
         self.terms.iter().any(|t| t.scale.is_dynamic())
     }
@@ -302,7 +335,7 @@ impl PhysicalAxisMap {
     }
 
     /// `axis`'s coefficient, `0` when it does not address this physical axis. Panics when the
-    /// coefficient is [`Dynamic`](Scale::Dynamic); [`addresses`](Self::addresses) is the question
+    /// coefficient is [`Dynamic`](Scale::Dynamic { max: 2 }); [`addresses`](Self::addresses) is the question
     /// that survives one.
     pub fn scale(&self, axis: Axis) -> usize {
         self.terms
@@ -376,7 +409,7 @@ mod tests {
         assert_eq!(map.origin(), Some((-50isize).div_euclid(133)));
         assert_eq!(map.residue(), Some((-50isize).rem_euclid(133) as usize));
 
-        let dynamic_div = PhysicalAxisMap::affine(&[(A, 100)]).over(Divisor::Dynamic);
+        let dynamic_div = PhysicalAxisMap::affine(&[(A, 100)]).over(Divisor::Dynamic { min: 3 });
         assert!(dynamic_div.is_rational());
         assert!(dynamic_div.divisor().is_dynamic());
         assert_eq!(dynamic_div.origin(), None);
@@ -434,7 +467,7 @@ mod tests {
                 .is_rational()
         );
         assert!(
-            PhysicalAxisMap::scaled(&[(A, Scale::Dynamic), (B, Scale::Static(4))])
+            PhysicalAxisMap::scaled(&[(A, Scale::Dynamic { max: 2 }), (B, Scale::Static(4))])
                 .over(4)
                 .is_rational()
         );

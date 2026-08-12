@@ -257,20 +257,6 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
-        // A staged operand's smem is allocated from its compacted window, whose extent a runtime
-        // coefficient makes runtime. `Compaction::of` refuses it too; this is the earlier, clearer
-        // report, at the operand rather than at the stage.
-        comptime!(assert!(
-            !coords.has_dynamic_scales() || !space.partitioner().stages(),
-            "Tile::of: a Dynamic coefficient cannot be staged, its window has no comptime extent; \
-             the schedule must be Direct"
-        ));
-        // Dynamic divisor has no comptime window extent.
-        comptime!(assert!(
-            !coords.has_dynamic_divisors() || !space.partitioner().stages(),
-            "Tile::of: a Dynamic divisor cannot be staged, its window has no comptime extent; \
-             the schedule must be Direct"
-        ));
         // Stage layout: the explicit override, else derived from the operand's leaf.
         let stage = comptime!(StagePlan {
             layout: spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
@@ -571,10 +557,11 @@ impl<T: Numeric> MemData<T> {
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        // A stage's own mapping is the compacted one: a Dynamic coefficient or divisor
-        // never reaches a stage, and the compaction drops the offset, the gmem window
-        // having already been placed. Initial residues start at 0 and are updated per-region
-        // from the source in `fill_from`.
+        // A stage's own mapping is the compacted one, which keeps whatever the source's was Dynamic
+        // in (the box is sized by its bound, the addressing still needs the value) and drops the
+        // offset, the gmem window having already been placed. Both carriers start empty and are
+        // taken from the source per-region in `fill_from`, which is why the compaction preserves
+        // the source's Dynamic terms slot for slot.
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let gmem_projection = comptime!(form.positional.clone());
         Tile::<T> {
@@ -1654,7 +1641,7 @@ fn gathered_descent(
             // The line division above never meets a runtime coefficient: the innermost physical
             // axis is a single identity term, which `Projection::validate` requires and `Static`
             // is the only spelling of.
-            Scale::Dynamic => {
+            Scale::Dynamic { .. } => {
                 let coefficient = map
                     .coefficients
                     .at(comptime!(projection.dynamic_scale_index(pa, t).unwrap()));

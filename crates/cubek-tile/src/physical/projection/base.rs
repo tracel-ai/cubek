@@ -382,25 +382,21 @@ impl Projection {
     /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
     /// overlapping stencil window. A constant offset shifts position without changing span.
     ///
-    /// For a [rational](Divisor) axis with a static divisor `d`, reports the conservative
-    /// receptive field over all possible runtime phase residues: `1 + ⌊(field + d - 1) / d⌋`.
+    /// For a [rational](Divisor) axis with divisor `d`, reports the conservative receptive field
+    /// over all possible runtime phase residues: `1 + ⌊(field + d - 1) / d⌋`.
+    ///
+    /// A [`Dynamic`](Scale::Dynamic) coefficient or [`Dynamic`](Divisor::Dynamic) divisor reports
+    /// the widest field its bound admits ([`Scale::bound`], [`Divisor::bound`]) rather than the
+    /// exact one, since the field grows with the coefficients and shrinks with the divisor. That is
+    /// an upper bound on every window the launch can ask for, which is what sizing a stage needs.
     pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
         let map = &self.physical[pa];
-        assert!(
-            !map.has_dynamic_scale(),
-            "Projection::span: a Dynamic coefficient has no comptime span"
-        );
         let field: usize = map
             .terms()
             .iter()
-            .map(|t| (extent_of(t.axis) - 1) * t.scale.get())
+            .map(|t| (extent_of(t.axis) - 1) * t.scale.bound())
             .sum();
-        match map.divisor() {
-            Divisor::Static(d) => 1 + (field + d - 1) / d,
-            Divisor::Dynamic => {
-                panic!("Projection::span: a Dynamic divisor has no comptime span");
-            }
-        }
+        1 + field.div_ceil(map.divisor().bound())
     }
 
     /// Whether every physical axis carries exactly one logical axis at coefficient `1` with zero
@@ -888,7 +884,10 @@ mod tests {
         let p = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic), (R, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[
+                    (A, Scale::Dynamic { max: 2 }),
+                    (R, Scale::Dynamic { max: 2 }),
+                ]),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -903,7 +902,7 @@ mod tests {
         let mixed = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::scaled(&[(A, Scale::Static(2)), (R, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[(A, Scale::Static(2)), (R, Scale::Dynamic { max: 2 })]),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -917,7 +916,7 @@ mod tests {
             &[A, R, B],
             &[
                 PhysicalAxisMap::scaled_with_offset(
-                    &[(A, Scale::Dynamic), (R, Scale::Static(1))],
+                    &[(A, Scale::Dynamic { max: 2 }), (R, Scale::Static(1))],
                     Offset::Dynamic,
                 ),
                 PhysicalAxisMap::of(B),
@@ -934,7 +933,10 @@ mod tests {
             &[A, R, B],
             &[
                 PhysicalAxisMap::affine_with_offset(&[(A, 2), (R, 1)], Offset::Dynamic),
-                PhysicalAxisMap::scaled_with_offset(&[(B, Scale::Dynamic)], Offset::Dynamic),
+                PhysicalAxisMap::scaled_with_offset(
+                    &[(B, Scale::Dynamic { max: 2 })],
+                    Offset::Dynamic,
+                ),
             ],
         );
         assert_eq!(two_offsets.dynamic_offset_index(0), Some(0));
@@ -949,7 +951,7 @@ mod tests {
         let p = Projection::new(
             &[A, B],
             &[
-                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic { max: 2 })]),
                 PhysicalAxisMap::of(B),
             ],
         );
@@ -991,19 +993,64 @@ mod tests {
         assert_eq!(p.span(0, |a| if a == A { 4 } else { 2 }), 5);
     }
 
-    /// A dynamic divisor has no comptime span.
+    /// A dynamic divisor spans against its `min`: the smallest divisor gives the widest field, so
+    /// the reported span holds every window a launch passing `>= min` can ask for.
     #[test]
-    #[should_panic(expected = "Dynamic divisor has no comptime span")]
-    fn a_dynamic_divisor_has_no_comptime_span() {
+    fn a_dynamic_divisor_spans_against_its_min() {
+        let bounded = |min| {
+            Projection::new(
+                &[A, R, B],
+                &[
+                    PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50)
+                        .over(Divisor::Dynamic { min }),
+                    PhysicalAxisMap::of(B),
+                ],
+            )
+        };
+        // field = (4-1)*100 + (1-1)*133 = 300, so span = 1 + ⌈300 / min⌉.
+        let extents = |a| if a == A { 4 } else { 1 };
+        assert_eq!(bounded(133).span(0, extents), 4);
+        assert_eq!(bounded(100).span(0, extents), 4);
+        // A looser bound admits a narrower divisor, so the box it sizes is wider.
+        assert_eq!(bounded(50).span(0, extents), 7);
+        // And it dominates every divisor at or above it, which is what makes the box safe.
+        let exact = |d| {
+            Projection::new(
+                &[A, R, B],
+                &[
+                    PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(d),
+                    PhysicalAxisMap::of(B),
+                ],
+            )
+            .span(0, extents)
+        };
+        for d in 50..160 {
+            assert!(exact(d) <= bounded(50).span(0, extents));
+        }
+    }
+
+    /// A dynamic coefficient spans against its `max`, the other direction: a field grows with its
+    /// coefficients, so the largest one bounds the box.
+    #[test]
+    fn a_dynamic_coefficient_spans_against_its_max() {
         let p = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50)
-                    .over(Divisor::Dynamic),
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic { max: 3 }), (R, Scale::Static(1))]),
                 PhysicalAxisMap::of(B),
             ],
         );
-        p.span(0, |_| 4);
+        // field = (4-1)*3 + (2-1)*1 = 10, so span = 11.
+        assert_eq!(p.span(0, |a| if a == A { 4 } else { 2 }), 11);
+        // The static map at the bound spans identically, which is the whole claim.
+        let at_max = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine(&[(A, 3), (R, 1)]),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        assert_eq!(at_max.span(0, |a| if a == A { 4 } else { 2 }), 11);
     }
 
     #[test]
@@ -1011,9 +1058,9 @@ mod tests {
         let p = Projection::new(
             &[A, R, B],
             &[
-                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic), (R, Scale::Static(1))])
-                    .over(Divisor::Dynamic),
-                PhysicalAxisMap::scaled(&[(B, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[(A, Scale::Dynamic { max: 2 }), (R, Scale::Static(1))])
+                    .over(Divisor::Dynamic { min: 4 }),
+                PhysicalAxisMap::scaled(&[(B, Scale::Dynamic { max: 2 })]),
             ],
         );
         assert!(p.has_dynamic());

@@ -78,7 +78,7 @@ pub(crate) fn divisor_of(
 ) -> u32 {
     match comptime!(projection.divisor(pa)) {
         Divisor::Static(d) => comptime!(d as u32).runtime(),
-        Divisor::Dynamic => {
+        Divisor::Dynamic { .. } => {
             coefficients.at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
         }
     }

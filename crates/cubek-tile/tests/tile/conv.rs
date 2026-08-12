@@ -843,9 +843,8 @@ fn conv_kernel_dynamic<E: Numeric>(
 
 impl Conv1d {
     /// [`check`](Conv1d::check) with both coefficients `Dynamic`, so the same convolution runs off
-    /// a kernel that was compiled without knowing either.
-    /// Only `Schedule::Direct`: staging a runtime coefficient is refused at expansion, since the
-    /// smem it would allocate has no comptime extent.
+    /// a kernel that was compiled without knowing either. Their bounds are the exact values here,
+    /// the tightest a stage can be sized at; `check_dynamic_padded` covers the staged schedule.
     fn check_dynamic(&self, tile_oh: usize, tile_co: usize) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::elem_type_native();
@@ -863,7 +862,10 @@ impl Conv1d {
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::scaled(&[(OH, Scale::Dynamic), (RH, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[
+                    (OH, Scale::Dynamic { max: self.stride }),
+                    (RH, Scale::Dynamic { max: self.dilation }),
+                ]),
                 PhysicalAxisMap::of(CI),
             ],
         ));
@@ -1057,7 +1059,10 @@ impl Conv1d {
 
         let gathered = if dynamic_scales {
             PhysicalAxisMap::scaled_with_offset(
-                &[(OH, Scale::Dynamic), (RH, Scale::Dynamic)],
+                &[
+                    (OH, Scale::Dynamic { max: self.stride }),
+                    (RH, Scale::Dynamic { max: self.dilation }),
+                ],
                 Offset::Dynamic,
             )
         } else {
@@ -1157,8 +1162,8 @@ fn conv1d_dynamic_padding_direct() {
     .check_dynamic_padded(3, 4, 1, 6, Schedule::Direct, false);
 }
 
-/// The same padding staged: a dynamic offset costs no comptime window geometry, so unlike a
-/// dynamic coefficient it survives the compaction into smem.
+/// The same padding staged: a dynamic offset costs no comptime window geometry at all, so it
+/// survives the compaction into smem without even a bound to declare.
 #[test]
 fn conv1d_dynamic_padding_staged() {
     Conv1d {
@@ -1184,6 +1189,21 @@ fn conv1d_all_dynamic() {
         dilation: 1,
     }
     .check_dynamic_padded(3, 4, 1, 8, Schedule::Direct, true);
+}
+
+/// The same thing staged: the runtime coefficients size their smem box off their declared bounds,
+/// so the stage holds the window and the launch's actual stride and dilation read out of it.
+#[test]
+fn conv1d_all_dynamic_staged() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 2,
+        dilation: 1,
+    }
+    .check_dynamic_padded(3, 4, 1, 8, Schedule::Staged, true);
 }
 
 // ---- 2-D -------------------------------------------------------------------
@@ -2178,7 +2198,9 @@ fn resize1d_rational_dynamic() {
                 &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
                 Offset::Dynamic,
             )
-            .over(Divisor::Dynamic),
+            .over(Divisor::Dynamic {
+                min: resize.divisor,
+            }),
             PhysicalAxisMap::of(CI),
         ],
     ))

@@ -169,9 +169,9 @@ impl Layout for AxisProjection {
                 let p = comptime!(self.space.position(term.axis));
                 match comptime!(term.scale) {
                     Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                    Scale::Dynamic => terms.push(pos[p].fmul(self.map.coefficients.at(comptime!(
-                        self.projection.dynamic_scale_index(pa, t).unwrap()
-                    )))),
+                    Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
+                        comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
+                    ))),
                 }
             }
             let sum = terms.fsum(comptime!(

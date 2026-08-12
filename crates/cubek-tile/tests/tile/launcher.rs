@@ -325,11 +325,10 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
     assert!(!launch.space().is_dynamic(M));
 }
 
-/// A runtime coefficient leaves the compacted window with no comptime extent, so the smem it would
-/// be staged into cannot be sized. Reported here rather than at the stage, on the caller's thread.
+/// A runtime coefficient sizes its compacted window by its declared `max`, so the smem it stages
+/// into holds every window the launch can then ask for.
 #[test]
-#[should_panic(expected = "cannot be staged")]
-fn arg_gathered_dynamic_coefficient_cannot_stage() {
+fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
@@ -345,7 +344,10 @@ fn arg_gathered_dynamic_coefficient_cannot_stage() {
         .gathered(Projection::new(
             &[M, K, N],
             &[
-                PhysicalAxisMap::scaled(&[(M, Scale::Dynamic), (K, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[
+                    (M, Scale::Dynamic { max: 2 }),
+                    (K, Scale::Dynamic { max: 3 }),
+                ]),
                 PhysicalAxisMap::of(N),
             ],
         ))
@@ -377,10 +379,10 @@ fn arg_gathered_rational_stages() {
         .build();
 }
 
-/// A dynamic divisor cannot be staged to shared memory.
+/// A dynamic divisor stages against its `min`, the smallest divisor and so the widest window any
+/// launch can ask for.
 #[test]
-#[should_panic(expected = "Dynamic divisor cannot be staged")]
-fn arg_gathered_dynamic_divisor_cannot_stage() {
+fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
@@ -396,7 +398,7 @@ fn arg_gathered_dynamic_divisor_cannot_stage() {
         .gathered(Projection::new(
             &[M, K, N],
             &[
-                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(Divisor::Dynamic),
+                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(Divisor::Dynamic { min: 4 }),
                 PhysicalAxisMap::of(N),
             ],
         ))
