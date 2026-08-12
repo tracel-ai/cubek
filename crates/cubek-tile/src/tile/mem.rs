@@ -1200,6 +1200,8 @@ impl<T: Numeric> MemData<T> {
                             comptime!(self.store.vector_size),
                         ))
                         .view(FlatLayout::new(self.window.extent.clone())),
+                    // No per-tensor scale; see `transparent`.
+                    ComptimeOption::new_None(),
                     comptime!(info.scheme),
                 )
                 .view(),
@@ -1248,6 +1250,10 @@ impl<T: Numeric> MemData<T> {
                             comptime!(self.store.vector_size),
                         ))
                         .view(layout),
+                    // No per-tensor scale: a tile's scales are the scheme's own level, and the
+                    // two-level schemes that carry a global on top are rejected before this
+                    // (`block_edges`), so there is never a second factor to fold in here.
+                    ComptimeOption::new_None(),
                     comptime!(info.scheme),
                 )
                 .view(),
