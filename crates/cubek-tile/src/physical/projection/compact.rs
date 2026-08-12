@@ -4,6 +4,7 @@
 
 use cubecl::zspace::SmallVec;
 
+use super::gcd;
 use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection};
 
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
@@ -171,10 +172,6 @@ impl Compaction {
     pub fn cells(&self, vector_size: usize) -> usize {
         self.line_extents(vector_size).iter().product()
     }
-}
-
-fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 { a } else { gcd(b, a % b) }
 }
 
 #[cfg(test)]

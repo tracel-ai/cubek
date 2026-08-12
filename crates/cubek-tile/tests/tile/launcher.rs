@@ -379,6 +379,34 @@ fn arg_gathered_rational_cannot_stage() {
         .build();
 }
 
+/// The same shape with a divisor its coefficients cancel: `⌊(8m + 4k)/4⌋` steps like `2m + k`, so
+/// `over` reduces it away and what reaches the stage is a plain strided gather, which compacts.
+#[test]
+fn arg_gathered_cancelling_divisor_stages() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let projection = Projection::new(
+        &[M, K, N],
+        &[
+            PhysicalAxisMap::affine(&[(M, 8), (K, 4)]).over(4),
+            PhysicalAxisMap::of(N),
+        ],
+    );
+    assert!(!projection.is_rational());
+    let _ = staged
+        .arg(binding(&client, &[512, 64]))
+        .gathered(projection)
+        .build();
+}
+
 // ---- Launcher::vector_size -------------------------------------------------
 
 #[test]

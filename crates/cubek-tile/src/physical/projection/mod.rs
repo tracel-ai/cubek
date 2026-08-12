@@ -30,3 +30,10 @@ pub use compact::*;
 pub use fold::*;
 pub use map::*;
 pub use tiling::*;
+
+/// Shared by the two places a set of coefficients has a common factor worth taking out:
+/// [`PhysicalAxisMap::over`], where a divisor every coefficient cancels is not a division at all,
+/// and [`Compaction`], where the step it leaves is what a stage stores instead of the whole box.
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
