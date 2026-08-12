@@ -2340,4 +2340,3 @@ fn resize1d_dynamic_stage_read_before_fill() {
         f32_ty,
     );
 }
-

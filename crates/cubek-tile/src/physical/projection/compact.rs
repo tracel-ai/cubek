@@ -522,4 +522,3 @@ mod tests {
         assert_eq!(c_dynamic.steps(), &[2, 1]);
     }
 }
-

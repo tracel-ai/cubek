@@ -134,7 +134,9 @@ impl<Acc: Numeric> Tile<Acc> {
                 pipe.fill(&mut s.1, &rhs.at(&odd_region));
             });
             let even_region = walk.region(even);
-            s0.consume(lhs, rhs, &even_region, |a, b| self.at(&even_region).mma(a, b));
+            s0.consume(lhs, rhs, &even_region, |a, b| {
+                self.at(&even_region).mma(a, b)
+            });
 
             // prefetch the next even region back into slot 0 (if it exists), then compute
             // the odd region on slot 1; on the walk's final region no fill follows, so
@@ -159,4 +161,3 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 }
-

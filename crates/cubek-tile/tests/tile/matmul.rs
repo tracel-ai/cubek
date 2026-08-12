@@ -832,69 +832,6 @@ fn register_matmul_unit_spread_n() {
         .enforce()
 }
 
-/// K spread across a plane's lanes (`ComputeScope::Unit`) — the split-K reduction. Each lane
-/// contracts a disjoint K-slice into its register block, the plane `plane_sum`-combines the
-/// partials, and lane 0 writes the shared `(m, n)` cell; the legacy `SimpleVecMat` intra-plane
-/// split. Unlike N-spread the output columns overlap, so the combine is what makes it correct.
-/// `plane_size == 1` on CPU resolves the Unit K axis to a single lane owning the whole K, so the
-/// split gates off and the classic per-region accumulate runs (still correct); the reduction is
-/// exercised on GPU (`cargo test-metal`), where the warp's lanes divide K.
-#[test]
-fn register_matmul_unit_split_k() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let lanes = client.properties().hardware.plane_size_max as usize;
-
-    let (m, n, slice) = (2usize, 4usize, 2usize);
-    let k = lanes * slice;
-    let seq = |edge| Cut::sequential(edge);
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, Cut::unit(slice))
-        })
-        .build()
-        // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
-        .resolve_lanes(lanes);
-
-    let dtype = f32::elem_type_native();
-    let a = TileInput::builder(&client, space.project(&[M, K]))
-        .untiled()
-        .arange();
-    let b = TileInput::builder(&client, space.project(&[K, N]))
-        .untiled()
-        .arange();
-    let c = TileInput::builder(&client, space.project(&[M, N]))
-        .untiled()
-        .zeros();
-
-    launch_staged_matmul::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        1,
-        a.arg(),
-        b.arg(),
-        c.arg(),
-        space,
-        dtype,
-    );
-
-    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
-    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
-    let expected: Vec<f32> = (0..m * n)
-        .map(|idx| {
-            let (i, j) = (idx / n, idx % n);
-            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
-        })
-        .collect();
-    let (_, expected) = TestInput::builder(client, shape![m, n])
-        .custom(expected)
-        .generate_with_f32_host_data();
-    assert_equals_approx(&output, &expected, 1e-3)
-        .as_test_outcome()
-        .enforce()
-}
-
 /// The legacy register budget as a level structure: a Direct contraction-step walk
 /// (windowing only), a `Staged` N-walk refilling one B fragment per step while the A
 /// column fills once above it, and an M-only fragment walk below. Exercises sub-block

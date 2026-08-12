@@ -178,12 +178,16 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
     ) where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
-        self.data
-            .0
-            .__expand_rebind_map_method(scope, &lhs.__expand_at_method(scope, region));
-        self.data
-            .1
-            .__expand_rebind_map_method(scope, &rhs.__expand_at_method(scope, region));
+        if comptime!(lhs.projection().is_rational()) {
+            self.data
+                .0
+                .__expand_rebind_map_method(scope, &lhs.__expand_at_method(scope, region));
+        }
+        if comptime!(rhs.projection().is_rational()) {
+            self.data
+                .1
+                .__expand_rebind_map_method(scope, &rhs.__expand_at_method(scope, region));
+        }
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.0, &self.data.1);
         self.__expand_release_read_method(scope);
@@ -203,4 +207,3 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         self.__expand_consume_method(scope, lhs, rhs, region, compute);
     }
 }
-

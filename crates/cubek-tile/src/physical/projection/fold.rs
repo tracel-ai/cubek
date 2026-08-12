@@ -7,9 +7,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{
-    Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, const_coords,
-};
+use crate::{Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, const_coords};
 
 /// What a [`Projection`] cannot state at comptime: the values its [`Dynamic`](crate::Scale)
 /// coefficients and divisors carry, and the phase its window origin sits at under a

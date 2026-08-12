@@ -370,6 +370,15 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
+/// Comptime metadata bundled when constructing a shared-memory stage.
+#[derive(Clone)]
+pub(crate) struct StageMeta {
+    pub space: Space,
+    pub leaf: Leaf,
+    pub vector_size: usize,
+    pub stage: StagePlan,
+}
+
 #[cube]
 impl<T: Numeric> MemData<T> {
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
@@ -472,7 +481,13 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        MemData::smem_with_form(space, leaf, vector_size, stage, form, map)
+        let meta = comptime!(StageMeta {
+            space,
+            leaf,
+            vector_size,
+            stage,
+        });
+        MemData::smem_with_form(meta, form, map)
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -502,30 +517,24 @@ impl<T: Numeric> MemData<T> {
             coefficients: map.coefficients.clone(),
             residues: const_coords(comptime!(vec![0; form.projection.physical_rank()])),
         };
-        MemData::smem_with_form(space, leaf, vector_size, stage, form, stage_map)
-    }
-
-    /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
-    fn smem_with_form(
-        #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
-        #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
-        #[comptime] form: StageForm,
-        map: RuntimeMap,
-    ) -> Tile<T> {
-        let size!(W) = vector_size;
-        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
-        MemData::smem_over(
+        let meta = comptime!(StageMeta {
             space,
             leaf,
             vector_size,
             stage,
-            &smem,
-            ComptimeOption::new_None(),
-            form,
-            map,
-        )
+        });
+        MemData::smem_with_form(meta, form, stage_map)
+    }
+
+    /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
+    fn smem_with_form(
+        #[comptime] meta: StageMeta,
+        #[comptime] form: StageForm,
+        map: RuntimeMap,
+    ) -> Tile<T> {
+        let size!(W) = meta.vector_size;
+        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
+        MemData::smem_over(meta, &smem, ComptimeOption::new_None(), form, map)
     }
 
     /// [`smem`](MemData::smem) staging the element an operand is *stored* in rather than the one it
@@ -548,7 +557,13 @@ impl<T: Numeric> MemData<T> {
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant, form, map)
+        let meta = comptime!(StageMeta {
+            space,
+            leaf,
+            vector_size,
+            stage,
+        });
+        MemData::smem_over(meta, &smem, quant, form, map)
     }
 
     /// The body every smem constructor shares: everything but the allocation's element (which is why
@@ -556,10 +571,7 @@ impl<T: Numeric> MemData<T> {
     /// erases the slice to the served `T` (the views recover the stored element through
     /// [`lines_storage`](MemData::lines_storage)) and wraps it in the whole-buffer window.
     fn smem_over<S: CubePrimitive>(
-        #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
-        #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
+        #[comptime] meta: StageMeta,
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
         #[comptime] form: StageForm,
@@ -579,7 +591,7 @@ impl<T: Numeric> MemData<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
                     buffer,
-                    vector_size,
+                    vector_size: meta.vector_size,
                     quant,
                 },
                 layout: GmemLayout {
@@ -597,12 +609,12 @@ impl<T: Numeric> MemData<T> {
                 access: comptime!(Access {
                     whole: true,
                     overhang: Overhang::Never,
-                    stage,
+                    stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
             }),
-            space: comptime!(space),
-            leaf: comptime!(leaf),
+            space: comptime!(meta.space),
+            leaf: comptime!(meta.leaf),
         }
     }
 }
@@ -770,6 +782,9 @@ impl<T: Numeric> MemData<T> {
         src: &MemData<T>,
         #[comptime] space: Space,
     ) {
+        // Direct `Tile::copy_from` callers receive the source's expand-time map here.
+        // For staged and double-buffered pipelines, `Staging::consume` is what guarantees
+        // the correct per-region binding prior to reads across rolled loop iterations.
         self.map.residues = src.map.residues.clone();
         self.map.coefficients = src.map.coefficients.clone();
         let check = comptime!(src.access.overhang.masks());
@@ -1696,14 +1711,22 @@ fn gathered_descent(
             Divisor::Static(d) => {
                 let d = comptime!(d as u32);
                 let residue = numerator.frem(d);
-                (numerator.fdiv(d), residue, field.fadd(residue).fdiv(d).fadd(1))
+                (
+                    numerator.fdiv(d),
+                    residue,
+                    field.fadd(residue).fdiv(d).fadd(1),
+                )
             }
             Divisor::Dynamic { .. } => {
                 let d = map
                     .coefficients
                     .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()));
                 let residue = numerator.frem(d);
-                (numerator.fdiv(d), residue, field.fadd(residue).fdiv(d).fadd(1))
+                (
+                    numerator.fdiv(d),
+                    residue,
+                    field.fadd(residue).fdiv(d).fadd(1),
+                )
             }
         }
     }
