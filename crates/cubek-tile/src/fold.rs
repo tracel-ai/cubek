@@ -329,6 +329,9 @@ impl<C: Int> AsMutExpand for CoordsExpand<C> {
 }
 
 impl<C: Int> CoordsExpand<C> {
+    pub fn __expand_assign_method(&mut self, _scope: &Scope, other: Self) {
+        self.values = other.values;
+    }
     pub fn __expand_push_method(&mut self, _scope: &Scope, v: NativeExpand<C>) {
         self.values.push(v);
     }

@@ -1974,10 +1974,15 @@ impl Resize1d {
     /// entries nest a second descent, which is where a rational window's leftover phase has to
     /// accumulate rather than restart.
     fn space(&self, oh_edges: &[usize]) -> Space {
+        self.space_with_schedule(oh_edges, Schedule::Direct)
+    }
+
+    fn space_with_schedule(&self, oh_edges: &[usize], schedule: Schedule) -> Space {
         let mut tiling =
             Tiling::new().extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
-        for &edge in oh_edges {
-            tiling = tiling.level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        for (i, &edge) in oh_edges.iter().enumerate() {
+            let sched = if i == 0 { schedule } else { Schedule::Direct };
+            tiling = tiling.level(WalkOrder::RowMajor, sched, |l| {
                 l.axis(OH, Cut::sequential(edge))
                     .axis(CO, Cut::sequential(self.co))
                     .axis(RH, Cut::sequential(self.rh))
@@ -1988,6 +1993,10 @@ impl Resize1d {
     }
 
     fn check(&self, oh_edges: &[usize]) {
+        self.check_with(oh_edges, Schedule::Direct, 1);
+    }
+
+    fn check_with(&self, oh_edges: &[usize], schedule: Schedule, vector_size: usize) {
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
@@ -2008,8 +2017,8 @@ impl Resize1d {
             in_spec,
             &[RH, CI, CO],
             TileSpec::direct(&[OH, CO]).checked(true),
-            self.space(oh_edges),
-            1,
+            self.space_with_schedule(oh_edges, schedule),
+            vector_size,
         );
 
         let want = self.reference(&input, &weight);
@@ -2018,7 +2027,7 @@ impl Resize1d {
                 assert_eq!(
                     got.get_f32(&[o, c]),
                     want[o * self.co + c],
-                    "resize1d {}/{} offset {} edges {oh_edges:?}: wrong at ({o}, {c})",
+                    "resize1d {}/{} offset {} edges {oh_edges:?} schedule {schedule:?} v {vector_size}: wrong at ({o}, {c})",
                     self.scale,
                     self.divisor,
                     self.offset
@@ -2047,6 +2056,23 @@ fn resize1d_rational_static() {
     .check(&[2]);
 }
 
+/// The same resample with `Schedule::Staged`: the input tile stages uncompacted into shared memory.
+#[test]
+fn resize1d_staged_static() {
+    Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_with(&[2], Schedule::Staged, 1);
+}
+
 /// A tap coefficient the divisor does not cancel: the window itself is fractionally dilated, so
 /// two taps can land on one input cell. Walked over two levels, where the second descent starts
 /// from the phase the first left over instead of from the projection's own offset.
@@ -2065,6 +2091,41 @@ fn resize1d_rational_fractional_taps() {
     };
     resize.check(&[3]);
     resize.check(&[3, 1]);
+}
+
+/// Staged rational gather with fractional taps.
+#[test]
+fn resize1d_staged_fractional_taps() {
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 3,
+        ci: 2,
+        in_len: 8,
+        scale: 5,
+        tap: 2,
+        offset: -2,
+        divisor: 3,
+    };
+    resize.check_with(&[3], Schedule::Staged, 1);
+    resize.check_with(&[3, 1], Schedule::Staged, 1);
+}
+
+/// Staged rational gather served in two-wide lines on the ungathered `CI` axis.
+#[test]
+fn resize1d_staged_vectorized() {
+    Resize1d {
+        oh: 6,
+        co: 4,
+        rh: 2,
+        ci: 4,
+        in_len: 6,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_with(&[2], Schedule::Staged, 2);
 }
 
 /// A rational gathered operand whose divisor and offset arrive at runtime.

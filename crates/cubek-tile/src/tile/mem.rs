@@ -265,10 +265,10 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: a Dynamic coefficient cannot be staged, its window has no comptime extent; \
              the schedule must be Direct"
         ));
-        // Subsumes a Dynamic divisor, which is rational by construction.
+        // Dynamic divisor has no comptime window extent.
         comptime!(assert!(
-            !coords.is_rational() || !space.partitioner().stages(),
-            "Tile::of: a rational axis's window is not a lattice, so it has no compacted step; \
+            !coords.has_dynamic_divisors() || !space.partitioner().stages(),
+            "Tile::of: a Dynamic divisor cannot be staged, its window has no comptime extent; \
              the schedule must be Direct"
         ));
         // Stage layout: the explicit override, else derived from the operand's leaf.
@@ -571,10 +571,10 @@ impl<T: Numeric> MemData<T> {
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        // A stage's own mapping is the compacted one, which is always integral: a Dynamic
-        // coefficient never reaches a stage and neither does a rational axis (`Compaction::of`
-        // refuses both), and the compaction drops the offset, the gmem window having already been
-        // placed, so there is no phase to carry either.
+        // A stage's own mapping is the compacted one: a Dynamic coefficient or divisor
+        // never reaches a stage, and the compaction drops the offset, the gmem window
+        // having already been placed. Initial residues start at 0 and are updated per-region
+        // from the source in `fill_from`.
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let gmem_projection = comptime!(form.positional.clone());
         Tile::<T> {
@@ -772,6 +772,8 @@ impl<T: Numeric> MemData<T> {
         src: &MemData<T>,
         #[comptime] space: Space,
     ) {
+        self.map.residues = src.map.residues.clone();
+        self.map.coefficients = src.map.coefficients.clone();
         let check = comptime!(src.access.overhang.masks());
         let w = comptime!(self.store.vector_size);
         let compaction = comptime!(stage_compaction(

@@ -5,7 +5,7 @@
 use cubecl::zspace::SmallVec;
 
 use super::gcd;
-use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection};
+use crate::{Axis, Divisor, MAX_AXES, PhysicalAxisMap, Projection};
 
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
 /// what step in the source one of its cells is, plus the projection the stage is addressed by.
@@ -57,20 +57,17 @@ impl Compaction {
         vector_size: usize,
         extent_of: impl Fn(Axis) -> usize,
     ) -> Compaction {
-        // The box below is the smem allocation: both its step (a gcd of coefficients) and its
-        // extent are comptime by construction, which a runtime coefficient cannot be.
+        // The box below is the smem allocation: both its step and its extent are comptime by
+        // construction, which a runtime coefficient or divisor cannot be.
         assert!(
             !projection.has_dynamic_scales(),
             "Compaction: a Dynamic coefficient has no comptime window extent, so the operand \
              carrying it cannot be staged (use Schedule::Direct)"
         );
-        // The lattice below is the one the numerator's coefficients generate. Dividing it does not
-        // yield a lattice: a rational axis advances by one physical cell on some steps and none on
-        // others, so its window has no single step to quotient by.
         assert!(
-            !projection.is_rational(),
-            "Compaction: a rational axis's window is not a lattice, so it has no compacted step; \
-             the operand carrying it cannot be staged (use Schedule::Direct)"
+            !projection.has_dynamic_divisors(),
+            "Compaction: a Dynamic divisor has no comptime window extent, so the operand \
+             carrying it cannot be staged (use Schedule::Direct)"
         );
         let rank = projection.physical_rank();
         let mut steps = SmallVec::new();
@@ -78,35 +75,57 @@ impl Compaction {
         let mut physical = Vec::with_capacity(rank);
 
         for pa in 0..rank {
-            let terms = projection.physical_axis(pa).terms();
-            // Only a term that moves contributes an offset, so only its coefficient constrains the
-            // step; a single-tap axis (extent 1) sits at a fixed offset the window's origin absorbs.
-            let step = terms
-                .iter()
-                .filter(|t| extent_of(t.axis) > 1)
-                .fold(0, |g, t| gcd(g, t.scale.get()));
-            let step = step.max(1);
-            // `step` divides every moving coefficient by construction; a non-moving one need not
-            // divide, and its value is unobservable, so it is pinned rather than truncated.
-            let scaled: Vec<(Axis, usize)> = terms
-                .iter()
-                .map(|t| {
-                    let scale = if extent_of(t.axis) > 1 {
-                        t.scale.get() / step
-                    } else {
-                        1
-                    };
-                    (t.axis, scale)
-                })
-                .collect();
-            extents.push(
-                1 + scaled
+            let axis_map = projection.physical_axis(pa);
+            let terms = axis_map.terms();
+            if axis_map.is_rational() {
+                // A rational axis advances by one physical cell on some steps and none on others,
+                // so its window has no single step to quotient by. Its step is 1 (dense, no holes
+                // to skip), and its extent is the conservative receptive field over all possible
+                // runtime phase residues: 1 + ⌊(Σ (extent - 1) * scale + divisor - 1) / divisor⌋.
+                let Divisor::Static(d) = axis_map.divisor() else {
+                    unreachable!("dynamic divisor checked above");
+                };
+                let field: usize = terms
                     .iter()
-                    .map(|&(axis, scale)| (extent_of(axis) - 1) * scale)
-                    .sum::<usize>(),
-            );
-            steps.push(step);
-            physical.push(PhysicalAxisMap::affine(&scaled));
+                    .filter(|t| extent_of(t.axis) > 1)
+                    .map(|t| (extent_of(t.axis) - 1) * t.scale.get())
+                    .sum();
+                extents.push(1 + (field + d - 1) / d);
+                steps.push(1);
+
+                let scaled: Vec<(Axis, usize)> =
+                    terms.iter().map(|t| (t.axis, t.scale.get())).collect();
+                physical.push(PhysicalAxisMap::affine(&scaled).over(d));
+            } else {
+                // Only a term that moves contributes an offset, so only its coefficient constrains the
+                // step; a single-tap axis (extent 1) sits at a fixed offset the window's origin absorbs.
+                let step = terms
+                    .iter()
+                    .filter(|t| extent_of(t.axis) > 1)
+                    .fold(0, |g, t| gcd(g, t.scale.get()));
+                let step = step.max(1);
+                // `step` divides every moving coefficient by construction; a non-moving one need not
+                // divide, and its value is unobservable, so it is pinned rather than truncated.
+                let scaled: Vec<(Axis, usize)> = terms
+                    .iter()
+                    .map(|t| {
+                        let scale = if extent_of(t.axis) > 1 {
+                            t.scale.get() / step
+                        } else {
+                            1
+                        };
+                        (t.axis, scale)
+                    })
+                    .collect();
+                extents.push(
+                    1 + scaled
+                        .iter()
+                        .map(|&(axis, scale)| (extent_of(axis) - 1) * scale)
+                        .sum::<usize>(),
+                );
+                steps.push(step);
+                physical.push(PhysicalAxisMap::affine(&scaled));
+            }
         }
 
         let projection = Projection::new(projection.logical_axes(), &physical);
@@ -346,14 +365,35 @@ mod tests {
     }
 
     /// A rational axis steps one physical cell on some outputs and none on others, so its window
-    /// has no lattice to quotient.
+    /// has no lattice to quotient. It compacts densely (step = 1) with conservative extent.
     #[test]
-    #[should_panic(expected = "not a lattice")]
-    fn a_rational_axis_is_refused() {
+    fn rational_axis_compacts_dense_with_conservative_extent() {
         let p = Projection::new(
             &[OH, RH, CI],
             &[
                 PhysicalAxisMap::affine(&[(OH, 2), (RH, 3)]).over(3),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        // OH: 8, RH: 3, CI: 16
+        // field = (8-1)*2 + (3-1)*3 = 14 + 6 = 20
+        // extent = 1 + (20 + 3 - 1) / 3 = 1 + 22 / 3 = 1 + 7 = 8
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        assert!(c.is_dense());
+        assert_eq!(c.steps(), &[1, 1]);
+        assert_eq!(c.extents(), &[8, 16]);
+        assert!(c.projection().physical_axis(0).is_rational());
+        assert_eq!(c.projection().divisor(0), Divisor::Static(3));
+    }
+
+    /// A dynamic divisor has no comptime extent, so it cannot be staged.
+    #[test]
+    #[should_panic(expected = "Dynamic divisor has no comptime window extent")]
+    fn a_dynamic_divisor_is_refused() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 3)]).over(Divisor::Dynamic),
                 PhysicalAxisMap::of(CI),
             ],
         );

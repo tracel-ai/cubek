@@ -382,22 +382,25 @@ impl Projection {
     /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
     /// overlapping stencil window. A constant offset shifts position without changing span.
     ///
-    /// A [rational](Divisor) axis has no comptime span at all: how far its numerator reaches
-    /// depends on the [`residue`](PhysicalAxisMap::residue) the descent left over, which is a
-    /// different value at every level and only known in the kernel. `MemData::at` spans such an
-    /// axis there, off the phase it is actually holding.
+    /// For a [rational](Divisor) axis with a static divisor `d`, reports the conservative
+    /// receptive field over all possible runtime phase residues: `1 + ⌊(field + d - 1) / d⌋`.
     pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
         let map = &self.physical[pa];
         assert!(
-            !map.is_rational(),
-            "Projection::span: a rational axis's receptive field depends on the runtime phase its \
-             descent left over, so it has no comptime extent"
+            !map.has_dynamic_scale(),
+            "Projection::span: a Dynamic coefficient has no comptime span"
         );
-        1 + map
+        let field: usize = map
             .terms()
             .iter()
             .map(|t| (extent_of(t.axis) - 1) * t.scale.get())
-            .sum::<usize>()
+            .sum();
+        match map.divisor() {
+            Divisor::Static(d) => 1 + (field + d - 1) / d,
+            Divisor::Dynamic => {
+                panic!("Projection::span: a Dynamic divisor has no comptime span");
+            }
+        }
     }
 
     /// Whether every physical axis carries exactly one logical axis at coefficient `1` with zero
@@ -970,15 +973,33 @@ mod tests {
         assert_eq!(p.span(1, |_| 8), 8);
     }
 
-    /// The phase a descent leaves over is a runtime value, so a rational axis has no comptime
-    /// receptive field to report; the kernel spans it off the phase it holds.
+    /// A static rational axis computes its conservative span over all possible runtime phases.
     #[test]
-    #[should_panic(expected = "no comptime extent")]
-    fn a_rational_axis_has_no_comptime_span() {
+    fn rational_axis_conservative_span() {
         let p = Projection::new(
             &[A, R, B],
             &[
                 PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(133),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        // field = (4-1)*100 + (1-1)*133 = 300
+        // span = 1 + (300 + 133 - 1) / 133 = 1 + 432 / 133 = 4
+        assert_eq!(p.span(0, |a| if a == A { 4 } else { 1 }), 4);
+        // field = 300 + (2-1)*133 = 433
+        // span = 1 + (433 + 132) / 133 = 1 + 4 = 5
+        assert_eq!(p.span(0, |a| if a == A { 4 } else { 2 }), 5);
+    }
+
+    /// A dynamic divisor has no comptime span.
+    #[test]
+    #[should_panic(expected = "Dynamic divisor has no comptime span")]
+    fn a_dynamic_divisor_has_no_comptime_span() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50)
+                    .over(Divisor::Dynamic),
                 PhysicalAxisMap::of(B),
             ],
         );

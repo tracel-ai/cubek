@@ -86,13 +86,12 @@ impl From<isize> for Offset {
 ///
 /// A divisor every coefficient cancels is not a division at all, and
 /// [`over`](PhysicalAxisMap::over) reduces it away rather than carrying it: `⌊(2o + 4r)/2⌋` is
-/// spelled as a fraction but steps like the integer map `o + 2r`, and is stored as one. So
-/// [`is_rational`](PhysicalAxisMap::is_rational) marks the mappings that genuinely divide, whose
-/// window is not a lattice and therefore cannot be staged.
+/// spelled as a fraction but steps like the integer map `o + 2r`, and is stored as one.
 ///
 /// Like [`Scale::Dynamic`], a `Dynamic` divisor costs the comptime window geometry: the receptive
-/// field it spans is a runtime value, so the operand cannot be staged. It also costs an in-kernel
-/// integer division per read, where a `Static` one folds.
+/// field it spans is a runtime value, so the operand cannot be staged (must use `Schedule::Direct`).
+/// It also costs an in-kernel integer division per read, where a `Static` one folds. A static
+/// rational mapping stages uncompacted (step 1) with conservative comptime extent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Divisor {
     Static(usize),
@@ -217,9 +216,8 @@ impl PhysicalAxisMap {
     /// ever acts on the constant term, and the constant term is the window origin's business.
     ///
     /// Worth taking out because a divisor is not free: a rational axis reads through an in-kernel
-    /// division, and its window is not a lattice, so it cannot be staged
-    /// ([`Compaction`](crate::Compaction) has no step to compact by). Reduced here, a fractionally
-    /// *spelled* but integrally *stepping* mapping keeps both.
+    /// division, and its uncompacted window carries a conservative extent. Reduced here, a fractionally
+    /// *spelled* but integrally *stepping* mapping keeps both compact step and exact extent.
     ///
     /// Only a fully comptime numerator reduces. A [`Dynamic`](Scale::Dynamic) coefficient cannot be
     /// shown divisible; a [`Dynamic`](Offset::Dynamic) offset could still cancel, but the carrier
