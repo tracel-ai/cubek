@@ -114,7 +114,7 @@ impl Default for StagePlan {
 /// pair with another operand's spec; only the kernel's one [`Space`] crosses the seam. A
 /// kernel body written over `D: DeliveryFamily` runs strided or TMA unchanged; the launch
 /// entry picks the family. One family covers both operands, since
-/// [`Sync::of`](crate::Sync::of) rejects a mixed pair anyway.
+/// [`Sync::merge`](crate::Sync::merge) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.

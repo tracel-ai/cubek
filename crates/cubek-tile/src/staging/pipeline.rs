@@ -22,20 +22,25 @@ pub enum Sync {
     Barrier,
 }
 
-impl Sync {
-    /// Deduce the strategy from the operands' [`Delivery`]: both async (TMA) → `Barrier`,
-    /// both strided → `Cube`. A mix is rejected.
-    pub fn of(lhs: Delivery, rhs: Delivery) -> Sync {
-        match (lhs, rhs) {
-            (Delivery::Tma, Delivery::Tma) => Sync::Barrier,
-            (Delivery::Strided, Delivery::Strided) => Sync::Cube,
-            _ => panic!("Staging: mixed delivery; both operands must be TMA sources or neither"),
+/// Deduce the strategy from the operand's [`Delivery`]: async (TMA) → `Barrier`,
+/// strided → `Cube`.
+impl From<Delivery> for Sync {
+    fn from(delivery: Delivery) -> Sync {
+        match delivery {
+            Delivery::Strided => Sync::Cube,
+            Delivery::Tma => Sync::Barrier,
         }
     }
+}
 
-    /// Deduce the strategy for a single operand: async (TMA) → `Barrier`, strided → `Cube`.
-    pub fn of_unary(operand: Delivery) -> Sync {
-        Sync::of(operand, operand)
+impl Sync {
+    /// The strategy two operands share. A mix is rejected.
+    pub fn merge(lhs: Delivery, rhs: Delivery) -> Sync {
+        assert_eq!(
+            lhs, rhs,
+            "Staging: mixed delivery; all operands must be TMA sources or none"
+        );
+        Sync::from(lhs)
     }
 }
 

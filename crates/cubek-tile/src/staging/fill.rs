@@ -78,7 +78,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
                 Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs, stage)
             }
             OperandStage::Smem => {
-                let sync = comptime!(Sync::of(lhs_delivery, rhs_delivery));
+                let sync = comptime!(Sync::merge(lhs_delivery, rhs_delivery));
                 // Each operand carries how far its quantized form travels, so staging it asks
                 // nothing: `smem_like` allocates the element that operand needs staged.
                 let stages = (MemData::smem_like(lhs), MemData::smem_like(rhs));
@@ -248,7 +248,7 @@ impl<T: Numeric> Staging<Tile<T>> {
                 Staging::wrap(a, Pipeline::new(Sync::Solo), pin, false, stage)
             }
             OperandStage::Smem => {
-                let sync = comptime!(Sync::of_unary(delivery));
+                let sync = comptime!(Sync::from(delivery));
                 let stage_tile = MemData::smem_like(input);
                 Staging::wrap(stage_tile, Pipeline::new(sync), pin, false, stage)
             }

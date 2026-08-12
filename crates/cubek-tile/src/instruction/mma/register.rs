@@ -1,6 +1,6 @@
 //! The register-resident leaf: a software outer-product GEMM microkernel over memory tiles.
 
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use cubecl::prelude::*;
 
 use crate::*;
 
@@ -253,29 +253,29 @@ fn mma_register_gather<
             let mut b = Array::<Vector<E, V>>::new(nr);
             #[unroll(unroll)]
             for n in 0..nr {
+                let acc_coords = acc_cell_coords(&batch, 0u32, n as u32);
                 let pos = resolve_nd_coords(
                     comptime!(rhs.space.clone()),
                     comptime!(space.clone()),
                     comptime!(reduce.clone()),
-                    &batch,
+                    &acc_coords,
                     &reduce_coords,
-                    0u32,
-                    n as u32,
                     vw,
+                    false,
                 );
                 b[n] = Vector::<E, V>::cast_from(rhs_view.read(pos));
             }
             #[unroll(unroll)]
             for i in 0..mr {
+                let acc_coords = acc_cell_coords(&batch, i as u32, 0u32);
                 let pos = resolve_nd_coords(
                     comptime!(lhs.space.clone()),
                     comptime!(space.clone()),
                     comptime!(reduce.clone()),
-                    &batch,
+                    &acc_coords,
                     &reduce_coords,
-                    i as u32,
-                    0u32,
                     lw,
+                    false,
                 );
                 let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract_dynamic(lane));
                 #[unroll(unroll)]
@@ -331,51 +331,20 @@ fn store_accumulators<E: Numeric, V: Size>(
     }
 }
 
-/// The coordinate `operand` is read at, one entry per axis of its own space, assembled from the
-/// three sources a step has: the accumulator cell (`row`/`col`), the reduce nest, and the batch.
-/// Every operand axis falls in exactly one of them, since an axis absent from the accumulator is
-/// contracted by definition.
-///
-/// `width` is the operand's line width, and only its innermost axis is addressed in lines, so the
-/// division applies there alone. The `col` branch needs none: it is already a line index, the
-/// accumulator's innermost axis being the one the rhs lines along ([`assert_operand_shapes`]).
-/// The reduce branch does: the lhs lines along the fastest contracted axis, whose coordinate is a
-/// scalar step, and the lane within the line is folded back by the caller.
+/// Assembles the accumulator cell coordinate [`resolve_nd_coords`] reads on its acc branch:
+/// `batch`'s own axes in order, then `row` (the accumulator's second to last axis), then `col`
+/// (its last). This is the axis order [`resolve_nd_coords`] assumes when it looks up
+/// `acc.position(axis)`.
 #[cube]
-fn resolve_nd_coords(
-    #[comptime] operand: Space,
-    #[comptime] acc: Space,
-    #[comptime] reduce: Vec<Axis>,
-    batch: &Coords<u32>,
-    reduce_coords: &Coords<u32>,
-    row: u32,
-    col: u32,
-    #[comptime] width: usize,
-) -> CoordsDyn {
-    let operand_rank = comptime!(operand.rank());
-    let acc_rank = comptime!(acc.rank());
-    let mut out = CoordsDyn::new();
+fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
+    let mut out = Coords::<u32>::new();
 
     #[unroll]
-    for axis_idx in 0..operand_rank {
-        let axis = comptime!(operand.axis_at(axis_idx));
-        let axis_coord = if comptime!(axis == acc.axis_at(acc_rank - 2)) {
-            row
-        } else if comptime!(axis == acc.axis_at(acc_rank - 1)) {
-            col
-        } else if comptime!(reduce.contains(&axis)) {
-            let reduce_coord =
-                reduce_coords.at(comptime!(reduce.iter().position(|&r| r == axis).unwrap()));
-            if comptime!(axis_idx == operand_rank - 1 && width > 1) {
-                reduce_coord.fdiv(comptime!(width as u32))
-            } else {
-                reduce_coord
-            }
-        } else {
-            batch.at(comptime!(acc.position(axis)))
-        };
-        out.push(axis_coord);
+    for p in 0..batch.len() {
+        out.push(batch.at(p));
     }
+    out.push(row);
+    out.push(col);
 
     out
 }

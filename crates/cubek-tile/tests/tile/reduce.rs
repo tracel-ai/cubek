@@ -40,82 +40,43 @@ fn reduce_matmul_kernel<E: Numeric>(
     c.mma(&a, &b);
 }
 
+/// Seeds `output` for `op` (the identity a fold starts from), then reduces `input` into it.
+/// One body serves Sum/Max/Min alike, which is the point: the three kernels below differed only
+/// in this seed and the `ReduceLeafKind` passed to `reduce_axis`.
+#[cube]
+fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] op: ReduceLeafKind) {
+    match comptime!(op) {
+        ReduceLeafKind::Sum => output.zero(),
+        ReduceLeafKind::Max => output.init(E::min_value()),
+        ReduceLeafKind::Min => output.init(E::max_value()),
+    }
+    output.reduce_axis(input, op);
+}
+
 #[cube(launch)]
-fn reduce_sum_kernel<E: Numeric>(
+fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] op: ReduceLeafKind,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    output.zero();
-    output.reduce_axis(&input, comptime!(ReduceLeafKind::Sum));
+    reduce_body(&input, &mut output, op);
 }
 
 #[cube(launch)]
-fn reduce_max_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    output.init(E::min_value());
-    output.reduce_axis(&input, comptime!(ReduceLeafKind::Max));
-}
-
-#[cube(launch)]
-fn reduce_min_kernel<E: Numeric>(
-    input: &TileArg<'_, E, Const<1>>,
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    output.init(E::max_value());
-    output.reduce_axis(&input, comptime!(ReduceLeafKind::Min));
-}
-
-#[cube(launch)]
-fn reduce_sum_kernel_v4<E: Numeric>(
+fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] op: ReduceLeafKind,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    output.zero();
-    output.reduce_axis(&input, comptime!(ReduceLeafKind::Sum));
-}
-
-#[cube(launch)]
-fn reduce_max_kernel_v4<E: Numeric>(
-    input: &TileArg<'_, E, Const<4>>,
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    output.init(E::min_value());
-    output.reduce_axis(&input, comptime!(ReduceLeafKind::Max));
-}
-
-#[cube(launch)]
-fn reduce_min_kernel_v4<E: Numeric>(
-    input: &TileArg<'_, E, Const<4>>,
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    output.init(E::max_value());
-    output.reduce_axis(&input, comptime!(ReduceLeafKind::Min));
+    reduce_body(&input, &mut output, op);
 }
 
 /// Small integers, so every product and partial sum is exact in `f32` and the two kernels can be
@@ -360,74 +321,32 @@ fn run_reduce_with_vw(
     let in_binding = in_handle.binding();
     let out_binding = out_handle.clone().binding();
 
-    match (op, in_vw) {
-        (ReduceLeafKind::Sum, 1) => {
-            reduce_sum_kernel::launch::<TestRuntime>(
+    match in_vw {
+        1 => {
+            reduce_kernel::launch::<TestRuntime>(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
                 space,
+                op,
                 f32_ty,
             );
         }
-        (ReduceLeafKind::Sum, 4) => {
-            reduce_sum_kernel_v4::launch::<TestRuntime>(
+        4 => {
+            reduce_kernel_v4::launch::<TestRuntime>(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
                 space,
+                op,
                 f32_ty,
             );
         }
-        (ReduceLeafKind::Max, 1) => {
-            reduce_max_kernel::launch::<TestRuntime>(
-                &client,
-                space.cube_count(),
-                space.cube_dim(&client),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                space,
-                f32_ty,
-            );
-        }
-        (ReduceLeafKind::Max, 4) => {
-            reduce_max_kernel_v4::launch::<TestRuntime>(
-                &client,
-                space.cube_count(),
-                space.cube_dim(&client),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                space,
-                f32_ty,
-            );
-        }
-        (ReduceLeafKind::Min, 1) => {
-            reduce_min_kernel::launch::<TestRuntime>(
-                &client,
-                space.cube_count(),
-                space.cube_dim(&client),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                space,
-                f32_ty,
-            );
-        }
-        (ReduceLeafKind::Min, 4) => {
-            reduce_min_kernel_v4::launch::<TestRuntime>(
-                &client,
-                space.cube_count(),
-                space.cube_dim(&client),
-                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                space,
-                f32_ty,
-            );
-        }
-        _ => unimplemented!("unsupported op / in_vw combination"),
+        _ => unimplemented!("unsupported in_vw"),
     }
 
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
@@ -620,6 +539,122 @@ fn test_reduce_axis_sum_double_buffered() {
             got.get_f32(&[i]),
             want,
             "DoubleBuffered sum mismatch at index {i}"
+        );
+    }
+}
+
+#[test]
+fn test_reduce_axis_max_staged() {
+    let (m, k, tm, tk) = (8, 16, 4, 8);
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        space,
+        ReduceLeafKind::Max,
+    );
+
+    for i in 0..m {
+        let want: f32 = (0..k)
+            .map(|j| ((i * k + j) % 7) as f32)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(got.get_f32(&[i]), want, "Staged max mismatch at index {i}");
+    }
+}
+
+#[test]
+fn test_reduce_axis_min_staged() {
+    let (m, k, tm, tk) = (8, 16, 4, 8);
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        space,
+        ReduceLeafKind::Min,
+    );
+
+    for i in 0..m {
+        let want: f32 = (0..k)
+            .map(|j| ((i * k + j) % 7) as f32)
+            .fold(f32::INFINITY, f32::min);
+        assert_eq!(got.get_f32(&[i]), want, "Staged min mismatch at index {i}");
+    }
+}
+
+#[test]
+fn test_reduce_axis_max_double_buffered() {
+    let (m, k, tm, tk) = (8, 16, 4, 4);
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        space,
+        ReduceLeafKind::Max,
+    );
+
+    for i in 0..m {
+        let want: f32 = (0..k)
+            .map(|j| ((i * k + j) % 7) as f32)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(
+            got.get_f32(&[i]),
+            want,
+            "DoubleBuffered max mismatch at index {i}"
+        );
+    }
+}
+
+#[test]
+fn test_reduce_axis_min_double_buffered() {
+    let (m, k, tm, tk) = (8, 16, 4, 4);
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        space,
+        ReduceLeafKind::Min,
+    );
+
+    for i in 0..m {
+        let want: f32 = (0..k)
+            .map(|j| ((i * k + j) % 7) as f32)
+            .fold(f32::INFINITY, f32::min);
+        assert_eq!(
+            got.get_f32(&[i]),
+            want,
+            "DoubleBuffered min mismatch at index {i}"
         );
     }
 }

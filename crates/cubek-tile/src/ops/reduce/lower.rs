@@ -126,24 +126,9 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
 ) {
     let in_view = input.nd::<I, WP, V>();
     let in_space = comptime!(input.space.clone());
-    let acc_rank = comptime!(acc_space.rank());
     let vw = input.vector_size();
-
-    let reduce_axes = comptime!(Space::contracted(&[&in_space], &acc_space).to_vec());
-    let reduce_extents = comptime!(
-        reduce_axes
-            .iter()
-            .map(|&a| in_space.extent(a))
-            .collect::<Vec<usize>>()
-    );
-    let kc = comptime!(in_space.contracted_extent(&acc_space));
-
-    let acc_extents = comptime!(
-        (0..acc_rank)
-            .map(|p| acc_space.extent_at(p))
-            .collect::<Vec<usize>>()
-    );
-    let total_acc = comptime!(acc_extents.iter().product::<usize>());
+    let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
+    let total_acc = comptime!(layout.total_acc);
 
     let count = comptime!(acc.mr * acc.nr);
     comptime!(assert!(
@@ -154,54 +139,24 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
     #[unroll]
     for a in 0..total_acc {
         let acc_coords = unravel(
-            &const_coords(comptime!(acc_extents.clone())),
+            &const_coords(comptime!(layout.acc_extents.clone())),
             comptime!(a as u32),
         );
 
         let line_idx = comptime!(a / acc.vector_size);
         let lane_idx = comptime!(a % acc.vector_size);
-        let mut curr_val = acc.data[line_idx].extract(comptime!(lane_idx));
+        let seed = acc.data[line_idx].extract(comptime!(lane_idx));
 
-        for p in 0..kc {
-            let reduce_coords = unravel(
-                &const_coords(comptime!(reduce_extents.clone())),
-                p.fcast::<u32>(),
-            );
-
-            let in_coords = resolve_reduce_nd_coords(
-                comptime!(in_space.clone()),
-                comptime!(acc_space.clone()),
-                comptime!(reduce_axes.clone()),
-                &acc_coords,
-                &reduce_coords,
-                vw,
-            );
-
-            let in_vec = in_view.read(in_coords);
-            let in_lane = resolve_reduce_in_lane(
-                comptime!(in_space.clone()),
-                comptime!(acc_space.clone()),
-                comptime!(reduce_axes.clone()),
-                &acc_coords,
-                &reduce_coords,
-                vw,
-            );
-
-            let in_val = in_vec.extract_dynamic(in_lane);
-            let in_cast = Acc::cast_from(in_val);
-
-            match comptime!(inst) {
-                ReduceLeafKind::Sum => {
-                    curr_val += in_cast;
-                }
-                ReduceLeafKind::Max => {
-                    curr_val = max(curr_val, in_cast);
-                }
-                ReduceLeafKind::Min => {
-                    curr_val = min(curr_val, in_cast);
-                }
-            }
-        }
+        let curr_val: Acc = reduce_element::<Acc, In, V>(
+            &in_view,
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.clone()),
+            &acc_coords,
+            vw,
+            seed,
+            inst,
+        );
 
         let mut vec_line = acc.data[line_idx];
         vec_line.insert(comptime!(lane_idx), curr_val);
@@ -239,115 +194,131 @@ fn reduce_register_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size,
 ) {
     let in_view = input.nd::<I, WP, V>();
     let in_space = comptime!(input.space.clone());
-    let acc_rank = comptime!(acc_space.rank());
     let vw = input.vector_size();
-
-    let reduce_axes = comptime!(Space::contracted(&[&in_space], &acc_space).to_vec());
-    let reduce_extents = comptime!(
-        reduce_axes
-            .iter()
-            .map(|&a| in_space.extent(a))
-            .collect::<Vec<usize>>()
-    );
-    let kc = comptime!(in_space.contracted_extent(&acc_space));
-
-    let acc_extents = comptime!(
-        (0..acc_rank)
-            .map(|p| acc_space.extent_at(p))
-            .collect::<Vec<usize>>()
-    );
-    let total_acc = comptime!(acc_extents.iter().product::<usize>());
+    let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
+    let total_acc = comptime!(layout.total_acc);
 
     let size!(One) = 1usize;
     let mut acc_view = acc.flat_accumulate::<One>();
 
     for a in 0..total_acc {
         let acc_coords = unravel(
-            &const_coords(comptime!(acc_extents.clone())),
+            &const_coords(comptime!(layout.acc_extents.clone())),
             a.fcast::<u32>(),
         );
 
-        let mut curr_val = acc_view.seed_reduce(a, inst).extract(0usize);
+        let seed = acc_view.seed_reduce(a, inst).extract(0usize);
 
-        for p in 0..kc {
-            let reduce_coords = unravel(
-                &const_coords(comptime!(reduce_extents.clone())),
-                p.fcast::<u32>(),
-            );
-
-            let in_coords = resolve_reduce_nd_coords(
-                comptime!(in_space.clone()),
-                comptime!(acc_space.clone()),
-                comptime!(reduce_axes.clone()),
-                &acc_coords,
-                &reduce_coords,
-                vw,
-            );
-
-            let in_vec = in_view.read(in_coords);
-            let in_lane = resolve_reduce_in_lane(
-                comptime!(in_space.clone()),
-                comptime!(acc_space.clone()),
-                comptime!(reduce_axes.clone()),
-                &acc_coords,
-                &reduce_coords,
-                vw,
-            );
-
-            let in_val = in_vec.extract_dynamic(in_lane);
-            let in_cast = Acc::cast_from(in_val);
-
-            match comptime!(inst) {
-                ReduceLeafKind::Sum => {
-                    curr_val += in_cast;
-                }
-                ReduceLeafKind::Max => {
-                    curr_val = max(curr_val, in_cast);
-                }
-                ReduceLeafKind::Min => {
-                    curr_val = min(curr_val, in_cast);
-                }
-            }
-        }
+        let curr_val: Acc = reduce_element::<Acc, In, V>(
+            &in_view,
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.clone()),
+            &acc_coords,
+            vw,
+            seed,
+            inst,
+        );
 
         acc_view.commit_reduce(a, Vector::<Acc, One>::cast_from(curr_val), inst);
     }
 }
 
-/// The coordinate `input` is read at, one entry per axis of its own space. The innermost axis is
-/// addressed in lines (matching [`Tile::nd`]), so its coordinate is divided by `width` regardless
-/// of whether that axis is reduced or retained in the accumulator.
+/// The per-element inner reduction shared by both accumulator backings: fold `input` across the
+/// contracted axes (`layout.kc` steps) into `seed`, for the single accumulator cell at
+/// `acc_coords`. Only the seed/commit around this loop differ between a register block (draining
+/// through `RegisterData`'s own lanes) and a memory accumulator (through [`AccumulateView`]).
 #[cube]
-fn resolve_reduce_nd_coords(
+fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
+    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
-    #[comptime] reduce_axes: Vec<Axis>,
+    #[comptime] layout: ReduceLayout,
     acc_coords: &Coords<u32>,
-    reduce_coords: &Coords<u32>,
-    #[comptime] width: usize,
-) -> CoordsDyn {
-    let in_rank = comptime!(in_space.rank());
-    let mut out = CoordsDyn::new();
+    #[comptime] vw: usize,
+    seed: Acc,
+    #[comptime] inst: ReduceLeafKind,
+) -> Acc {
+    let mut curr_val = seed;
+    let kc = comptime!(layout.kc);
 
-    #[unroll]
-    for p in 0..in_rank {
-        let axis = comptime!(in_space.axis_at(p));
-        let raw_coord = if comptime!(acc_space.contains(axis)) {
-            let pos = comptime!(acc_space.position(axis));
-            acc_coords.at(comptime!(pos))
-        } else {
-            let pos = comptime!(reduce_axes.iter().position(|&r| r == axis).unwrap());
-            reduce_coords.at(comptime!(pos))
-        };
-        let coord = if comptime!(p == in_rank - 1 && width > 1) {
-            raw_coord.fdiv(comptime!(width as u32))
-        } else {
-            raw_coord
-        };
-        out.push(coord);
+    for p in 0..kc {
+        let reduce_coords = unravel(
+            &const_coords(comptime!(layout.reduce_extents.clone())),
+            p.fcast::<u32>(),
+        );
+
+        let in_coords = resolve_nd_coords(
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.reduce_axes.clone()),
+            acc_coords,
+            &reduce_coords,
+            vw,
+            true,
+        );
+
+        let in_vec = in_view.read(in_coords);
+        let in_lane = resolve_reduce_in_lane(
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.reduce_axes.clone()),
+            acc_coords,
+            &reduce_coords,
+            vw,
+        );
+
+        let in_val = in_vec.extract_dynamic(in_lane);
+        let in_cast = Acc::cast_from(in_val);
+
+        match comptime!(inst) {
+            ReduceLeafKind::Sum => {
+                curr_val += in_cast;
+            }
+            ReduceLeafKind::Max => {
+                curr_val = max(curr_val, in_cast);
+            }
+            ReduceLeafKind::Min => {
+                curr_val = min(curr_val, in_cast);
+            }
+        }
     }
 
-    out
+    curr_val
+}
+
+/// Comptime bookkeeping shared by both accumulator backings: which axes of `in_space` are
+/// contracted against `acc_space`, their extents, the total contracted size (`kc`), and the
+/// accumulator's own extents/total cell count.
+#[derive(Clone)]
+struct ReduceLayout {
+    reduce_axes: Vec<Axis>,
+    reduce_extents: Vec<usize>,
+    kc: usize,
+    acc_extents: Vec<usize>,
+    total_acc: usize,
+}
+
+impl ReduceLayout {
+    fn new(in_space: &Space, acc_space: &Space) -> Self {
+        let reduce_axes = Space::contracted(&[in_space], acc_space).to_vec();
+        let reduce_extents = reduce_axes
+            .iter()
+            .map(|&a| in_space.extent(a))
+            .collect::<Vec<usize>>();
+        let kc = in_space.contracted_extent(acc_space);
+        let acc_extents = (0..acc_space.rank())
+            .map(|p| acc_space.extent_at(p))
+            .collect::<Vec<usize>>();
+        let total_acc = acc_extents.iter().product::<usize>();
+        Self {
+            reduce_axes,
+            reduce_extents,
+            kc,
+            acc_extents,
+            total_acc,
+        }
+    }
 }
 
 /// The lane within the vectorized line for the input's fastest (innermost) axis, whether it is
