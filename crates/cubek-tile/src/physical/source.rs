@@ -109,7 +109,10 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     ///
     /// # Bounds Checking & Extents
     /// - Boundary checking is enabled by default if the projection [`may_underflow`](Projection::may_underflow)
-    ///   (override with [`checked`](Self::checked)).
+    ///   (override with [`checked`](Self::checked)). A window running off the buffer's *tail* is
+    ///   not detected: nothing here knows how far the receptive field reaches, only the tiling's
+    ///   own divisibility. A gather whose last window overruns the buffer, which a rational
+    ///   mapping's does by construction, must state [`checked(true)`](Self::checked) itself.
     /// - An axis sharing a physical dim with another has no extent of its own here (the buffer holds
     ///   the receptive field they reach over), so if it is [`Dynamic`](crate::Extent) some other
     ///   operand of the operation must state its size ([`Tile::witnesses`](crate::Tile::witnesses)).

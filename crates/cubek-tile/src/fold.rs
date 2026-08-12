@@ -14,8 +14,6 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::unexpanded;
 
-use crate::{Divisor, Projection};
-
 /// Folding arithmetic on integer kernel values; `f` for folding.
 pub trait Fold: Sized {
     /// `self + rhs`; `x + 0` passes through.
@@ -263,36 +261,6 @@ impl<C: Int> Coords<C> {
 pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
     let q = n / d;
     select(n % d < 0, q - 1, q)
-}
-
-/// Physical axis `pa`'s [`Divisor`](crate::Divisor) as a kernel value: the comptime constant, or
-/// the entry the coefficient carrier holds for it. `1` for every integer mapping, which [`Fold`]
-/// then passes through, so the rational paths cost nothing where they are not used.
-#[cube]
-pub(crate) fn divisor_of(
-    #[comptime] projection: Projection,
-    coefficients: &Coords<u32>,
-    #[comptime] pa: usize,
-) -> u32 {
-    match comptime!(projection.divisor(pa)) {
-        Divisor::Static(d) => comptime!(d as u32).runtime(),
-        Divisor::Dynamic => {
-            coefficients.at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
-        }
-    }
-}
-
-/// A [`Coords<u32>`] of `rank` zeros: the no-phase residues an integer mapping carries.
-#[cube]
-pub(crate) fn zero_coords(#[comptime] rank: usize) -> Coords<u32> {
-    let mut out = Coords::<u32>::new();
-
-    #[unroll]
-    for _ in 0..rank {
-        out.push(0u32);
-    }
-
-    out
 }
 
 /// Converts a comptime list of extents into constant [`Coords<u32>`].

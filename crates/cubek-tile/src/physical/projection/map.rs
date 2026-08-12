@@ -100,16 +100,6 @@ pub enum Divisor {
 }
 
 impl Divisor {
-    /// The comptime divisor; panics on `Dynamic`.
-    pub fn get(self) -> usize {
-        match self {
-            Divisor::Static(n) => n,
-            Divisor::Dynamic => {
-                panic!("Divisor::get: this divisor is Dynamic; its value is only known at runtime")
-            }
-        }
-    }
-
     pub fn is_dynamic(self) -> bool {
         matches!(self, Divisor::Dynamic)
     }
@@ -209,6 +199,13 @@ impl PhysicalAxisMap {
         assert!(
             divisor != Divisor::Static(0),
             "PhysicalAxisMap::over: a divisor of 0 does not map anywhere"
+        );
+        // Setting, not composing: a second `over` would drop a divisor the first could not reduce
+        // away, so spell the product instead.
+        assert!(
+            self.divisor.is_unit(),
+            "PhysicalAxisMap::over: this map already divides by {:?}; state the whole divisor once",
+            self.divisor
         );
         self.divisor = divisor;
         self.reduced()
@@ -392,6 +389,14 @@ mod tests {
     #[should_panic(expected = "divisor of 0 does not map anywhere")]
     fn divisor_zero_panics() {
         PhysicalAxisMap::affine(&[(A, 1)]).over(0);
+    }
+
+    /// `over` sets the divisor rather than composing with it, so a second one over a divisor the
+    /// first could not reduce away would silently drop it.
+    #[test]
+    #[should_panic(expected = "state the whole divisor once")]
+    fn a_second_over_is_refused() {
+        PhysicalAxisMap::affine(&[(A, 4), (B, 6)]).over(4).over(3);
     }
 
     /// `⌊(8a + 4r)/4⌋` is `2a + r` exactly, so it is stored as that: an integer map, which stages.

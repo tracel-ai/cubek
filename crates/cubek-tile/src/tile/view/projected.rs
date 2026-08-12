@@ -90,20 +90,17 @@ impl<L: LogicalLayout> Layout for Projected<L> {
 ///
 /// Constant offsets are handled by [`Window`](crate::Window) and omitted here, all but the part a
 /// window origin cannot absorb: under a division the offset sets the phase the floor starts at, and
-/// that phase ([`residues`](Self::residues)) has to be inside the numerator.
+/// that phase, which the [`RuntimeMap`](crate::RuntimeMap) carries, has to be inside the numerator.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct AxisProjection {
     /// The tile's per-logical-axis extents, in the space's axis order. The innermost is a
     /// line count, matching the window's innermost physical axis.
     shape: Coords<u32>,
-    /// The projection's runtime coefficients, in [`Projection::dynamic_scale_index`] and
-    /// [`Projection::dynamic_divisor_index`] order; empty for a fully-`Static` mapping. The
-    /// constant offsets are not among them: a tap is relative to the window, which they placed.
-    coefficients: Coords<u32>,
-    /// The window origin's phase within its divisor, one per physical axis, in `0..divisor`.
-    /// Constant `0` for every integer mapping, where the origin absorbs the offset whole.
-    residues: Coords<u32>,
+    /// The projection's runtime half: the coefficients a tap folds through, and the phase its
+    /// window origin left over. The constant offsets are not among them: a tap is relative to the
+    /// window, which they placed.
+    map: RuntimeMap,
     #[cube(comptime)]
     space: Space,
     #[cube(comptime)]
@@ -114,8 +111,7 @@ pub struct AxisProjection {
 impl AxisProjection {
     pub fn new(
         shape: Coords<u32>,
-        coefficients: Coords<u32>,
-        residues: Coords<u32>,
+        map: RuntimeMap,
         #[comptime] space: Space,
         #[comptime] projection: Projection,
     ) -> Self {
@@ -125,14 +121,14 @@ impl AxisProjection {
             "AxisProjection: shape has {rank} entries but the space spans {} logical axes",
             space.rank()
         ));
-        let given = coefficients.len();
+        let given = map.coefficients.len();
         comptime!(assert!(
             given == projection.dynamic_coefficient_count(),
             "AxisProjection: the projection has {} Dynamic coefficients and divisors but {given} \
              were given",
             projection.dynamic_coefficient_count()
         ));
-        let phases = residues.len();
+        let phases = map.residues.len();
         comptime!(assert!(
             phases == projection.physical_rank(),
             "AxisProjection: the projection has {} physical axes but {phases} residues were given",
@@ -140,8 +136,7 @@ impl AxisProjection {
         ));
         AxisProjection {
             shape,
-            coefficients,
-            residues,
+            map,
             space,
             projection,
         }
@@ -158,34 +153,37 @@ impl Layout for AxisProjection {
 
         #[unroll]
         for pa in 0..comptime!(self.projection.physical_rank()) {
-            let map = comptime!(self.projection.physical_axis(pa));
-            let n = comptime!(map.terms().len());
+            let axis_map = comptime!(self.projection.physical_axis(pa));
+            let n = comptime!(axis_map.terms().len());
 
             // Per-term products, summed below (chained, so a single coefficient-1 term folds to
             // the coordinate itself). Under a division the sum is the numerator, and it starts at
             // the phase the window origin could not absorb.
             let mut terms = Coords::<u32>::new();
-            if comptime!(map.is_rational()) {
-                terms.push(self.residues.at(pa));
+            if comptime!(axis_map.is_rational()) {
+                terms.push(self.map.residues.at(pa));
             }
             #[unroll]
             for t in 0..n {
-                let term = comptime!(map.terms()[t]);
+                let term = comptime!(axis_map.terms()[t]);
                 let p = comptime!(self.space.position(term.axis));
                 match comptime!(term.scale) {
                     Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                    Scale::Dynamic => terms.push(pos[p].fmul(self.coefficients.at(comptime!(
+                    Scale::Dynamic => terms.push(pos[p].fmul(self.map.coefficients.at(comptime!(
                         self.projection.dynamic_scale_index(pa, t).unwrap()
                     )))),
                 }
             }
             let sum = terms.fsum(comptime!(
-                (0..n + map.is_rational() as usize).collect::<Vec<_>>()
+                (0..n + axis_map.is_rational() as usize).collect::<Vec<_>>()
             ));
 
-            if comptime!(map.is_rational()) {
-                let divisor =
-                    divisor_of(comptime!(self.projection.clone()), &self.coefficients, pa);
+            if comptime!(axis_map.is_rational()) {
+                let divisor = divisor_of(
+                    comptime!(self.projection.clone()),
+                    &self.map.coefficients,
+                    pa,
+                );
                 out.push(sum.fdiv(divisor));
             } else {
                 out.push(sum);
@@ -283,8 +281,7 @@ impl<T: Numeric> Tile<T> {
                 let layout = axis_projection(
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
-                    g.coefficients.clone(),
-                    g.residues.clone(),
+                    g.map.clone(),
                     self.vector_size(),
                 );
                 g.nd_transparent::<I, WP, W>(layout)
@@ -303,14 +300,13 @@ impl<T: Numeric> Tile<T> {
 pub(crate) fn axis_projection(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
-    coefficients: Coords<u32>,
-    residues: Coords<u32>,
+    map: RuntimeMap,
     #[comptime] vector_size: usize,
 ) -> AxisProjection {
     let rank = comptime!(space.rank());
     let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
 
-    AxisProjection::new(shape, coefficients, residues, space, projection)
+    AxisProjection::new(shape, map, space, projection)
 }
 
 /// Returns the extents of `space` in the range `from..to`, with the innermost axis

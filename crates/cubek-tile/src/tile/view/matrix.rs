@@ -240,21 +240,14 @@ pub(crate) fn projected_batch_matrix(
     bound: &Coords<u32>,
     #[comptime] space: Space,
     #[comptime] projection: Projection,
-    coefficients: Coords<u32>,
-    residues: Coords<u32>,
+    map: RuntimeMap,
     #[comptime] vector_size: usize,
     i: usize,
 ) -> ProjectedBatchMatrix {
     let gathered = comptime!(!projection.is_direct());
     ProjectedBatchMatrix::new(
         batch_matrix(bound, comptime!(&space), gathered, vector_size, i),
-        axis_projection(
-            comptime!(space),
-            comptime!(projection),
-            coefficients,
-            residues,
-            vector_size,
-        ),
+        axis_projection(comptime!(space), comptime!(projection), map, vector_size),
     )
 }
 
@@ -264,21 +257,14 @@ pub(crate) fn projected_batch_matrix(
 pub(crate) fn projected_grouped_matrix(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
-    coefficients: Coords<u32>,
-    residues: Coords<u32>,
+    map: RuntimeMap,
     #[comptime] vector_size: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
 ) -> ProjectedGroupedMatrix {
     ProjectedGroupedMatrix::new(
         grouped_matrix(comptime!(&space), vector_size, rows, cols),
-        axis_projection(
-            comptime!(space),
-            comptime!(projection),
-            coefficients,
-            residues,
-            vector_size,
-        ),
+        axis_projection(comptime!(space), comptime!(projection), map, vector_size),
     )
 }
 
@@ -294,8 +280,7 @@ impl<T: Numeric> Tile<T> {
                     &bound,
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
-                    g.coefficients.clone(),
-                    g.residues.clone(),
+                    g.map.clone(),
                     vector_size,
                     i,
                 );
@@ -322,8 +307,7 @@ impl<T: Numeric> Tile<T> {
                     &bound,
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
-                    g.coefficients.clone(),
-                    g.residues.clone(),
+                    g.map.clone(),
                     vector_size,
                     i,
                 );
@@ -353,8 +337,7 @@ impl<T: Numeric> Tile<T> {
                     &bound,
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
-                    g.coefficients.clone(),
-                    g.residues.clone(),
+                    g.map.clone(),
                     vector_size,
                     i,
                 );
@@ -387,8 +370,7 @@ impl<T: Numeric> Tile<T> {
                 let layout = projected_grouped_matrix(
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
-                    g.coefficients.clone(),
-                    g.residues.clone(),
+                    g.map.clone(),
                     vector_size,
                     rows,
                     cols,
