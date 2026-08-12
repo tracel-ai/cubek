@@ -8,7 +8,7 @@
 
 use cubecl::prelude::*;
 
-use crate::*;
+use crate::{instruction::sum, *};
 
 #[cube]
 impl<EA: Float> Tile<EA> {
@@ -80,7 +80,7 @@ impl<EA: Float> Tile<EA> {
                 }
                 #[unroll]
                 for i in 0..height {
-                    let s = hsum(acc[i], wq);
+                    let s = sum::vector::<EA, WI>(acc[i], wq);
                     out.write((base + i) * cols + c, Vector::cast_from(s));
                 }
             }
@@ -172,5 +172,3 @@ impl<EA: Float> Tile<EA> {
         }
     }
 }
-
-pub(super) use crate::instruction::sum::vector as hsum;
