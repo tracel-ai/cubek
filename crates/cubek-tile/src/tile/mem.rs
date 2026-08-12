@@ -908,7 +908,8 @@ impl<T: Numeric> MemData<T> {
         self.init(T::from_int(0));
     }
 
-    /// Initialize this window with `val`: whole lines at the store's width.
+    /// Initialize this window with `val`: whole lines at the store's width; a checked window
+    /// skips cells past the logical bound.
     pub(crate) fn init(&mut self, val: T) {
         let size!(W) = comptime!(self.store.vector_size);
         let mut d = self.flat_mut::<W>();

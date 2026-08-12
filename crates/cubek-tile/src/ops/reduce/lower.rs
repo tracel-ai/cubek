@@ -4,12 +4,19 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use super::kind::ReduceLeafKind;
+use super::kind::{ReduceLeafKind, identity};
 use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c.reduce_axis(input, inst)`: reduce `input` into `self` across contracted axes.
+    /// `c.reduce_axis(input, inst)`: reduce `input` into `self` across contracted axes, folding
+    /// each contracted cell into whatever `self` already holds there.
+    ///
+    /// Under `LaneShare::Whole` (a register or memory accumulator, not a lane-shared plane
+    /// fragment) that existing value is the fold's literal starting point: nothing seeds it on
+    /// `self`'s behalf. The caller must pre-seed `self` with `inst`'s identity ([`Tile::zero`] for
+    /// `Sum`, [`Tile::init`] with `E::min_value()`/`E::max_value()` for `Max`/`Min`) before the
+    /// first call, or an uninitialized/stale accumulator folds against garbage.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] inst: ReduceLeafKind) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
@@ -29,7 +36,7 @@ impl<Acc: Numeric> Tile<Acc> {
     /// witnesses each dynamic axis.
     fn reduce_op_space<In: Numeric>(&self, input: &Tile<In>) -> Space {
         let merged = comptime!({
-            let merged = Space::merge(&[&input.space]);
+            let merged = input.space.clone();
             assert!(
                 self.space.axes().all(|axis| merged.contains(axis)),
                 "Tile::reduce_axis: the output spans an axis the input does not, \
@@ -198,29 +205,50 @@ fn reduce_register_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size,
     let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
     let total_acc = comptime!(layout.total_acc);
 
-    let size!(One) = 1usize;
-    let mut acc_view = acc.flat_accumulate::<One>();
+    // Use the accumulator's native store width so flat_accumulate<W> is a
+    // no-op retype (W == vector_size) rather than a pointer retype that the
+    // WGSL backend cannot lower.  The pattern mirrors reduce_register_data_typed:
+    // outer runtime loop over lines, inner comptime-unrolled loop over lanes.
+    let size!(W) = comptime!(acc.store.vector_size);
+    // Capture the integer before the mutable borrow so we can reference it inside.
+    let ws = comptime!(acc.store.vector_size);
+    let total_lines = comptime!(total_acc / acc.store.vector_size);
+    comptime!(assert!(
+        total_acc % acc.store.vector_size == 0,
+        "reduce: MemData total_acc must be divisible by store.vector_size"
+    ));
+    let mut acc_view = acc.flat_accumulate::<W>();
 
-    for a in 0..total_acc {
-        let acc_coords = unravel(
-            &const_coords(comptime!(layout.acc_extents.clone())),
-            a.fcast::<u32>(),
-        );
+    for line_idx in 0..total_lines {
+        // Seed the whole W-wide line once per accumulator line.
+        let seed_vec = acc_view.seed_reduce(line_idx, inst);
+        let mut result = seed_vec;
 
-        let seed = acc_view.seed_reduce(a, inst).extract(0usize);
+        #[unroll]
+        for lane_idx in 0..comptime!(ws) {
+            let a = line_idx * comptime!(ws) + comptime!(lane_idx);
+            let acc_coords = unravel(
+                &const_coords(comptime!(layout.acc_extents.clone())),
+                a.fcast::<u32>(),
+            );
 
-        let curr_val: Acc = reduce_element::<Acc, In, V>(
-            &in_view,
-            comptime!(in_space.clone()),
-            comptime!(acc_space.clone()),
-            comptime!(layout.clone()),
-            &acc_coords,
-            vw,
-            seed,
-            inst,
-        );
+            let seed = seed_vec.extract(comptime!(lane_idx));
+            let curr_val: Acc = reduce_element::<Acc, In, V>(
+                &in_view,
+                comptime!(in_space.clone()),
+                comptime!(acc_space.clone()),
+                comptime!(layout.clone()),
+                &acc_coords,
+                vw,
+                seed,
+                inst,
+            );
 
-        acc_view.commit_reduce(a, Vector::<Acc, One>::cast_from(curr_val), inst);
+            // insert() is in-place and returns (); mirror reduce_register_data_typed.
+            result.insert(comptime!(lane_idx), curr_val);
+        }
+
+        acc_view.commit_reduce(line_idx, result, inst);
     }
 }
 
@@ -258,7 +286,14 @@ fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
             true,
         );
 
-        let in_vec = in_view.read(in_coords);
+        // `in_view.read`'s own masked fallback is always zero (Sum's identity, not Max's or
+        // Min's), so an overhang cell is selected against `inst`'s own identity here instead.
+        let valid = in_view.is_in_bounds(in_coords.clone());
+        let in_vec = select(
+            valid,
+            in_view.read(in_coords),
+            Vector::<In, V>::cast_from(identity::<In>(inst)),
+        );
         let in_lane = resolve_reduce_in_lane(
             comptime!(in_space.clone()),
             comptime!(acc_space.clone()),

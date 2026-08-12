@@ -16,7 +16,7 @@ impl<Acc: Numeric> Tile<Acc> {
     ) {
         if self.tile_kind.static_level(comptime!(self.space.clone())) {
             let merged = comptime!({
-                let merged = Space::merge(&[&input.space]);
+                let merged = input.space.clone();
                 assert!(
                     merged.is_static(),
                     "Tile::reduce_axis: a fragment output's walk unrolls over the operand merge, \

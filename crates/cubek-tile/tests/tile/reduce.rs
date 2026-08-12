@@ -718,6 +718,177 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     }
 }
 
+/// [`run_reduce`], but the input is `checked(true)`: a non-divisible reduced axis leaves an
+/// overhang past the operand's real data, and only a checked operand masks it instead of reading
+/// garbage.
+fn run_reduce_checked(
+    in_data: Vec<f32>,
+    in_shape: Shape,
+    out_shape: Shape,
+    in_axes: &[Axis],
+    out_axes: &[Axis],
+    space: Space,
+    op: ReduceLeafKind,
+) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data)
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), out_shape)
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let in_binding = in_handle.binding();
+    let out_binding = out_handle.clone().binding();
+
+    reduce_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            in_binding.into_tensor_arg(),
+            TileSpec::direct(in_axes).checked(true),
+        ),
+        TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
+        space,
+        op,
+        f32_ty,
+    );
+
+    HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
+}
+
+fn nondivisible_k_space(m: usize, k: usize, tk: usize, schedule: Schedule) -> Space {
+    Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, schedule, |l| {
+            l.axis(M, Cut::sequential(m)).axis(K, Cut::sequential(tk))
+        })
+        .build()
+}
+
+#[test]
+fn test_reduce_axis_sum_nondivisible_k() {
+    let (m, k, tk) = (4, 6, 4);
+    let data = ramp(m * k, 7);
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Schedule::Direct),
+        ReduceLeafKind::Sum,
+    );
+
+    for i in 0..m {
+        let want: f32 = data[i * k..(i + 1) * k].iter().sum();
+        assert_eq!(got.get_f32(&[i]), want, "Sum mismatch at row {i}");
+    }
+}
+
+#[test]
+fn test_reduce_axis_sum_nondivisible_k_staged() {
+    let (m, k, tk) = (4, 6, 4);
+    let data = ramp(m * k, 7);
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Schedule::Staged),
+        ReduceLeafKind::Sum,
+    );
+
+    for i in 0..m {
+        let want: f32 = data[i * k..(i + 1) * k].iter().sum();
+        assert_eq!(got.get_f32(&[i]), want, "Staged sum mismatch at row {i}");
+    }
+}
+
+#[test]
+fn test_reduce_axis_sum_nondivisible_k_double_buffered() {
+    let (m, k, tk) = (4, 10, 4);
+    let data = ramp(m * k, 7);
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Schedule::DoubleBuffered),
+        ReduceLeafKind::Sum,
+    );
+
+    for i in 0..m {
+        let want: f32 = data[i * k..(i + 1) * k].iter().sum();
+        assert_eq!(
+            got.get_f32(&[i]),
+            want,
+            "Double-buffered sum mismatch at row {i}"
+        );
+    }
+}
+
+#[test]
+fn test_reduce_axis_max_nondivisible_k() {
+    let (m, k, tk) = (4, 6, 4);
+    let data = ramp(m * k, 7);
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Schedule::Direct),
+        ReduceLeafKind::Max,
+    );
+
+    for i in 0..m {
+        let want = data[i * k..(i + 1) * k]
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(got.get_f32(&[i]), want, "Max mismatch at row {i}");
+    }
+}
+
+/// `ramp`'s data is nonnegative, so a masked overhang cell falling back to zero (Sum's identity)
+/// would still leave `Max` accidentally correct: zero never beats the real maximum. Strictly
+/// negative data closes that gap, since a zero fallback would then beat every real value.
+#[test]
+fn test_reduce_axis_max_nondivisible_k_negative_data() {
+    let (m, k, tk) = (4, 6, 4);
+    let data: Vec<f32> = (0..m * k).map(|i| -1.0 - i as f32).collect();
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Schedule::Direct),
+        ReduceLeafKind::Max,
+    );
+
+    for i in 0..m {
+        let want = data[i * k..(i + 1) * k]
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(got.get_f32(&[i]), want, "Max mismatch at row {i}");
+    }
+}
+
 #[test]
 fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
