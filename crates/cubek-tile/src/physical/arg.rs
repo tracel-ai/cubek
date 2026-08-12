@@ -127,10 +127,11 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
     }
 
-    /// [`tile`](Self::tile) for a gather whose affine map is not all comptime: one value per
-    /// [`Scale::Dynamic`](crate::Scale) term and one signed value per
-    /// [`Offset::Dynamic`](crate::Offset) axis of the spec's projection. See
-    /// [`Tile::of_gathered`].
+    /// [`tile`](Self::tile) for a gather whose affine map is not all comptime: `coefficients` holds
+    /// one value per [`Scale::Dynamic`](crate::Scale) term and one per
+    /// [`Divisor::Dynamic`](crate::Divisor) axis of the spec's projection, `offsets` one signed
+    /// value per [`Offset::Dynamic`](crate::Offset) axis. See [`Tile::of_gathered`] for the order
+    /// each carrier is read in, which only it enforces.
     pub fn tile_gathered(
         &self,
         #[comptime] space: Space,

@@ -378,28 +378,26 @@ impl Projection {
     }
 
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
-    /// the receptive field `1 + (Σ (extent - 1) * scale + residue) / divisor`. A single
-    /// coefficient-`1` term collapses to `extent`, so a direct operand's window is its sub-tile
-    /// edge as before; two terms give the overlapping stencil window.
+    /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
+    /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
+    /// overlapping stencil window. A constant offset shifts position without changing span.
     ///
-    /// A constant offset shifts position without changing span, *except* under a division, where
-    /// the [`residue`](PhysicalAxisMap::residue) decides whether the numerator's last step crosses
-    /// into one more physical cell.
+    /// A [rational](Divisor) axis has no comptime span at all: how far its numerator reaches
+    /// depends on the [`residue`](PhysicalAxisMap::residue) the descent left over, which is a
+    /// different value at every level and only known in the kernel. `MemData::at` spans such an
+    /// axis there, off the phase it is actually holding.
     pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
         let map = &self.physical[pa];
-        let field: usize = map
+        assert!(
+            !map.is_rational(),
+            "Projection::span: a rational axis's receptive field depends on the runtime phase its \
+             descent left over, so it has no comptime extent"
+        );
+        1 + map
             .terms()
             .iter()
             .map(|t| (extent_of(t.axis) - 1) * t.scale.get())
-            .sum();
-        if !map.is_rational() {
-            return 1 + field;
-        }
-        let residue = map.residue().expect(
-            "Projection::span: a rational axis with a Dynamic offset or divisor has no comptime \
-             receptive field; its window extent is a runtime value",
-        );
-        1 + (field + residue) / map.divisor().get()
+            .sum::<usize>()
     }
 
     /// Whether every physical axis carries exactly one logical axis at coefficient `1` with zero
@@ -968,16 +966,23 @@ mod tests {
         assert!(p.is_rational());
         assert_eq!(p.divisor(0), Divisor::Static(133));
         assert_eq!(p.divisor(1), Divisor::Static(1));
-        // span: 1 + ( (4 - 1)*100 + (2 - 1)*133 + residue ) / 133
-        // field = 300 + 133 = 433
-        // residue = (-50).rem_euclid(133) = 83
-        // span = 1 + (433 + 83) / 133 = 1 + 516 / 133 = 1 + 3 = 4
-        let extent_of = |a| match a {
-            A => 4,
-            R => 2,
-            _ => 1,
-        };
-        assert_eq!(p.span(0, extent_of), 4);
+        // The integer axis beside it still spans normally.
+        assert_eq!(p.span(1, |_| 8), 8);
+    }
+
+    /// The phase a descent leaves over is a runtime value, so a rational axis has no comptime
+    /// receptive field to report; the kernel spans it off the phase it holds.
+    #[test]
+    #[should_panic(expected = "no comptime extent")]
+    fn a_rational_axis_has_no_comptime_span() {
+        let p = Projection::new(
+            &[A, R, B],
+            &[
+                PhysicalAxisMap::affine_with_offset(&[(A, 100), (R, 133)], -50).over(133),
+                PhysicalAxisMap::of(B),
+            ],
+        );
+        p.span(0, |_| 4);
     }
 
     #[test]

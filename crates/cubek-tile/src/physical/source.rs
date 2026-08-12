@@ -115,8 +115,9 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     ///   operand of the operation must state its size ([`Tile::witnesses`](crate::Tile::witnesses)).
     ///   Nothing here can see the other operands, so an axis no operand answers for is reported at
     ///   expansion, by the op that walks it.
-    /// - Dynamic scale and offset coefficients ([`Scale::Dynamic`](crate::Scale), [`Offset::Dynamic`](crate::Offset))
-    ///   are passed at runtime via [`TileArg::tile_gathered`](crate::TileArg::tile_gathered).
+    /// - Dynamic scales, divisors and offsets ([`Scale::Dynamic`](crate::Scale),
+    ///   [`Divisor::Dynamic`](crate::Divisor), [`Offset::Dynamic`](crate::Offset)) are passed at
+    ///   runtime via [`TileArg::tile_gathered`](crate::TileArg::tile_gathered).
     pub fn gathered(mut self, projection: Projection) -> StridedTileSource<'a, Sp, Set, Q, R> {
         self.data.projection = Some(projection);
         StridedTileSource {

@@ -146,16 +146,6 @@ impl AxisProjection {
             projection,
         }
     }
-
-    /// This axis's divisor as a kernel value: the comptime constant, or the carried one.
-    fn divisor(&self, #[comptime] pa: usize) -> u32 {
-        match comptime!(self.projection.divisor(pa)) {
-            Divisor::Static(d) => comptime!(d as u32).runtime(),
-            Divisor::Dynamic => self.coefficients.at(comptime!(
-                self.projection.dynamic_divisor_index(pa).unwrap()
-            )),
-        }
-    }
 }
 
 #[cube]
@@ -194,7 +184,9 @@ impl Layout for AxisProjection {
             ));
 
             if comptime!(map.is_rational()) {
-                out.push(sum.fdiv(self.divisor(pa)));
+                let divisor =
+                    divisor_of(comptime!(self.projection.clone()), &self.coefficients, pa);
+                out.push(sum.fdiv(divisor));
             } else {
                 out.push(sum);
             }

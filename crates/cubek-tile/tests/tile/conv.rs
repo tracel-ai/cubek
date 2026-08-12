@@ -2076,8 +2076,10 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     divisor: u32,
     offset: i32,
     #[comptime] space: Space,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
+    // The one carried coefficient is the divisor: both scales are Static, so it is the whole
+    // carrier (`Projection::dynamic_divisor_index` puts it at 0).
     let mut coefficients = Coords::<u32>::new();
     coefficients.push(divisor);
     let mut offsets = Coords::<i32>::new();
@@ -2093,7 +2095,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
 #[test]
 fn resize1d_rational_dynamic() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
 
     let resize = Resize1d {
         oh: 6,

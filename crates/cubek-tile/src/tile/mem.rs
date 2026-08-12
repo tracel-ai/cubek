@@ -33,9 +33,12 @@ pub struct MemData<T: Numeric> {
     #[cube(comptime)]
     pub(crate) projection: Projection,
     /// The runtime half of [`projection`](Self::projection): one value per
-    /// [`Scale::Dynamic`](crate::Scale) coefficient, in [`Projection::dynamic_scale_index`] order.
-    /// Empty for every fully-`Static` mapping, which is every operand but a runtime-strided gather.
-    /// Named apart from the quantization scales in [`Store`], which are a different thing entirely.
+    /// [`Scale::Dynamic`](crate::Scale) coefficient in [`Projection::dynamic_scale_index`] order,
+    /// plus one per [`Divisor::Dynamic`](crate::Divisor) axis in
+    /// [`Projection::dynamic_divisor_index`] order, both interleaved physical axis major (an
+    /// axis's divisor follows its own coefficients). Empty for every fully-`Static` mapping, which
+    /// is every operand but a runtime-strided or runtime-resampled gather. Named apart from the
+    /// quantization scales in [`Store`], which are a different thing entirely.
     pub(crate) coefficients: Coords<u32>,
     /// The runtime half of the projection's constant terms: one value per
     /// [`Offset::Dynamic`](crate::Offset) axis, in [`Projection::dynamic_offset_index`] order.
@@ -147,11 +150,16 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) for a gather whose affine map is not all comptime: `coefficients` holds one
-    /// value per [`Scale::Dynamic`](crate::Scale) term in [`Projection::dynamic_scale_index`] order,
-    /// `offsets` one signed value per [`Offset::Dynamic`](crate::Offset) axis in
-    /// [`Projection::dynamic_offset_index`] order. A runtime stride, dilation or padding is exactly
-    /// this, and the kernel builds the carriers from its own scalar arguments, so nothing about
-    /// them reaches the launch.
+    /// value per [`Scale::Dynamic`](crate::Scale) term in [`Projection::dynamic_scale_index`] order
+    /// *and* one per [`Divisor::Dynamic`](crate::Divisor) axis in
+    /// [`Projection::dynamic_divisor_index`] order, the two interleaved physical axis major so an
+    /// axis's divisor follows its own coefficients; `offsets` one signed value per
+    /// [`Offset::Dynamic`](crate::Offset) axis in [`Projection::dynamic_offset_index`] order. A
+    /// runtime stride, dilation, padding or resize ratio is exactly this, and the kernel builds the
+    /// carriers from its own scalar arguments, so nothing about them reaches the launch.
+    ///
+    /// Only the lengths are checked, so the two index orders above are the contract: swap a
+    /// coefficient for a divisor and the read is silently wrong.
     pub fn of_gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -569,11 +577,8 @@ impl<T: Numeric> MemData<T> {
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        let mut residues = Coords::<u32>::new();
-        #[unroll]
-        for _ in 0..comptime!(form.projection.physical_rank()) {
-            residues.push(0u32);
-        }
+        // A stage's compacted mapping is never rational, so its phases are all zero.
+        let residues = zero_coords(comptime!(form.projection.physical_rank()));
         let gmem_projection = comptime!(form.positional.clone());
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
@@ -1402,83 +1407,15 @@ impl<T: Numeric> MemData<T> {
         } else {
             #[unroll]
             for pa in 0..rank {
-                // One term per contributing axis: its tile coordinate times its sub-tile edge
-                // times its coefficient. All comptime but the coordinate, so this stays the
-                // multiply-add `window_start` is documented to be.
-                //
-                // Each term divides by `w` on its own, which only sums back to the whole
-                // advance because the innermost physical axis carries a single identity term:
-                // `Projection::validate` requires it, precisely because this axis is addressed
-                // in lines. A second term here would need the division after the sum, not before.
-                let picks =
-                    comptime!((0..proj.physical_axis(pa).terms().len()).collect::<Vec<_>>());
-                let mut terms = Coords::<u32>::new();
-                // The receptive field's leading `1`, so the sum below needs no seed.
-                let mut spans = Coords::<u32>::new();
-                spans.push(comptime!(1u32).runtime());
-                #[unroll]
-                for t in 0..comptime!(proj.physical_axis(pa).terms().len()) {
-                    let term = comptime!(proj.physical_axis(pa).terms()[t]);
-                    let edge = comptime!(space.partitioner().edge(term.axis));
-                    match comptime!(term.scale) {
-                        Scale::Static(s) => {
-                            let step = comptime!(if pa == last { edge * s / w } else { edge * s });
-                            terms.push(region.coord(term.axis).fmul(step).fcast::<u32>());
-                            spans.push(comptime!(((edge - 1) * s) as u32).runtime());
-                        }
-                        // The line division above never meets a runtime coefficient: the innermost
-                        // physical axis is a single identity term, which `Projection::validate`
-                        // requires and `Static` is the only spelling of.
-                        Scale::Dynamic => {
-                            let coefficient = self
-                                .coefficients
-                                .at(comptime!(proj.dynamic_scale_index(pa, t).unwrap()));
-                            terms.push(
-                                region
-                                    .coord(term.axis)
-                                    .fcast::<u32>()
-                                    .fmul(comptime!(edge as u32).runtime())
-                                    .fmul(coefficient),
-                            );
-                            spans.push(comptime!((edge - 1) as u32).runtime().fmul(coefficient));
-                        }
-                    }
-                }
-                let advance = terms.fsum(comptime!(picks.clone()));
-
-                // A rational axis advances by the whole cells its numerator crossed, and hands the
-                // phase it did not fill to the child window: `⌊(a + r)/d⌋` splits into this step
-                // plus a child floor starting at `r_new`, which is what makes the descent compose.
-                let (step, residue, span) = if comptime!(!proj.physical_axis(pa).is_rational()) {
-                    // The receptive field of the child edges: `1 + Σ (edge - 1) * scale`, which
-                    // stays comptime for the mapping that is.
-                    let span = if comptime!(proj.physical_axis(pa).dynamic_scale_count() == 0) {
-                        comptime!({
-                            let s = proj.span(pa, |a| space.partitioner().edge(a));
-                            (if pa == last { s / w } else { s }) as u32
-                        })
-                        .runtime()
-                    } else {
-                        spans.fsum(comptime!((0..picks.len() + 1).collect::<Vec<_>>()))
-                    };
-                    (advance, 0u32, span)
-                } else {
-                    let divisor = match comptime!(proj.divisor(pa)) {
-                        Divisor::Static(d) => comptime!(d as u32).runtime(),
-                        Divisor::Dynamic => self
-                            .coefficients
-                            .at(comptime!(proj.dynamic_divisor_index(pa).unwrap())),
-                    };
-                    let numerator = advance.fadd(self.residues.at(pa));
-                    let residue = numerator.frem(divisor);
-                    // The field without its leading `1`, since the division is what carries it.
-                    let field = spans.fsum(comptime!((1..picks.len() + 1).collect::<Vec<_>>()));
-                    (
-                        numerator.fdiv(divisor),
-                        residue,
-                        field.fadd(residue).fdiv(divisor).fadd(1),
-                    )
-                };
+                let (step, residue, span) = gathered_descent(
+                    comptime!(proj.clone()),
+                    comptime!(space.clone()),
+                    region,
+                    &self.coefficients,
+                    &self.residues,
+                    w,
+                    pa,
+                );
 
                 // `step` only moves forward, so add directly to the signed origin.
                 origin.push(self.window.origin.at(pa).fadd(step.fcast::<i32>()));
@@ -1601,42 +1538,152 @@ fn top_window(
                 Extent::Dynamic => bound.at(pa),
             }
         } else {
-            let map = comptime!(projection.physical_axis(pa));
-            if comptime!(!map.is_rational()) {
-                // Gathered axes start at their initial signed offset (e.g. negative padding),
-                // which an integer mapping's origin absorbs whole, leaving no phase behind.
-                match comptime!(map.offset()) {
-                    Offset::Static(o) => origin.push((comptime!(o as i32)).runtime()),
-                    Offset::Dynamic => origin
-                        .push(offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap()))),
-                }
-                residues.push(0u32);
-            } else if comptime!(map.origin().is_some()) {
-                origin.push((comptime!(map.origin().unwrap() as i32)).runtime());
-                residues.push((comptime!(map.residue().unwrap() as u32)).runtime());
-            } else {
-                let off = match comptime!(map.offset()) {
-                    Offset::Static(o) => (comptime!(o as i32)).runtime(),
-                    Offset::Dynamic => {
-                        offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap()))
-                    }
-                };
-                let div = match comptime!(map.divisor()) {
-                    Divisor::Static(d) => (comptime!(d as i32)).runtime(),
-                    Divisor::Dynamic => coefficients
-                        .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
-                        .fcast::<i32>(),
-                };
-                let q = floor_div(off, div);
-                origin.push(q);
-                residues.push(off.fsub(q.fmul(div)).fcast::<u32>());
-            }
+            let (start, phase) =
+                gathered_origin(comptime!(projection.clone()), offsets, coefficients, pa);
+            origin.push(start);
+            residues.push(phase);
             bound.at(pa)
         };
         extent.push(size);
     }
 
     (origin, extent, residues)
+}
+
+/// Where a gathered physical axis's top window starts, and the phase its division left behind:
+/// `⌊offset / divisor⌋` and `offset mod divisor`. An integer mapping divides by `1`, so its origin
+/// absorbs the offset whole and its phase is `0`; a rational one can only absorb the multiples of
+/// its divisor, and hands the rest to [`AxisProjection`](crate::AxisProjection), which adds it back
+/// inside the numerator.
+///
+/// The floor is the host's whenever both sides are comptime
+/// ([`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin)); only a `Dynamic` offset or
+/// divisor pays for one in the kernel.
+#[cube]
+fn gathered_origin(
+    #[comptime] projection: Projection,
+    offsets: &Coords<i32>,
+    coefficients: &Coords<u32>,
+    #[comptime] pa: usize,
+) -> (i32, u32) {
+    let map = comptime!(projection.physical_axis(pa));
+
+    if comptime!(map.origin().is_some()) {
+        (
+            comptime!(map.origin().unwrap() as i32).runtime(),
+            comptime!(map.residue().unwrap() as u32).runtime(),
+        )
+    } else {
+        // A signed offset places the window before the buffer's origin (a padding), which is
+        // exactly where truncating division would land a cell too high.
+        let offset = match comptime!(map.offset()) {
+            Offset::Static(o) => comptime!(o as i32).runtime(),
+            Offset::Dynamic => offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap())),
+        };
+        if comptime!(!map.is_rational()) {
+            (offset, 0u32)
+        } else {
+            let divisor =
+                divisor_of(comptime!(projection.clone()), coefficients, pa).fcast::<i32>();
+            let start = floor_div(offset, divisor);
+            (start, offset.fsub(start.fmul(divisor)).fcast::<u32>())
+        }
+    }
+}
+
+/// One gathered physical axis's descent into `region`: how far its window moves, the phase that
+/// move leaves behind, and the receptive field the child then covers.
+///
+/// The move sums one term per contributing axis, its tile coordinate times its sub-tile edge times
+/// its coefficient. All comptime but the coordinate, so this stays the multiply-add `window_start`
+/// is documented to be. Each term divides by `vector_size` on its own, which only sums back to the
+/// whole move because the innermost physical axis carries a single identity term:
+/// [`Projection::validate`] requires it, precisely because that axis is addressed in lines. A
+/// second term here would need the division after the sum, not before.
+///
+/// A [rational](crate::Divisor) axis moves by the whole cells its numerator crossed and hands the
+/// phase it did not fill to the child: `⌊(move + phase)/d⌋` splits into this step plus a child
+/// floor starting at the new phase, which is what makes the descent compose across levels.
+#[cube]
+fn gathered_descent(
+    #[comptime] projection: Projection,
+    #[comptime] space: Space,
+    region: &Region,
+    coefficients: &Coords<u32>,
+    residues: &Coords<u32>,
+    #[comptime] vector_size: usize,
+    #[comptime] pa: usize,
+) -> (u32, u32, u32) {
+    let map = comptime!(projection.physical_axis(pa));
+    let n = comptime!(map.terms().len());
+    let picks = comptime!((0..n).collect::<Vec<_>>());
+    let lined = comptime!(pa == projection.physical_rank() - 1);
+
+    let mut terms = Coords::<u32>::new();
+    // One receptive-field term per contributing axis, `(edge - 1) * scale`. The field's leading
+    // `1` is the branch's to add: under a division it is the quotient that carries it, not the
+    // numerator.
+    let mut spans = Coords::<u32>::new();
+    #[unroll]
+    for t in 0..n {
+        let term = comptime!(map.terms()[t]);
+        let edge = comptime!(space.partitioner().edge(term.axis));
+        match comptime!(term.scale) {
+            Scale::Static(s) => {
+                let step = comptime!(if lined {
+                    edge * s / vector_size
+                } else {
+                    edge * s
+                });
+                terms.push(region.coord(term.axis).fmul(step).fcast::<u32>());
+                spans.push(comptime!(((edge - 1) * s) as u32).runtime());
+            }
+            // The line division above never meets a runtime coefficient: the innermost physical
+            // axis is a single identity term, which `Projection::validate` requires and `Static`
+            // is the only spelling of.
+            Scale::Dynamic => {
+                let coefficient =
+                    coefficients.at(comptime!(projection.dynamic_scale_index(pa, t).unwrap()));
+                terms.push(
+                    region
+                        .coord(term.axis)
+                        .fcast::<u32>()
+                        .fmul(comptime!(edge as u32).runtime())
+                        .fmul(coefficient),
+                );
+                spans.push(comptime!((edge - 1) as u32).runtime().fmul(coefficient));
+            }
+        }
+    }
+    let advance = terms.fsum(comptime!(picks.clone()));
+
+    if comptime!(!map.is_rational()) {
+        // The receptive field of the child edges: `1 + Σ (edge - 1) * scale`, which stays comptime
+        // for the mapping that is.
+        let span = if comptime!(!map.has_dynamic_scale()) {
+            comptime!({
+                let s = projection.span(pa, |a| space.partitioner().edge(a));
+                (if lined { s / vector_size } else { s }) as u32
+            })
+            .runtime()
+        } else {
+            spans.fsum(comptime!(picks.clone())).fadd(1)
+        };
+        (advance, 0u32, span)
+    } else {
+        // No `/ vector_size` anywhere below, and none is owed: `Projection::validate` refuses a
+        // rational innermost physical axis at any width past `1`, so it is `1` whenever this
+        // branch runs and the terms above are already in elements.
+        let divisor = divisor_of(comptime!(projection.clone()), coefficients, pa);
+        let numerator = advance.fadd(residues.at(pa));
+        let residue = numerator.frem(divisor);
+        let field = spans.fsum(comptime!(picks.clone()));
+        (
+            numerator.fdiv(divisor),
+            residue,
+            field.fadd(residue).fdiv(divisor).fadd(1),
+        )
+    }
 }
 
 /// The staged scales side-channel for a quantized smem stage: a compact `Shared` buffer holding one
