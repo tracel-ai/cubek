@@ -207,3 +207,144 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         self.__expand_consume_method(scope, lhs, rhs, region, compute);
     }
 }
+
+#[cube]
+impl<T: Numeric> Staging<Tile<T>> {
+    /// Build a slot staging one region of operand `input`.
+    pub fn single(
+        input: &Tile<T>,
+        #[comptime] op_space: Space,
+        #[comptime] out: Space,
+    ) -> Staging<Tile<T>> {
+        // See `Staging::<(Tile, Tile)>::new` for the rationale: the stage keeps the operand's own
+        // projection (the physical window a gather reads, compacted), and a gathered operand's
+        // extra gmem traffic (overlapping sibling windows) is the cost of that choice.
+        let gathered = input.gathered();
+        let delivery = input.delivery();
+        // Pin only when the window is genuinely fixed across the walk: a TMA pair keeps the joint
+        // per-region fill (its barrier pipeline arrives `full` once per fill), and a dynamic level
+        // can't decide invariance at comptime. Both fall back to streaming (pin = false).
+        let split = comptime!(op_space.is_static() && !delivery.is_tma());
+        let pin = comptime!(split && op_space.walk_invariant(&input.space));
+        let stage = comptime!(out.operand_stage(input.leaf));
+        match comptime!(stage) {
+            OperandStage::Plane => {
+                comptime!(assert!(
+                    !delivery.is_tma(),
+                    "Staging: a TMA source cannot stage into plane tiles"
+                ));
+                // A fragment fill reads its source as a 2-D window, which a gathered operand has no
+                // equivalent of; only `OperandStage::Smem` stages the compacted window and leaves
+                // the gather to the leaf's read.
+                comptime!(assert!(
+                    !gathered,
+                    "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane)"
+                ));
+                let a = PlanePartition::store(
+                    comptime!(input.space.divide()),
+                    comptime!(input.leaf),
+                    comptime!(out.clone()),
+                );
+                Staging::wrap(a, Pipeline::new(Sync::Solo), pin, false, stage)
+            }
+            OperandStage::Smem => {
+                let sync = comptime!(Sync::of_unary(delivery));
+                let stage_tile = MemData::smem_like(input);
+                Staging::wrap(stage_tile, Pipeline::new(sync), pin, false, stage)
+            }
+        }
+    }
+
+    /// Fill the pinned operand from `region`'s window.
+    pub fn fill_pinned(&mut self, input: &Tile<T>, region: &Region) {
+        let pin = self.pinned();
+        if comptime!(pin) {
+            self.fill(|s, pipe| {
+                pipe.fill(s, &input.at(region));
+            });
+        }
+    }
+
+    /// Fill the streamed operand from `region`'s window.
+    pub fn fill_streamed(&mut self, input: &Tile<T>, region: &Region) {
+        let pin = self.pinned();
+        self.fill(|s, pipe| {
+            if comptime!(!pin) {
+                pipe.fill(s, &input.at(region));
+            }
+        });
+    }
+
+    /// Whether the sole operand is pinned. `pin_lhs` is the `(Tile, Tile)` payload's field name;
+    /// a unary payload has no `rhs` to pair it with, so this names what the field means here
+    /// instead of reading a `lhs` that isn't one.
+    fn pinned(&self) -> comptime_type!(bool) {
+        comptime!(self.pin_lhs)
+    }
+}
+
+impl<T: Numeric> Staging<Tile<T>> {
+    /// Producer: wait the slot is free, run `fill` over the staged buffer and the slot's
+    /// [`Pipeline`], then publish.
+    pub fn fill(&mut self, _fill: impl FnOnce(&mut Tile<T>, &Pipeline)) {
+        unexpanded!()
+    }
+
+    /// Consumer: wait the slot's fill, rebind per-region phase residues from `region`'s window on
+    /// `input`, hand the staged tile to `compute`, then free the slot.
+    pub fn consume(&mut self, _input: &Tile<T>, _region: &Region, _compute: impl FnOnce(&Tile<T>)) {
+        unexpanded!()
+    }
+
+    /// Consumer for a fill no later fill will publish: publish the slot first, then consume.
+    pub fn consume_final(
+        &mut self,
+        _input: &Tile<T>,
+        _region: &Region,
+        _compute: impl FnOnce(&Tile<T>),
+    ) {
+        unexpanded!()
+    }
+}
+
+impl<T: Numeric> StagingExpand<Tile<T>> {
+    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
+    where
+        F: FnOnce(&Scope, &mut TileExpand<T>, &PipelineExpand),
+    {
+        self.__expand_acquire_write_method(scope);
+        fill(scope, &mut self.data, &self.pipeline);
+        self.__expand_release_write_method(scope);
+    }
+
+    pub fn __expand_consume_method<F>(
+        &mut self,
+        scope: &Scope,
+        input: &TileExpand<T>,
+        region: &RegionExpand,
+        compute: F,
+    ) where
+        F: FnOnce(&Scope, &TileExpand<T>),
+    {
+        if comptime!(input.projection().is_rational()) {
+            self.data
+                .__expand_rebind_map_method(scope, &input.__expand_at_method(scope, region));
+        }
+        self.__expand_acquire_read_method(scope);
+        compute(scope, &self.data);
+        self.__expand_release_read_method(scope);
+    }
+
+    pub fn __expand_consume_final_method<F>(
+        &mut self,
+        scope: &Scope,
+        input: &TileExpand<T>,
+        region: &RegionExpand,
+        compute: F,
+    ) where
+        F: FnOnce(&Scope, &TileExpand<T>),
+    {
+        self.__expand_publish_method(scope);
+        self.__expand_consume_method(scope, input, region, compute);
+    }
+}

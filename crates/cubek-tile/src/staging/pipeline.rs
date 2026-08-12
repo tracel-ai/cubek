@@ -32,6 +32,11 @@ impl Sync {
             _ => panic!("Staging: mixed delivery; both operands must be TMA sources or neither"),
         }
     }
+
+    /// Deduce the strategy for a single operand: async (TMA) → `Barrier`, strided → `Cube`.
+    pub fn of_unary(operand: Delivery) -> Sync {
+        Sync::of(operand, operand)
+    }
 }
 
 /// The rendezvous for one slot, and every barrier it owns. The acquire/release operations live

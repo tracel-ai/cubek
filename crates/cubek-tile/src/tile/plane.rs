@@ -85,6 +85,15 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    pub(crate) fn init(&mut self, val: T) {
+        match self {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
+                panic!("PlaneTile::init: a hardware mma fragment has no fill other than zero")
+            }
+            PlaneTile::Register(d) => d.init(val),
+        }
+    }
+
     /// Fill this fragment from a memory `src`. Takes the whole tile, not its store: the manual-mma
     /// transport reads element by element through the quant-transparent matrix view, so it needs
     /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
@@ -275,6 +284,18 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
                 frag.zero();
+            }
+        }
+    }
+
+    /// Initialize every tile with `val`.
+    pub(crate) fn init(&self, val: T) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut frag = self.at(mi, ni);
+                frag.init(val);
             }
         }
     }

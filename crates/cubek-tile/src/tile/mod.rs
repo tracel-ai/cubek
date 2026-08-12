@@ -495,6 +495,25 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
+    pub fn init(&mut self, val: T) {
+        match comptime!(self.space.partitioner().clone()) {
+            Partitioner::Final => match &mut self.tile_kind {
+                TileKind::Gmem(d) | TileKind::Smem(d) => d.init(val),
+                TileKind::PlaneTile(t) => t.init(val),
+                TileKind::PlanePartition(p) => p.init(val),
+                TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
+            },
+            Partitioner::Level(_) => {
+                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
+                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
+                    let mut sub = self.at(&region);
+                    sub.init(val);
+                }
+            }
+        }
+    }
+
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
     /// own width): index `i` reads line `origin + i` — one add, no layout
     /// walk. See [`MemData::dense_lines`] for the (caller-owned) contiguity
