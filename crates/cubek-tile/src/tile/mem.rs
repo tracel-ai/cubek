@@ -179,6 +179,7 @@ impl<T: Numeric> Tile<T> {
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
+        global: ComptimeOption<f32>,
         #[comptime] scheme: QuantScheme,
         #[comptime] dequant_at: DequantAt,
         #[comptime] space: Space,
@@ -200,6 +201,7 @@ impl<T: Numeric> Tile<T> {
         }
         let info = QuantInfo {
             buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
+            global,
             strides,
             window_start: 0u32,
             block: comptime!(block),
@@ -904,7 +906,14 @@ impl<T: Numeric> MemData<T> {
                     .frem(comptime!(nb[p] as u32));
                 src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
             }
-            dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
+            // The grid holds *effective* scales: a two-level source's per-tensor factor folds in
+            // here, once per block per stage, so everything below the stage serves a one-level
+            // scheme and no global threads past this point.
+            if comptime!(sinfo.global.is_some()) {
+                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()] * sinfo.global.unwrap();
+            } else {
+                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
+            }
             bl += workers;
         }
     }
@@ -1238,8 +1247,7 @@ impl<T: Numeric> MemData<T> {
                             comptime!(self.store.vector_size),
                         ))
                         .view(FlatLayout::new(self.window.extent.clone())),
-                    // No per-tensor scale; see `transparent`.
-                    ComptimeOption::new_None(),
+                    info.global,
                     comptime!(info.scheme),
                 )
                 .view(),
@@ -1288,10 +1296,7 @@ impl<T: Numeric> MemData<T> {
                             comptime!(self.store.vector_size),
                         ))
                         .view(layout),
-                    // No per-tensor scale: a tile's scales are the scheme's own level, and the
-                    // two-level schemes that carry a global on top are rejected before this
-                    // (`block_edges`), so there is never a second factor to fold in here.
-                    ComptimeOption::new_None(),
+                    info.global,
                     comptime!(info.scheme),
                 )
                 .view(),
@@ -1767,6 +1772,10 @@ fn smem_quant_info(
     }
     ComptimeOption::new_Some(QuantInfo {
         buffer,
+        // The fill folds a two-level source's global into the staged grid
+        // ([`MemData::stage_scales`]), so the stage serves effective scales under the one-level
+        // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
+        global: ComptimeOption::new_None(),
         strides,
         window_start: 0u32,
         block: comptime!(block),
@@ -1774,7 +1783,7 @@ fn smem_quant_info(
         // path reaching here.
         dequant_at: comptime!(DequantAt::Read),
         scale_shape: comptime!(nb),
-        scheme: comptime!(scheme),
+        scheme: comptime!(staged_scheme(scheme)),
     })
 }
 

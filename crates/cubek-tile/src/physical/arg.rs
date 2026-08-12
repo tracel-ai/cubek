@@ -6,7 +6,7 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::{QuantParam, QuantScheme, QuantStore};
 use cubecl::std::tensor::{
     ViewMut,
-    layout::{CoordsDyn, Layout, LayoutExpand},
+    layout::{CoordsDyn, Layout, LayoutExpand, linear::LinearView},
     view::launch::ViewArg,
 };
 
@@ -157,6 +157,9 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub values: &'a Tensor<Vector<E, V>>,
     pub scales: &'a Tensor<f32>,
+    /// Per-tensor scale of a two-level scheme in its first element, bound exactly when the
+    /// scheme's level has one.
+    pub global: ComptimeOption<LinearView<'static, f32>>,
     #[cube(comptime)]
     pub spec: TileSpec,
     #[cube(comptime)]
@@ -171,9 +174,23 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`] of the served type `O`: the kernel's one `space`
     /// projected onto this operand's `spec` axes, reads dequantizing per the scheme.
     pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
+        // The engine's own backstop, like `validate_dequant_at`: the builder checks the binding
+        // contract too, but a hand-built `QuantTileArgLaunch` reaches here without it.
+        comptime!(cubecl::std::quant::check_global_bindings(
+            self.scheme.level,
+            self.global.is_some()
+        ));
+        // One read for the whole kernel; every window below shares the register.
+        let global = if comptime!(self.global.is_some()) {
+            let buffer = self.global.unwrap();
+            ComptimeOption::new_Some(buffer.read(0))
+        } else {
+            ComptimeOption::new_None()
+        };
         Tile::<O>::of_dequant(
             self.values,
             self.scales,
+            global,
             comptime!(self.scheme),
             comptime!(self.dequant_at),
             space,

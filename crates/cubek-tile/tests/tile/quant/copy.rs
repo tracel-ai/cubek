@@ -1,4 +1,7 @@
-use cubecl::{TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape};
+use cubecl::{
+    TestRuntime, features::TypeUsage, ir::ElemType, prelude::*,
+    std::tensor::layout::linear::linear_view, zspace::Shape,
+};
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
@@ -85,6 +88,7 @@ fn copy_quantized_per_tensor_matches_reference() {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,
@@ -240,6 +244,142 @@ pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
     output.copy_from(&input);
 }
 
+/// Two-level: block scales normalized by one per-tensor scale, both folded into every read,
+/// `out == q * scale[i/bm, j/bn] * global`. The expectation carries the global, so an
+/// implementation that drops it fails by exactly that factor.
+#[test]
+fn copy_quantized_two_level_matches_reference() {
+    run_quantized_two_level(8, 8, 4, 4, 0.5);
+    run_quantized_two_level(16, 8, 4, 4, 0.25);
+    run_quantized_two_level(6, 8, 4, 4, 0.5); // M's last block is half-filled: masked overhang
+}
+
+/// The mutation check on the same path: a zero per-tensor scale zeroes every reconstruction, so
+/// the global provably participates in each read rather than defaulting to one.
+#[test]
+fn copy_quantized_two_level_zero_global_zeroes_output() {
+    run_quantized_two_level(8, 8, 4, 4, 0.0);
+}
+
+/// A two-level scheme with no global binding is refused by the builder, host-side and on the
+/// caller's thread: a missing per-tensor scale would otherwise reconstruct every value short by
+/// that factor. (The kernel-side backstop in `QuantTileArg::tile` cannot be pinned here: it fires
+/// on the compile server, where a panic is swallowed rather than propagated.)
+#[test]
+#[should_panic(expected = "takes a per-tensor scale")]
+fn two_level_without_global_refused_by_the_builder() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n) = (8, 8);
+    let scheme = two_level_scheme(4, 4);
+    let shape = Shape::from(vec![m, n]);
+    let input_dtype = ElemType::from_quant_value(scheme.value);
+    let input = TestInput::builder(client.clone(), shape.clone())
+        .dtype(input_dtype)
+        .uniform(0x1, -8.0, 7.0)
+        .generate_without_host_data();
+    let scales = TestInput::builder(client.clone(), Shape::from(vec![2usize, 2]))
+        .custom(vec![1.0; 4])
+        .generate_without_host_data();
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let launcher = space.launcher(&client);
+    launcher
+        .arg(input.binding())
+        .subspace(&[M, N])
+        .quantized(scales.binding().into_tensor_arg(), scheme, DequantAt::Read)
+        .build();
+}
+
+fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
+    QuantScheme::default()
+        .with_level(QuantLevel::block_tensor(
+            [bm as u8, bn as u8],
+            QuantParam::F32,
+        ))
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S)
+        .with_param(QuantParam::F32)
+}
+
+/// [`run_quantized_block`] with a two-level scheme: the same block grid, its scales normalized
+/// by `global`, bound as a third 1-element tensor.
+fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, global: f32) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let scheme = two_level_scheme(bm, bn);
+
+    let shape = Shape::from(vec![m, n]);
+    let input_dtype = ElemType::from_quant_value(scheme.value);
+    let (lo, hi) = scheme.value.range();
+    let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
+        .dtype(input_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
+        })
+        .build();
+    let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    let (sm, sn) = (m.div_ceil(bm), n.div_ceil(bn));
+    let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
+    let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
+        .custom(scale_vals.clone())
+        .generate_without_host_data();
+    let global_scale = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
+        .custom(vec![global])
+        .generate_without_host_data();
+
+    let out_dtype = f32::elem_type_native();
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        1,
+        QuantTileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            scales.binding().into_tensor_arg(),
+            Some(linear_view(global_scale.binding())).into(),
+            TileSpec::direct(&[M, N]),
+            scheme,
+            DequantAt::Read,
+        ),
+        TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
+        space,
+        input_dtype,
+        out_dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            input_host
+                .iter_indices()
+                .map(|idx| {
+                    let scale = scale_vals[(idx[0] / bm) * sn + (idx[1] / bn)];
+                    input_host.get_f32(&idx) * scale * global
+                })
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
 /// Copy a `bm×bn` block-scaled Q8S input and check each element used its own block's scale:
 /// `out == q * scale[i/bm, j/bn]`. The space tiles into block-sized leaves, so a tensor that
 /// doesn't fill its last block overhangs it.
@@ -294,6 +434,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,

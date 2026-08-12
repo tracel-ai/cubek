@@ -105,6 +105,10 @@ pub enum DequantAt {
 #[expand(derive(Clone))]
 pub struct QuantInfo {
     pub(crate) buffer: Box<[f32]>,
+    /// Per-tensor scale of a two-level scheme, already read from its binding. `None` on a staged
+    /// side-channel even for a two-level scheme: [`MemData::stage_scales`] folds it into the grid,
+    /// so everything below a stage sees a one-level scheme.
+    pub(crate) global: ComptimeOption<f32>,
     pub(crate) strides: Coords<u32>,
     pub(crate) window_start: u32,
     #[cube(comptime)]
@@ -129,13 +133,19 @@ pub struct QuantInfo {
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     match scheme.level {
         QuantLevel::Tensor => vec![1; rank],
-        QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
-        QuantLevel::BlockTensor { .. } => {
-            unimplemented!(
-                "two-level quantization is not supported here, got {:?}",
-                scheme.level
-            )
+        QuantLevel::Block(bs) | QuantLevel::BlockTensor { block: bs, .. } => {
+            bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
         }
+    }
+}
+
+/// The scheme a staged side-channel serves: its grid holds *effective* scales
+/// ([`MemData::stage_scales`] folds the per-tensor factor in), so a two-level scheme stages as
+/// its one-level block form and reads below the stage carry no global.
+pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
+    match scheme.level {
+        QuantLevel::BlockTensor { block, .. } => scheme.with_level(QuantLevel::Block(block)),
+        QuantLevel::Tensor | QuantLevel::Block(_) => scheme,
     }
 }
 
@@ -163,6 +173,7 @@ impl QuantInfo {
         }
         QuantInfo {
             buffer: unsafe { self.buffer.as_boxed_unchecked() },
+            global: self.global,
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),

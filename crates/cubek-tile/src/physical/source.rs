@@ -7,6 +7,7 @@ use core::marker::PhantomData;
 use cubecl::prelude::*;
 
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
     Axis, Boundary, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, Projection,
@@ -225,6 +226,24 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
             _state: PhantomData,
         }
     }
+
+    /// [`quantized`](Self::quantized) for a two-level scheme: `global` holds the per-tensor scale
+    /// the block scales are normalized against, read as f32 from its first element.
+    pub fn quantized_two_level(
+        mut self,
+        scales: TensorArg<R>,
+        global: TensorBinding<R>,
+        scheme: QuantScheme,
+        dequant_at: DequantAt,
+    ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
+        self.data.quant = Some(Quantization::new_two_level(
+            scales, global, scheme, dequant_at,
+        ));
+        StridedTileSource {
+            data: self.data,
+            _state: PhantomData,
+        }
+    }
 }
 
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
@@ -233,6 +252,9 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 /// [`DequantAt`] without a scheme has nothing to bound.
 pub struct Quantization<R: Runtime> {
     pub scales: TensorArg<R>,
+    /// Per-tensor scale of a two-level scheme, present exactly when the level has one
+    /// ([`validate`](Self::validate) holds the two together).
+    pub global: Option<TensorBinding<R>>,
     pub scheme: QuantScheme,
     pub dequant_at: DequantAt,
 }
@@ -241,6 +263,22 @@ impl<R: Runtime> Quantization<R> {
     pub fn new(scales: TensorArg<R>, scheme: QuantScheme, dequant_at: DequantAt) -> Self {
         Quantization {
             scales,
+            global: None,
+            scheme,
+            dequant_at,
+        }
+    }
+
+    /// [`new`](Self::new) for a two-level scheme, with the per-tensor scale's tensor.
+    pub fn new_two_level(
+        scales: TensorArg<R>,
+        global: TensorBinding<R>,
+        scheme: QuantScheme,
+        dequant_at: DequantAt,
+    ) -> Self {
+        Quantization {
+            scales,
+            global: Some(global),
             scheme,
             dequant_at,
         }
@@ -255,6 +293,7 @@ impl<R: Runtime> Quantization<R> {
     /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
     /// it. Both rules live here because both are facts about this quantization and nothing else.
     pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
+        cubecl::std::quant::check_global_bindings(self.scheme.level, self.global.is_some());
         validate_scheme(space, vector_size, self.scheme);
         validate_dequant_at(self.dequant_at, leaf);
     }
@@ -300,6 +339,7 @@ impl<R: Runtime> QuantOperand<R> {
         QuantTileArgLaunch::new(
             self.tensor,
             self.quant.scales,
+            self.quant.global.map(linear_view).into(),
             self.spec,
             self.quant.scheme,
             self.quant.dequant_at,

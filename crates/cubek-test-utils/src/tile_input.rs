@@ -395,6 +395,7 @@ impl QuantizedTileInput {
         QuantTileArgLaunch::new(
             self.tile.tensor_arg(1),
             self.scales_arg(),
+            None.into(),
             self.tile.spec(),
             self.scheme,
             self.dequant_at,
