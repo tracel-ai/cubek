@@ -113,6 +113,11 @@ pub struct QuantInfo {
     pub(crate) window_start: u32,
     #[cube(comptime)]
     pub(crate) block: Vec<usize>,
+    /// Per-axis extent of the window these scales cover, in elements; [`usize::MAX`] where it is
+    /// not comptime (a dynamic top-level axis). An axis whose extent fits inside a block has no
+    /// distinct scales left to address, which is what [`ScaleLayout`] drops its term for.
+    #[cube(comptime)]
+    pub(crate) extent: Vec<usize>,
     /// Where this operand's quantized form ends. Read by [`MemData::smem_like`], which is why no
     /// call site asks an operand whether it is quantized before staging it.
     #[cube(comptime)]
@@ -139,6 +144,17 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     }
 }
 
+/// Per-axis window extent in elements for a space's own level, [`usize::MAX`] where an axis is
+/// dynamic. What [`QuantInfo`] carries so [`ScaleLayout`] can drop the axes that hold one scale.
+pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
+    (0..rank)
+        .map(|p| match space.extent_raw(space.axis_at(p)) {
+            Extent::Static(e) => e,
+            Extent::Dynamic => usize::MAX,
+        })
+        .collect()
+}
+
 /// The scheme a staged side-channel serves: its grid holds *effective* scales
 /// ([`MemData::stage_scales`] folds the per-tensor factor in), so a two-level scheme stages as
 /// its one-level block form and reads below the stage carry no global.
@@ -161,6 +177,7 @@ impl QuantInfo {
         origin: &Coords<u32>,
         #[comptime] rank: usize,
         #[comptime] vector_size: usize,
+        #[comptime] extent: Vec<usize>,
     ) -> QuantInfo {
         let last = comptime!(rank - 1);
         let mut advances = Coords::<u32>::new();
@@ -177,6 +194,7 @@ impl QuantInfo {
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
+            extent: comptime!(extent),
             dequant_at: comptime!(self.dequant_at),
             scale_shape: comptime!(self.scale_shape.clone()),
             scheme: comptime!(self.scheme),

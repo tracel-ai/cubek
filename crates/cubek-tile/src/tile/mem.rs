@@ -205,6 +205,7 @@ impl<T: Numeric> Tile<T> {
             strides,
             window_start: 0u32,
             block: comptime!(block),
+            extent: comptime!(window_extents(&space.project(spec.axes()), rank)),
             dequant_at: comptime!(dequant_at),
             // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
             scale_shape: comptime!(Vec::new()),
@@ -1245,6 +1246,7 @@ impl<T: Numeric> MemData<T> {
                             info.window_start,
                             comptime!(info.block.clone()),
                             comptime!(self.store.vector_size),
+                            comptime!(info.extent.clone()),
                         ))
                         .view(FlatLayout::new(self.window.extent.clone())),
                     info.global,
@@ -1294,6 +1296,7 @@ impl<T: Numeric> MemData<T> {
                             info.window_start,
                             comptime!(info.block.clone()),
                             comptime!(self.store.vector_size),
+                            comptime!(info.extent.clone()),
                         ))
                         .view(layout),
                     info.global,
@@ -1478,10 +1481,17 @@ impl<T: Numeric> MemData<T> {
                     "MemData::at: a quantized operand cannot carry a negative window origin, its \
                      scale grid is addressed unsigned"
                 ));
+                // A quantized operand is direct (asserted at construction), so the child window's
+                // extent per axis is this level's cut edge.
                 ComptimeOption::new_Some(info.window(
                     &origin_u32,
                     rank,
                     comptime!(self.store.vector_size),
+                    comptime!(
+                        (0..rank)
+                            .map(|p| space.partitioner().edge(space.axis_at(p)))
+                            .collect::<Vec<_>>()
+                    ),
                 ))
             }
             ComptimeOption::None => ComptimeOption::new_None(),
@@ -1779,6 +1789,7 @@ fn smem_quant_info(
         strides,
         window_start: 0u32,
         block: comptime!(block),
+        extent: comptime!(window_extents(&space, rank)),
         // A stage only keeps its quantized form when the read is what decodes it; that is the one
         // path reaching here.
         dequant_at: comptime!(DequantAt::Read),
