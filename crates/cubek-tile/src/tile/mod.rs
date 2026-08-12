@@ -227,6 +227,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Rebind this tile's runtime map (coefficients and phase residues) from another tile.
+    pub(crate) fn rebind_map(&mut self, src: &Tile<T>) {
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (
+                TileKind::Gmem(dst) | TileKind::Smem(dst),
+                TileKind::Gmem(src) | TileKind::Smem(src),
+            ) => {
+                dst.map.residues = src.map.residues.clone();
+                dst.map.coefficients = src.map.coefficients.clone();
+            }
+            _ => {}
+        }
+    }
+
     /// The [`StagePlan`] a stage derived from this tile takes: its [`StageStorage`] layout
     /// and the launch's cube size. A TMA bulk copy writes its box rows raw and a fragment
     /// is never a fill source, so both report the plain default (strided, units unknown).

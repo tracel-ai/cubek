@@ -2093,6 +2093,23 @@ fn resize1d_staged_static() {
     .check_with(&[2], Schedule::Staged, 1);
 }
 
+/// Rational gather driven under double buffering on alternating slots.
+#[test]
+fn resize1d_staged_double_buffered() {
+    Resize1d {
+        oh: 8,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 6,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_with(&[2], Schedule::DoubleBuffered, 1);
+}
+
 /// A tap coefficient the divisor does not cancel: the window itself is fractionally dilated, so
 /// two taps can land on one input cell. Walked over two levels, where the second descent starts
 /// from the phase the first left over instead of from the projection's own offset.

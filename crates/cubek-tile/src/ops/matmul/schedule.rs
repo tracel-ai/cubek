@@ -83,7 +83,7 @@ impl<Acc: Numeric> Tile<Acc> {
         };
         for region in walk {
             staging.fill_streamed(lhs, rhs, &region);
-            staging.consume_final(|a, b| self.at(&region).mma(a, b));
+            staging.consume_final(lhs, rhs, &region, |a, b| self.at(&region).mma(a, b));
         }
     }
 
@@ -134,7 +134,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 pipe.fill(&mut s.1, &rhs.at(&odd_region));
             });
             let even_region = walk.region(even);
-            s0.consume(|a, b| self.at(&even_region).mma(a, b));
+            s0.consume(lhs, rhs, &even_region, |a, b| self.at(&even_region).mma(a, b));
 
             // prefetch the next even region back into slot 0 (if it exists), then compute
             // the odd region on slot 1; on the walk's final region no fill follows, so
@@ -145,9 +145,9 @@ impl<Acc: Numeric> Tile<Acc> {
                     pipe.fill(&mut s.0, &lhs.at(&next_even));
                     pipe.fill(&mut s.1, &rhs.at(&next_even));
                 });
-                s1.consume(|a, b| self.at(&odd_region).mma(a, b));
+                s1.consume(lhs, rhs, &odd_region, |a, b| self.at(&odd_region).mma(a, b));
             } else {
-                s1.consume_final(|a, b| self.at(&odd_region).mma(a, b));
+                s1.consume_final(lhs, rhs, &odd_region, |a, b| self.at(&odd_region).mma(a, b));
             }
         }
 
@@ -155,7 +155,8 @@ impl<Acc: Numeric> Tile<Acc> {
         // loop; no fill follows, so `consume_final` publishes it.
         if n % 2 == 1 {
             let last = walk.region(n - 1);
-            s0.consume_final(|a, b| self.at(&last).mma(a, b));
+            s0.consume_final(lhs, rhs, &last, |a, b| self.at(&last).mma(a, b));
         }
     }
 }
+

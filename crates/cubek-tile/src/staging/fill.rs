@@ -132,15 +132,28 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         unexpanded!()
     }
 
-    /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
+    /// Consumer: wait the slot's fill, rebind per-region phase residues from `region`'s window on
+    /// `lhs`/`rhs`, hand the two staged tiles to `compute`, then free the slot.
     /// See [`StagingExpand::__expand_consume_method`].
-    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+    pub fn consume(
+        &mut self,
+        _lhs: &Tile<Lhs>,
+        _rhs: &Tile<Rhs>,
+        _region: &Region,
+        _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>),
+    ) {
         unexpanded!()
     }
 
     /// Consumer for a fill no later fill will publish (the walk's final regions): publish
     /// the slot first, then consume. See [`StagingExpand::__expand_consume_final_method`].
-    pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+    pub fn consume_final(
+        &mut self,
+        _lhs: &Tile<Lhs>,
+        _rhs: &Tile<Rhs>,
+        _region: &Region,
+        _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>),
+    ) {
         unexpanded!()
     }
 }
@@ -155,20 +168,39 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         self.__expand_release_write_method(scope);
     }
 
-    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
-    where
+    pub fn __expand_consume_method<F>(
+        &mut self,
+        scope: &Scope,
+        lhs: &TileExpand<Lhs>,
+        rhs: &TileExpand<Rhs>,
+        region: &RegionExpand,
+        compute: F,
+    ) where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
+        self.data
+            .0
+            .__expand_rebind_map_method(scope, &lhs.__expand_at_method(scope, region));
+        self.data
+            .1
+            .__expand_rebind_map_method(scope, &rhs.__expand_at_method(scope, region));
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.0, &self.data.1);
         self.__expand_release_read_method(scope);
     }
 
-    pub fn __expand_consume_final_method<F>(&mut self, scope: &Scope, compute: F)
-    where
+    pub fn __expand_consume_final_method<F>(
+        &mut self,
+        scope: &Scope,
+        lhs: &TileExpand<Lhs>,
+        rhs: &TileExpand<Rhs>,
+        region: &RegionExpand,
+        compute: F,
+    ) where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
         self.__expand_publish_method(scope);
-        self.__expand_consume_method(scope, compute);
+        self.__expand_consume_method(scope, lhs, rhs, region, compute);
     }
 }
+
