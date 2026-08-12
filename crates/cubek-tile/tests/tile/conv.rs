@@ -2270,3 +2270,74 @@ fn resize1d_rational_dynamic() {
         }
     }
 }
+
+/// A rational gathered stage born with dynamic coefficients can be addressed before fill
+/// without tripping AxisProjection's dynamic coefficient count assert.
+#[cube(launch)]
+fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    divisor: u32,
+    offset: i32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(divisor);
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let stage = MemData::smem_like(&input);
+    let _view = stage.nd::<E, Const<1>, Const<1>>();
+}
+
+#[test]
+fn resize1d_dynamic_stage_read_before_fill() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    };
+    let space = resize.space(&[2]);
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
+                Offset::Dynamic,
+            )
+            .over(Divisor::Dynamic {
+                min: resize.divisor,
+            }),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true);
+
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
+        .dtype(f32_ty)
+        .custom(ramp(resize.in_len * resize.ci, 7))
+        .generate_with_f32_host_data();
+
+    conv_kernel_rational_dynamic_stage_read::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        resize.divisor as u32,
+        resize.offset as i32,
+        space,
+        f32_ty,
+    );
+}
+

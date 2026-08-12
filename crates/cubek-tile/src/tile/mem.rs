@@ -390,7 +390,14 @@ impl<T: Numeric> MemData<T> {
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, leaf, vector_size, stage)
                 } else {
-                    MemData::smem_gathered(space, leaf, vector_size, stage, projection)
+                    MemData::smem_gathered(
+                        space,
+                        leaf,
+                        vector_size,
+                        stage,
+                        projection,
+                        &operand.runtime_map(),
+                    )
                 }
             }
             DequantAt::Read => MemData::smem_stored(operand),
@@ -464,7 +471,8 @@ impl<T: Numeric> MemData<T> {
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
-        MemData::smem_with_form(space, leaf, vector_size, stage, form)
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        MemData::smem_with_form(space, leaf, vector_size, stage, form, map)
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -482,6 +490,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         #[comptime] projection: Projection,
+        map: &RuntimeMap,
     ) -> Tile<T> {
         let form = comptime!(StageForm::gathered(
             &space,
@@ -489,7 +498,11 @@ impl<T: Numeric> MemData<T> {
             stage.layout,
             &projection
         ));
-        MemData::smem_with_form(space, leaf, vector_size, stage, form)
+        let stage_map = RuntimeMap {
+            coefficients: map.coefficients.clone(),
+            residues: const_coords(comptime!(vec![0; form.projection.physical_rank()])),
+        };
+        MemData::smem_with_form(space, leaf, vector_size, stage, form, stage_map)
     }
 
     /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
@@ -499,6 +512,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         #[comptime] form: StageForm,
+        map: RuntimeMap,
     ) -> Tile<T> {
         let size!(W) = vector_size;
         let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
@@ -510,6 +524,7 @@ impl<T: Numeric> MemData<T> {
             &smem,
             ComptimeOption::new_None(),
             form,
+            map,
         )
     }
 
@@ -532,7 +547,8 @@ impl<T: Numeric> MemData<T> {
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
-        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant, form)
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant, form, map)
     }
 
     /// The body every smem constructor shares: everything but the allocation's element (which is why
@@ -547,6 +563,7 @@ impl<T: Numeric> MemData<T> {
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
         #[comptime] form: StageForm,
+        map: RuntimeMap,
     ) -> Tile<T> {
         let buffer = unsafe {
             smem.inner_ref()
@@ -557,12 +574,6 @@ impl<T: Numeric> MemData<T> {
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
-        // A stage's own mapping is the compacted one, which keeps whatever the source's was Dynamic
-        // in (the box is sized by its bound, the addressing still needs the value) and drops the
-        // offset, the gmem window having already been placed. Both carriers start empty and are
-        // taken from the source per-region in `fill_from`, which is why the compaction preserves
-        // the source's Dynamic terms slot for slot.
-        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let gmem_projection = comptime!(form.positional.clone());
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
