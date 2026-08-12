@@ -71,15 +71,21 @@ impl Compaction {
 
         for pa in 0..rank {
             let axis_map = projection.physical_axis(pa);
-            let terms = axis_map.terms();
-            if axis_map.is_rational() {
+            // The stage is placed at offset 0 (gmem windowing absorbs the offset), so a static
+            // divisor can reduce away here even if the source operand carried a Dynamic offset.
+            let scaled: Vec<(Axis, Scale)> =
+                axis_map.terms().iter().map(|t| (t.axis, t.scale)).collect();
+            let stage_map = PhysicalAxisMap::scaled(&scaled).over(axis_map.divisor());
+            let terms = stage_map.terms();
+
+            if stage_map.is_rational() {
                 // A rational axis advances by one physical cell on some steps and none on others,
                 // so its window has no single step to quotient by. Its step is 1 (dense, no holes
                 // to skip), and its extent is the conservative receptive field over all possible
                 // runtime phase residues: 1 + ⌊(Σ (extent - 1) * scale + divisor - 1) / divisor⌋.
                 // Under a bound (a Dynamic coefficient or divisor) that field is the widest one the
                 // bound admits, so the box still holds every window the launch can ask for.
-                let d = axis_map.divisor().bound();
+                let d = stage_map.divisor().bound();
                 let field: usize = terms
                     .iter()
                     .filter(|t| extent_of(t.axis) > 1)
@@ -87,11 +93,7 @@ impl Compaction {
                     .sum();
                 extents.push(1 + field.div_ceil(d));
                 steps.push(1);
-
-                // The divisor carries over as it stands, bound and all: the stage divides by the
-                // same runtime value the source did, and its residue rides the same carrier.
-                let scaled: Vec<(Axis, Scale)> = terms.iter().map(|t| (t.axis, t.scale)).collect();
-                physical.push(PhysicalAxisMap::scaled(&scaled).over(axis_map.divisor()));
+                physical.push(stage_map);
             } else {
                 // Only a term that moves contributes an offset, so only its coefficient constrains the
                 // step; a single-tap axis (extent 1) sits at a fixed offset the window's origin absorbs.
@@ -488,4 +490,36 @@ mod tests {
             }
         }
     }
+
+    /// A fraction whose coefficients cancel the divisor reduces on the stage (where offset is 0)
+    /// even if the source operand carried a dynamic offset, recovering the integer gcd step.
+    #[test]
+    fn dynamic_offset_with_cancelling_divisor_compacts_as_integers() {
+        let p_dynamic_offset = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled_with_offset(
+                    &[(OH, Scale::Static(16)), (RH, Scale::Static(8))],
+                    Offset::Dynamic,
+                )
+                .over(4),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let p_integer = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, 4), (RH, 2)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let c_dynamic = Compaction::of(&p_dynamic_offset, 4, extents(8, 3, 16));
+        let c_integer = Compaction::of(&p_integer, 4, extents(8, 3, 16));
+
+        assert_eq!(c_dynamic.steps(), c_integer.steps());
+        assert_eq!(c_dynamic.extents(), c_integer.extents());
+        assert_eq!(c_dynamic.projection(), c_integer.projection());
+        assert_eq!(c_dynamic.steps(), &[2, 1]);
+    }
 }
+
