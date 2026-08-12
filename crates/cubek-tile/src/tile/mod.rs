@@ -144,6 +144,28 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     }
 }
 
+/// Whether one scale covers a window of `extent` under `block` edges: every axis fits inside a
+/// block, so there is nothing left for [`ScaleLayout`] to address and the scale can be read once
+/// ([`QuantInfo::uniform_scale`]) instead of per value.
+fn uniform_window(block: &[usize], extent: &[usize]) -> bool {
+    (0..block.len()).all(|p| extent[p] <= block[p])
+}
+
+impl QuantInfo {
+    /// See [`uniform_window`]. Both this and its expand twin exist because a `comptime!` branch
+    /// typechecks as host code as well as expanded.
+    pub(crate) fn uniform(&self) -> bool {
+        uniform_window(&self.block, &self.extent)
+    }
+}
+
+impl QuantInfoExpand {
+    /// See [`uniform_window`].
+    pub(crate) fn uniform(&self) -> bool {
+        uniform_window(&self.block, &self.extent)
+    }
+}
+
 /// Per-axis window extent in elements for a space's own level, [`usize::MAX`] where an axis is
 /// dynamic. What [`QuantInfo`] carries so [`ScaleLayout`] can drop the axes that hold one scale.
 pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
@@ -172,6 +194,17 @@ impl QuantInfo {
     /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
     /// the window's own block index in here lets [`ScaleLayout`] add only the within-window offset,
     /// sound because a window never straddles a block (`validate_scheme` enforces it).
+    /// The one scale this whole window reconstructs against, per-tensor factor folded in. Only
+    /// meaningful where [`uniform`](QuantInfoExpand::uniform) holds; one load for the whole tile.
+    pub(crate) fn uniform_scale(&self) -> f32 {
+        let scale = self.buffer[self.window_start.fcast::<usize>()];
+        if comptime!(self.global.is_some()) {
+            scale * self.global.unwrap()
+        } else {
+            scale
+        }
+    }
+
     pub(crate) fn window(
         &self,
         origin: &Coords<u32>,

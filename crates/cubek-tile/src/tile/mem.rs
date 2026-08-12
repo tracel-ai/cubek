@@ -1232,29 +1232,43 @@ impl<T: Numeric> MemData<T> {
     ) -> FlatView<'_, Vector<T, W>> {
         #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => FlatView::new(
-                DequantView::<I, WP, f32, T, W, Coords1d>::new(
-                    // The storage view groups at the *physical* width: a packed buffer holds
-                    // `W / num_quants` elements per served line.
-                    self.lines_storage::<I, WP>()
-                        .view(self.base())
-                        .view(self.window())
-                        .view(FlatLayout::new(self.window.extent.clone())),
-                    info.buffer
-                        .view(ScaleLayout::new(
-                            info.strides.clone(),
-                            info.window_start,
-                            comptime!(info.block.clone()),
-                            comptime!(self.store.vector_size),
-                            comptime!(info.extent.clone()),
-                        ))
-                        .view(FlatLayout::new(self.window.extent.clone())),
-                    info.global,
-                    comptime!(info.scheme),
-                )
-                .view(),
-                comptime!(self.access.overhang.masks()),
-            ),
+            ComptimeOption::Some(info) => {
+                // The storage view groups at the *physical* width: a packed buffer holds
+                // `W / num_quants` elements per served line.
+                let values = self
+                    .lines_storage::<I, WP>()
+                    .view(self.base())
+                    .view(self.window())
+                    .view(FlatLayout::new(self.window.extent.clone()));
+                let scales = info
+                    .buffer
+                    .view(ScaleLayout::new(
+                        info.strides.clone(),
+                        info.window_start,
+                        comptime!(info.block.clone()),
+                        comptime!(self.store.vector_size),
+                        comptime!(info.extent.clone()),
+                    ))
+                    .view(FlatLayout::new(self.window.extent.clone()));
+                let dequant = if comptime!(info.uniform()) {
+                    // One scale for the whole window: read once here, so no read below pays
+                    // for the scales view at all.
+                    DequantView::<I, WP, f32, T, W, Coords1d>::new_uniform(
+                        values,
+                        scales,
+                        info.uniform_scale(),
+                        comptime!(info.scheme),
+                    )
+                } else {
+                    DequantView::<I, WP, f32, T, W, Coords1d>::new(
+                        values,
+                        scales,
+                        info.global,
+                        comptime!(info.scheme),
+                    )
+                };
+                FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+            }
             ComptimeOption::None => self.flat::<W>(),
         }
     }
@@ -1279,32 +1293,46 @@ impl<T: Numeric> MemData<T> {
         match &self.store.quant {
             // A quantized view *is* a view: cubecl's decodes on read and answers as `Vector<T, W>`,
             // so both arms hand back the same masked view and no caller learns the difference.
-            ComptimeOption::Some(info) => MaskedView::new(
-                DequantView::<I, WP, f32, T, W, C>::new(
-                    // The storage view groups at the *physical* width: a packed buffer holds
-                    // `W / num_quants` elements per served line.
-                    self.lines_storage::<I, WP>()
-                        .view(self.base())
-                        .view(self.window())
-                        .view(layout.clone()),
-                    // The scales over this same window: `ScaleLayout` resolves a window coordinate
-                    // to its block's scale, addressed by the same `layout` as the values, so both
-                    // answer the same coordinate.
-                    info.buffer
-                        .view(ScaleLayout::new(
-                            info.strides.clone(),
-                            info.window_start,
-                            comptime!(info.block.clone()),
-                            comptime!(self.store.vector_size),
-                            comptime!(info.extent.clone()),
-                        ))
-                        .view(layout),
-                    info.global,
-                    comptime!(info.scheme),
-                )
-                .view(),
-                comptime!(self.access.overhang.masks()),
-            ),
+            ComptimeOption::Some(info) => {
+                // The storage view groups at the *physical* width: a packed buffer holds
+                // `W / num_quants` elements per served line.
+                let values = self
+                    .lines_storage::<I, WP>()
+                    .view(self.base())
+                    .view(self.window())
+                    .view(layout.clone());
+                // The scales over this same window: `ScaleLayout` resolves a window coordinate
+                // to its block's scale, addressed by the same `layout` as the values, so both
+                // answer the same coordinate.
+                let scales = info
+                    .buffer
+                    .view(ScaleLayout::new(
+                        info.strides.clone(),
+                        info.window_start,
+                        comptime!(info.block.clone()),
+                        comptime!(self.store.vector_size),
+                        comptime!(info.extent.clone()),
+                    ))
+                    .view(layout);
+                let dequant = if comptime!(info.uniform()) {
+                    // One scale for the whole window: read once here, so no read below pays
+                    // for the scales view at all.
+                    DequantView::<I, WP, f32, T, W, C>::new_uniform(
+                        values,
+                        scales,
+                        info.uniform_scale(),
+                        comptime!(info.scheme),
+                    )
+                } else {
+                    DequantView::<I, WP, f32, T, W, C>::new(
+                        values,
+                        scales,
+                        info.global,
+                        comptime!(info.scheme),
+                    )
+                };
+                MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+            }
             ComptimeOption::None => self.masked::<W, C, L>(layout),
         }
     }
