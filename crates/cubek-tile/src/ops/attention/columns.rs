@@ -173,13 +173,4 @@ impl<EA: Float> Tile<EA> {
     }
 }
 
-/// Horizontal sum of a vector's `width` lanes.
-#[cube]
-pub(super) fn hsum<E: Float, N: Size>(v: Vector<E, N>, #[comptime] width: usize) -> E {
-    let mut s = E::from_int(0);
-    #[unroll]
-    for j in 0..width {
-        s += v.extract(j);
-    }
-    s
-}
+pub(super) use crate::instruction::sum::hsum;
