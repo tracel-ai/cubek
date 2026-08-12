@@ -1595,8 +1595,12 @@ fn gathered_origin(
         if comptime!(!axis_map.is_rational()) {
             (offset, 0u32)
         } else {
-            let divisor =
-                divisor_of(comptime!(projection.clone()), coefficients, pa).fcast::<i32>();
+            let divisor = match comptime!(axis_map.divisor()) {
+                Divisor::Static(d) => comptime!(d as i32).runtime(),
+                Divisor::Dynamic { .. } => coefficients
+                    .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
+                    .fcast::<i32>(),
+            };
             let start = floor_div(offset, divisor);
             (start, offset.fsub(start.fmul(divisor)).fcast::<u32>())
         }
@@ -1686,15 +1690,22 @@ fn gathered_descent(
         // No `/ vector_size` anywhere below, and none is owed: `Projection::validate` refuses a
         // rational innermost physical axis at any width past `1`, so it is `1` whenever this
         // branch runs and the terms above are already in elements.
-        let divisor = divisor_of(comptime!(projection.clone()), &map.coefficients, pa);
         let numerator = advance.fadd(map.residues.at(pa));
-        let residue = numerator.frem(divisor);
         let field = spans.fsum(comptime!(picks.clone()));
-        (
-            numerator.fdiv(divisor),
-            residue,
-            field.fadd(residue).fdiv(divisor).fadd(1),
-        )
+        match comptime!(axis_map.divisor()) {
+            Divisor::Static(d) => {
+                let d = comptime!(d as u32);
+                let residue = numerator.frem(d);
+                (numerator.fdiv(d), residue, field.fadd(residue).fdiv(d).fadd(1))
+            }
+            Divisor::Dynamic { .. } => {
+                let d = map
+                    .coefficients
+                    .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()));
+                let residue = numerator.frem(d);
+                (numerator.fdiv(d), residue, field.fadd(residue).fdiv(d).fadd(1))
+            }
+        }
     }
 }
 

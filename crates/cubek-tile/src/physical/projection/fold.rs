@@ -8,7 +8,7 @@ use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::{
-    Axis, Coords, Divisor, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, const_coords,
+    Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, const_coords,
 };
 
 /// What a [`Projection`] cannot state at comptime: the values its [`Dynamic`](crate::Scale)
@@ -65,23 +65,6 @@ pub fn logical_extent(
         bound.push(physical_shape.fproduct(picks));
     }
     bound
-}
-
-/// Physical axis `pa`'s [`Divisor`] as a kernel value: the comptime constant, or the entry the
-/// coefficient carrier holds for it. `1` for every integer mapping, which [`Fold`] then passes
-/// through, so the rational paths cost nothing where they are not used.
-#[cube]
-pub(crate) fn divisor_of(
-    #[comptime] projection: Projection,
-    coefficients: &Coords<u32>,
-    #[comptime] pa: usize,
-) -> u32 {
-    match comptime!(projection.divisor(pa)) {
-        Divisor::Static(d) => comptime!(d as u32).runtime(),
-        Divisor::Dynamic { .. } => {
-            coefficients.at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
-        }
-    }
 }
 
 /// The line offset one `edge`-sized tile step along `axis` moves under `projection`: `axis`'s
