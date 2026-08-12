@@ -19,6 +19,31 @@ use cubek_tile::*;
 
 use super::references;
 
+/// Skip guard for the tensor-core tests in this file, which all hardcode
+/// `8x8x8` `f32` fragments (the native Metal simdgroup shape). Checking only
+/// that *some* cmma config exists is not enough: drivers accept only the exact
+/// fragment shapes they advertise, and an unsupported shape is rejected at
+/// compile time. Returns `false` (after enforcing a skip outcome) when the
+/// device doesn't advertise the exact configuration.
+fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+    let f32_ty = f32::elem_type_native();
+    let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
+        cfg.a_type == f32_ty
+            && cfg.b_type == f32_ty
+            && cfg.cd_type == f32_ty
+            && cfg.m == 8
+            && cfg.n == 8
+            && cfg.k == 8
+    });
+    if !supported {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no 8x8x8 f32 cmma (tensor-core) fragment support".to_string(),
+        ))
+        .enforce();
+    }
+    supported
+}
+
 // Matmul's axes — the labels this client gives the engine's opaque `Axis`. `B`
 // is the leading batch axis; `M`/`N`/`K` are the matrix axes.
 const M: Axis = Axis(0);
@@ -903,11 +928,7 @@ fn register_matmul_unit_split_k() {
 #[test]
 fn cmma_matmul_staged_n_walk_partition() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no cmma (tensor-core) support".to_string(),
-        ))
-        .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
 
@@ -1335,11 +1356,7 @@ fn register_matmul_promoted_cube_plane() {
 #[test]
 fn cmma_fragment_roundtrip() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no cmma (tensor-core) support".to_string(),
-        ))
-        .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
 
@@ -1417,11 +1434,7 @@ fn cmma_roundtrip<E: Numeric>(
 #[test]
 fn cmma_matmul_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no cmma (tensor-core) support".to_string(),
-        ))
-        .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
 
@@ -1463,9 +1476,7 @@ fn cmma_matmul_8x8x8() {
 #[test]
 fn cmma_matmul_quant_per_tensor_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -1640,11 +1651,7 @@ fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
 
 fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: StageStorage) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no cmma (tensor-core) support".to_string(),
-        ))
-        .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
 
@@ -1782,11 +1789,7 @@ fn mma_matmul_8x8x8() {
 #[test]
 fn cmma_matmul_plane_partitioned_stage() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no cmma (tensor-core) support".to_string(),
-        ))
-        .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
 
@@ -1858,11 +1861,7 @@ fn cmma_matmul_plane_partitioned_stage() {
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no cmma (tensor-core) support".to_string(),
-        ))
-        .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
 
@@ -2091,9 +2090,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
 #[test]
 fn cmma_matmul_quant_block_m_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -2176,9 +2173,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
 #[test]
 fn cmma_matmul_quant_block_k_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -2370,9 +2365,7 @@ fn mma_matmul_quant_until_read() {
 
 fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -2466,9 +2459,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
 #[test]
 fn cmma_matmul_quant_block_m_k_walk() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -2562,9 +2553,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
 #[test]
 fn cmma_matmul_quant_block_k_k_walk() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -2658,9 +2647,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
 #[test]
 fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.cmma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped("backend has no cmma".to_string()))
-            .enforce();
+    if !require_cmma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -3402,3 +3389,4 @@ fn run_register_matmul_quant_rhs(
         .as_test_outcome()
         .enforce()
 }
+
