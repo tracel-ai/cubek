@@ -1,5 +1,7 @@
 //! A memory-free tile source evaluated from logical coordinates.
 
+use core::marker::PhantomData;
+
 use cubecl::prelude::*;
 
 use crate::{Axis, Coords, Fold, FoldExpand, Region, Space};
@@ -44,9 +46,10 @@ impl ProceduralRecipe {
 #[expand(derive(Clone))]
 pub struct ProceduralData<T: Numeric> {
     origin: Coords<u32>,
-    one: T,
     #[cube(comptime)]
     recipe: ProceduralRecipe,
+    #[cube(comptime)]
+    _marker: PhantomData<T>,
 }
 
 #[cube]
@@ -59,8 +62,8 @@ impl<T: Numeric> ProceduralData<T> {
         }
         ProceduralData::<T> {
             origin,
-            one: T::from_int(1),
             recipe,
+            _marker: PhantomData,
         }
     }
 
@@ -74,8 +77,8 @@ impl<T: Numeric> ProceduralData<T> {
         }
         ProceduralData::<T> {
             origin,
-            one: self.one,
             recipe: comptime!(self.recipe.clone()),
+            _marker: PhantomData,
         }
     }
 
@@ -91,14 +94,16 @@ impl<T: Numeric> ProceduralData<T> {
     ) -> T {
         match comptime!(recipe) {
             ProceduralRecipe::Zero => T::from_int(0),
-            ProceduralRecipe::One => self.one,
-            ProceduralRecipe::Uniform { denominator } => self.one / T::from_int(denominator as i64),
+            ProceduralRecipe::One => T::from_int(1),
+            ProceduralRecipe::Uniform { denominator } => {
+                T::from_int(1) / T::from_int(denominator as i64)
+            }
             ProceduralRecipe::AxisIndex { axis } => {
                 let p = comptime!(space.position(axis));
                 T::cast_from(self.origin.at(p) + pos.at(p))
             }
             ProceduralRecipe::AxisProduct(factors) => {
-                let mut value = self.one;
+                let mut value = T::from_int(1);
                 #[allow(clippy::needless_range_loop)]
                 #[unroll]
                 for i in 0..comptime!(factors.len()) {
