@@ -17,7 +17,6 @@ use std::fmt::Display;
 
 use cubecl::{Runtime, features::MmaConfig};
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
-use cubek_tile::Delivery;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -30,6 +29,29 @@ use crate::{
 /// Upper bound on planes along one stage axis; 2×4 or 4×2 tends to saturate without
 /// blowing the cube dim.
 const MAX_PLANES_PER_AXIS: usize = 4;
+
+/// The CMMA routine's launch-time input transport choice. This is deliberately separate from
+/// [`cubek_tile::Delivery`], which describes an already-constructed tile's staging behavior.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CmmaDelivery {
+    #[default]
+    Copy,
+    Tma,
+}
+
+impl CmmaDelivery {
+    pub(crate) fn is_tma(self) -> bool {
+        matches!(self, CmmaDelivery::Tma)
+    }
+
+    fn validate_tma(self, boxes: &[usize], batched: bool) -> Result<(), String> {
+        if self.is_tma() {
+            cubek_tile::Delivery::Tma.validate_tma(boxes, batched)
+        } else {
+            Ok(())
+        }
+    }
+}
 
 /// Tiles per plane along `m`/`n`: the plane's resident fragment partition,
 /// sized so `A`/`B` fragments are reused across executes.
@@ -50,8 +72,8 @@ pub struct CmmaBlueprint {
     /// K-stage depth in elements: a multiple of `instruction.k`, chosen by [`select`]
     /// against the shared-memory budget.
     pub stage_k: usize,
-    /// How the operands' bytes move (the output is always strided).
-    pub delivery: Delivery,
+    /// Launch-time transport for both inputs (the output always uses a regular buffer copy).
+    pub delivery: CmmaDelivery,
 }
 
 impl CmmaBlueprint {
@@ -109,13 +131,13 @@ impl CmmaBlueprint {
 pub struct CmmaStrategy {
     /// How the operands' bytes move (the output is always strided). `Tma` is
     /// `Unavailable` on backends without the feature; it never silently degrades.
-    pub delivery: Delivery,
+    pub delivery: CmmaDelivery,
 }
 
 impl CmmaStrategy {
     pub fn tma() -> Self {
         CmmaStrategy {
-            delivery: Delivery::Tma,
+            delivery: CmmaDelivery::Tma,
         }
     }
 }
@@ -123,8 +145,8 @@ impl CmmaStrategy {
 impl Display for CmmaStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.delivery {
-            Delivery::Strided => Ok(()),
-            Delivery::Tma => f.write_str("_tma"),
+            CmmaDelivery::Copy => Ok(()),
+            CmmaDelivery::Tma => f.write_str("_tma"),
         }
     }
 }
@@ -213,7 +235,7 @@ impl CmmaRoutine {
     fn select<R: Runtime>(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings<R>,
-        delivery: Delivery,
+        delivery: CmmaDelivery,
         acc: ElemType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let client = &device_settings.client;

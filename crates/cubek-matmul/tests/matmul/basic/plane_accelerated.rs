@@ -303,18 +303,18 @@ fn cmma_batched_f32() {
 /// cube-shared smem (every plane contracted plane 0's windows).
 #[test]
 fn cmma_partition_1x1_f32() {
+    use cubek_matmul::routines::cmma::CmmaDelivery;
     use cubek_matmul::routines::{
         cmma::{CmmaBlueprint, Partition},
         cpu_gemm::{Instruction, PlaneGrid},
     };
-    use cubek_tile::Delivery;
 
     let blueprint = CmmaBlueprint {
         instruction: Instruction { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 1 },
         planes: PlaneGrid { m: 2, n: 1 },
         stage_k: 48,
-        delivery: Delivery::Strided,
+        delivery: CmmaDelivery::Copy,
     };
     test_matmul_strategy(
         client(),
@@ -352,12 +352,12 @@ fn cmma_tma_square_f16() {
 #[test]
 fn cmma_tma_rejects_oversized_box() {
     use cubek_matmul::definition::{AvailableVectorSizes, MatmulSetupError};
+    use cubek_matmul::routines::cmma::CmmaDelivery;
     use cubek_matmul::routines::{
         DeviceSettings,
         cmma::{CmmaBlueprint, CmmaRoutine, Partition},
         cpu_gemm::{Instruction, PlaneGrid},
     };
-    use cubek_tile::Delivery;
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.
@@ -370,7 +370,7 @@ fn cmma_tma_rejects_oversized_box() {
         partition: Partition { m: 2, n: 8 },
         planes: PlaneGrid { m: 2, n: 4 },
         stage_k: 16,
-        delivery: Delivery::Tma,
+        delivery: CmmaDelivery::Tma,
     };
     let problem = super::common::rect(64, 1024, 64, f16_elems());
     let device_settings = DeviceSettings {

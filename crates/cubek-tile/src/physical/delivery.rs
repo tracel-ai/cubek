@@ -1,18 +1,18 @@
-//! How an operand's bytes move: the [`Delivery`] (strided cooperative copy or TMA bulk
+//! How an operand's bytes move: the [`Delivery`] (cooperative buffer copy or TMA bulk
 //! copy) and its type-level twin [`DeliveryFamily`], which lets one kernel body serve
 //! both argument types.
 
 use cubecl::prelude::*;
 
-use crate::{Leaf, Space, Tile, TileArg, TmaTileArg};
+use crate::{Leaf, Space, Sync, Tile, TileArg, TmaTileArg};
 
-/// How an operand reaches a stage: a strided cooperative copy, coordinate-backed cooperative
+/// How an operand reaches a stage: a buffered cooperative copy, coordinate-backed cooperative
 /// materialization, or a TMA hardware bulk copy. Read off a tile via
 /// [`delivery`](crate::Tile::delivery); the staging sync comes from it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Delivery {
     #[default]
-    Strided,
+    Copy,
     Procedural,
     Tma,
 }
@@ -24,6 +24,14 @@ const TMA_MAX_BOX_DIM: usize = 256;
 impl Delivery {
     pub fn is_tma(&self) -> bool {
         matches!(self, Delivery::Tma)
+    }
+
+    /// The synchronization required to materialize this source in a staging slot.
+    pub fn rendezvous(&self) -> Sync {
+        match self {
+            Delivery::Copy | Delivery::Procedural => Sync::Cube,
+            Delivery::Tma => Sync::Barrier,
+        }
     }
 
     /// Reject a plan the TMA descriptor path can't encode, so a bad plan fails here as a
@@ -126,7 +134,7 @@ pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E>;
 }
 
-/// [`Delivery::Strided`]'s family: a plain tensor + spec ([`TileArg`]), tiled in-kernel
+/// [`Delivery::Copy`]'s family: a plain tensor + spec ([`TileArg`]), tiled in-kernel
 /// by [`Tile::of`].
 pub struct Strided;
 

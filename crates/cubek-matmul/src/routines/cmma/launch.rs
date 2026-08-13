@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Delivery, Launcher, Leaf, Schedule, Space, Strided, Tiling, Tma,
-    TmaTileArgLaunch, WalkOrder,
+    Axis, CubeAxis, Cut, Launcher, Leaf, Schedule, Space, Strided, Tiling, Tma, TmaTileArgLaunch,
+    WalkOrder,
 };
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
     routines::{
         BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
         cmma::{
-            base::{CmmaBlueprint, CmmaRoutine},
+            base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
             kernel::cmma_kernel,
         },
     },
@@ -183,7 +183,7 @@ fn tile_space(
 
 /// The one entry for both deliveries: the shared geometry (space, launcher, out arg) is
 /// built once, and only the operand construction dispatches on the blueprint's
-/// [`Delivery`]. A TMA plan is fully validated by then, so on CUDA it runs or fails to
+/// [`CmmaDelivery`]. A TMA plan is fully validated by then, so on CUDA it runs or fails to
 /// compile, never silently degrades.
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
@@ -217,7 +217,7 @@ pub fn launch_ref<R: Runtime>(
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
     // Either path runs the same kernel body and never branches on the delivery again.
     match blueprint.delivery {
-        Delivery::Strided => launch_strided::<R>(
+        CmmaDelivery::Copy => launch_strided::<R>(
             client,
             &launch,
             cube_count,
@@ -229,7 +229,7 @@ pub fn launch_ref<R: Runtime>(
             dtypes,
             leaf,
         ),
-        Delivery::Tma => launch_tma::<R>(
+        CmmaDelivery::Tma => launch_tma::<R>(
             client,
             &launch,
             cube_count,
