@@ -208,6 +208,21 @@ fn bound_states(projection: &Projection, axis: Axis) -> Option<usize> {
     }
 }
 
+/// Resolve an in-place source for the consumer leaf. Only scalar/manual readers can evaluate a
+/// recipe directly; opaque fragment transports first require a shared-memory stage.
+fn in_place_operand_stage(leaf: Leaf) -> OperandStage {
+    match leaf {
+        Leaf::Memory => OperandStage::InPlace,
+        Leaf::Mma { io }
+            if matches!(io.lhs_load_method, LoadMethod::Manual)
+                && matches!(io.rhs_load_method, LoadMethod::Manual) =>
+        {
+            OperandStage::InPlace
+        }
+        Leaf::Cmma | Leaf::Mma { .. } => OperandStage::Smem,
+    }
+}
+
 /// The physical dim in this tile's window bounds that `axis`'s runtime extent is read off. A
 /// direct operand maps each axis 1:1; anything else has to be answered by an operand of the same
 /// operation that does ([`Tile::witnesses`]).
@@ -295,12 +310,9 @@ impl<T: Numeric> Tile<T> {
     pub fn operand_stage(&self, #[comptime] out: &Space) -> comptime_type!(OperandStage) {
         let requested = comptime!(out.operand_stage(self.leaf));
         let plan = self.stage();
-        match comptime!(plan.materialization) {
-            Materialization::InPlace => match comptime!(self.leaf) {
-                Leaf::Cmma => OperandStage::Smem,
-                Leaf::Memory | Leaf::Mma { .. } => OperandStage::InPlace,
-            },
-            Materialization::Materialize => requested,
+        match comptime!(plan.residence) {
+            Residence::InPlace => comptime!(in_place_operand_stage(self.leaf)),
+            Residence::Materialized => requested,
         }
     }
 
@@ -621,9 +633,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's
-    /// transport leaf. A partition source is matched first: it needs the whole
-    /// destination tile, which the pairing match below would keep borrowed.
+    /// Transfer `src` into `self`, or rebind an in-place procedural payload to `src`'s current
+    /// region. Each physical pairing dispatches to its transport leaf; procedural-to-procedural
+    /// is metadata-only and copies no values. A partition source is matched first because it
+    /// needs the whole destination tile, which the pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
         // Bound before the match, which borrows the kind: a memory fill needs the logical space
         // both sides carry (a gathered source is addressed per axis).

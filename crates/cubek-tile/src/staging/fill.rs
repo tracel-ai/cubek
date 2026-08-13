@@ -12,23 +12,15 @@ use cubecl::unexpanded;
 
 use crate::*;
 
-/// The slot-wide rendezvous derived only from operands that physically materialize.
-#[derive(Clone, Copy)]
-struct SlotPlan {
-    sync: Sync,
-    collective_full: bool,
-}
-
-fn slot_plan(deliveries: &[Delivery]) -> SlotPlan {
+/// The slot-wide sync and whether all units publish its full barrier, derived only from operands
+/// that physically materialize.
+fn slot_plan(deliveries: &[Delivery]) -> (Sync, bool) {
     let sync = if deliveries.is_empty() {
         Sync::Solo
     } else {
         Sync::for_deliveries(deliveries)
     };
-    SlotPlan {
-        sync,
-        collective_full: Sync::collective_full(deliveries),
-    }
+    (sync, Sync::collective_full(deliveries))
 }
 
 fn rendezvous_deliveries(stages: &[OperandStage], deliveries: &[Delivery]) -> Vec<Delivery> {
@@ -96,14 +88,14 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             &[lhs_stage, rhs_stage],
             &[lhs_delivery, rhs_delivery],
         ));
-        let plan = comptime!(slot_plan(&materialized));
+        let (sync, collective_full) = comptime!(slot_plan(&materialized));
         let stages = (
             stage_operand(lhs, comptime!(out.clone()), lhs_stage),
             stage_operand(rhs, comptime!(out.clone()), rhs_stage),
         );
         Staging::wrap(
             stages,
-            Pipeline::new(comptime!(plan.sync), comptime!(plan.collective_full)),
+            Pipeline::new(sync, collective_full),
             pin_lhs,
             pin_rhs,
             lhs_stage,
@@ -228,11 +220,11 @@ impl<T: Numeric> Staging<Tile<T>> {
         let pin = comptime!(split && op_space.walk_invariant(&input.space));
         let stage = input.operand_stage(comptime!(&out));
         let materialized = comptime!(rendezvous_deliveries(&[stage], &[delivery]));
-        let plan = comptime!(slot_plan(&materialized));
+        let (sync, collective_full) = comptime!(slot_plan(&materialized));
         let staged_input = stage_operand(input, comptime!(out.clone()), stage);
         Staging::wrap(
             staged_input,
-            Pipeline::new(comptime!(plan.sync), comptime!(plan.collective_full)),
+            Pipeline::new(sync, collective_full),
             pin,
             false,
             stage,
@@ -377,7 +369,7 @@ mod tests {
             &[Delivery::Procedural, Delivery::Copy],
         );
         assert_eq!(deliveries, vec![Delivery::Copy]);
-        assert_eq!(slot_plan(&deliveries).sync, Sync::Cube);
+        assert_eq!(slot_plan(&deliveries).0, Sync::Cube);
     }
 
     #[test]

@@ -102,7 +102,7 @@ impl Pipeline {
 
     /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
     /// stages under its `full` mbarrier; a `Cube` slot is a plain blocking
-    /// [`copy_from`](Tile::copy_from).
+    /// [`copy_from`](Tile::copy_from), which also handles an in-place procedural rebind.
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind: the fill needs the logical space both
         // sides carry (a gathered source is addressed per axis).

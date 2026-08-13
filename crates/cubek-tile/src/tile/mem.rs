@@ -258,11 +258,10 @@ impl<T: Numeric> Tile<T> {
             coords.dynamic_offset_count()
         ));
         // Stage layout: the explicit override, else derived from the operand's leaf.
-        let stage = comptime!(StagePlan {
-            layout: spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
-            materialization: Materialization::Materialize,
-            units: spec.units,
-        });
+        let stage = comptime!(StagePlan::materialized(
+            spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
+            spec.units,
+        ));
         // The binding type's own width, comptime; a packed store serves `pack` values per
         // stored element.
         let bound_width = tensor.vector_size();
@@ -382,9 +381,10 @@ pub(crate) struct StageMeta {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// Cooperatively materialize a coordinate-backed source into this plain, direct memory tile.
-    /// This is the one bridge from a procedural source to ordinary tile consumers: once staged,
-    /// all later reads use the normal memory views and leaves.
+    /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
+    /// tile. The caller must own the destination window for the whole cube: workers write cyclic
+    /// positions across it. Staged shared-memory buffers meet that contract; a global destination
+    /// must be the cube's exclusive output window.
     pub(crate) fn fill_procedural(&mut self, src: &ProceduralData<T>, #[comptime] space: Space) {
         comptime!(assert!(
             self.store.quant.is_none()
@@ -423,7 +423,10 @@ impl<T: Numeric> MemData<T> {
                 let leaf = comptime!(operand.leaf);
                 let vector_size = operand.vector_size();
                 let source_stage = operand.stage();
-                let stage = comptime!(source_stage.materialized());
+                let stage = comptime!(StagePlan::materialized(
+                    source_stage.layout(),
+                    source_stage.units,
+                ));
 
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, leaf, vector_size, stage)
@@ -453,7 +456,10 @@ impl<T: Numeric> MemData<T> {
         let leaf = comptime!(operand.leaf);
         let vector_size = operand.vector_size();
         let source_stage = operand.stage();
-        let stage = comptime!(source_stage.materialized());
+        let stage = comptime!(StagePlan::materialized(
+            source_stage.layout(),
+            source_stage.units,
+        ));
         match &operand.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]
@@ -512,7 +518,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
+        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout()));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
@@ -543,7 +549,7 @@ impl<T: Numeric> MemData<T> {
         let form = comptime!(StageForm::gathered(
             &space,
             vector_size,
-            stage.layout,
+            stage.layout(),
             &projection
         ));
         let stage_map = RuntimeMap {
@@ -591,7 +597,7 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
         // the layout and window below are the same grid either way.
-        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
+        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout()));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));

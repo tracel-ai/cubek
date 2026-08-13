@@ -67,13 +67,12 @@ pub enum StageStorage {
     Strided,
 }
 
-/// Whether an operand participates in a staged level's physical fill. This is a property of the
-/// operand plan, not of the slot: an in-place source is rebound to the current region but allocates
-/// no plane/shared-memory backing and contributes no rendezvous requirement.
+/// Whether an operand prefers to stay in place or take materialized backing. This is the source
+/// request; [`OperandStage`] is the resolved backing a particular consumer actually uses.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Materialization {
+pub enum Residence {
     InPlace,
-    Materialize,
+    Materialized,
 }
 
 impl StageStorage {
@@ -94,8 +93,8 @@ impl StageStorage {
 /// re-derives either.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StagePlan {
-    pub layout: StageStorage,
-    pub materialization: Materialization,
+    layout: Option<StageStorage>,
+    pub residence: Residence,
     /// The launch's cube size (units per cube), `0` when unknown. A comptime worker count
     /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
     /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
@@ -106,36 +105,36 @@ impl StagePlan {
     /// The default layout for an operand that becomes `leaf` (tiled for cmma, else strided) with
     /// an unknown worker count. A [`Launcher`](crate::Launcher) stamps `units` on top.
     pub fn for_leaf(leaf: Leaf) -> Self {
-        StagePlan {
-            layout: StageStorage::for_leaf(leaf),
-            materialization: Materialization::Materialize,
-            units: 0,
-        }
+        StagePlan::materialized(StageStorage::for_leaf(leaf), 0)
     }
 
     /// A plain strided stage with an unknown worker count.
     pub fn strided() -> Self {
-        StagePlan {
-            layout: StageStorage::Strided,
-            materialization: Materialization::Materialize,
-            units: 0,
-        }
+        StagePlan::materialized(StageStorage::Strided, 0)
     }
 
     /// A memory-free source evaluated directly by a compatible leaf.
     pub fn in_place() -> Self {
         StagePlan {
-            layout: StageStorage::Strided,
-            materialization: Materialization::InPlace,
+            layout: None,
+            residence: Residence::InPlace,
             units: 0,
         }
     }
 
-    /// The plan carried by a physical stage derived from this operand. Layout and worker count
-    /// survive, but the resulting memory tile participates in later staged levels normally.
-    pub fn materialized(mut self) -> Self {
-        self.materialization = Materialization::Materialize;
-        self
+    /// A physical stage's layout and launch worker count.
+    pub fn materialized(layout: StageStorage, units: usize) -> Self {
+        StagePlan {
+            layout: Some(layout),
+            residence: Residence::Materialized,
+            units,
+        }
+    }
+
+    /// The layout of a physical stage. In-place sources have no backing and therefore no layout.
+    pub fn layout(self) -> StageStorage {
+        self.layout
+            .expect("StagePlan::layout: an in-place source has no stage layout")
     }
 }
 
