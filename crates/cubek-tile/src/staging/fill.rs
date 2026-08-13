@@ -22,20 +22,6 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         #[comptime] op_space: Space,
         #[comptime] out: Space,
     ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-        // Staging copies an operand into a buffer shaped like its sub-tile. For a gathered operand
-        // that is the *physical window* the sub-tile reads, compacted ([`Compaction`]), not its
-        // logical box: several logical cells of a gather read the same physical one, so a logical
-        // stage would replicate elements by roughly the tap count. The stage therefore keeps the
-        // operand's own projection, and the gather stays where it already was, at the leaf's read
-        // ([`MemData::smem_gathered`]).
-        //
-        // What a gathered stage does cost is gmem traffic: sibling windows overlap, so consecutive
-        // regions re-read the halo between them. And the window is only smaller than the logical
-        // box when the taps outrun the stride; past that it is padding the fill still reads
-        // ([`Compaction`]).
-        let lhs_gathered = lhs.gathered();
-        let rhs_gathered = rhs.gathered();
-        let gathered = comptime!(lhs_gathered || rhs_gathered);
         let lhs_delivery = lhs.delivery();
         let rhs_delivery = rhs.delivery();
         // Pin an operand only when its window is genuinely fixed across the walk. A barrier
@@ -46,45 +32,18 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
         let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
-        // How the operands stage follows from what they become; they agree or meet the
-        // kind-pairing panics at the instruction.
+        // Both operands use the output leaf's staging kind. The helper preserves each tile's
+        // own projection and rejects unsupported Plane/TMA/gather combinations.
         let stage = comptime!(out.operand_stage(lhs.leaf));
-        match comptime!(stage) {
-            OperandStage::Plane => {
-                comptime!(assert!(
-                    !lhs_delivery.is_tma() && !rhs_delivery.is_tma(),
-                    "Staging: a TMA source cannot stage into plane tiles"
-                ));
-                // A fragment fill reads its source as a 2-D window, which a gathered operand has
-                // no equivalent of. `OperandStage::Smem` stages the physical window instead and
-                // leaves the gather to the leaf's read; a cmma leaf (`OperandStage::Plane`) has no
-                // such path, so a gathered operand cannot feed one today.
-                comptime!(assert!(
-                    !gathered,
-                    "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane); \
-                     only OperandStage::Smem stages one, as the compacted window its leaf reads"
-                ));
-                // Each operand's fragment encoding is its own; `out` only names the contracted axis.
-                let a = PlanePartition::store(
-                    comptime!(lhs.space.divide()),
-                    comptime!(lhs.leaf),
-                    comptime!(out.clone()),
-                );
-                let b = PlanePartition::store(
-                    comptime!(rhs.space.divide()),
-                    comptime!(rhs.leaf),
-                    comptime!(out.clone()),
-                );
-                Staging::wrap((a, b), Pipeline::new(Sync::Solo), pin_lhs, pin_rhs, stage)
-            }
-            OperandStage::Smem => {
-                let sync = comptime!(Sync::merge(lhs_delivery, rhs_delivery));
-                // Each operand carries how far its quantized form travels, so staging it asks
-                // nothing: `smem_like` allocates the element that operand needs staged.
-                let stages = (MemData::smem_like(lhs), MemData::smem_like(rhs));
-                Staging::wrap(stages, Pipeline::new(sync), pin_lhs, pin_rhs, stage)
-            }
-        }
+        let stages = (
+            stage_operand(lhs, comptime!(out.clone()), stage),
+            stage_operand(rhs, comptime!(out.clone()), stage),
+        );
+        let sync = match comptime!(stage) {
+            OperandStage::Plane => comptime!(Sync::Solo),
+            OperandStage::Smem => comptime!(Sync::merge(lhs_delivery, rhs_delivery)),
+        };
+        Staging::wrap(stages, Pipeline::new(sync), pin_lhs, pin_rhs, stage)
     }
 
     /// Fill the pinned operand(s), those the walk leaves invariant, from `region`'s window.
@@ -182,10 +141,6 @@ impl<T: Numeric> Staging<Tile<T>> {
         #[comptime] op_space: Space,
         #[comptime] out: Space,
     ) -> Staging<Tile<T>> {
-        // See `Staging::<(Tile, Tile)>::new` for the rationale: the stage keeps the operand's own
-        // projection (the physical window a gather reads, compacted), and a gathered operand's
-        // extra gmem traffic (overlapping sibling windows) is the cost of that choice.
-        let gathered = input.gathered();
         let delivery = input.delivery();
         // Pin only when the window is genuinely fixed across the walk: a TMA pair keeps the joint
         // per-region fill (its barrier pipeline arrives `full` once per fill), and a dynamic level
@@ -193,32 +148,12 @@ impl<T: Numeric> Staging<Tile<T>> {
         let split = comptime!(op_space.is_static() && !delivery.is_tma());
         let pin = comptime!(split && op_space.walk_invariant(&input.space));
         let stage = comptime!(out.operand_stage(input.leaf));
-        match comptime!(stage) {
-            OperandStage::Plane => {
-                comptime!(assert!(
-                    !delivery.is_tma(),
-                    "Staging: a TMA source cannot stage into plane tiles"
-                ));
-                // A fragment fill reads its source as a 2-D window, which a gathered operand has no
-                // equivalent of; only `OperandStage::Smem` stages the compacted window and leaves
-                // the gather to the leaf's read.
-                comptime!(assert!(
-                    !gathered,
-                    "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane)"
-                ));
-                let a = PlanePartition::store(
-                    comptime!(input.space.divide()),
-                    comptime!(input.leaf),
-                    comptime!(out.clone()),
-                );
-                Staging::wrap(a, Pipeline::new(Sync::Solo), pin, false, stage)
-            }
-            OperandStage::Smem => {
-                let sync = comptime!(Sync::from(delivery));
-                let stage_tile = MemData::smem_like(input);
-                Staging::wrap(stage_tile, Pipeline::new(sync), pin, false, stage)
-            }
-        }
+        let staged_input = stage_operand(input, comptime!(out.clone()), stage);
+        let sync = match comptime!(stage) {
+            OperandStage::Plane => comptime!(Sync::Solo),
+            OperandStage::Smem => comptime!(Sync::from(delivery)),
+        };
+        Staging::wrap(staged_input, Pipeline::new(sync), pin, false, stage)
     }
 
     /// Fill the pinned operand from `region`'s window.
@@ -293,5 +228,36 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
     {
         self.__expand_publish_method(scope);
         self.__expand_consume_method(scope, compute);
+    }
+}
+
+/// Allocate one staged operand for `stage`. A gathered operand keeps its compacted physical
+/// window and projection; the leaf still performs the gather when it reads the staged tile.
+#[cube]
+fn stage_operand<T: Numeric>(
+    input: &Tile<T>,
+    #[comptime] out: Space,
+    #[comptime] stage: OperandStage,
+) -> Tile<T> {
+    let gathered = input.gathered();
+    let delivery = input.delivery();
+    match comptime!(stage) {
+        OperandStage::Plane => {
+            comptime!(assert!(
+                !delivery.is_tma(),
+                "Staging: a TMA source cannot stage into plane tiles"
+            ));
+            comptime!(assert!(
+                !gathered,
+                "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane); \\
+                 only OperandStage::Smem stages one, as the compacted window its leaf reads"
+            ));
+            PlanePartition::store(
+                comptime!(input.space.divide()),
+                comptime!(input.leaf),
+                comptime!(out.clone()),
+            )
+        }
+        OperandStage::Smem => MemData::smem_like(input),
     }
 }
