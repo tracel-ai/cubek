@@ -8,7 +8,7 @@ const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
 
 #[cube(launch)]
-fn procedural_kernel<E: Numeric>(
+fn procedural_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[comptime] recipe: ProceduralRecipe,
@@ -25,6 +25,20 @@ fn procedural_kernel<E: Numeric>(
 
     let mut output = output.tile(space);
     output.init(source.procedural_value(pos));
+}
+
+/// Exercise the normal tile-copy path: the procedural source is materialized by the same
+/// `copy_from` transport staging uses, rather than being read through its bespoke accessor.
+#[cube(launch)]
+fn procedural_copy_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] recipe: ProceduralRecipe,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let mut output = output.tile(space);
+    output.copy_from(&source);
 }
 
 fn run(recipe: ProceduralRecipe) -> HostData {
@@ -59,6 +73,38 @@ fn run(recipe: ProceduralRecipe) -> HostData {
     HostData::from_tensor_handle(&client, output, HostDataType::F32)
 }
 
+fn run_copy(recipe: ProceduralRecipe) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let space = Tiling::new()
+        .extents(&[(ROW, 4), (COL, 6)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |level| {
+            level
+                .axis(ROW, Cut::sequential(2))
+                .axis(COL, Cut::sequential(3))
+        })
+        .build();
+    let output = TestInput::builder(client.clone(), shape![4, 6])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    procedural_copy_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        recipe,
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, output, HostDataType::F32)
+}
+
 #[test]
 fn evaluates_separable_axis_products_after_region_rebase() {
     // The selected region begins at (2, 3), so AxisIndex(ROW) * AxisIndex(COL) is 6.
@@ -69,6 +115,19 @@ fn evaluates_separable_axis_products_after_region_rebase() {
     for row in 0..4 {
         for col in 0..6 {
             assert_eq!(got.get_f32(&[row, col]), 6.0);
+        }
+    }
+}
+
+#[test]
+fn copies_coordinate_varying_values_through_the_tile_transport() {
+    let got = run_copy(ProceduralRecipe::axis_product(vec![
+        ProceduralRecipe::axis_index(ROW),
+        ProceduralRecipe::axis_index(COL),
+    ]));
+    for row in 0..4 {
+        for col in 0..6 {
+            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
         }
     }
 }

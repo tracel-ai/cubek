@@ -222,8 +222,12 @@ fn bound_position(projection: &Projection, axis: Axis) -> usize {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Create a scalar, memory-free tile over a static logical space.
-    pub fn procedural(#[comptime] space: Space, #[comptime] recipe: ProceduralRecipe) -> Self {
+    /// Create a scalar, memory-free tile over a logical space. Dynamic extents are supplied by
+    /// another operand when an operation is walked; a procedural tile never witnesses them.
+    pub fn procedural(#[comptime] space: Space, #[comptime] recipe: ProceduralRecipe) -> Self
+    where
+        T: Float,
+    {
         Tile::<T> {
             tile_kind: TileKind::new_Procedural(ProceduralData::<T>::new(
                 comptime!(space.clone()),
@@ -254,7 +258,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(Delivery::Strided),
-            TileKind::Procedural(_) => panic!("Tile::delivery: a procedural tile has no transport"),
+            // A procedural source is synchronously materialized into its stage.
+            TileKind::Procedural(_) => comptime!(Delivery::Strided),
         }
     }
 
@@ -278,7 +283,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 comptime!(StagePlan::strided())
             }
-            TileKind::Procedural(_) => panic!("Tile::stage: a procedural tile cannot be staged"),
+            TileKind::Procedural(_) => comptime!(StagePlan::strided()),
         }
     }
 
@@ -613,6 +618,9 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
                     d.fill_from(s, space)
+                }
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Procedural(s)) => {
+                    d.fill_procedural(s, space)
                 }
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
