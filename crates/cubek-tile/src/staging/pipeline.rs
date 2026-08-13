@@ -22,25 +22,26 @@ pub enum Sync {
     Barrier,
 }
 
-/// Deduce the strategy from the operand's [`Delivery`]: async (TMA) → `Barrier`,
-/// strided → `Cube`.
-impl From<Delivery> for Sync {
-    fn from(delivery: Delivery) -> Sync {
-        match delivery {
-            Delivery::Strided => Sync::Cube,
-            Delivery::Tma => Sync::Barrier,
-        }
-    }
-}
-
 impl Sync {
-    /// The strategy two operands share. A mix is rejected.
-    pub fn merge(lhs: Delivery, rhs: Delivery) -> Sync {
-        assert_eq!(
-            lhs, rhs,
-            "Staging: mixed delivery; all operands must be TMA sources or none"
+    /// Resolve one slot's synchronization from all of its source deliveries. Strided copies and
+    /// procedural materialization are cooperative, so they share [`Cube`](Self::Cube). A slot
+    /// containing only TMA sources uses [`Barrier`](Self::Barrier). TMA cannot yet share a slot
+    /// with a synchronous source: publishing its barrier would need another cube rendezvous.
+    pub fn for_deliveries(deliveries: &[Delivery]) -> Sync {
+        assert!(
+            !deliveries.is_empty(),
+            "Staging: a slot must have at least one delivery"
         );
-        Sync::from(lhs)
+        let has_tma = deliveries.contains(&Delivery::Tma);
+        if has_tma {
+            assert!(
+                deliveries.iter().all(|delivery| *delivery == Delivery::Tma),
+                "Staging: a TMA source cannot share a slot with a synchronous strided or procedural source"
+            );
+            Sync::Barrier
+        } else {
+            Sync::Cube
+        }
     }
 }
 
@@ -104,10 +105,28 @@ impl Pipeline {
                 }
                 // A strided source under a barrier is a plain synchronous copy.
                 (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s, space),
-                (TileKind::Smem(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Pipeline::fill: unsupported kind pairing"),
             },
             Pipeline::Cube | Pipeline::Solo => dst.copy_from(src),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn procedural_and_strided_share_a_cube_pipeline() {
+        assert_eq!(
+            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Strided]),
+            Sync::Cube
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "TMA source cannot share a slot")]
+    fn procedural_and_tma_are_explicitly_rejected() {
+        Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma]);
     }
 }

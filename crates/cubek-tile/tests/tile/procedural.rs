@@ -27,18 +27,25 @@ fn procedural_kernel<E: Float>(
     output.init(source.procedural_value(pos));
 }
 
-/// Exercise the normal tile-copy path: the procedural source is materialized by the same
-/// `copy_from` transport staging uses, rather than being read through its bespoke accessor.
+/// Exercise the staging path: the procedural source is cooperatively materialized into smem
+/// before the normal memory-to-memory copy reaches the output.
 #[cube(launch)]
-fn procedural_copy_kernel<E: Float>(
+fn procedural_stage_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[comptime] recipe: ProceduralRecipe,
     #[define(E)] _dtype: ElemType,
 ) {
     let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
-    let mut output = output.tile(space);
-    output.copy_from(&source);
+    let output = output.tile(comptime!(space.clone()));
+    let mut staging = Staging::single(&source, comptime!(space.clone()), comptime!(space.clone()));
+    let walk = Walk::over(source.runtime_space());
+    for region in walk {
+        staging.fill_streamed(&source, &region);
+        staging.consume_final(|staged| {
+            output.at(&region).copy_from(staged);
+        });
+    }
 }
 
 fn run(recipe: ProceduralRecipe) -> HostData {
@@ -89,7 +96,7 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    procedural_copy_kernel::launch::<TestRuntime>(
+    procedural_stage_kernel::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -120,7 +127,7 @@ fn evaluates_separable_axis_products_after_region_rebase() {
 }
 
 #[test]
-fn copies_coordinate_varying_values_through_the_tile_transport() {
+fn stages_coordinate_varying_values_through_shared_memory() {
     let got = run_copy(ProceduralRecipe::axis_product(vec![
         ProceduralRecipe::axis_index(ROW),
         ProceduralRecipe::axis_index(COL),

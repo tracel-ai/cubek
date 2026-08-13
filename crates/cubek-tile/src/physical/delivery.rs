@@ -6,13 +6,14 @@ use cubecl::prelude::*;
 
 use crate::{Leaf, Space, Tile, TileArg, TmaTileArg};
 
-/// How an operand's bytes move out of it: a strided cooperative copy or a TMA hardware
-/// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
-/// comes from it.
+/// How an operand reaches a stage: a strided cooperative copy, coordinate-backed cooperative
+/// materialization, or a TMA hardware bulk copy. Read off a tile via
+/// [`delivery`](crate::Tile::delivery); the staging sync comes from it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Delivery {
     #[default]
     Strided,
+    Procedural,
     Tma,
 }
 
@@ -114,7 +115,7 @@ impl Default for StagePlan {
 /// pair with another operand's spec; only the kernel's one [`Space`] crosses the seam. A
 /// kernel body written over `D: DeliveryFamily` runs strided or TMA unchanged; the launch
 /// entry picks the family. One family covers both operands, since
-/// [`Sync::merge`](crate::Sync::merge) rejects a mixed pair anyway.
+/// [`Sync::for_deliveries`](crate::Sync::for_deliveries) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.

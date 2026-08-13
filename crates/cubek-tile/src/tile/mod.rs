@@ -258,8 +258,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(Delivery::Strided),
-            // A procedural source is synchronously materialized into its stage.
-            TileKind::Procedural(_) => comptime!(Delivery::Strided),
+            // A procedural source is cooperatively materialized into its stage.
+            TileKind::Procedural(_) => comptime!(Delivery::Procedural),
         }
     }
 
@@ -619,9 +619,7 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
                     d.fill_from(s, space)
                 }
-                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Procedural(s)) => {
-                    d.fill_procedural(s, space)
-                }
+                (TileKind::Smem(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
                 }
