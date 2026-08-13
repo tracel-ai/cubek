@@ -76,7 +76,7 @@ impl<Acc: Numeric> Tile<Acc> {
         };
         for region in walk {
             staging.fill_streamed(input, &region);
-            staging.consume_final(input, &region, |a| {
+            staging.consume_final(|a| {
                 self.at(&region).reduce_axis(a, inst);
             });
         }
@@ -92,12 +92,12 @@ impl<Acc: Numeric> Tile<Acc> {
     ) {
         // Double-buffering fills the operand every region (see the raw `fill`s below), so the
         // pin flag goes unread; pass the operation space only to satisfy `single`.
-        let mut s0 = Staging::single(
+        let mut even_slot = Staging::single(
             input,
             comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
-        let mut s1 = Staging::single(
+        let mut odd_slot = Staging::single(
             input,
             comptime!(op_space.clone()),
             comptime!(self.space.clone()),
@@ -108,50 +108,50 @@ impl<Acc: Numeric> Tile<Acc> {
         let walk = Walk::over(op_space);
         let n = walk.total();
 
-        // prologue: prime slot 0 with region 0.
+        // Prologue: prime the even slot with region 0.
         let first = walk.region(0);
-        s0.fill(|s, pipe| {
-            pipe.fill(s, &input.at(&first));
+        even_slot.fill(|staged_input, pipe| {
+            pipe.fill(staged_input, &input.at(&first));
         });
 
         for p in 0..n / 2 {
             let even = p * 2;
             let odd = even + 1;
 
-            // prefetch the odd region into slot 1 (its fill overlaps the compute below), then
-            // compute the even region on slot 0.
+            // Prefetch the odd region into its slot (its fill overlaps the compute below), then
+            // compute the even region from the even slot.
             let odd_region = walk.region(odd);
-            s1.fill(|s, pipe| {
-                pipe.fill(s, &input.at(&odd_region));
+            odd_slot.fill(|staged_input, pipe| {
+                pipe.fill(staged_input, &input.at(&odd_region));
             });
             let even_region = walk.region(even);
-            s0.consume(input, &even_region, |a| {
+            even_slot.consume(|a| {
                 self.at(&even_region).reduce_axis(a, inst);
             });
 
-            // prefetch the next even region back into slot 0 (if it exists), then compute
-            // the odd region on slot 1; on the walk's final region no fill follows, so
-            // `consume_final` publishes slot 1 itself.
+            // Prefetch the next even region back into the even slot (if it exists), then compute
+            // the odd region from the odd slot; on the walk's final region no fill follows, so
+            // `consume_final` publishes the odd slot itself.
             if odd + 1 < n {
                 let next_even = walk.region(odd + 1);
-                s0.fill(|s, pipe| {
-                    pipe.fill(s, &input.at(&next_even));
+                even_slot.fill(|staged_input, pipe| {
+                    pipe.fill(staged_input, &input.at(&next_even));
                 });
-                s1.consume(input, &odd_region, |a| {
+                odd_slot.consume(|a| {
                     self.at(&odd_region).reduce_axis(a, inst);
                 });
             } else {
-                s1.consume_final(input, &odd_region, |a| {
+                odd_slot.consume_final(|a| {
                     self.at(&odd_region).reduce_axis(a, inst);
                 });
             }
         }
 
-        // An odd total leaves the last region primed in slot 0 with no consumer in the
+        // An odd total leaves the last region primed in the even slot with no consumer in the
         // loop; no fill follows, so `consume_final` publishes it.
         if n % 2 == 1 {
             let last = walk.region(n - 1);
-            s0.consume_final(input, &last, |a| {
+            even_slot.consume_final(|a| {
                 self.at(&last).reduce_axis(a, inst);
             });
         }
