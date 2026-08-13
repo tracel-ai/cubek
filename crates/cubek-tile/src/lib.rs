@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod fold;
+pub mod instruction;
 mod mma_config;
 mod ops;
 mod physical;

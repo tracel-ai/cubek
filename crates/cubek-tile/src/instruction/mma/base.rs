@@ -11,7 +11,7 @@ use crate::*;
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
 /// storage config
 #[cube]
-pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
+pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
@@ -43,7 +43,7 @@ pub(crate) fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
     /// Contract this plane tile.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+    pub fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,

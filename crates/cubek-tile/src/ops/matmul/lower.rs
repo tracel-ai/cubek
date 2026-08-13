@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use super::instruction::mma_leaf;
+use crate::instruction::mma::mma_leaf;
 use crate::*;
 
 #[cube]

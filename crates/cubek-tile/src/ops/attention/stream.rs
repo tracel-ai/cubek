@@ -11,8 +11,7 @@
 
 use cubecl::prelude::*;
 
-use super::columns::hsum;
-use crate::*;
+use crate::{instruction::sum, *};
 
 /// One plane's share of the streamed fold.
 ///
@@ -140,7 +139,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                     let kv = Vector::<EA, N>::cast_from(kf[s * lines + li]);
                     #[unroll]
                     for g in 0..rows {
-                        partial[g] += hsum(self.q[g * per_lane + p] * kv, w);
+                        partial[g] += sum::vector::<EA, N>(self.q[g * per_lane + p] * kv, w);
                     }
                 }
             }
@@ -149,13 +148,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             let mut weights = Array::<EA>::new(rows);
             #[unroll]
             for g in 0..rows {
-                // A one-lane plane's partial is the whole dot; the CPU
-                // backend has no plane ops, so the comptime branch keeps
-                // them out of its kernels entirely.
-                let mut dot = partial[g];
-                if comptime!(lanes > 1) {
-                    dot = plane_sum(partial[g]);
-                }
+                let dot = sum::plane::<EA>(partial[g], lanes);
                 let score = dot * scale;
                 let rescale = self.state.absorb(g, score);
                 corrections[g] = rescale.correction;

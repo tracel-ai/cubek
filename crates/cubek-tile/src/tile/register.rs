@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use crate::*;
+use crate::{instruction::sum, *};
 
 // The block's line width, as a scope-registered size rather than a generic. `RA` names the
 // vector element `data` is allocated at; `alloc` binds it to the promoting tile's width with
@@ -143,7 +143,7 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = fold_group::<T, RA>(
+                        let combined = sum::group::<T, RA>(
                             self.data[comptime!(i * self.nr + n)],
                             comptime!(fold_mask),
                         );

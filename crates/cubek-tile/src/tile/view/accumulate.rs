@@ -1,6 +1,6 @@
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
-use crate::*;
+use crate::{instruction::sum, *};
 
 /// The view a register block accumulates through: [`seed`](AccumulateView::seed) it, contract into
 /// it, [`commit`](AccumulateView::commit) it back. The write-side mirror of a
@@ -50,7 +50,7 @@ impl<'a, E: Numeric, V: Size> AccumulateView<'a, E, V> {
                 }
             }
             LaneShare::Group { fold_mask } => {
-                let combined = fold_group::<E, V>(value, fold_mask);
+                let combined = sum::group::<E, V>(value, fold_mask);
                 let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                 if lane_in_group == 0 {
                     self.values.write(pos, self.values.read(pos) + combined);

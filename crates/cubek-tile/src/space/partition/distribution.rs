@@ -37,28 +37,6 @@ pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare 
     }
 }
 
-/// Combine a lane group's partials, leaving every lane of the group holding the group's total.
-///
-/// One butterfly step per bit of `fold_mask`. A cell's partials sit on the lanes that agree
-/// outside the mask and differ inside it, so an xor by a single mask bit stays within the group
-/// — every group folds at once, each over its own cell, with no guard and no branch.
-/// [`LaneShare::Plane`] is this same fold across every bit, and takes the hardware's reduction
-/// instead.
-#[cube]
-pub(crate) fn fold_group<E: Numeric, V: Size>(
-    value: Vector<E, V>,
-    #[comptime] fold_mask: usize,
-) -> Vector<E, V> {
-    let mut total = value;
-    #[unroll]
-    for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
-        if comptime!(fold_mask & (1 << bit) != 0) {
-            total = total + plane_shuffle_xor(total, comptime!(1u32 << bit));
-        }
-    }
-    total
-}
-
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
 /// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

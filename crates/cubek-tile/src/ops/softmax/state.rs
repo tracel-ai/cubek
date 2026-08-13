@@ -82,11 +82,10 @@ impl<E: Float> RowState<E> {
     /// makes the first real score overwrite the state cleanly, and a row
     /// that never absorbs keeps `l = 0` for the epilogue's masked guard.
     pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
-        let m_new = max(self.m[i], score);
-        let correction = (self.m[i] - m_new).exp();
-        let weight = (score - m_new).exp();
-        self.l[i] = self.l[i] * correction + weight;
+        let (m_new, l_new, correction, weight) =
+            instruction::logsumexp::step::<E>(self.m[i], self.l[i], score);
         self.m[i] = m_new;
+        self.l[i] = l_new;
         Rescale::<E> { correction, weight }
     }
 
