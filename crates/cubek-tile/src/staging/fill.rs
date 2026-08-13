@@ -34,14 +34,20 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
         // Both operands use the output leaf's staging kind. The helper preserves each tile's
         // own projection and rejects unsupported Plane/TMA/gather combinations.
-        let stage = comptime!(out.operand_stage(lhs.leaf));
+        let requested_stage = comptime!(out.operand_stage(lhs.leaf));
+        // A procedural source has no fragment transport. Resolve the effective stage before
+        // allocating either operand and before choosing the pipeline: when either side needs
+        // cooperative materialization, both live in smem under the matching `Cube` pipeline.
+        let stage = resolved_stage(requested_stage, lhs_delivery, rhs_delivery);
         let stages = (
             stage_operand(lhs, comptime!(out.clone()), stage),
             stage_operand(rhs, comptime!(out.clone()), stage),
         );
         let sync = match comptime!(stage) {
             OperandStage::Plane => comptime!(Sync::Solo),
-            OperandStage::Smem => comptime!(Sync::merge(lhs_delivery, rhs_delivery)),
+            OperandStage::Smem => {
+                comptime!(Sync::for_deliveries(&[lhs_delivery, rhs_delivery]))
+            }
         };
         Staging::wrap(stages, Pipeline::new(sync), pin_lhs, pin_rhs, stage)
     }
@@ -147,11 +153,12 @@ impl<T: Numeric> Staging<Tile<T>> {
         // can't decide invariance at comptime. Both fall back to streaming (pin = false).
         let split = comptime!(op_space.is_static() && !delivery.is_tma());
         let pin = comptime!(split && op_space.walk_invariant(&input.space));
-        let stage = comptime!(out.operand_stage(input.leaf));
+        let requested_stage = comptime!(out.operand_stage(input.leaf));
+        let stage = resolved_stage(requested_stage, delivery, delivery);
         let staged_input = stage_operand(input, comptime!(out.clone()), stage);
         let sync = match comptime!(stage) {
             OperandStage::Plane => comptime!(Sync::Solo),
-            OperandStage::Smem => comptime!(Sync::from(delivery)),
+            OperandStage::Smem => comptime!(Sync::for_deliveries(&[delivery])),
         };
         Staging::wrap(staged_input, Pipeline::new(sync), pin, false, stage)
     }
@@ -231,6 +238,24 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
     }
 }
 
+/// Resolve a slot's backing before either allocation or synchronization. A procedural source is
+/// cooperatively materialized, so a requested plane stage becomes a cube-synchronized smem stage.
+#[cube]
+fn resolved_stage(
+    #[comptime] requested: OperandStage,
+    #[comptime] lhs_delivery: Delivery,
+    #[comptime] rhs_delivery: Delivery,
+) -> comptime_type!(OperandStage) {
+    if comptime!(
+        matches!(lhs_delivery, Delivery::Procedural)
+            || matches!(rhs_delivery, Delivery::Procedural)
+    ) {
+        comptime!(OperandStage::Smem)
+    } else {
+        requested
+    }
+}
+
 /// Allocate one staged operand for `stage`. A gathered operand keeps its compacted physical
 /// window and projection, so staging does not replicate each logical element for every gather
 /// tap. The leaf performs the gather on read instead; that keeps staging compact but means
@@ -243,12 +268,6 @@ fn stage_operand<T: Numeric>(
 ) -> Tile<T> {
     let gathered = input.gathered();
     let delivery = input.delivery();
-    // A procedural operand has no raw-memory fragment transport. Materialize it into smem at
-    // this boundary; recursive staging then treats that result exactly like any other tile.
-    let stage = match &input.tile_kind {
-        TileKind::Procedural(_) => comptime!(OperandStage::Smem),
-        _ => stage,
-    };
     match comptime!(stage) {
         OperandStage::Plane => {
             comptime!(assert!(
@@ -267,5 +286,18 @@ fn stage_operand<T: Numeric>(
             )
         }
         OperandStage::Smem => MemData::smem_like(input),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn procedural_upgrades_a_plane_request_to_smem() {
+        assert_eq!(
+            resolved_stage(OperandStage::Plane, Delivery::Procedural, Delivery::Strided),
+            OperandStage::Smem
+        );
     }
 }
