@@ -43,6 +43,22 @@ impl RuntimeMap {
             residues: const_coords(comptime!(vec![0; physical_rank])),
         }
     }
+
+    /// Materialize this map in mutable, per-slot kernel registers. A normal clone preserves the
+    /// source expressions; a staged slot instead needs values that survive independently while a
+    /// sibling slot is refilled for another region.
+    pub(crate) fn stored(&self) -> RuntimeMap {
+        RuntimeMap {
+            coefficients: self.coefficients.stored(),
+            residues: self.residues.stored(),
+        }
+    }
+
+    /// Store a source window's complete runtime addressing state in this slot.
+    pub(crate) fn store_from(&mut self, src: &RuntimeMap) {
+        self.coefficients.store_from(&src.coefficients);
+        self.residues.store_from(&src.residues);
+    }
 }
 
 /// The logical extent per axis, folded from `projection`'s physical shape: a single-carrier axis

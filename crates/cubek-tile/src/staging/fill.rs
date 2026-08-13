@@ -94,12 +94,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let pin_lhs = comptime!(self.pin_lhs);
         let pin_rhs = comptime!(self.pin_rhs);
         if comptime!(pin_lhs || pin_rhs) {
-            self.fill(|s, pipe| {
+            self.fill(|staged_operands, pipe| {
                 if comptime!(pin_lhs) {
-                    pipe.fill(&mut s.0, &lhs.at(region));
+                    pipe.fill(&mut staged_operands.0, &lhs.at(region));
                 }
                 if comptime!(pin_rhs) {
-                    pipe.fill(&mut s.1, &rhs.at(region));
+                    pipe.fill(&mut staged_operands.1, &rhs.at(region));
                 }
             });
         }
@@ -110,12 +110,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
         let pin_lhs = comptime!(self.pin_lhs);
         let pin_rhs = comptime!(self.pin_rhs);
-        self.fill(|s, pipe| {
+        self.fill(|staged_operands, pipe| {
             if comptime!(!pin_lhs) {
-                pipe.fill(&mut s.0, &lhs.at(region));
+                pipe.fill(&mut staged_operands.0, &lhs.at(region));
             }
             if comptime!(!pin_rhs) {
-                pipe.fill(&mut s.1, &rhs.at(region));
+                pipe.fill(&mut staged_operands.1, &rhs.at(region));
             }
         });
     }
@@ -132,28 +132,16 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         unexpanded!()
     }
 
-    /// Consumer: wait the slot's fill, rebind per-region phase residues from `region`'s window on
-    /// `lhs`/`rhs`, hand the two staged tiles to `compute`, then free the slot.
+    /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
+    /// Each tile's bytes and runtime map were stored together by the producer.
     /// See [`StagingExpand::__expand_consume_method`].
-    pub fn consume(
-        &mut self,
-        _lhs: &Tile<Lhs>,
-        _rhs: &Tile<Rhs>,
-        _region: &Region,
-        _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>),
-    ) {
+    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
 
     /// Consumer for a fill no later fill will publish (the walk's final regions): publish
     /// the slot first, then consume. See [`StagingExpand::__expand_consume_final_method`].
-    pub fn consume_final(
-        &mut self,
-        _lhs: &Tile<Lhs>,
-        _rhs: &Tile<Rhs>,
-        _region: &Region,
-        _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>),
-    ) {
+    pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
 }
@@ -168,43 +156,21 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         self.__expand_release_write_method(scope);
     }
 
-    pub fn __expand_consume_method<F>(
-        &mut self,
-        scope: &Scope,
-        lhs: &TileExpand<Lhs>,
-        rhs: &TileExpand<Rhs>,
-        region: &RegionExpand,
-        compute: F,
-    ) where
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
+    where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
-        if comptime!(lhs.projection().is_rational()) {
-            self.data
-                .0
-                .__expand_rebind_map_method(scope, &lhs.__expand_at_method(scope, region));
-        }
-        if comptime!(rhs.projection().is_rational()) {
-            self.data
-                .1
-                .__expand_rebind_map_method(scope, &rhs.__expand_at_method(scope, region));
-        }
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data.0, &self.data.1);
         self.__expand_release_read_method(scope);
     }
 
-    pub fn __expand_consume_final_method<F>(
-        &mut self,
-        scope: &Scope,
-        lhs: &TileExpand<Lhs>,
-        rhs: &TileExpand<Rhs>,
-        region: &RegionExpand,
-        compute: F,
-    ) where
+    pub fn __expand_consume_final_method<F>(&mut self, scope: &Scope, compute: F)
+    where
         F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
     {
         self.__expand_publish_method(scope);
-        self.__expand_consume_method(scope, lhs, rhs, region, compute);
+        self.__expand_consume_method(scope, compute);
     }
 }
 
@@ -320,16 +286,12 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
     pub fn __expand_consume_method<F>(
         &mut self,
         scope: &Scope,
-        input: &TileExpand<T>,
-        region: &RegionExpand,
+        _input: &TileExpand<T>,
+        _region: &RegionExpand,
         compute: F,
     ) where
         F: FnOnce(&Scope, &TileExpand<T>),
     {
-        if comptime!(input.projection().is_rational()) {
-            self.data
-                .__expand_rebind_map_method(scope, &input.__expand_at_method(scope, region));
-        }
         self.__expand_acquire_read_method(scope);
         compute(scope, &self.data);
         self.__expand_release_read_method(scope);

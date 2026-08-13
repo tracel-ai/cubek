@@ -130,6 +130,23 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     output[base + 14] = min_pair.extract(0usize);
 }
 
+/// CPU planes contain one unit, so only exercise the explicit one-lane fallbacks there.
+#[cube(launch)]
+fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
+    let lane_id = UNIT_POS_X;
+    let val = (lane_id + 1u32) as f32;
+    let size!(W2) = 2;
+    let mut v2 = Vector::<f32, W2>::zeroed();
+    v2.insert(0usize, val);
+    v2.insert(1usize, val * 2.0f32);
+
+    let base = (lane_id * 15u32) as usize;
+    output[base + 7] = sum::plane::<f32>(val, 1usize);
+    output[base + 8] = max::plane::<f32>(val, 1usize);
+    output[base + 9] = min::plane::<f32>(val, 1usize);
+    output[base + 10] = sum::group::<f32, W2>(v2, 0usize).extract(0usize);
+}
+
 #[test]
 fn test_hsum_and_array_sum() {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
@@ -234,12 +251,22 @@ fn test_plane_and_group_primitives() {
         .zeros()
         .generate_without_host_data();
 
-    test_plane_and_group_kernel::launch::<TestRuntime>(
-        &client,
-        CubeCount::Static(1, 1, 1),
-        CubeDim::new_1d(4),
-        output_handle.clone().binding().into_tensor_arg(),
-    );
+    let is_cpu = client.properties().hardware.num_cpu_cores.is_some();
+    if is_cpu {
+        test_plane_and_group_fallback_kernel::launch::<TestRuntime>(
+            &client,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(4),
+            output_handle.clone().binding().into_tensor_arg(),
+        );
+    } else {
+        test_plane_and_group_kernel::launch::<TestRuntime>(
+            &client,
+            CubeCount::Static(1, 1, 1),
+            CubeDim::new_1d(4),
+            output_handle.clone().binding().into_tensor_arg(),
+        );
+    }
 
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
@@ -247,46 +274,48 @@ fn test_plane_and_group_primitives() {
         let base = lane * 15;
         let val = (lane + 1) as f32;
 
-        // Plane cooperative intrinsics (all lanes see the whole-plane reduction)
-        assert_eq!(output.get_f32(&[base]), 10.0, "plane_sum on lane {lane}");
-        assert_eq!(output.get_f32(&[base + 1]), 4.0, "plane_max on lane {lane}");
-        assert_eq!(output.get_f32(&[base + 2]), 1.0, "plane_min on lane {lane}");
+        if !is_cpu {
+            // Plane cooperative intrinsics (all lanes see the whole-plane reduction)
+            assert_eq!(output.get_f32(&[base]), 10.0, "plane_sum on lane {lane}");
+            assert_eq!(output.get_f32(&[base + 1]), 4.0, "plane_max on lane {lane}");
+            assert_eq!(output.get_f32(&[base + 2]), 1.0, "plane_min on lane {lane}");
 
-        // 4-lane butterfly group fold (mask 0b11: all lanes hold the 4-lane vector total)
-        assert_eq!(
-            output.get_f32(&[base + 3]),
-            10.0,
-            "fold_group 0b11 [0] on lane {lane}"
-        );
-        assert_eq!(
-            output.get_f32(&[base + 4]),
-            20.0,
-            "fold_group 0b11 [1] on lane {lane}"
-        );
+            // 4-lane butterfly group fold (mask 0b11: all lanes hold the 4-lane vector total)
+            assert_eq!(
+                output.get_f32(&[base + 3]),
+                10.0,
+                "fold_group 0b11 [0] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 4]),
+                20.0,
+                "fold_group 0b11 [1] on lane {lane}"
+            );
 
-        // 2-lane pairwise butterfly fold (mask 0b01: lanes (0,1) and (2,3) fold separately)
-        if lane < 2 {
-            assert_eq!(
-                output.get_f32(&[base + 5]),
-                3.0,
-                "fold_group 0b01 [0] on lane {lane}"
-            );
-            assert_eq!(
-                output.get_f32(&[base + 6]),
-                6.0,
-                "fold_group 0b01 [1] on lane {lane}"
-            );
-        } else {
-            assert_eq!(
-                output.get_f32(&[base + 5]),
-                7.0,
-                "fold_group 0b01 [0] on lane {lane}"
-            );
-            assert_eq!(
-                output.get_f32(&[base + 6]),
-                14.0,
-                "fold_group 0b01 [1] on lane {lane}"
-            );
+            // 2-lane pairwise butterfly fold (mask 0b01: lanes (0,1) and (2,3) fold separately)
+            if lane < 2 {
+                assert_eq!(
+                    output.get_f32(&[base + 5]),
+                    3.0,
+                    "fold_group 0b01 [0] on lane {lane}"
+                );
+                assert_eq!(
+                    output.get_f32(&[base + 6]),
+                    6.0,
+                    "fold_group 0b01 [1] on lane {lane}"
+                );
+            } else {
+                assert_eq!(
+                    output.get_f32(&[base + 5]),
+                    7.0,
+                    "fold_group 0b01 [0] on lane {lane}"
+                );
+                assert_eq!(
+                    output.get_f32(&[base + 6]),
+                    14.0,
+                    "fold_group 0b01 [1] on lane {lane}"
+                );
+            }
         }
 
         // 1-lane fallback paths (lanes = 1, mask = 0)
@@ -311,26 +340,28 @@ fn test_plane_and_group_primitives() {
             "group mask 0 fallback on lane {lane}"
         );
 
-        // Max/min butterfly over the same 4 lanes: vectors are [1,2] [2,4] [3,6] [4,8]
-        assert_eq!(
-            output.get_f32(&[base + 11]),
-            4.0,
-            "max_group 0b11 [0] on lane {lane}"
-        );
-        assert_eq!(
-            output.get_f32(&[base + 12]),
-            8.0,
-            "max_group 0b11 [1] on lane {lane}"
-        );
-        assert_eq!(
-            output.get_f32(&[base + 13]),
-            1.0,
-            "min_group 0b11 [0] on lane {lane}"
-        );
-        assert_eq!(
-            output.get_f32(&[base + 14]),
-            if lane < 2 { 1.0 } else { 3.0 },
-            "min_group 0b01 [0] on lane {lane}"
-        );
+        if !is_cpu {
+            // Max/min butterfly over the same 4 lanes: vectors are [1,2] [2,4] [3,6] [4,8]
+            assert_eq!(
+                output.get_f32(&[base + 11]),
+                4.0,
+                "max_group 0b11 [0] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 12]),
+                8.0,
+                "max_group 0b11 [1] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 13]),
+                1.0,
+                "min_group 0b11 [0] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 14]),
+                if lane < 2 { 1.0 } else { 3.0 },
+                "min_group 0b01 [0] on lane {lane}"
+            );
+        }
     }
 }

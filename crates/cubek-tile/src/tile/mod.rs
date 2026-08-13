@@ -227,18 +227,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Rebind this tile's runtime map (coefficients and phase residues) from another tile.
-    pub(crate) fn rebind_map(&mut self, src: &Tile<T>) {
-        if let (
-            TileKind::Gmem(dst) | TileKind::Smem(dst),
-            TileKind::Gmem(src) | TileKind::Smem(src),
-        ) = (&mut self.tile_kind, &src.tile_kind)
-        {
-            dst.map.residues = src.map.residues.clone();
-            dst.map.coefficients = src.map.coefficients.clone();
-        }
-    }
-
     /// The runtime map (dynamic coefficients and origin phase residues) of this tile.
     pub(crate) fn runtime_map(&self) -> RuntimeMap {
         match &self.tile_kind {
@@ -586,18 +574,6 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_) => {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
-        }
-    }
-}
-
-impl<T: Numeric> TileExpand<T> {
-    /// How this tile's logical axes address its buffer's physical ones.
-    pub(crate) fn projection(&self) -> Projection {
-        match &self.tile_kind {
-            TileKindExpand::Gmem(g) | TileKindExpand::Smem(g) => g.projection.clone(),
-            TileKindExpand::PlaneTile(_)
-            | TileKindExpand::PlanePartition(_)
-            | TileKindExpand::TmaGmem(_) => Projection::direct_over(&self.space),
         }
     }
 }
