@@ -11,6 +11,9 @@ pub mod dequantize_tiled;
 #[cfg(feature = "kernels")]
 pub mod quantize;
 
+#[cfg(feature = "benchmarks")]
+pub mod eval;
+
 #[cfg(feature = "kernels")]
 pub mod layout;
 

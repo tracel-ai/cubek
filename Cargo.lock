@@ -284,6 +284,7 @@ dependencies = [
  "cubek-interpolate",
  "cubek-matmul",
  "cubek-pool",
+ "cubek-quant",
  "cubek-reduce",
  "cubek-std",
  "cubek-test-utils",

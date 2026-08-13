@@ -17,11 +17,16 @@ std = []
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
+
+# Enables `pub mod eval`, the dequantize benchmark catalogue. Off by default;
+# the top-level `benchmarks` crate turns it on.
+benchmarks = ["kernels", "dep:cubek-test-utils", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false, optional = true }
 cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.2", default-features = false }
 
 half.workspace = true
