@@ -231,7 +231,8 @@ impl<E: Numeric> TmaTileArg<E> {
 /// ([`ScaleLayout`]), which is the true block only if no window straddles a block edge. Every
 /// window is a level's cut, and its origin is a multiple of that cut, so per axis each level's
 /// edge must tile whole blocks or fit inside one. A line is one read, so it may not straddle
-/// either. Per-tensor's block edges are `1` and divide everything.
+/// either. A per-tensor scale covers every window and line, so only the store and param rules
+/// apply to it.
 pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
@@ -265,6 +266,11 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
         "StridedTileSource::quantized: scales are read as f32, got {:?}",
         scheme.scale_dtype()
     );
+
+    // A per-tensor scale has no edge to straddle, whatever the cuts and the served width.
+    if scheme.block_size().is_none() {
+        return;
+    }
 
     let rank = space.rank();
     let block = block_edges(scheme, rank);

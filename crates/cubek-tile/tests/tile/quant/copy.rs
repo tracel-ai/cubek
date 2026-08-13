@@ -84,6 +84,7 @@ fn copy_quantized_per_tensor_matches_reference() {
         CubeCount::new_single(),
         CubeDim::new_single(),
         1,
+        1,
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
@@ -104,6 +105,154 @@ fn copy_quantized_per_tensor_matches_reference() {
             input_host
                 .iter_indices()
                 .map(|idx| input_host.get_f32(&idx) * scale)
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
+/// Per-tensor native Q8S served in 4-wide lines, through the builder: one full block covers
+/// every line, so nothing can straddle a scale and the vectorized operand is accepted.
+#[test]
+fn copy_quantized_per_tensor_vectorized_matches_reference() {
+    let (m, n, v) = (8, 8, 4);
+    let scale = 0.05f32;
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    let max_width = client.properties().hardware.max_vector_size;
+    if v > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below the {v}-wide served line"
+        )))
+        .enforce();
+        return;
+    }
+
+    let scheme = QuantScheme::default()
+        .per_tensor(ScaleDtype::F32)
+        .with_store(QuantStore::Native)
+        .with_value(QuantValue::Q8S);
+
+    let shape = Shape::from(vec![m, n]);
+    let input_dtype = ElemType::from_quant_value(scheme.value);
+    let (lo, hi) = scheme.value.range();
+    let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
+        .dtype(input_dtype)
+        .uniform(0x1, lo, hi)
+        .generate_with_f32_host_data();
+    let scales = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
+        .custom(vec![scale])
+        .generate_without_host_data();
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    let launcher = space.launcher_over(&client, &[]);
+    let input_op = launcher
+        .arg(input.binding())
+        .subspace(&[M, N])
+        .vectorize(v)
+        .quantized(&[scales.binding()], scheme, DequantAt::Read)
+        .build();
+
+    let out_dtype = f32::elem_type_native();
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        input_op.bound_width(),
+        v,
+        input_op.arg(),
+        output.arg(),
+        launcher.space().clone(),
+        input_dtype,
+        out_dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            input_host
+                .iter_indices()
+                .map(|idx| input_host.get_f32(&idx) * scale)
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
+/// Per-tensor packed-u32 Q8S, through the builder: one full block covers whole `pack`-wide
+/// lines. The binding is a `u32`, so this runs on every backend, no native i8 needed.
+#[test]
+fn copy_quantized_per_tensor_packed_matches_reference() {
+    let (m, n) = (8, 8);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let scheme = QuantScheme::default()
+        .per_tensor(ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q8S);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below the packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let input = TileInput::builder(&client, space.clone())
+        .untiled()
+        .packed(&scheme, DequantAt::Read)
+        .arange();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    let launcher = space.launcher_over(&client, &[]);
+    let input_op = launcher
+        .arg(input.tile.handle().binding())
+        .subspace(&[M, N])
+        .vectorize(pack)
+        .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
+        .build();
+
+    let input_dtype = u32::elem_type_native();
+    let out_dtype = f32::elem_type_native();
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        input_op.bound_width(),
+        pack,
+        input_op.arg(),
+        output.arg(),
+        launcher.space().clone(),
+        input_dtype,
+        out_dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let shape = Shape::from(vec![m, n]);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            (0..m * n)
+                .map(|k| input.q[k] as f32 * input.scale_values[0])
                 .collect(),
         ),
         strides: StridedLayout::RowMajor.compute_strides(&shape),
@@ -186,6 +335,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
+        1,
         pack,
         input.arg(),
         output.arg(),
@@ -229,10 +379,11 @@ pub fn plain_copy<E: Numeric>(
 
 #[cube(launch)]
 /// `I` names the binding's element only: the arg's scheme recovers the served value, so a
-/// quantized input dequantizes with nothing threaded through the body.
-pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
-    input: &QuantTileArg<'_, I, Const<1>>,
-    output: &TileArg<'_, O, V>,
+/// quantized input dequantizes with nothing threaded through the body. `VI` is the binding
+/// width (served ÷ packing factor), `VO` the served width the copy writes at.
+pub fn dequant_copy<I: Numeric, O: Numeric, VI: Size, VO: Size>(
+    input: &QuantTileArg<'_, I, VI>,
+    output: &TileArg<'_, O, VO>,
     #[comptime] space: Space,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
@@ -358,6 +509,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
+        1,
         1,
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
