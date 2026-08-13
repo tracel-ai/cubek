@@ -83,20 +83,24 @@ impl<L: LogicalLayout> Layout for Projected<L> {
 }
 
 /// A [`Layout`] mapping a tile's logical coordinate to its window's physical one:
-/// `phys[pa] = Σ logical[axis] * scale`. Sits between the [`Window`](crate::Window) and the
-/// element layout: this only folds axes, it never decides what an out-of-range tap does, so the
-/// window's own [`Boundary`](crate::Boundary) (zero or the edge cell) still governs the read.
-/// Constant offsets are handled by [`Window`](crate::Window) and omitted here.
+/// `phys[pa] = (Σ logical[axis] * scale + residue) / divisor`. Sits between the
+/// [`Window`](crate::Window) and the element layout: this only folds axes, it never decides what an
+/// out-of-range tap does, so the window's own [`Boundary`](crate::Boundary) (zero or the edge cell)
+/// still governs the read.
+///
+/// Constant offsets are handled by [`Window`](crate::Window) and omitted here, all but the part a
+/// window origin cannot absorb: under a division the offset sets the phase the floor starts at, and
+/// that phase, which the [`RuntimeMap`](crate::RuntimeMap) carries, has to be inside the numerator.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct AxisProjection {
     /// The tile's per-logical-axis extents, in the space's axis order. The innermost is a
     /// line count, matching the window's innermost physical axis.
     shape: Coords<u32>,
-    /// The projection's runtime coefficients, in [`Projection::dynamic_scale_index`] order; empty
-    /// for a fully-`Static` mapping. The constant offsets are not among them: a tap is relative to
-    /// the window, which they placed.
-    coefficients: Coords<u32>,
+    /// The projection's runtime half: the coefficients a tap folds through, and the phase its
+    /// window origin left over. The constant offsets are not among them: a tap is relative to the
+    /// window, which they placed.
+    map: RuntimeMap,
     #[cube(comptime)]
     space: Space,
     #[cube(comptime)]
@@ -107,7 +111,7 @@ pub struct AxisProjection {
 impl AxisProjection {
     pub fn new(
         shape: Coords<u32>,
-        coefficients: Coords<u32>,
+        map: RuntimeMap,
         #[comptime] space: Space,
         #[comptime] projection: Projection,
     ) -> Self {
@@ -117,15 +121,22 @@ impl AxisProjection {
             "AxisProjection: shape has {rank} entries but the space spans {} logical axes",
             space.rank()
         ));
-        let given = coefficients.len();
+        let given = map.coefficients.len();
         comptime!(assert!(
-            given == projection.dynamic_scale_count(),
-            "AxisProjection: the projection has {} Dynamic coefficients but {given} were given",
-            projection.dynamic_scale_count()
+            given == projection.dynamic_coefficient_count(),
+            "AxisProjection: the projection has {} Dynamic coefficients and divisors but {given} \
+             were given",
+            projection.dynamic_coefficient_count()
+        ));
+        let phases = map.residues.len();
+        comptime!(assert!(
+            phases == projection.physical_rank(),
+            "AxisProjection: the projection has {} physical axes but {phases} residues were given",
+            projection.physical_rank()
         ));
         AxisProjection {
             shape,
-            coefficients,
+            map,
             space,
             projection,
         }
@@ -142,24 +153,44 @@ impl Layout for AxisProjection {
 
         #[unroll]
         for pa in 0..comptime!(self.projection.physical_rank()) {
-            let map = comptime!(self.projection.physical_axis(pa));
-            let n = comptime!(map.terms().len());
+            let axis_map = comptime!(self.projection.physical_axis(pa));
+            let n = comptime!(axis_map.terms().len());
 
             // Per-term products, summed below (chained, so a single coefficient-1 term folds to
-            // the coordinate itself).
+            // the coordinate itself). Under a division the sum is the numerator, and it starts at
+            // the phase the window origin could not absorb.
             let mut terms = Coords::<u32>::new();
+            if comptime!(axis_map.is_rational()) {
+                terms.push(self.map.residues.at(pa));
+            }
             #[unroll]
             for t in 0..n {
-                let term = comptime!(map.terms()[t]);
+                let term = comptime!(axis_map.terms()[t]);
                 let p = comptime!(self.space.position(term.axis));
                 match comptime!(term.scale) {
                     Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                    Scale::Dynamic => terms.push(pos[p].fmul(self.coefficients.at(comptime!(
-                        self.projection.dynamic_scale_index(pa, t).unwrap()
-                    )))),
+                    Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
+                        comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
+                    ))),
                 }
             }
-            out.push(terms.fsum(comptime!((0..n).collect::<Vec<_>>())));
+            let sum = terms.fsum(comptime!(
+                (0..n + axis_map.is_rational() as usize).collect::<Vec<_>>()
+            ));
+
+            if comptime!(axis_map.is_rational()) {
+                match comptime!(axis_map.divisor()) {
+                    Divisor::Static(d) => out.push(sum.fdiv(comptime!(d as u32))),
+                    Divisor::Dynamic { .. } => {
+                        let divisor = self.map.coefficients.at(comptime!(
+                            self.projection.dynamic_divisor_index(pa).unwrap()
+                        ));
+                        out.push(sum.fdiv(divisor));
+                    }
+                }
+            } else {
+                out.push(sum);
+            }
         }
 
         out
@@ -253,7 +284,7 @@ impl<T: Numeric> Tile<T> {
                 let layout = axis_projection(
                     comptime!(self.space.clone()),
                     comptime!(g.projection.clone()),
-                    g.coefficients.clone(),
+                    g.map.clone(),
                     self.vector_size(),
                 );
                 g.nd_transparent::<I, WP, W>(layout)
@@ -272,13 +303,13 @@ impl<T: Numeric> Tile<T> {
 pub(crate) fn axis_projection(
     #[comptime] space: Space,
     #[comptime] projection: Projection,
-    coefficients: Coords<u32>,
+    map: RuntimeMap,
     #[comptime] vector_size: usize,
 ) -> AxisProjection {
     let rank = comptime!(space.rank());
     let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
 
-    AxisProjection::new(shape, coefficients, space, projection)
+    AxisProjection::new(shape, map, space, projection)
 }
 
 /// Returns the extents of `space` in the range `from..to`, with the innermost axis

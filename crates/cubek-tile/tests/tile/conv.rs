@@ -843,9 +843,8 @@ fn conv_kernel_dynamic<E: Numeric>(
 
 impl Conv1d {
     /// [`check`](Conv1d::check) with both coefficients `Dynamic`, so the same convolution runs off
-    /// a kernel that was compiled without knowing either.
-    /// Only `Schedule::Direct`: staging a runtime coefficient is refused at expansion, since the
-    /// smem it would allocate has no comptime extent.
+    /// a kernel that was compiled without knowing either. Their bounds are the exact values here,
+    /// the tightest a stage can be sized at; `check_dynamic_padded` covers the staged schedule.
     fn check_dynamic(&self, tile_oh: usize, tile_co: usize) {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::elem_type_native();
@@ -863,7 +862,10 @@ impl Conv1d {
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::scaled(&[(OH, Scale::Dynamic), (RH, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[
+                    (OH, Scale::Dynamic { max: self.stride }),
+                    (RH, Scale::Dynamic { max: self.dilation }),
+                ]),
                 PhysicalAxisMap::of(CI),
             ],
         ));
@@ -1057,7 +1059,10 @@ impl Conv1d {
 
         let gathered = if dynamic_scales {
             PhysicalAxisMap::scaled_with_offset(
-                &[(OH, Scale::Dynamic), (RH, Scale::Dynamic)],
+                &[
+                    (OH, Scale::Dynamic { max: self.stride }),
+                    (RH, Scale::Dynamic { max: self.dilation }),
+                ],
                 Offset::Dynamic,
             )
         } else {
@@ -1157,8 +1162,8 @@ fn conv1d_dynamic_padding_direct() {
     .check_dynamic_padded(3, 4, 1, 6, Schedule::Direct, false);
 }
 
-/// The same padding staged: a dynamic offset costs no comptime window geometry, so unlike a
-/// dynamic coefficient it survives the compaction into smem.
+/// The same padding staged: a dynamic offset costs no comptime window geometry at all, so it
+/// survives the compaction into smem without even a bound to declare.
 #[test]
 fn conv1d_dynamic_padding_staged() {
     Conv1d {
@@ -1184,6 +1189,21 @@ fn conv1d_all_dynamic() {
         dilation: 1,
     }
     .check_dynamic_padded(3, 4, 1, 8, Schedule::Direct, true);
+}
+
+/// The same thing staged: the runtime coefficients size their smem box off their declared bounds,
+/// so the stage holds the window and the launch's actual stride and dilation read out of it.
+#[test]
+fn conv1d_all_dynamic_staged() {
+    Conv1d {
+        oh: 6,
+        co: 4,
+        rh: 3,
+        ci: 2,
+        stride: 2,
+        dilation: 1,
+    }
+    .check_dynamic_padded(3, 4, 1, 8, Schedule::Staged, true);
 }
 
 // ---- 2-D -------------------------------------------------------------------
@@ -1925,4 +1945,398 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
             );
         }
     }
+}
+
+// ---- rational (fractional scale) -------------------------------------------
+
+/// `out[o, co] = Σ_{r, ci} w[r, ci, co] · in[⌊(o·scale + r·tap + offset) / divisor⌋, ci]`: the
+/// continuous-resize mapping, where an output position lands between input cells so the window
+/// steps a whole cell on some outputs and stays put on others.
+struct Resize1d {
+    oh: usize,
+    co: usize,
+    rh: usize,
+    ci: usize,
+    in_len: usize,
+    scale: usize,
+    tap: usize,
+    offset: isize,
+    divisor: usize,
+}
+
+impl Resize1d {
+    /// The input cell tap `r` of output `o` reads, `None` outside the buffer, where
+    /// [`Boundary::Zero`] contributes nothing.
+    fn source(&self, o: usize, r: usize) -> Option<usize> {
+        let numerator = (o * self.scale + r * self.tap) as isize + self.offset;
+        let h = numerator.div_euclid(self.divisor as isize);
+        (h >= 0 && (h as usize) < self.in_len).then_some(h as usize)
+    }
+
+    fn reference(&self, input: &[f32], weight: &[f32]) -> Vec<f32> {
+        let mut out = vec![0.0f32; self.oh * self.co];
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                let mut acc = 0.0f32;
+                for r in 0..self.rh {
+                    for i in 0..self.ci {
+                        let x = self.source(o, r).map_or(0.0, |h| input[h * self.ci + i]);
+                        acc += x * weight[(r * self.ci + i) * self.co + c];
+                    }
+                }
+                out[o * self.co + c] = acc;
+            }
+        }
+        out
+    }
+
+    /// One level per entry, each cutting `OH` at that edge and keeping the other axes whole: two
+    /// entries nest a second descent, which is where a rational window's leftover phase has to
+    /// accumulate rather than restart.
+    fn space(&self, oh_edges: &[usize]) -> Space {
+        self.space_with_schedule(oh_edges, Schedule::Direct)
+    }
+
+    fn space_with_schedule(&self, oh_edges: &[usize], schedule: Schedule) -> Space {
+        let mut tiling =
+            Tiling::new().extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        for (i, &edge) in oh_edges.iter().enumerate() {
+            let sched = if i == 0 { schedule } else { Schedule::Direct };
+            tiling = tiling.level(WalkOrder::RowMajor, sched, |l| {
+                l.axis(OH, Cut::sequential(edge))
+                    .axis(CO, Cut::sequential(self.co))
+                    .axis(RH, Cut::sequential(self.rh))
+                    .axis(CI, Cut::sequential(self.ci))
+            });
+        }
+        tiling.build()
+    }
+
+    fn check(&self, oh_edges: &[usize]) {
+        self.check_with(oh_edges, Schedule::Direct, 1);
+    }
+
+    fn check_with(&self, oh_edges: &[usize], schedule: Schedule, vector_size: usize) {
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine_with_offset(
+                    &[(OH, self.scale), (RH, self.tap)],
+                    self.offset,
+                )
+                .over(self.divisor),
+                PhysicalAxisMap::of(CI),
+            ],
+        ))
+        .checked(true);
+
+        let (got, input, weight) = run(
+            shape![self.in_len, self.ci],
+            shape![self.rh, self.ci, self.co],
+            shape![self.oh, self.co],
+            in_spec,
+            &[RH, CI, CO],
+            TileSpec::direct(&[OH, CO]).checked(true),
+            self.space_with_schedule(oh_edges, schedule),
+            vector_size,
+        );
+
+        let want = self.reference(&input, &weight);
+        for o in 0..self.oh {
+            for c in 0..self.co {
+                assert_eq!(
+                    got.get_f32(&[o, c]),
+                    want[o * self.co + c],
+                    "resize1d {}/{} offset {} edges {oh_edges:?} schedule {schedule:?} v {vector_size}: wrong at ({o}, {c})",
+                    self.scale,
+                    self.divisor,
+                    self.offset
+                );
+            }
+        }
+    }
+}
+
+/// The tap axis carries the divisor as its coefficient, so it survives the division whole: the
+/// resample shape, `⌊(o·4 - 2) / 6⌋ + r`. The last outputs read past the input, which
+/// `Boundary::Zero` masks.
+#[test]
+fn resize1d_rational_static() {
+    Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check(&[2]);
+}
+
+/// The same resample with `Schedule::Staged`: the input tile stages uncompacted into shared memory.
+#[test]
+fn resize1d_staged_static() {
+    Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_with(&[2], Schedule::Staged, 1);
+}
+
+/// Rational gather driven under double buffering on alternating slots.
+#[test]
+fn resize1d_staged_double_buffered() {
+    Resize1d {
+        oh: 8,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 6,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_with(&[2], Schedule::DoubleBuffered, 1);
+}
+
+/// A tap coefficient the divisor does not cancel: the window itself is fractionally dilated, so
+/// two taps can land on one input cell. Walked over two levels, where the second descent starts
+/// from the phase the first left over instead of from the projection's own offset.
+#[test]
+fn resize1d_rational_fractional_taps() {
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 3,
+        ci: 2,
+        in_len: 8,
+        scale: 5,
+        tap: 2,
+        offset: -2,
+        divisor: 3,
+    };
+    resize.check(&[3]);
+    resize.check(&[3, 1]);
+}
+
+/// Staged rational gather with fractional taps.
+#[test]
+fn resize1d_staged_fractional_taps() {
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 3,
+        ci: 2,
+        in_len: 8,
+        scale: 5,
+        tap: 2,
+        offset: -2,
+        divisor: 3,
+    };
+    resize.check_with(&[3], Schedule::Staged, 1);
+    resize.check_with(&[3, 1], Schedule::Staged, 1);
+}
+
+/// Staged rational gather served in two-wide lines on the ungathered `CI` axis.
+#[test]
+fn resize1d_staged_vectorized() {
+    Resize1d {
+        oh: 6,
+        co: 4,
+        rh: 2,
+        ci: 4,
+        in_len: 6,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_with(&[2], Schedule::Staged, 2);
+}
+
+/// A rational gathered operand whose divisor and offset arrive at runtime.
+#[cube(launch)]
+fn conv_kernel_rational_dynamic<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    weight: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    divisor: u32,
+    offset: i32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    // The one carried coefficient is the divisor: both scales are Static, so it is the whole
+    // carrier (`Projection::dynamic_divisor_index` puts it at 0).
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(divisor);
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
+    out.zero();
+    out.mma(&input, &weight);
+}
+
+#[test]
+fn resize1d_rational_dynamic() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    };
+    let space = resize.space(&[2]);
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
+                Offset::Dynamic,
+            )
+            .over(Divisor::Dynamic {
+                min: resize.divisor,
+            }),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true);
+
+    let in_data = ramp(resize.in_len * resize.ci, 7);
+    let w_data = ramp(resize.rh * resize.ci * resize.co, 5);
+
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let (w_handle, _) = TestInput::builder(client.clone(), shape![resize.rh, resize.ci, resize.co])
+        .dtype(f32_ty)
+        .custom(w_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![resize.oh, resize.co])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    conv_kernel_rational_dynamic::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            w_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[RH, CI, CO]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[OH, CO]).checked(true),
+        ),
+        resize.divisor as u32,
+        resize.offset as i32,
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    let want = resize.reference(&in_data, &w_data);
+    for o in 0..resize.oh {
+        for c in 0..resize.co {
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want[o * resize.co + c],
+                "resize1d dynamic: wrong at ({o}, {c})"
+            );
+        }
+    }
+}
+
+/// A rational gathered stage born with dynamic coefficients can be addressed before fill
+/// without tripping AxisProjection's dynamic coefficient count assert.
+#[cube(launch)]
+fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    divisor: u32,
+    offset: i32,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let mut coefficients = Coords::<u32>::new();
+    coefficients.push(divisor);
+    let mut offsets = Coords::<i32>::new();
+    offsets.push(offset);
+
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let stage = MemData::smem_like(&input);
+    let _view = stage.nd::<E, Const<1>, Const<1>>();
+}
+
+#[test]
+fn resize1d_dynamic_stage_read_before_fill() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let resize = Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    };
+    let space = resize.space(&[2]);
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
+                Offset::Dynamic,
+            )
+            .over(Divisor::Dynamic {
+                min: resize.divisor,
+            }),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true);
+
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
+        .dtype(f32_ty)
+        .custom(ramp(resize.in_len * resize.ci, 7))
+        .generate_with_f32_host_data();
+
+    conv_kernel_rational_dynamic_stage_read::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        resize.divisor as u32,
+        resize.offset as i32,
+        space,
+        f32_ty,
+    );
 }

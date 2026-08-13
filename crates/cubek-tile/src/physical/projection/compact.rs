@@ -4,7 +4,8 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection};
+use super::gcd;
+use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection, Scale};
 
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
 /// what step in the source one of its cells is, plus the projection the stage is addressed by.
@@ -37,7 +38,14 @@ use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection};
 /// so its coefficient is unobservable: the only coordinate it is ever multiplied by is `0`. It is
 /// emitted as `1` rather than as `sᵢ/g`, which need not divide, so the compacted projection still
 /// satisfies [`Projection::validate`] (a `0` coefficient would read as "this axis addresses no
-/// physical axis").
+/// physical axis"). A [`Dynamic`](crate::Scale) one is exempt: pinning it would drop its slot from
+/// the coefficient carrier the stage inherits from its source.
+///
+/// A `Dynamic` coefficient or divisor is sized by its bound rather than its value. The step goes to
+/// `1` wherever one moves (a runtime coefficient need share no factor with anything, so there is no
+/// lattice to quotient by), and the extent is the widest field the bound admits, which dominates
+/// every window the launch can then ask for. The compacted mapping keeps the term dynamic: the box
+/// is comptime, addressing it is not.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Compaction {
     steps: SmallVec<[usize; MAX_AXES]>,
@@ -56,48 +64,77 @@ impl Compaction {
         vector_size: usize,
         extent_of: impl Fn(Axis) -> usize,
     ) -> Compaction {
-        // The box below is the smem allocation: both its step (a gcd of coefficients) and its
-        // extent are comptime by construction, which a runtime coefficient cannot be.
-        assert!(
-            !projection.has_dynamic_scales(),
-            "Compaction: a Dynamic coefficient has no comptime window extent, so the operand \
-             carrying it cannot be staged (use Schedule::Direct)"
-        );
         let rank = projection.physical_rank();
         let mut steps = SmallVec::new();
         let mut extents = SmallVec::new();
         let mut physical = Vec::with_capacity(rank);
 
         for pa in 0..rank {
-            let terms = projection.physical_axis(pa).terms();
-            // Only a term that moves contributes an offset, so only its coefficient constrains the
-            // step; a single-tap axis (extent 1) sits at a fixed offset the window's origin absorbs.
-            let step = terms
-                .iter()
-                .filter(|t| extent_of(t.axis) > 1)
-                .fold(0, |g, t| gcd(g, t.scale.get()));
-            let step = step.max(1);
-            // `step` divides every moving coefficient by construction; a non-moving one need not
-            // divide, and its value is unobservable, so it is pinned rather than truncated.
-            let scaled: Vec<(Axis, usize)> = terms
-                .iter()
-                .map(|t| {
-                    let scale = if extent_of(t.axis) > 1 {
-                        t.scale.get() / step
-                    } else {
-                        1
-                    };
-                    (t.axis, scale)
-                })
-                .collect();
-            extents.push(
-                1 + scaled
+            let axis_map = projection.physical_axis(pa);
+            // The stage is placed at offset 0 (gmem windowing absorbs the offset), so a static
+            // divisor can reduce away here even if the source operand carried a Dynamic offset.
+            let scaled: Vec<(Axis, Scale)> =
+                axis_map.terms().iter().map(|t| (t.axis, t.scale)).collect();
+            let stage_map = PhysicalAxisMap::scaled(&scaled).over(axis_map.divisor());
+            let terms = stage_map.terms();
+
+            if stage_map.is_rational() {
+                // A rational axis advances by one physical cell on some steps and none on others,
+                // so its window has no single step to quotient by. Its step is 1 (dense, no holes
+                // to skip), and its extent is the conservative receptive field over all possible
+                // runtime phase residues: 1 + ⌊(Σ (extent - 1) * scale + divisor - 1) / divisor⌋.
+                // Under a bound (a Dynamic coefficient or divisor) that field is the widest one the
+                // bound admits, so the box still holds every window the launch can ask for.
+                let d = stage_map.divisor().bound();
+                let field: usize = terms
                     .iter()
-                    .map(|&(axis, scale)| (extent_of(axis) - 1) * scale)
-                    .sum::<usize>(),
-            );
-            steps.push(step);
-            physical.push(PhysicalAxisMap::affine(&scaled));
+                    .filter(|t| extent_of(t.axis) > 1)
+                    .map(|t| (extent_of(t.axis) - 1) * t.scale.bound())
+                    .sum();
+                extents.push(1 + field.div_ceil(d));
+                steps.push(1);
+                physical.push(stage_map);
+            } else {
+                // Only a term that moves contributes an offset, so only its coefficient constrains the
+                // step; a single-tap axis (extent 1) sits at a fixed offset the window's origin absorbs.
+                //
+                // A moving Dynamic coefficient has no comptime lattice to quotient by (the runtime
+                // value need share no factor with anything), so any of those forces the dense step.
+                let step = terms
+                    .iter()
+                    .filter(|t| extent_of(t.axis) > 1)
+                    .try_fold(0, |g, t| match t.scale {
+                        Scale::Static(s) => Some(gcd(g, s)),
+                        Scale::Dynamic { .. } => None,
+                    })
+                    .unwrap_or(1);
+                let step = step.max(1);
+                // `step` divides every moving static coefficient by construction; a non-moving one
+                // need not divide, and its value is unobservable, so it is pinned rather than
+                // truncated. A Dynamic one passes through untouched: `step` is 1 wherever one
+                // moves, and pinning a non-moving one would drop its slot from the coefficient
+                // carrier, which the stage inherits verbatim from its source
+                // ([`MemData::fill_from`](crate::MemData)) and must therefore index identically.
+                let scaled: Vec<(Axis, Scale)> = terms
+                    .iter()
+                    .map(|t| {
+                        let scale = match t.scale {
+                            Scale::Static(s) if extent_of(t.axis) > 1 => Scale::Static(s / step),
+                            Scale::Static(_) => Scale::Static(1),
+                            dynamic => dynamic,
+                        };
+                        (t.axis, scale)
+                    })
+                    .collect();
+                extents.push(
+                    1 + scaled
+                        .iter()
+                        .map(|&(axis, scale)| (extent_of(axis) - 1) * scale.bound())
+                        .sum::<usize>(),
+                );
+                steps.push(step);
+                physical.push(PhysicalAxisMap::scaled(&scaled));
+            }
         }
 
         let projection = Projection::new(projection.logical_axes(), &physical);
@@ -165,14 +202,10 @@ impl Compaction {
     }
 }
 
-fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 { a } else { gcd(b, a % b) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Offset, Scale};
+    use crate::{Divisor, Offset};
 
     const OH: Axis = Axis(0);
     const RH: Axis = Axis(1);
@@ -326,17 +359,166 @@ mod tests {
         assert_eq!(c.projection().offset(0), Offset::Static(0));
     }
 
-    /// A stage is sized at comptime, which a runtime coefficient cannot be.
+    /// A moving runtime coefficient has no comptime lattice to quotient by, so the box goes dense
+    /// and is sized at the coefficient's `max`, matching what the same map spelled statically at
+    /// that bound compacts to. The coefficient itself survives into the stage's own mapping: the
+    /// box is bounded at comptime, but addressing it still needs the runtime value.
     #[test]
-    #[should_panic(expected = "cannot be staged")]
-    fn a_dynamic_coefficient_is_refused() {
+    fn a_dynamic_coefficient_compacts_dense_against_its_max() {
         let p = Projection::new(
             &[OH, RH, CI],
             &[
-                PhysicalAxisMap::scaled(&[(OH, Scale::Dynamic), (RH, Scale::Static(1))]),
+                PhysicalAxisMap::scaled(&[(OH, Scale::Dynamic { max: 2 }), (RH, Scale::Static(1))]),
                 PhysicalAxisMap::of(CI),
             ],
         );
-        Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        assert!(c.is_dense());
+        // 1 + 7*2 + 2*1, the box `conv(2, 1)` fills.
+        assert_eq!(c.extents(), &[17, 16]);
+        assert_eq!(
+            Compaction::of(&conv(2, 1), 4, extents(8, 3, 16)).extents(),
+            c.extents()
+        );
+        assert!(c.projection().physical_axis(0).has_dynamic_scale());
+        assert_eq!(c.projection().dynamic_scale_index(0, 0), Some(0));
+    }
+
+    /// A step the static coefficients would otherwise share is given up as soon as one of them
+    /// moves at runtime: `gcd(2, 2)` is `2`, but a runtime coefficient need share no factor with
+    /// anything, so the lattice cannot be assumed and the box stays dense.
+    #[test]
+    fn a_moving_dynamic_coefficient_gives_up_the_lattice() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled(&[(OH, Scale::Static(2)), (RH, Scale::Dynamic { max: 2 })]),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        assert!(c.is_dense());
+        assert_eq!(c.steps(), &[1, 1]);
+        // 1 + 7*2 + 2*2, the bounding box `conv(2, 2)` quotients but this one cannot.
+        assert_eq!(c.extents(), &[19, 16]);
+    }
+
+    /// A non-moving term is pinned to `1` only when it is static: pinning a `Dynamic` one would
+    /// drop its slot from the coefficient carrier, which the stage inherits from its source
+    /// position for position and so must index identically.
+    #[test]
+    fn a_non_moving_dynamic_coefficient_keeps_its_carrier_slot() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled(&[(OH, Scale::Static(2)), (RH, Scale::Dynamic { max: 4 })]),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        // RH does not move, so it contributes nothing to the box: 1 + 7*2 on the even lattice.
+        let c = Compaction::of(&p, 4, extents(8, 1, 16));
+        assert_eq!(c.steps(), &[2, 1]);
+        assert_eq!(c.extents(), &[8, 16]);
+        assert_eq!(p.dynamic_scale_index(0, 1), Some(0));
+        assert_eq!(c.projection().dynamic_scale_index(0, 1), Some(0));
+    }
+
+    /// A rational axis steps one physical cell on some outputs and none on others, so its window
+    /// has no lattice to quotient. It compacts densely (step = 1) with conservative extent.
+    #[test]
+    fn rational_axis_compacts_dense_with_conservative_extent() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 3)]).over(3),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        // OH: 8, RH: 3, CI: 16
+        // field = (8-1)*2 + (3-1)*3 = 14 + 6 = 20
+        // extent = 1 + (20 + 3 - 1) / 3 = 1 + 22 / 3 = 1 + 7 = 8
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        assert!(c.is_dense());
+        assert_eq!(c.steps(), &[1, 1]);
+        assert_eq!(c.extents(), &[8, 16]);
+        assert!(c.projection().physical_axis(0).is_rational());
+        assert_eq!(c.projection().divisor(0), Divisor::Static(3));
+    }
+
+    /// A dynamic divisor sizes the same box its `min` spelled statically would, and carries over
+    /// into the stage's mapping bound and all, so the stage divides by the same runtime value.
+    #[test]
+    fn a_dynamic_divisor_compacts_against_its_min() {
+        let p = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 3)]).over(Divisor::Dynamic { min: 3 }),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        assert!(c.is_dense());
+        // Identical to the static `over(3)` box above: field 20 over divisor 3 is 1 + 7 = 8.
+        assert_eq!(c.extents(), &[8, 16]);
+        assert_eq!(c.projection().divisor(0), Divisor::Dynamic { min: 3 });
+        assert_eq!(c.projection().dynamic_divisor_index(0), Some(0));
+    }
+
+    /// The box a bound sizes dominates every divisor the launch may then pass, which is what makes
+    /// staging one safe: a wider divisor reads a narrower window out of the same allocation.
+    #[test]
+    fn a_dynamic_divisor_box_holds_every_divisor_above_its_min() {
+        let bounded = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, 2), (RH, 3)]).over(Divisor::Dynamic { min: 2 }),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let box_extent = Compaction::of(&bounded, 4, extents(8, 3, 16)).extents()[0];
+        for d in 2..24 {
+            let exact = Projection::new(
+                &[OH, RH, CI],
+                &[
+                    PhysicalAxisMap::affine(&[(OH, 2), (RH, 3)]).over(d),
+                    PhysicalAxisMap::of(CI),
+                ],
+            );
+            // `over` reduces a divisor the coefficients cancel, which is a different shape.
+            if exact.physical_axis(0).is_rational() {
+                assert!(Compaction::of(&exact, 4, extents(8, 3, 16)).extents()[0] <= box_extent);
+            }
+        }
+    }
+
+    /// A fraction whose coefficients cancel the divisor reduces on the stage (where offset is 0)
+    /// even if the source operand carried a dynamic offset, recovering the integer gcd step.
+    #[test]
+    fn dynamic_offset_with_cancelling_divisor_compacts_as_integers() {
+        let p_dynamic_offset = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled_with_offset(
+                    &[(OH, Scale::Static(16)), (RH, Scale::Static(8))],
+                    Offset::Dynamic,
+                )
+                .over(4),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let p_integer = Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, 4), (RH, 2)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        );
+        let c_dynamic = Compaction::of(&p_dynamic_offset, 4, extents(8, 3, 16));
+        let c_integer = Compaction::of(&p_integer, 4, extents(8, 3, 16));
+
+        assert_eq!(c_dynamic.steps(), c_integer.steps());
+        assert_eq!(c_dynamic.extents(), c_integer.extents());
+        assert_eq!(c_dynamic.projection(), c_integer.projection());
+        assert_eq!(c_dynamic.steps(), &[2, 1]);
     }
 }

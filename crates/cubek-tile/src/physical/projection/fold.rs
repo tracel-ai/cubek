@@ -1,12 +1,65 @@
-//! The runtime half of a [`Projection`]: folding a buffer's physical shape and strides against
-//! the digits an operand's coordinates decompose into. Free `#[cube]` functions, not methods,
-//! because `Projection` stays comptime-only (never a [`CubeType`]), like every other
-//! comptime/runtime mix in this crate.
+//! The runtime side of a [`Projection`]: [`RuntimeMap`], the values a mapping only knows in the
+//! kernel, and the folds that drive a buffer's physical shape and strides against the digits an
+//! operand's coordinates decompose into. Free `#[cube]` functions, not methods, because
+//! `Projection` stays comptime-only (never a [`CubeType`]), like every other comptime/runtime mix
+//! in this crate.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection};
+use crate::{Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, const_coords};
+
+/// What a [`Projection`] cannot state at comptime: the values its [`Dynamic`](crate::Scale)
+/// coefficients and divisors carry, and the phase its window origin sits at under a
+/// [rational](Divisor) mapping. The two travel together because they are read together, per
+/// physical axis, in one expression: [`AxisProjection`](crate::AxisProjection) resolves a tap
+/// through the coefficients and off the phase at once, and a descent
+/// ([`MemData::at`](crate::MemData)) advances both.
+///
+/// No coefficients and an all-zero phase is the whole of it for a fully-`Static` integer mapping,
+/// which is every operand but a runtime-strided or fractionally scaled gather; [`Fold`] passes
+/// that through, so carrying it costs nothing where it says nothing.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct RuntimeMap {
+    /// One value per [`Scale::Dynamic`](crate::Scale) coefficient in
+    /// [`Projection::dynamic_scale_index`] order, plus one per [`Divisor::Dynamic`] axis in
+    /// [`Projection::dynamic_divisor_index`] order, the two interleaved physical axis major (an
+    /// axis's divisor follows its own coefficients). Named apart from the quantization scales in
+    /// [`Store`](crate::Store), which are a different thing entirely.
+    pub(crate) coefficients: Coords<u32>,
+    /// The window origin's phase within its divisor, one per physical axis, in `0..divisor`.
+    /// Constant `0` for every integer mapping, where the origin absorbs the offset whole.
+    pub(crate) residues: Coords<u32>,
+}
+
+#[cube]
+impl RuntimeMap {
+    /// The runtime map an integer mapping carries: nothing to carry, and no phase on any of
+    /// `physical_rank` axes.
+    pub(crate) fn integral(#[comptime] physical_rank: usize) -> RuntimeMap {
+        RuntimeMap {
+            coefficients: Coords::<u32>::new(),
+            residues: const_coords(comptime!(vec![0; physical_rank])),
+        }
+    }
+
+    /// Materialize this map in mutable, per-slot kernel registers. A normal clone preserves the
+    /// source expressions; a staged slot instead needs values that survive independently while a
+    /// sibling slot is refilled for another region.
+    pub(crate) fn stored(&self) -> RuntimeMap {
+        RuntimeMap {
+            coefficients: self.coefficients.stored(),
+            residues: self.residues.stored(),
+        }
+    }
+
+    /// Store a source window's complete runtime addressing state in this slot.
+    pub(crate) fn store_from(&mut self, src: &RuntimeMap) {
+        self.coefficients.store_from(&src.coefficients);
+        self.residues.store_from(&src.residues);
+    }
+}
 
 /// The logical extent per axis, folded from `projection`'s physical shape: a single-carrier axis
 /// passes its physical extent through, a storage-tiled one multiplies its fragments' extents back

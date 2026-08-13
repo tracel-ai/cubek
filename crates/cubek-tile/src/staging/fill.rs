@@ -94,12 +94,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         let pin_lhs = comptime!(self.pin_lhs);
         let pin_rhs = comptime!(self.pin_rhs);
         if comptime!(pin_lhs || pin_rhs) {
-            self.fill(|s, pipe| {
+            self.fill(|staged_operands, pipe| {
                 if comptime!(pin_lhs) {
-                    pipe.fill(&mut s.0, &lhs.at(region));
+                    pipe.fill(&mut staged_operands.0, &lhs.at(region));
                 }
                 if comptime!(pin_rhs) {
-                    pipe.fill(&mut s.1, &rhs.at(region));
+                    pipe.fill(&mut staged_operands.1, &rhs.at(region));
                 }
             });
         }
@@ -110,12 +110,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
         let pin_lhs = comptime!(self.pin_lhs);
         let pin_rhs = comptime!(self.pin_rhs);
-        self.fill(|s, pipe| {
+        self.fill(|staged_operands, pipe| {
             if comptime!(!pin_lhs) {
-                pipe.fill(&mut s.0, &lhs.at(region));
+                pipe.fill(&mut staged_operands.0, &lhs.at(region));
             }
             if comptime!(!pin_rhs) {
-                pipe.fill(&mut s.1, &rhs.at(region));
+                pipe.fill(&mut staged_operands.1, &rhs.at(region));
             }
         });
     }
@@ -133,6 +133,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     }
 
     /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
+    /// Each tile's bytes and runtime map were stored together by the producer.
     /// See [`StagingExpand::__expand_consume_method`].
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()

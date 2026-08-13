@@ -6,8 +6,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, Boundary, CubeAxis, Cut, DequantAt, Offset, PhysicalAxisMap, Projection, Scale, Schedule,
-    StridedOperand, Tiling, WalkOrder,
+    Axis, Boundary, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap, Projection, Scale,
+    Schedule, StridedOperand, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -325,11 +325,10 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
     assert!(!launch.space().is_dynamic(M));
 }
 
-/// A runtime coefficient leaves the compacted window with no comptime extent, so the smem it would
-/// be staged into cannot be sized. Reported here rather than at the stage, on the caller's thread.
+/// A runtime coefficient sizes its compacted window by its declared `max`, so the smem it stages
+/// into holds every window the launch can then ask for.
 #[test]
-#[should_panic(expected = "cannot be staged")]
-fn arg_gathered_dynamic_coefficient_cannot_stage() {
+fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
@@ -345,10 +344,92 @@ fn arg_gathered_dynamic_coefficient_cannot_stage() {
         .gathered(Projection::new(
             &[M, K, N],
             &[
-                PhysicalAxisMap::scaled(&[(M, Scale::Dynamic), (K, Scale::Dynamic)]),
+                PhysicalAxisMap::scaled(&[
+                    (M, Scale::Dynamic { max: 2 }),
+                    (K, Scale::Dynamic { max: 3 }),
+                ]),
                 PhysicalAxisMap::of(N),
             ],
         ))
+        .build();
+}
+
+/// A static rational projection stages uncompacted into shared memory.
+#[test]
+fn arg_gathered_rational_stages() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(4),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
+}
+
+/// A dynamic divisor stages against its `min`, the smallest divisor and so the widest window any
+/// launch can ask for.
+#[test]
+fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(Divisor::Dynamic { min: 4 }),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
+}
+
+/// The same shape with a divisor its coefficients cancel: `⌊(8m + 4k)/4⌋` steps like `2m + k`, so
+/// `over` reduces it away and what reaches the stage is a plain strided gather, which compacts.
+#[test]
+fn arg_gathered_cancelling_divisor_stages() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let projection = Projection::new(
+        &[M, K, N],
+        &[
+            PhysicalAxisMap::affine(&[(M, 8), (K, 4)]).over(4),
+            PhysicalAxisMap::of(N),
+        ],
+    );
+    assert!(!projection.is_rational());
+    let _ = staged
+        .arg(binding(&client, &[512, 64]))
+        .gathered(projection)
         .build();
 }
 

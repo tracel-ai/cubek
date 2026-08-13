@@ -32,14 +32,15 @@ pub struct MemData<T: Numeric> {
     /// like the layout: `at` moves the window, never the mapping.
     #[cube(comptime)]
     pub(crate) projection: Projection,
-    /// The runtime half of [`projection`](Self::projection): one value per
-    /// [`Scale::Dynamic`](crate::Scale) coefficient, in [`Projection::dynamic_scale_index`] order.
-    /// Empty for every fully-`Static` mapping, which is every operand but a runtime-strided gather.
-    /// Named apart from the quantization scales in [`Store`], which are a different thing entirely.
-    pub(crate) coefficients: Coords<u32>,
+    /// What [`projection`](Self::projection) only knows in the kernel: its runtime coefficients and
+    /// the phase its window origin sits at. [`integral`](RuntimeMap::integral) for every operand
+    /// but a runtime-strided or fractionally scaled gather.
+    pub(crate) map: RuntimeMap,
     /// The runtime half of the projection's constant terms: one value per
     /// [`Offset::Dynamic`](crate::Offset) axis, in [`Projection::dynamic_offset_index`] order.
-    /// Signed, since a padding places the window before the buffer's origin.
+    /// Signed, since a padding places the window before the buffer's origin. Not part of
+    /// [`map`](Self::map): an offset only ever places the top window, which
+    /// [`window`](Self::window) then carries, so nothing below reads it again.
     pub(crate) offsets: Coords<i32>,
     /// The window origin's offset through the layout, accumulated across [`at`](Tile::at)s rather
     /// than re-derived: each descent shifts by a *comptime* edge, so [`step_offset`] folds
@@ -144,11 +145,16 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) for a gather whose affine map is not all comptime: `coefficients` holds one
-    /// value per [`Scale::Dynamic`](crate::Scale) term in [`Projection::dynamic_scale_index`] order,
-    /// `offsets` one signed value per [`Offset::Dynamic`](crate::Offset) axis in
-    /// [`Projection::dynamic_offset_index`] order. A runtime stride, dilation or padding is exactly
-    /// this, and the kernel builds the carriers from its own scalar arguments, so nothing about
-    /// them reaches the launch.
+    /// value per [`Scale::Dynamic`](crate::Scale) term in [`Projection::dynamic_scale_index`] order
+    /// *and* one per [`Divisor::Dynamic`](crate::Divisor) axis in
+    /// [`Projection::dynamic_divisor_index`] order, the two interleaved physical axis major so an
+    /// axis's divisor follows its own coefficients; `offsets` one signed value per
+    /// [`Offset::Dynamic`](crate::Offset) axis in [`Projection::dynamic_offset_index`] order. A
+    /// runtime stride, dilation, padding or resize ratio is exactly this, and the kernel builds the
+    /// carriers from its own scalar arguments, so nothing about them reaches the launch.
+    ///
+    /// Only the lengths are checked, so the two index orders above are the contract: swap a
+    /// coefficient for a divisor and the read is silently wrong.
     pub fn of_gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -240,23 +246,16 @@ impl<T: Numeric> Tile<T> {
         ));
         let scales_given = coefficients.len();
         comptime!(assert!(
-            scales_given == coords.dynamic_scale_count(),
-            "Tile::of: the projection has {} Dynamic coefficients but {scales_given} were given",
-            coords.dynamic_scale_count()
+            scales_given == coords.dynamic_coefficient_count(),
+            "Tile::of: the projection has {} Dynamic coefficients and divisors but \
+             {scales_given} were given",
+            coords.dynamic_coefficient_count()
         ));
         let offsets_given = offsets.len();
         comptime!(assert!(
             offsets_given == coords.dynamic_offset_count(),
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
-        ));
-        // A staged operand's smem is allocated from its compacted window, whose extent a runtime
-        // coefficient makes runtime. `Compaction::of` refuses it too; this is the earlier, clearer
-        // report, at the operand rather than at the stage.
-        comptime!(assert!(
-            !coords.has_dynamic_scales() || !space.partitioner().stages(),
-            "Tile::of: a Dynamic coefficient cannot be staged, its window has no comptime extent; \
-             the schedule must be Direct"
         ));
         // Stage layout: the explicit override, else derived from the operand's leaf.
         let stage = comptime!(StagePlan {
@@ -324,10 +323,11 @@ impl<T: Numeric> Tile<T> {
         let bound = logical_extent(comptime!(gmem_projection.clone()), &physical_shape);
         // The whole-tile window. A `Dynamic` axis takes its runtime size from `bound`, so the
         // top-level extent never bakes into the kernel; a `Static` axis keeps its comptime size.
-        let (origin, extent) = top_window(
+        let (origin, extent, map) = top_window(
             comptime!(space.clone()),
             &bound,
             &offsets,
+            coefficients,
             vector_size,
             comptime!(coords.clone()),
         );
@@ -351,7 +351,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(spec.boundary.unwrap_or(Boundary::Zero)),
                 ),
                 projection: comptime!(coords),
-                coefficients,
+                map,
                 offsets,
                 window_start: 0u32,
                 access: comptime!(Access {
@@ -368,6 +368,15 @@ impl<T: Numeric> Tile<T> {
             leaf: comptime!(leaf),
         }
     }
+}
+
+/// Comptime metadata bundled when constructing a shared-memory stage.
+#[derive(Clone)]
+pub(crate) struct StageMeta {
+    pub space: Space,
+    pub leaf: Leaf,
+    pub vector_size: usize,
+    pub stage: StagePlan,
 }
 
 #[cube]
@@ -390,7 +399,14 @@ impl<T: Numeric> MemData<T> {
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, leaf, vector_size, stage)
                 } else {
-                    MemData::smem_gathered(space, leaf, vector_size, stage, projection)
+                    MemData::smem_gathered(
+                        space,
+                        leaf,
+                        vector_size,
+                        stage,
+                        projection,
+                        &operand.runtime_map(),
+                    )
                 }
             }
             DequantAt::Read => MemData::smem_stored(operand),
@@ -464,7 +480,14 @@ impl<T: Numeric> MemData<T> {
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, stage.layout));
-        MemData::smem_with_form(space, leaf, vector_size, stage, form)
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        let meta = comptime!(StageMeta {
+            space,
+            leaf,
+            vector_size,
+            stage,
+        });
+        MemData::smem_with_form(meta, form, map)
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -482,6 +505,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         #[comptime] projection: Projection,
+        map: &RuntimeMap,
     ) -> Tile<T> {
         let form = comptime!(StageForm::gathered(
             &space,
@@ -489,28 +513,34 @@ impl<T: Numeric> MemData<T> {
             stage.layout,
             &projection
         ));
-        MemData::smem_with_form(space, leaf, vector_size, stage, form)
-    }
-
-    /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
-    fn smem_with_form(
-        #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
-        #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
-        #[comptime] form: StageForm,
-    ) -> Tile<T> {
-        let size!(W) = vector_size;
-        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
-        MemData::smem_over(
+        let stage_map = RuntimeMap {
+            coefficients: map.coefficients.clone(),
+            residues: const_coords(comptime!(vec![0; form.projection.physical_rank()])),
+        };
+        let stage_map =
+            if comptime!(form.projection.is_rational() || form.projection.has_dynamic_scales()) {
+                stage_map.stored()
+            } else {
+                stage_map
+            };
+        let meta = comptime!(StageMeta {
             space,
             leaf,
             vector_size,
             stage,
-            &smem,
-            ComptimeOption::new_None(),
-            form,
-        )
+        });
+        MemData::smem_with_form(meta, form, stage_map)
+    }
+
+    /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
+    fn smem_with_form(
+        #[comptime] meta: StageMeta,
+        #[comptime] form: StageForm,
+        map: RuntimeMap,
+    ) -> Tile<T> {
+        let size!(W) = meta.vector_size;
+        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
+        MemData::smem_over(meta, &smem, ComptimeOption::new_None(), form, map)
     }
 
     /// [`smem`](MemData::smem) staging the element an operand is *stored* in rather than the one it
@@ -532,7 +562,14 @@ impl<T: Numeric> MemData<T> {
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
-        MemData::smem_over(space, leaf, vector_size, stage, &smem, quant, form)
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        let meta = comptime!(StageMeta {
+            space,
+            leaf,
+            vector_size,
+            stage,
+        });
+        MemData::smem_over(meta, &smem, quant, form, map)
     }
 
     /// The body every smem constructor shares: everything but the allocation's element (which is why
@@ -540,13 +577,11 @@ impl<T: Numeric> MemData<T> {
     /// erases the slice to the served `T` (the views recover the stored element through
     /// [`lines_storage`](MemData::lines_storage)) and wraps it in the whole-buffer window.
     fn smem_over<S: CubePrimitive>(
-        #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
-        #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
+        #[comptime] meta: StageMeta,
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
         #[comptime] form: StageForm,
+        map: RuntimeMap,
     ) -> Tile<T> {
         let buffer = unsafe {
             smem.inner_ref()
@@ -562,7 +597,7 @@ impl<T: Numeric> MemData<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
                     buffer,
-                    vector_size,
+                    vector_size: meta.vector_size,
                     quant,
                 },
                 layout: GmemLayout {
@@ -574,21 +609,18 @@ impl<T: Numeric> MemData<T> {
                 // below), so the boundary policy is never consulted.
                 window: Window::new(origin, extent, bound, false, Boundary::Zero),
                 projection: comptime!(form.projection),
-                // A stage's own mapping is the compacted one, which is fully `Static`: a Dynamic
-                // coefficient never reaches a stage ([`Compaction::of`] refuses it), and the
-                // compaction drops the offset, the gmem window having already been placed.
-                coefficients: Coords::<u32>::new(),
+                map,
                 offsets: Coords::<i32>::new(),
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
                     overhang: Overhang::Never,
-                    stage,
+                    stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
             }),
-            space: comptime!(space),
-            leaf: comptime!(leaf),
+            space: comptime!(meta.space),
+            leaf: comptime!(meta.leaf),
         }
     }
 }
@@ -756,6 +788,12 @@ impl<T: Numeric> MemData<T> {
         src: &MemData<T>,
         #[comptime] space: Space,
     ) {
+        // A gathered stage owns mutable map registers alongside its bytes. Store the source
+        // window's coefficients and phase into those registers so bytes and interpretation are
+        // one slot value. Direct stages carry no runtime map state.
+        if comptime!(self.projection.is_rational() || self.projection.has_dynamic_scales()) {
+            self.map.store_from(&src.map);
+        }
         let check = comptime!(src.access.overhang.masks());
         let w = comptime!(self.store.vector_size);
         let compaction = comptime!(stage_compaction(
@@ -1355,7 +1393,7 @@ impl<T: Numeric> MemData<T> {
         let last = comptime!(rank - 1);
         let w = comptime!(self.store.vector_size);
 
-        if comptime!(proj.is_direct()) {
+        let map = if comptime!(proj.is_direct()) {
             // One logical axis per physical axis at coefficient 1. Kept as its own loop because
             // this is the only mapping a *tiled* buffer can carry, where `step` folds the
             // grid/tile digit split that a scaled advance cannot be pushed through.
@@ -1385,74 +1423,38 @@ impl<T: Numeric> MemData<T> {
                     &self.layout.physical_strides,
                 )));
             }
+            // Every axis at coefficient 1, which no Dynamic term and no divisor can spell, so
+            // there is nothing to carry and no phase to leave over.
+            RuntimeMap::integral(rank)
         } else {
+            let mut residues = Coords::<u32>::new();
             #[unroll]
             for pa in 0..rank {
-                // One term per contributing axis: its tile coordinate times its sub-tile edge
-                // times its coefficient. All comptime but the coordinate, so this stays the
-                // multiply-add `window_start` is documented to be.
-                //
-                // Each term divides by `w` on its own, which only sums back to the whole
-                // advance because the innermost physical axis carries a single identity term:
-                // `Projection::validate` requires it, precisely because this axis is addressed
-                // in lines. A second term here would need the division after the sum, not before.
-                let picks =
-                    comptime!((0..proj.physical_axis(pa).terms().len()).collect::<Vec<_>>());
-                let mut terms = Coords::<u32>::new();
-                // The receptive field's leading `1`, so the sum below needs no seed.
-                let mut spans = Coords::<u32>::new();
-                spans.push(comptime!(1u32).runtime());
-                #[unroll]
-                for t in 0..comptime!(proj.physical_axis(pa).terms().len()) {
-                    let term = comptime!(proj.physical_axis(pa).terms()[t]);
-                    let edge = comptime!(space.partitioner().edge(term.axis));
-                    match comptime!(term.scale) {
-                        Scale::Static(s) => {
-                            let step = comptime!(if pa == last { edge * s / w } else { edge * s });
-                            terms.push(region.coord(term.axis).fmul(step).fcast::<u32>());
-                            spans.push(comptime!(((edge - 1) * s) as u32).runtime());
-                        }
-                        // The line division above never meets a runtime coefficient: the innermost
-                        // physical axis is a single identity term, which `Projection::validate`
-                        // requires and `Static` is the only spelling of.
-                        Scale::Dynamic => {
-                            let coefficient = self
-                                .coefficients
-                                .at(comptime!(proj.dynamic_scale_index(pa, t).unwrap()));
-                            terms.push(
-                                region
-                                    .coord(term.axis)
-                                    .fcast::<u32>()
-                                    .fmul(comptime!(edge as u32).runtime())
-                                    .fmul(coefficient),
-                            );
-                            spans.push(comptime!((edge - 1) as u32).runtime().fmul(coefficient));
-                        }
-                    }
-                }
-                let advance = terms.fsum(comptime!(picks.clone()));
+                let (step, residue, span) = gathered_descent(
+                    comptime!(proj.clone()),
+                    comptime!(space.clone()),
+                    region,
+                    &self.map,
+                    w,
+                    pa,
+                );
 
-                // The receptive field of the child edges: `1 + Σ (edge - 1) * scale`, which stays
-                // comptime for the mapping that is.
-                let span = if comptime!(proj.physical_axis(pa).dynamic_scale_count() == 0) {
-                    comptime!({
-                        let s = proj.span(pa, |a| space.partitioner().edge(a));
-                        (if pa == last { s / w } else { s }) as u32
-                    })
-                    .runtime()
-                } else {
-                    spans.fsum(comptime!((0..picks.len() + 1).collect::<Vec<_>>()))
-                };
-
-                // `advance` only moves forward, so add directly to the signed origin.
-                origin.push(self.window.origin.at(pa).fadd(advance.fcast::<i32>()));
+                // `step` only moves forward, so add directly to the signed origin.
+                origin.push(self.window.origin.at(pa).fadd(step.fcast::<i32>()));
+                residues.push(residue);
                 extent.push(span);
                 // `Projection::validate` pins a gathered operand to untiled storage (bare gmem, or
                 // the row-major compacted stage of one), so one physical axis step is one stride
                 // and the advance passes straight through.
-                advances.push(advance.fmul(self.layout.physical_strides.at(pa)));
+                advances.push(step.fmul(self.layout.physical_strides.at(pa)));
             }
-        }
+            // The coefficients are a fact about the buffer, invariant down the descent; only the
+            // phase each axis's division left over is this level's.
+            RuntimeMap {
+                coefficients: self.map.coefficients.clone(),
+                residues,
+            }
+        };
         let start = self
             .window_start
             .fadd(advances.fsum(comptime!((0..rank).collect::<Vec<_>>())));
@@ -1496,10 +1498,10 @@ impl<T: Numeric> MemData<T> {
                 comptime!(self.window.boundary),
             ),
             // How the logical axes address the physical ones is a fact about the buffer, invariant
-            // down the descent, and so are its runtime coefficients. The offsets only placed the
-            // top window, which `origin` above already carries.
+            // down the descent. The offsets only placed the top window, which `origin` above
+            // already carries.
             projection: comptime!(proj),
-            coefficients: self.coefficients.clone(),
+            map,
             offsets: self.offsets.clone(),
             window_start: start,
             // The window no longer covers the buffer, so the straight-through fill is off.
@@ -1538,11 +1540,13 @@ fn top_window(
     #[comptime] space: Space,
     bound: &Coords<u32>,
     offsets: &Coords<i32>,
+    coefficients: Coords<u32>,
     #[comptime] vector_size: usize,
     #[comptime] projection: Projection,
-) -> (Coords<i32>, Coords<u32>) {
+) -> (Coords<i32>, Coords<u32>, RuntimeMap) {
     let mut origin = Coords::<i32>::new();
     let mut extent = Coords::<u32>::new();
+    let mut residues = Coords::<u32>::new();
     let rank = comptime!(projection.physical_rank());
     let last = comptime!(rank - 1);
 
@@ -1550,6 +1554,7 @@ fn top_window(
     for pa in 0..rank {
         let size = if comptime!(projection.is_direct()) {
             origin.push(0);
+            residues.push(0u32);
             let axis = comptime!(space.axis_at(pa));
             // The innermost (vectorized) axis is a line count, `/ vector_size`. A `Dynamic` axis
             // reads its size from `bound`, already lined from the physical shape.
@@ -1560,19 +1565,178 @@ fn top_window(
                 Extent::Dynamic => bound.at(pa),
             }
         } else {
-            // Gathered axes start at their initial signed offset (e.g. negative padding).
-            match comptime!(projection.offset(pa)) {
-                Offset::Static(o) => origin.push((comptime!(o as i32)).runtime()),
-                Offset::Dynamic => {
-                    origin.push(offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap())))
-                }
-            }
+            let (start, phase) =
+                gathered_origin(comptime!(projection.clone()), offsets, &coefficients, pa);
+            origin.push(start);
+            residues.push(phase);
             bound.at(pa)
         };
         extent.push(size);
     }
 
-    (origin, extent)
+    (
+        origin,
+        extent,
+        RuntimeMap {
+            coefficients,
+            residues,
+        },
+    )
+}
+
+/// Where a gathered physical axis's top window starts, and the phase its division left behind:
+/// `⌊offset / divisor⌋` and `offset mod divisor`. An integer mapping divides by `1`, so its origin
+/// absorbs the offset whole and its phase is `0`; a rational one can only absorb the multiples of
+/// its divisor, and hands the rest to [`AxisProjection`](crate::AxisProjection), which adds it back
+/// inside the numerator.
+///
+/// The floor is the host's whenever both sides are comptime
+/// ([`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin)); only a `Dynamic` offset or
+/// divisor pays for one in the kernel.
+#[cube]
+fn gathered_origin(
+    #[comptime] projection: Projection,
+    offsets: &Coords<i32>,
+    coefficients: &Coords<u32>,
+    #[comptime] pa: usize,
+) -> (i32, u32) {
+    let axis_map = comptime!(projection.physical_axis(pa));
+
+    if comptime!(axis_map.origin().is_some()) {
+        (
+            comptime!(axis_map.origin().unwrap() as i32).runtime(),
+            comptime!(axis_map.residue().unwrap() as u32).runtime(),
+        )
+    } else {
+        // A signed offset places the window before the buffer's origin (a padding), which is
+        // exactly where truncating division would land a cell too high.
+        let offset = match comptime!(axis_map.offset()) {
+            Offset::Static(o) => comptime!(o as i32).runtime(),
+            Offset::Dynamic => offsets.at(comptime!(projection.dynamic_offset_index(pa).unwrap())),
+        };
+        if comptime!(!axis_map.is_rational()) {
+            (offset, 0u32)
+        } else {
+            let divisor = match comptime!(axis_map.divisor()) {
+                Divisor::Static(d) => comptime!(d as i32).runtime(),
+                Divisor::Dynamic { .. } => coefficients
+                    .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
+                    .fcast::<i32>(),
+            };
+            let start = floor_div(offset, divisor);
+            (start, offset.fsub(start.fmul(divisor)).fcast::<u32>())
+        }
+    }
+}
+
+/// One gathered physical axis's descent into `region`: how far its window moves, the phase that
+/// move leaves behind, and the receptive field the child then covers.
+///
+/// The move sums one term per contributing axis, its tile coordinate times its sub-tile edge times
+/// its coefficient. All comptime but the coordinate, so this stays the multiply-add `window_start`
+/// is documented to be. Each term divides by `vector_size` on its own, which only sums back to the
+/// whole move because the innermost physical axis carries a single identity term:
+/// [`Projection::validate`] requires it, precisely because that axis is addressed in lines. A
+/// second term here would need the division after the sum, not before.
+///
+/// A [rational](crate::Divisor) axis moves by the whole cells its numerator crossed and hands the
+/// phase it did not fill to the child: `⌊(move + phase)/d⌋` splits into this step plus a child
+/// floor starting at the new phase, which is what makes the descent compose across levels.
+#[cube]
+fn gathered_descent(
+    #[comptime] projection: Projection,
+    #[comptime] space: Space,
+    region: &Region,
+    map: &RuntimeMap,
+    #[comptime] vector_size: usize,
+    #[comptime] pa: usize,
+) -> (u32, u32, u32) {
+    let axis_map = comptime!(projection.physical_axis(pa));
+    let n = comptime!(axis_map.terms().len());
+    let picks = comptime!((0..n).collect::<Vec<_>>());
+    let lined = comptime!(pa == projection.physical_rank() - 1);
+
+    let mut terms = Coords::<u32>::new();
+    // One receptive-field term per contributing axis, `(edge - 1) * scale`. The field's leading
+    // `1` is the branch's to add: under a division it is the quotient that carries it, not the
+    // numerator.
+    let mut spans = Coords::<u32>::new();
+    #[unroll]
+    for t in 0..n {
+        let term = comptime!(axis_map.terms()[t]);
+        let edge = comptime!(space.partitioner().edge(term.axis));
+        match comptime!(term.scale) {
+            Scale::Static(s) => {
+                let step = comptime!(if lined {
+                    edge * s / vector_size
+                } else {
+                    edge * s
+                });
+                terms.push(region.coord(term.axis).fmul(step).fcast::<u32>());
+                spans.push(comptime!(((edge - 1) * s) as u32).runtime());
+            }
+            // The line division above never meets a runtime coefficient: the innermost physical
+            // axis is a single identity term, which `Projection::validate` requires and `Static`
+            // is the only spelling of.
+            Scale::Dynamic { .. } => {
+                let coefficient = map
+                    .coefficients
+                    .at(comptime!(projection.dynamic_scale_index(pa, t).unwrap()));
+                terms.push(
+                    region
+                        .coord(term.axis)
+                        .fcast::<u32>()
+                        .fmul(comptime!(edge as u32).runtime())
+                        .fmul(coefficient),
+                );
+                spans.push(comptime!((edge - 1) as u32).runtime().fmul(coefficient));
+            }
+        }
+    }
+    let advance = terms.fsum(comptime!(picks.clone()));
+
+    if comptime!(!axis_map.is_rational()) {
+        // The receptive field of the child edges: `1 + Σ (edge - 1) * scale`, which stays comptime
+        // for the mapping that is.
+        let span = if comptime!(!axis_map.has_dynamic_scale()) {
+            comptime!({
+                let s = projection.span(pa, |a| space.partitioner().edge(a));
+                (if lined { s / vector_size } else { s }) as u32
+            })
+            .runtime()
+        } else {
+            spans.fsum(comptime!(picks.clone())).fadd(1)
+        };
+        (advance, 0u32, span)
+    } else {
+        // No `/ vector_size` anywhere below, and none is owed: `Projection::validate` refuses a
+        // rational innermost physical axis at any width past `1`, so it is `1` whenever this
+        // branch runs and the terms above are already in elements.
+        let numerator = advance.fadd(map.residues.at(pa));
+        let field = spans.fsum(comptime!(picks.clone()));
+        match comptime!(axis_map.divisor()) {
+            Divisor::Static(d) => {
+                let d = comptime!(d as u32);
+                let residue = numerator.frem(d);
+                (
+                    numerator.fdiv(d),
+                    residue,
+                    field.fadd(residue).fdiv(d).fadd(1),
+                )
+            }
+            Divisor::Dynamic { .. } => {
+                let d = map
+                    .coefficients
+                    .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()));
+                let residue = numerator.frem(d);
+                (
+                    numerator.fdiv(d),
+                    residue,
+                    field.fadd(residue).fdiv(d).fadd(1),
+                )
+            }
+        }
+    }
 }
 
 /// The staged scales side-channel for a quantized smem stage: a compact `Shared` buffer holding one

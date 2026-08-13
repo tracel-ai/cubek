@@ -247,9 +247,33 @@ impl<C: Int> Coords<C> {
         unexpanded!()
     }
 
+    /// Copy these coordinates into mutable kernel registers. Unlike [`clone`](Clone::clone),
+    /// which deliberately keeps the same expression handles, this gives a staging slot durable
+    /// storage whose values can be replaced on every fill.
+    pub(crate) fn stored(&self) -> Coords<C> {
+        unexpanded!()
+    }
+
+    /// Assign every coordinate into this stored carrier. Both lists must have the same comptime
+    /// length; the receiver must have been produced by [`stored`](Coords::stored).
+    pub(crate) fn store_from(&mut self, _src: &Coords<C>) {
+        unexpanded!()
+    }
+
     pub fn __expand_new(_scope: &Scope) -> CoordsExpand<C> {
         CoordsExpand { values: Vec::new() }
     }
+}
+
+/// `n / d` rounded toward minus infinity, for a numerator that may sit below the buffer's origin
+/// (a padded or fractionally placed window). The stock `/` truncates toward zero, which lands one
+/// cell too high there. Only reached for a genuinely runtime numerator or divisor: a comptime pair
+/// divides on the host, where [`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin) is the
+/// same floor.
+#[cube]
+pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
+    let q = n / d;
+    select(n % d < 0, q - 1, q)
 }
 
 /// Converts a comptime list of extents into constant [`Coords<u32>`].
@@ -318,6 +342,9 @@ impl<C: Int> AsMutExpand for CoordsExpand<C> {
 }
 
 impl<C: Int> CoordsExpand<C> {
+    pub fn __expand_assign_method(&mut self, _scope: &Scope, other: Self) {
+        self.values = other.values;
+    }
     pub fn __expand_push_method(&mut self, _scope: &Scope, v: NativeExpand<C>) {
         self.values.push(v);
     }
@@ -355,5 +382,22 @@ impl<C: Int> CoordsExpand<C> {
             acc = fold_add(scope, acc, self.values[i]);
         }
         acc
+    }
+
+    pub fn __expand_stored_method(&self, scope: &Scope) -> CoordsExpand<C> {
+        CoordsExpand {
+            values: self.values.iter().map(|v| (*v).into_mut(scope)).collect(),
+        }
+    }
+
+    pub fn __expand_store_from_method(&mut self, scope: &Scope, src: &CoordsExpand<C>) {
+        assert_eq!(
+            self.values.len(),
+            src.values.len(),
+            "Coords::store_from: source and destination lengths differ"
+        );
+        for (dst, src) in self.values.iter_mut().zip(&src.values) {
+            dst.__expand_assign_method(scope, *src);
+        }
     }
 }

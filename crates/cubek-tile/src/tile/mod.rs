@@ -227,6 +227,16 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The runtime map (dynamic coefficients and origin phase residues) of this tile.
+    pub(crate) fn runtime_map(&self) -> RuntimeMap {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.map.clone(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                RuntimeMap::integral(comptime!(self.space.rank()))
+            }
+        }
+    }
+
     /// The [`StagePlan`] a stage derived from this tile takes: its [`StageStorage`] layout
     /// and the launch's cube size. A TMA bulk copy writes its box rows raw and a fragment
     /// is never a fill source, so both report the plain default (strided, units unknown).
