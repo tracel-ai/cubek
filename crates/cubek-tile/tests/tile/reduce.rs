@@ -783,7 +783,7 @@ fn test_reduce_axis_max_nondivisible_k_negative_data() {
 }
 
 /// A zero overhang fallback would incorrectly win this Min reduction, whereas the correct
-/// identity is positive infinity.
+/// device-side identity is the element type's maximum value.
 #[test]
 fn test_reduce_axis_min_nondivisible_k_positive_data() {
     let (m, k, tk) = (4, 6, 4);

@@ -379,18 +379,14 @@ fn resolve_reduce_in_lane(
     reduce_coords: &Coords<u32>,
     #[comptime] width: usize,
 ) -> usize {
-    if comptime!(width <= 1) {
-        0usize.runtime()
+    let in_rank = comptime!(in_space.rank());
+    let fastest_axis = comptime!(in_space.axis_at(in_rank - 1));
+    let raw_coord = if comptime!(acc_space.contains(fastest_axis)) {
+        let pos = comptime!(acc_space.position(fastest_axis));
+        acc_coords.at(comptime!(pos))
     } else {
-        let in_rank = comptime!(in_space.rank());
-        let fastest_axis = comptime!(in_space.axis_at(in_rank - 1));
-        let raw_coord = if comptime!(acc_space.contains(fastest_axis)) {
-            let pos = comptime!(acc_space.position(fastest_axis));
-            acc_coords.at(comptime!(pos))
-        } else {
-            let pos = comptime!(reduce_axes.iter().position(|&r| r == fastest_axis).unwrap());
-            reduce_coords.at(comptime!(pos))
-        };
-        raw_coord.frem(comptime!(width as u32)).fcast::<usize>()
-    }
+        let pos = comptime!(reduce_axes.iter().position(|&r| r == fastest_axis).unwrap());
+        reduce_coords.at(comptime!(pos))
+    };
+    raw_coord.frem(comptime!(width as u32)).fcast::<usize>()
 }
