@@ -381,6 +381,33 @@ pub(crate) struct StageMeta {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
+    /// Cooperatively materialize a coordinate-backed source into this plain, direct memory tile.
+    /// This is the one bridge from a procedural source to ordinary tile consumers: once staged,
+    /// all later reads use the normal memory views and leaves.
+    pub(crate) fn fill_procedural(&mut self, src: &ProceduralData<T>, #[comptime] space: Space) {
+        comptime!(assert!(
+            self.store.quant.is_none()
+                && self.projection.is_direct()
+                && self.store.vector_size == 1,
+            "MemData::fill_procedural: procedural sources require a plain, direct scalar destination"
+        ));
+        // Read the destination's runtime window rather than the comptime space so direct copies
+        // also work when another operand witnesses a Dynamic extent.
+        let shape = self.window.extent.clone();
+        let mut dst = self.flat_mut::<Const<1>>();
+        let total = dst.shape();
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            let pos = unravel(&shape, i.fcast::<u32>());
+            dst.write(
+                i,
+                Vector::cast_from(src.evaluate(&pos, comptime!(space.clone()))),
+            );
+            i += workers;
+        }
+    }
+
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
     /// the element that operand needs staged: the one it *serves* when the load is what decodes it
     /// ([`DequantAt::Load`], and always for a plain operand, whose served and stored elements are the

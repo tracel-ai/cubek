@@ -243,6 +243,12 @@ fn stage_operand<T: Numeric>(
 ) -> Tile<T> {
     let gathered = input.gathered();
     let delivery = input.delivery();
+    // A procedural operand has no raw-memory fragment transport. Materialize it into smem at
+    // this boundary; recursive staging then treats that result exactly like any other tile.
+    let stage = match &input.tile_kind {
+        TileKind::Procedural(_) => comptime!(OperandStage::Smem),
+        _ => stage,
+    };
     match comptime!(stage) {
         OperandStage::Plane => {
             comptime!(assert!(

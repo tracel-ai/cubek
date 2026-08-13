@@ -52,10 +52,6 @@ pub struct ProceduralData<T: Numeric> {
 #[cube]
 impl<T: Numeric> ProceduralData<T> {
     pub(crate) fn new(#[comptime] space: Space, #[comptime] recipe: ProceduralRecipe) -> Self {
-        comptime!(assert!(
-            space.is_static(),
-            "Tile::procedural: procedural tiles require a static Space; another operand must witness Dynamic axes"
-        ));
         let mut origin = Coords::<u32>::new();
         #[unroll]
         for _ in 0..comptime!(space.rank()) {
