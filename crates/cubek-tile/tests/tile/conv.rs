@@ -14,7 +14,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 use cubek_tile::*;
 
@@ -1861,11 +1861,7 @@ fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
 
 fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.mma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no manual mma (features.matmul.mma) support".to_string(),
-        ))
-        .enforce();
+    if !super::require_uniform_mma(&client, f32::elem_type_native()) {
         return;
     }
 

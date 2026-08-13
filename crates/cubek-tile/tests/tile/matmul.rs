@@ -1655,11 +1655,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
 #[test]
 fn mma_matmul_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.mma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no manual mma (features.matmul.mma) support".to_string(),
-        ))
-        .enforce();
+    if !super::require_uniform_mma(&client, f32::elem_type_native()) {
         return;
     }
 
@@ -2209,11 +2205,8 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
 #[test]
 fn mma_matmul_quant_until_read() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.mma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no manual mma (features.matmul.mma) support".to_string(),
-        ))
-        .enforce();
+    // `A` dequantizes into f32 registers, so the contraction itself is the uniform f32 mma.
+    if !super::require_uniform_mma(&client, f32::elem_type_native()) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
