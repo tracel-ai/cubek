@@ -19,7 +19,7 @@ use crate::{
 };
 use crate::{
     layout::{ScalesView, scales_layout},
-    scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue},
+    scheme::{QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 
 #[cube]
@@ -154,7 +154,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
 
     let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
-    let scale = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
+    let scale = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param());
 
     if input.vector_size().comptime() == num_quants {
         output.write(
@@ -201,12 +201,12 @@ pub fn launch_ref<R: Runtime>(
     // Refused here rather than during kernel expansion, where the caller can no longer read the
     // scheme off the error.
     assert!(
-        scheme.param.round_up(1.0).is_some(),
+        scheme.param().round_up(1.0).is_some(),
         "{:?} scales have no round-up rule, which quantization requires",
-        scheme.param
+        scheme.param()
     );
 
-    let scale_dtype = ElemType::from_quant_param(scheme.param);
+    let scale_dtype = ElemType::from_quant_param(scheme.param());
 
     match scheme {
         QuantScheme {
@@ -289,11 +289,10 @@ fn quantize_native<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
-        } => {
+        } if scheme.levels().len() == 1 => {
             // We could use vector_size = block_size if it's in the supported vector sizes.. but let's keep it simple
             check_block_size_compat(scheme, vector_size as usize);
 
@@ -319,7 +318,7 @@ fn quantize_native<R: Runtime>(
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
                     scales_layout,
-                    scheme.param,
+                    scheme.param(),
                     [input_dtype, scale_dtype, output_dtype],
                 )
             }
@@ -346,11 +345,10 @@ fn quantize_packed<R: Runtime>(
     // Determine if we can use vectorized packing
     let mut can_vectorize = match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
             store: QuantStore::PackedU32(dim),
             ..
-        } => {
+        } if scheme.levels().len() == 1 => {
             // Check if packing dim is contiguous
             let ndims = input.shape.len();
             input.strides[ndims - 1 - *dim] == 1

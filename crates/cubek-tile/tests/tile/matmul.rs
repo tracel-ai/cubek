@@ -9,7 +9,7 @@ use cubecl::{
     prelude::*,
     zspace::shape,
 };
-use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
+use cubek_quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx,
@@ -1426,10 +1426,9 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .with_scales(ScaleLevels::tensor(QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     // A: i8 quantized, with host values to build the reference.
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2041,10 +2040,9 @@ fn cmma_matmul_quant_block_m_8x8x8() {
 
     let bm = 4usize; // 2 blocks along M, each 4×8; one scale each
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, 8]))
+        .with_scales(ScaleLevels::block([bm as u8, 8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2125,10 +2123,9 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 
     let bk = 4usize; // 2 blocks along K, each 8×4; the scale changes at p = 4
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([8, bk as u8]))
+        .with_scales(ScaleLevels::block([8, bk as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2242,10 +2239,9 @@ fn mma_matmul_quant_until_read() {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .with_scales(ScaleLevels::tensor(QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2330,10 +2326,9 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .with_scales(ScaleLevels::tensor(QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     // A: i8 quantized (m×k), with host values for the reference.
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2425,10 +2420,9 @@ fn cmma_matmul_quant_block_m_k_walk() {
 
     // One scale per M-block, over the full K: block `[bm, k]`, scales shaped (m/bm, 1).
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2520,10 +2514,9 @@ fn cmma_matmul_quant_block_k_k_walk() {
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_scales(ScaleLevels::block([m as u8, bk as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2615,10 +2608,9 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .with_scales(ScaleLevels::block([m as u8, bk as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2825,10 +2817,9 @@ fn register_matmul_quant_native_block_m() {
 
     let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2876,10 +2867,9 @@ fn register_matmul_quant_native_direct_serve() {
 
     let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2934,10 +2924,9 @@ fn run_register_matmul_quant_packed(
     bm: usize,
 ) {
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
         .with_store(QuantStore::PackedU32(0))
-        .with_value(value)
-        .with_param(QuantParam::F32);
+        .with_value(value);
     let pack = scheme.num_quants();
 
     let max_width = client.properties().hardware.max_vector_size;
@@ -3279,10 +3268,9 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 fn quant_until_read_refused_by_a_cmma_leaf() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([1, 4]))
+        .with_scales(ScaleLevels::block([1, 4], QuantParam::F32))
         .with_store(QuantStore::PackedU32(0))
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let leaf = Leaf::Cmma;
     let plan = Tiling::new()
         .extents(&[(M, 8), (N, 8), (K, 8)])
@@ -3325,12 +3313,13 @@ fn run_register_matmul_quant_rhs(
     // The data is minted against the one-level scheme either way: a two-level tensor holds the
     // same value and block-scale bytes, plus the global in its own binding.
     let mint_scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([1, bn as u8]))
+        .with_scales(ScaleLevels::block([1, bn as u8], QuantParam::F32))
         .with_store(QuantStore::PackedU32(0))
-        .with_value(value)
-        .with_param(QuantParam::F32);
+        .with_value(value);
     let scheme = match global {
-        Some(_) => mint_scheme.with_level(QuantLevel::block_tensor([1, bn as u8], QuantParam::F32)),
+        Some(_) => mint_scheme.with_scales(
+            ScaleLevels::block([1, bn as u8], QuantParam::F32).and_tensor(QuantParam::F32),
+        ),
         None => mint_scheme,
     };
     let pack = scheme.num_quants();
@@ -3423,4 +3412,3 @@ fn run_register_matmul_quant_rhs(
         .as_test_outcome()
         .enforce()
 }
-

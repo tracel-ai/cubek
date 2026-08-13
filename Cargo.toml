@@ -20,9 +20,13 @@ version = "0.3.0-pre.2"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "088dd7053c039775f73cf4d1645d30706d0ddf7d", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "088dd7053c039775f73cf4d1645d30706d0ddf7d", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "088dd7053c039775f73cf4d1645d30706d0ddf7d", default-features = false }
+# cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "088dd7053c039775f73cf4d1645d30706d0ddf7d", default-features = false }
+# cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "088dd7053c039775f73cf4d1645d30706d0ddf7d", default-features = false }
+# cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "088dd7053c039775f73cf4d1645d30706d0ddf7d", default-features = false }
+### For the cubecl feat/quant-scale-levels branch. ###
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "9b9ce8ee3294618e394d0b939b1fe93f3bcfce30", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "9b9ce8ee3294618e394d0b939b1fe93f3bcfce30", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "9b9ce8ee3294618e394d0b939b1fe93f3bcfce30", default-features = false }
 ### For releases ###
 # cubecl = { version = "=0.11.0-pre.2", default-features = false }
 # cubecl-common = { version = "=0.11.0-pre.2", default-features = false }

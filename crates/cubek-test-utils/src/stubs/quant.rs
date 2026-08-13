@@ -1,7 +1,7 @@
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
     e4m3, e5m2,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue},
 };
 
 pub fn quantize(
@@ -181,18 +181,11 @@ fn quant_mask(size_quant: usize) -> u32 {
 
 /// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
 pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => shape.to_vec(),
-        QuantLevel::Block(bs) => bs
-            .to_dim_vec(shape.len())
-            .iter()
-            .map(|&b| b as usize)
-            .collect(),
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
+    let levels = scheme.scale_levels();
+    if levels.len() > 1 {
+        unimplemented!("two-level quantization is not supported here, got {levels:?}");
     }
+    scheme.block_size().resolved_dims(shape)
 }
 
 /// Shape of the per-block scale grid: each dimension divided by its block
@@ -242,21 +235,22 @@ fn scale_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl_common::quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantStore, QuantValue};
+    use cubecl_common::quant::scheme::{
+        QuantMode, QuantParam, QuantStore, QuantValue, ScaleLevels,
+    };
 
-    fn scheme(value: QuantValue, store: QuantStore, level: QuantLevel) -> QuantScheme {
+    fn scheme(value: QuantValue, store: QuantStore, levels: ScaleLevels) -> QuantScheme {
         QuantScheme::default()
             .with_mode(QuantMode::Symmetric)
-            .with_level(level)
+            .with_scales(levels)
             .with_value(value)
             .with_store(store)
-            .with_param(QuantParam::F32)
     }
 
     /// Quantize then dequantize and assert the round-trip stays within one
     /// quantization step (`scale`), the worst-case symmetric error.
     fn assert_round_trips(value: QuantValue, store: QuantStore, scale: f32) {
-        let s = scheme(value, store, QuantLevel::Tensor);
+        let s = scheme(value, store, ScaleLevels::tensor(QuantParam::F32));
         let n = 64; // multiple of every num_quants we test (≤16)
         let values: Vec<f32> = (0..n).map(|i| (i as f32 / n as f32) * 2.0 - 1.0).collect();
 
@@ -281,7 +275,11 @@ mod tests {
             &[values.len()],
             &[scale],
             &[values.len()],
-            &scheme(QuantValue::Q8S, QuantStore::Native, QuantLevel::Tensor),
+            &scheme(
+                QuantValue::Q8S,
+                QuantStore::Native,
+                ScaleLevels::tensor(QuantParam::F32),
+            ),
         );
 
         let got: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
@@ -312,7 +310,7 @@ mod tests {
         let s = scheme(
             QuantValue::Q8S,
             QuantStore::Native,
-            QuantLevel::block([4u8]),
+            ScaleLevels::block([4u8], QuantParam::F32),
         );
         let values = vec![
             0.1, 0.2, 0.3, 0.4, // block 0

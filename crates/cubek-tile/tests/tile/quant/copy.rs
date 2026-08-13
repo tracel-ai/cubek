@@ -2,7 +2,7 @@ use cubecl::{
     TestRuntime, features::TypeUsage, ir::ElemType, prelude::*,
     std::tensor::layout::linear::linear_view, zspace::Shape,
 };
-use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
+use cubek_quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
     ValidationResult, assert_equals_approx,
@@ -60,10 +60,9 @@ fn copy_quantized_per_tensor_matches_reference() {
     }
 
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .with_scales(ScaleLevels::tensor(QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let shape = Shape::from(vec![m, n]);
     let input_dtype = ElemType::from_quant_value(scheme.value);
@@ -158,10 +157,9 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, bn as u8]))
+        .with_scales(ScaleLevels::block([bm as u8, bn as u8], QuantParam::F32))
         .with_store(QuantStore::PackedU32(0))
-        .with_value(value)
-        .with_param(QuantParam::F32);
+        .with_value(value);
     let pack = scheme.num_quants();
 
     let max_width = client.properties().hardware.max_vector_size;
@@ -266,7 +264,7 @@ fn copy_quantized_two_level_zero_global_zeroes_output() {
 /// that factor. (The kernel-side backstop in `QuantTileArg::tile` cannot be pinned here: it fires
 /// on the compile server, where a panic is swallowed rather than propagated.)
 #[test]
-#[should_panic(expected = "takes a per-tensor scale")]
+#[should_panic(expected = "takes as many scale bindings")]
 fn two_level_without_global_refused_by_the_builder() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n) = (8, 8);
@@ -292,13 +290,11 @@ fn two_level_without_global_refused_by_the_builder() {
 
 fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
     QuantScheme::default()
-        .with_level(QuantLevel::block_tensor(
-            [bm as u8, bn as u8],
-            QuantParam::F32,
-        ))
+        .with_scales(
+            ScaleLevels::block([bm as u8, bn as u8], QuantParam::F32).and_tensor(QuantParam::F32),
+        )
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32)
 }
 
 /// [`run_quantized_block`] with a two-level scheme: the same block grid, its scales normalized
@@ -394,10 +390,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
     }
 
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, bn as u8]))
+        .with_scales(ScaleLevels::block([bm as u8, bn as u8], QuantParam::F32))
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let shape = Shape::from(vec![m, n]);
     let input_dtype = ElemType::from_quant_value(scheme.value);

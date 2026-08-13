@@ -2,7 +2,6 @@ use cubecl::{
     CubeCount, CubeDim, Runtime,
     client::ComputeClient,
     ir::{AddressType, DeviceProperties},
-    quant::scheme::QuantLevel,
     server::LaunchError,
 };
 use cubek_std::MatrixLayout;
@@ -139,9 +138,11 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.lhs_scheme
-            && let QuantLevel::Block(block_size) = scheme.level
+            && scheme.levels().len() == 1
+            && !scheme.block_size().is_full()
         {
             let vector_size = vector_sizes.lhs * scheme.num_quants();
+            let block_size = scheme.block_size();
             let block_size = block_size.to_dim_vec(2.max(block_size.len()));
             let block_width = block_size[block_size.len() - 1] as usize;
             if !block_width.is_multiple_of(vector_size) {
@@ -152,9 +153,11 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.rhs_scheme
-            && let QuantLevel::Block(block_size) = scheme.level
+            && scheme.levels().len() == 1
+            && !scheme.block_size().is_full()
         {
             let vector_size = vector_sizes.rhs * scheme.num_quants();
+            let block_size = scheme.block_size();
             let block_size = block_size.to_dim_vec(2.max(block_size.len()));
             let block_width = block_size[block_size.len() - 2] as usize;
             if !block_width.is_multiple_of(vector_size) {

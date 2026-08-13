@@ -5,7 +5,9 @@ use cubek_matmul::{
     launch::launch_ref,
     strategy::Strategy,
 };
-use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
+use cubek_quant::scheme::{
+    QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels,
+};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, InputDataType, TestInput, TestOutcome, TestTensor,
@@ -60,10 +62,9 @@ fn tolerance_for(scheme: &QuantScheme, k: usize, scale: f32) -> f32 {
 fn tensor_scheme(value: QuantValue) -> QuantScheme {
     QuantScheme::default()
         .with_mode(QuantMode::Symmetric)
-        .with_level(QuantLevel::Tensor)
+        .with_scales(ScaleLevels::tensor(QuantParam::F32))
         .with_value(value)
         .with_store(QuantStore::PackedU32(0))
-        .with_param(QuantParam::F32)
 }
 
 fn tensor_scheme_store(value: QuantValue, store: QuantStore) -> QuantScheme {
@@ -71,7 +72,7 @@ fn tensor_scheme_store(value: QuantValue, store: QuantStore) -> QuantScheme {
 }
 
 fn block_scheme(value: QuantValue, block_size: impl AsRef<[u8]>) -> QuantScheme {
-    tensor_scheme(value).with_level(QuantLevel::block(block_size))
+    tensor_scheme(value).with_scales(ScaleLevels::block(block_size, QuantParam::F32))
 }
 
 /// Skips a test when the runtime lacks `i8` conversion support, which

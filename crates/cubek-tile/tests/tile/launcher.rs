@@ -3,7 +3,7 @@
 use cubecl::{
     TestRuntime,
     prelude::*,
-    quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels},
 };
 use cubek_tile::{
     Axis, Boundary, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap, Projection, Scale,
@@ -546,12 +546,11 @@ fn quantize(v: usize, scheme: QuantScheme) {
         .build();
 }
 
-fn quant_scheme(level: QuantLevel) -> QuantScheme {
+fn quant_scheme(levels: ScaleLevels) -> QuantScheme {
     QuantScheme::default()
-        .with_level(level)
+        .with_scales(levels)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32)
 }
 
 /// Scale blocks cut by the operand's own tiling: `K` is cut into 16-element tiles, so a 6-element
@@ -560,7 +559,10 @@ fn quant_scheme(level: QuantLevel) -> QuantScheme {
 #[test]
 #[should_panic(expected = "straddle its 6-element scale blocks")]
 fn quantized_block_straddling_a_cut_panics() {
-    quantize(1, quant_scheme(QuantLevel::block([64, 6])));
+    quantize(
+        1,
+        quant_scheme(ScaleLevels::block([64, 6], QuantParam::F32)),
+    );
 }
 
 /// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine — but a line is one
@@ -568,7 +570,10 @@ fn quantized_block_straddling_a_cut_panics() {
 #[test]
 #[should_panic(expected = "straddles two scales")]
 fn quantized_line_straddling_two_blocks_panics() {
-    quantize(4, quant_scheme(QuantLevel::block([64, 2])));
+    quantize(
+        4,
+        quant_scheme(ScaleLevels::block([64, 2], QuantParam::F32)),
+    );
 }
 
 /// Scales ride an `f32` buffer read straight through, so a narrower param would reinterpret its
@@ -576,10 +581,7 @@ fn quantized_line_straddling_two_blocks_panics() {
 #[test]
 #[should_panic(expected = "scales are read as f32")]
 fn quantized_non_f32_param_panics() {
-    quantize(
-        1,
-        quant_scheme(QuantLevel::Tensor).with_param(QuantParam::F16),
-    );
+    quantize(1, quant_scheme(ScaleLevels::tensor(QuantParam::F16)));
 }
 
 /// A packed store's values are laid down along the innermost axis, so that is the only axis it may
@@ -589,7 +591,7 @@ fn quantized_non_f32_param_panics() {
 fn quantized_packed_store_outer_axis_panics() {
     quantize(
         1,
-        quant_scheme(QuantLevel::Tensor).with_store(QuantStore::PackedU32(2)),
+        quant_scheme(ScaleLevels::tensor(QuantParam::F32)).with_store(QuantStore::PackedU32(2)),
     );
 }
 
@@ -600,6 +602,6 @@ fn quantized_packed_store_outer_axis_panics() {
 fn quantized_packed_store_narrow_line_panics() {
     quantize(
         1,
-        quant_scheme(QuantLevel::Tensor).with_store(QuantStore::PackedU32(0)),
+        quant_scheme(ScaleLevels::tensor(QuantParam::F32)).with_store(QuantStore::PackedU32(0)),
     );
 }

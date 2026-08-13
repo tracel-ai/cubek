@@ -176,9 +176,9 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
         // The engine's own backstop, like `validate_dequant_at`: the builder checks the binding
         // contract too, but a hand-built `QuantTileArgLaunch` reaches here without it.
-        comptime!(cubecl::std::quant::check_global_bindings(
-            self.scheme.level,
-            self.global.is_some()
+        comptime!(cubecl::std::quant::check_scale_bindings(
+            &self.scheme,
+            1 + self.global.is_some() as usize
         ));
         // One read for the whole kernel; every window below shares the register.
         let global = if comptime!(self.global.is_some()) {
@@ -261,9 +261,9 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
     // The scales ride a plain `f32` tensor read straight through, so a narrower param
     // would reinterpret its bytes.
     assert!(
-        scheme.param == QuantParam::F32,
+        scheme.param() == QuantParam::F32,
         "StridedTileSource::quantized: scales are read as f32, got {:?}",
-        scheme.param
+        scheme.param()
     );
 
     let rank = space.rank();

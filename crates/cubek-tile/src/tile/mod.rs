@@ -19,10 +19,7 @@ pub use register::*;
 pub use tma::*;
 pub use view::*;
 
-use cubecl::{
-    prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme},
-};
+use cubecl::{prelude::*, quant::scheme::QuantScheme};
 
 use crate::*;
 
@@ -136,12 +133,11 @@ pub struct QuantInfo {
 /// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
 /// strides); a block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => vec![1; rank],
-        QuantLevel::Block(bs) | QuantLevel::BlockTensor { block: bs, .. } => {
-            bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
-        }
+    let block = scheme.block_size();
+    if block.is_full() {
+        return vec![1; rank];
     }
+    block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
 }
 
 /// Whether one scale covers a window of `extent` under `block` edges: every axis fits inside a
@@ -181,9 +177,9 @@ pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
 /// ([`MemData::stage_scales`] folds the per-tensor factor in), so a two-level scheme stages as
 /// its one-level block form and reads below the stage carry no global.
 pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
-    match scheme.level {
-        QuantLevel::BlockTensor { block, .. } => scheme.with_level(QuantLevel::Block(block)),
-        QuantLevel::Tensor | QuantLevel::Block(_) => scheme,
+    match scheme.scale_levels().inner() {
+        Some(inner) => scheme.with_scales(inner),
+        None => scheme,
     }
 }
 

@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
-    scheme::{QuantLevel, QuantMode, QuantScheme, QuantStore, QuantValue},
+    scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
 use cubecl::std::tensor::{
@@ -200,7 +200,7 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
-    let scale_dtype: ElemType = ElemType::from_quant_param(scheme.param);
+    let scale_dtype: ElemType = ElemType::from_quant_param(scheme.param());
 
     match scheme {
         QuantScheme {
@@ -288,11 +288,10 @@ fn dequantize_packed<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
             store: QuantStore::PackedU32(_),
             mode: QuantMode::Symmetric,
             ..
-        } => unsafe {
+        } if scheme.levels().len() == 1 => unsafe {
             dequantize_symmetric_packed_kernel::launch_unchecked(
                 client,
                 cube_count,
@@ -339,11 +338,10 @@ fn dequantize_native<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
-        } => {
+        } if scheme.levels().len() == 1 => {
             let address_type = input
                 .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))

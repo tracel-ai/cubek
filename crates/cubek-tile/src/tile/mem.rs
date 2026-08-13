@@ -3,7 +3,7 @@
 
 use cubecl::{
     prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue},
     std::quant::view::QuantizedView as DequantView,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
@@ -193,7 +193,7 @@ impl<T: Numeric> Tile<T> {
         let mut strides = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            if comptime!(scheme.level == QuantLevel::Tensor) {
+            if comptime!(scheme.block_size().is_full()) {
                 strides.push(0u32);
             } else {
                 strides.push(scales.stride(p) as u32);
@@ -1253,17 +1253,23 @@ impl<T: Numeric> MemData<T> {
                 let dequant = if comptime!(info.uniform()) {
                     // One scale for the whole window: read once here, so no read below pays
                     // for the scales view at all.
-                    DequantView::<I, WP, f32, T, W, Coords1d>::new_uniform(
+                    DequantView::<I, WP, f32, T, W, Coords1d>::new_with_whole_scale(
                         values,
                         scales,
                         info.uniform_scale(),
+                        comptime!(info.scheme),
+                    )
+                } else if comptime!(info.global.is_some()) {
+                    DequantView::<I, WP, f32, T, W, Coords1d>::new_with_outer_scale(
+                        values,
+                        scales,
+                        info.global.unwrap(),
                         comptime!(info.scheme),
                     )
                 } else {
                     DequantView::<I, WP, f32, T, W, Coords1d>::new(
                         values,
                         scales,
-                        info.global,
                         comptime!(info.scheme),
                     )
                 };
@@ -1317,19 +1323,21 @@ impl<T: Numeric> MemData<T> {
                 let dequant = if comptime!(info.uniform()) {
                     // One scale for the whole window: read once here, so no read below pays
                     // for the scales view at all.
-                    DequantView::<I, WP, f32, T, W, C>::new_uniform(
+                    DequantView::<I, WP, f32, T, W, C>::new_with_whole_scale(
                         values,
                         scales,
                         info.uniform_scale(),
                         comptime!(info.scheme),
                     )
-                } else {
-                    DequantView::<I, WP, f32, T, W, C>::new(
+                } else if comptime!(info.global.is_some()) {
+                    DequantView::<I, WP, f32, T, W, C>::new_with_outer_scale(
                         values,
                         scales,
-                        info.global,
+                        info.global.unwrap(),
                         comptime!(info.scheme),
                     )
+                } else {
+                    DequantView::<I, WP, f32, T, W, C>::new(values, scales, comptime!(info.scheme))
                 };
                 MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
             }
@@ -1835,7 +1843,7 @@ fn smem_scale_grid(
     scheme: QuantScheme,
 ) -> (Vec<usize>, Vec<usize>) {
     let rank = space.rank();
-    let per_tensor = matches!(scheme.level, QuantLevel::Tensor);
+    let per_tensor = scheme.block_size().is_full();
     let nb: Vec<usize> = (0..rank)
         .map(|p| {
             if per_tensor {

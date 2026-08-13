@@ -2,7 +2,7 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
-    quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
     Axis, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space, StridedOperand,
@@ -29,11 +29,11 @@ pub fn launch_ref<R: Runtime>(
         "only native quantization is supported for now."
     );
     assert!(
-        scheme.level == QuantLevel::Tensor,
+        scheme.levels().len() == 1 && scheme.block_size().is_full(),
         "only per tensor quantization is supported for now."
     );
     assert!(
-        scheme.param == QuantParam::F32,
+        scheme.param() == QuantParam::F32,
         "only f32 scales are supported for now."
     );
     check_i8_supported(client, scheme);

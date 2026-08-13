@@ -293,7 +293,7 @@ impl<R: Runtime> Quantization<R> {
     /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
     /// it. Both rules live here because both are facts about this quantization and nothing else.
     pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
-        cubecl::std::quant::check_global_bindings(self.scheme.level, self.global.is_some());
+        cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
         validate_scheme(space, vector_size, self.scheme);
         validate_dequant_at(self.dequant_at, leaf);
     }

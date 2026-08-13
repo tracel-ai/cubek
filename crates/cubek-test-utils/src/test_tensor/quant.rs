@@ -1,10 +1,6 @@
 use cubecl::{
-    TestRuntime,
-    client::ComputeClient,
-    ir::ElemType,
-    quant::scheme::{QuantLevel, QuantStore},
-    std::tensor::TensorHandle,
-    zspace::Shape,
+    TestRuntime, client::ComputeClient, ir::ElemType, quant::scheme::QuantStore,
+    std::tensor::TensorHandle, zspace::Shape,
 };
 use cubecl_common::quant::scheme::QuantScheme;
 
@@ -26,7 +22,7 @@ pub(crate) fn apply_quantization(
     let original_shape = tensor.handle.shape().clone();
 
     // Derive the scale tensor from the quant value's range. For
-    // `QuantLevel::Tensor` a single scale is used; for `QuantLevel::Block` we
+    // a per-tensor scheme a single scale is used; for a block scheme we
     // compute a per-block scale from the host data so each block fully uses
     // the quant range without clipping.
     let (scales_shape, scales_data, block_dims) = compute_input_scales(&tensor.host, &scheme);
@@ -64,7 +60,7 @@ pub(crate) fn apply_quantization(
         output_storage_type,
     );
 
-    let scale_dtype = ElemType::from_quant_param(scheme.param);
+    let scale_dtype = ElemType::from_quant_param(scheme.param());
     let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
     let out_scale_handle = TensorHandle::new_contiguous(
         scales_shape,
@@ -104,9 +100,9 @@ fn logical_values_f32(host: &HostData) -> Vec<f32> {
 /// Compute the scale tensor shape, values, and per-dimension block extent for a
 /// quantized input.
 ///
-/// For `QuantLevel::Tensor` this returns a single-element scale based on the
+/// For a per-tensor scheme this returns a single-element scale based on the
 /// quant value's range (assumes input in [-1, 1]) and the full shape as the
-/// block. For `QuantLevel::Block` each block gets its own scale derived from
+/// block. For a block scheme each block gets its own scale derived from
 /// `max(|value|)` in that block, matching the reference pattern used by the
 /// cubek-quant symmetric tests.
 fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f32>, Vec<usize>) {
@@ -119,9 +115,10 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
         .into_iter()
         .collect();
 
-    let scales = match &scheme.level {
-        QuantLevel::Tensor => vec![1.0 / max_abs_q],
-        QuantLevel::Block(_) => {
+    let scales = if scheme.block_size().is_full() {
+        vec![1.0 / max_abs_q]
+    } else {
+        {
             let rank = shape.len();
             let num_blocks: usize = scales_shape.iter().product();
             let block_elem_count: usize = block_dims.iter().product();
@@ -159,10 +156,6 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
             }
             scales
         }
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
     };
 
     (scales_shape, scales, block_dims)
