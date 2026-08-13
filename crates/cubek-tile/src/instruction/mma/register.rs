@@ -305,7 +305,7 @@ fn load_accumulators<E: Numeric, V: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            c[i * nr + n] = acc.seed((i as u32, n as u32));
+            c[i * nr + n] = acc.seed((i as u32, n as u32), comptime!(ReduceLeafKind::Sum));
         }
     }
     c
@@ -326,7 +326,11 @@ fn store_accumulators<E: Numeric, V: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            acc.commit((i as u32, n as u32), c[i * nr + n]);
+            acc.commit(
+                (i as u32, n as u32),
+                c[i * nr + n],
+                comptime!(ReduceLeafKind::Sum),
+            );
         }
     }
 }

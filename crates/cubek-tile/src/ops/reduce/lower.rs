@@ -225,7 +225,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
     let mut acc_view = acc.flat_accumulate::<W>();
 
     for line_idx in 0..total_lines {
-        let seed_vec = acc_view.seed_reduce(line_idx, inst);
+        let seed_vec = acc_view.seed(line_idx, inst);
         let mut result = seed_vec;
 
         #[unroll]
@@ -251,7 +251,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
             result.insert(comptime!(lane_idx), curr_val);
         }
 
-        acc_view.commit_reduce(line_idx, result, inst);
+        acc_view.commit(line_idx, result, inst);
     }
 }
 

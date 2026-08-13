@@ -35,16 +35,10 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         comptime!(self.values.check)
     }
 
-    /// A block's starting value. A partial starts at zero: the shared cell is folded in once, by
-    /// the lane that commits, so seeding from it would count it once per lane.
-    pub fn seed(&self, pos: C) -> Vector<E, V> {
-        self.seed_reduce(pos, comptime!(ReduceLeafKind::Sum))
-    }
-
-    /// Seed the accumulator with the appropriate identity element for `inst` when folding across
-    /// lanes (`LaneShare::Plane` or `LaneShare::Group`), or with the existing accumulator value
-    /// under `LaneShare::Whole`.
-    pub fn seed_reduce(&self, pos: C, #[comptime] inst: ReduceLeafKind) -> Vector<E, V> {
+    /// A block's starting value for an `inst` fold. A partial starts at `inst`'s identity: the
+    /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
+    /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.
+    pub fn seed(&self, pos: C, #[comptime] inst: ReduceLeafKind) -> Vector<E, V> {
         match comptime!(self.lane_share) {
             LaneShare::Plane | LaneShare::Group { .. } => {
                 Vector::<E, V>::cast_from(reduce_identity::<E>(inst))
@@ -53,16 +47,11 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 
-    /// Fold a finished block back. The fold reduces each `V`-wide cell element-wise and leaves
-    /// every lane holding a partial of it with the total, so one of them writes and its siblings
-    /// don't all hit the address: the plane's first lane where the whole plane shares one cell,
-    /// each group's first lane where the plane carries a cell per group.
-    pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
-        self.commit_reduce(pos, value, comptime!(ReduceLeafKind::Sum));
-    }
-
-    /// Fold a finished block back according to `inst` (`Sum`, `Max`, or `Min`).
-    pub fn commit_reduce(&mut self, pos: C, value: Vector<E, V>, #[comptime] inst: ReduceLeafKind) {
+    /// Fold a finished block back under `inst`. The fold reduces each `V`-wide cell element-wise
+    /// and leaves every lane holding a partial of it with the total, so one of them writes and its
+    /// siblings don't all hit the address: the plane's first lane where the whole plane shares one
+    /// cell, each group's first lane where the plane carries a cell per group.
+    pub fn commit(&mut self, pos: C, value: Vector<E, V>, #[comptime] inst: ReduceLeafKind) {
         match comptime!(self.lane_share) {
             LaneShare::Plane => {
                 let combined = match comptime!(inst) {
