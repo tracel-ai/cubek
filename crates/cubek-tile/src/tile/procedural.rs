@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::{Axis, Coords, Fold, FoldExpand, Region, Space};
 
@@ -84,6 +84,21 @@ impl<T: Numeric> ProceduralData<T> {
 
     pub(crate) fn evaluate(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
         self.value_recipe(pos, space, comptime!(self.recipe.clone()))
+    }
+
+    /// Rebind an in-place staged payload to the source's current region. Recipes are comptime and
+    /// identical by construction; only the runtime origin moves.
+    pub(crate) fn rebind(&mut self, source: &Self) {
+        self.origin = source.origin.clone();
+    }
+
+    pub(crate) fn evaluate_dyn(&self, pos: &CoordsDyn, #[comptime] space: Space) -> T {
+        let mut coords = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..comptime!(space.rank()) {
+            coords.push(pos[p]);
+        }
+        self.evaluate(&coords, space)
     }
 
     fn value_recipe(

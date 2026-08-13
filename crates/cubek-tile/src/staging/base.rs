@@ -2,6 +2,7 @@
 //! against its read. Generic slot mechanics only: the producer/consumer acquire/release and the
 //! final publish; the operand-specific construction and fill live in [`fill`](crate::fill).
 
+use core::option::Option;
 use cubecl::prelude::*;
 
 use crate::*;
@@ -20,10 +21,11 @@ pub struct Staging<T: CubeType> {
     pub(crate) pin_lhs: bool,
     #[cube(comptime)]
     pub(crate) pin_rhs: bool,
-    /// How the slot's operands are backed, computed once by [`new`](Staging::new) from the output
-    /// plan. The schedule reads it to decide the walk's unroll rather than re-deriving it.
+    /// How each operand is backed. Unary slots have no right-hand operand.
     #[cube(comptime)]
-    pub(crate) stage: OperandStage,
+    pub(crate) stage_lhs: OperandStage,
+    #[cube(comptime)]
+    pub(crate) stage_rhs: Option<OperandStage>,
 }
 
 #[cube]
@@ -36,20 +38,30 @@ impl<T: CubeType> Staging<T> {
         pipeline: Pipeline,
         #[comptime] pin_lhs: bool,
         #[comptime] pin_rhs: bool,
-        #[comptime] stage: OperandStage,
+        #[comptime] stage_lhs: OperandStage,
+        #[comptime] stage_rhs: Option<OperandStage>,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
             pin_lhs,
             pin_rhs,
-            stage,
+            stage_lhs,
+            stage_rhs,
         }
     }
 
     /// How this slot's operands are backed, decided when the slot was built.
     pub(crate) fn stage(&self) -> comptime_type!(OperandStage) {
-        comptime!(self.stage)
+        comptime!(self.stage_lhs)
+    }
+
+    /// Whether either operand uses a plane partition, requiring an unrolled walk.
+    pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
+        comptime!(
+            self.stage_lhs == OperandStage::Plane
+                || matches!(self.stage_rhs, Option::Some(OperandStage::Plane))
+        )
     }
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`

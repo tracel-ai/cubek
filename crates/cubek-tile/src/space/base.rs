@@ -91,6 +91,7 @@ impl Extents {
 /// selects tiles by comptime coordinate, so its walk must be unrolled).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum OperandStage {
+    InPlace,
     Plane,
     Smem,
 }

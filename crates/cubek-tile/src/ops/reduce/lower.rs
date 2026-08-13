@@ -2,7 +2,6 @@
 //! walk this level under its [`Schedule`].
 
 use cubecl::prelude::*;
-use cubecl::std::tensor::layout::CoordsDyn;
 
 use super::kind::{ReduceLeafKind, reduce_identity};
 use crate::*;
@@ -23,8 +22,15 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => reduce_leaf(self, input, inst),
             Partitioner::Level(level) => {
                 let op_space = self.reduce_op_space(input);
+                let plan = input.stage();
+                let requested = comptime!(self.space.operand_stage(input.leaf));
+                let in_place =
+                    comptime!(plan.resolve(input.leaf, requested) == OperandStage::InPlace);
                 match comptime!(level.schedule()) {
                     Schedule::Direct => self.reduce_direct(input, inst, op_space),
+                    Schedule::Staged | Schedule::DoubleBuffered if in_place => {
+                        self.reduce_direct(input, inst, op_space)
+                    }
                     Schedule::Staged => self.reduce_staged(input, inst, op_space),
                     Schedule::DoubleBuffered => self.reduce_double(input, inst, op_space),
                 }
@@ -141,7 +147,6 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
     #[comptime] acc_space: Space,
     #[comptime] inst: ReduceLeafKind,
 ) {
-    let in_view = input.nd::<I, WP, V>();
     let in_space = comptime!(input.space.clone());
     let vw = input.vector_size();
     let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
@@ -164,8 +169,8 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
         let lane_idx = comptime!(a % acc.vector_size);
         let seed = acc.data[line_idx].extract(comptime!(lane_idx));
 
-        let curr_val: Acc = reduce_element::<Acc, In, V>(
-            &in_view,
+        let curr_val: Acc = reduce_element::<Acc, In, I, WP, V>(
+            input,
             comptime!(in_space.clone()),
             comptime!(acc_space.clone()),
             comptime!(layout.clone()),
@@ -209,7 +214,6 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
     #[comptime] acc_space: Space,
     #[comptime] inst: ReduceLeafKind,
 ) {
-    let in_view = input.nd::<I, WP, V>();
     let in_space = comptime!(input.space.clone());
     let vw = input.vector_size();
     let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
@@ -238,8 +242,8 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
             );
 
             let seed = seed_vec.extract(comptime!(lane_idx));
-            let curr_val: Acc = reduce_element::<Acc, In, V>(
-                &in_view,
+            let curr_val: Acc = reduce_element::<Acc, In, I, WP, V>(
+                input,
                 comptime!(in_space.clone()),
                 comptime!(acc_space.clone()),
                 comptime!(layout.clone()),
@@ -261,8 +265,8 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
 /// `acc_coords`. Only the seed/commit around this loop differ between a register block (draining
 /// through `RegisterData`'s own lanes) and a memory accumulator (through [`AccumulateView`]).
 #[cube]
-fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
-    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+fn reduce_element<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
+    input: &Tile<In>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,
@@ -290,16 +294,15 @@ fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
             true,
         );
 
-        // `read` already returns Sum's zero identity out of bounds, so its select is dead work.
-        // Max and Min need their own identity; nested view boundaries cannot yet carry a custom
-        // fallback through every layer, so they retain the explicit outer validity predicate.
+        // Memory reads already return Sum's zero identity out of bounds; procedural reads are
+        // always valid. Max and Min retain their explicit operation-specific fallback.
         let in_vec = match comptime!(inst) {
-            ReduceLeafKind::Sum => in_view.read(in_coords),
+            ReduceLeafKind::Sum => input.read_nd::<I, WP, V>(in_coords),
             ReduceLeafKind::Max | ReduceLeafKind::Min => {
-                let valid = in_view.is_in_bounds(in_coords.clone());
+                let valid = input.nd_in_bounds::<I, WP, V>(in_coords.clone());
                 select(
                     valid,
-                    in_view.read(in_coords),
+                    input.read_nd::<I, WP, V>(in_coords),
                     Vector::<In, V>::cast_from(reduce_identity::<In>(inst)),
                 )
             }

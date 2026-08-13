@@ -260,6 +260,7 @@ impl<T: Numeric> Tile<T> {
         // Stage layout: the explicit override, else derived from the operand's leaf.
         let stage = comptime!(StagePlan {
             layout: spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
+            materialization: Materialization::Materialize,
             units: spec.units,
         });
         // The binding type's own width, comptime; a packed store serves `pack` values per
@@ -421,7 +422,8 @@ impl<T: Numeric> MemData<T> {
                 let projection = operand.projection();
                 let leaf = comptime!(operand.leaf);
                 let vector_size = operand.vector_size();
-                let stage = operand.stage();
+                let source_stage = operand.stage();
+                let stage = comptime!(source_stage.materialized());
 
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, leaf, vector_size, stage)
@@ -450,7 +452,8 @@ impl<T: Numeric> MemData<T> {
         let space = comptime!(operand.space.divide());
         let leaf = comptime!(operand.leaf);
         let vector_size = operand.vector_size();
-        let stage = operand.stage();
+        let source_stage = operand.stage();
+        let stage = comptime!(source_stage.materialized());
         match &operand.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]

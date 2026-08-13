@@ -44,10 +44,14 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
 
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
+    let lhs_procedural = lhs.is_procedural();
+    let rhs_procedural = rhs.is_procedural();
     let nd = comptime!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() > 1
             || lhs_gathered
             || rhs_gathered
+            || lhs_procedural
+            || rhs_procedural
     );
     if nd {
         if comptime!(pack_l == 1) {
@@ -215,9 +219,6 @@ fn mma_register_gather<
         &lhs.space, &rhs.space, &space, &reduce, lw
     ));
 
-    let lhs_view = lhs.nd::<IL, WPL, L>();
-    let rhs_view = rhs.nd::<IR, WPR, V>();
-
     for mat in 0..matrices {
         let batch = unravel(
             &const_coords(comptime!(
@@ -231,8 +232,8 @@ fn mma_register_gather<
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
-        let lhs_check = comptime!(lhs_view.check);
-        let rhs_check = comptime!(rhs_view.check);
+        let lhs_check = lhs.nd_checks();
+        let rhs_check = rhs.nd_checks();
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
@@ -263,7 +264,7 @@ fn mma_register_gather<
                     vw,
                     false,
                 );
-                b[n] = Vector::<E, V>::cast_from(rhs_view.read(pos));
+                b[n] = Vector::<E, V>::cast_from(rhs.read_nd::<IR, WPR, V>(pos));
             }
             #[unroll(unroll)]
             for i in 0..mr {
@@ -277,7 +278,8 @@ fn mma_register_gather<
                     lw,
                     false,
                 );
-                let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract_dynamic(lane));
+                let a =
+                    Vector::<E, V>::cast_from(lhs.read_nd::<IL, WPL, L>(pos).extract_dynamic(lane));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     c[i * nr + n] = fma(a, b[n], c[i * nr + n]);

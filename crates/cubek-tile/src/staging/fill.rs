@@ -6,34 +6,62 @@
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
+use core::option::Option;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 use crate::*;
 
-/// The one resolved staging policy shared by unary and binary slots. Backing allocation,
-/// rendezvous, and producer-arrival count are derived together from the actual sources.
+/// The slot-wide rendezvous derived only from operands that physically materialize.
 #[derive(Clone, Copy)]
 struct SlotPlan {
-    stage: OperandStage,
     sync: Sync,
     collective_full: bool,
 }
 
-fn slot_plan(requested: OperandStage, deliveries: &[Delivery]) -> SlotPlan {
-    let stage = if deliveries.contains(&Delivery::Procedural) {
-        OperandStage::Smem
+fn slot_plan(deliveries: &[Delivery]) -> SlotPlan {
+    let sync = if deliveries.is_empty() {
+        Sync::Solo
     } else {
-        requested
-    };
-    let sync = match stage {
-        OperandStage::Plane => Sync::Solo,
-        OperandStage::Smem => Sync::for_deliveries(deliveries),
+        Sync::for_deliveries(deliveries)
     };
     SlotPlan {
-        stage,
         sync,
         collective_full: Sync::collective_full(deliveries),
+    }
+}
+
+fn rendezvous_deliveries(stages: &[OperandStage], deliveries: &[Delivery]) -> Vec<Delivery> {
+    stages
+        .iter()
+        .zip(deliveries)
+        .filter_map(|(stage, delivery)| (*stage == OperandStage::Smem).then_some(*delivery))
+        .collect()
+}
+
+/// A plane partition is private to its unit and assumes a solo fill. It cannot share a slot with
+/// a shared-memory stage, whose transfer selects a slot-wide Cube or Barrier pipeline.
+fn compatible_slot_stages(stages: &[OperandStage]) -> bool {
+    let has_plane = stages.iter().any(|stage| *stage == OperandStage::Plane);
+    let has_smem = stages.iter().any(|stage| *stage == OperandStage::Smem);
+    !(has_plane && has_smem)
+}
+
+/// Fill a materialized operand through its slot pipeline, or rebind an in-place procedural
+/// operand to the source region. The pipeline is slot-wide while this decision is per-operand.
+#[cube]
+fn fill_operand<T: Numeric>(
+    dst: &mut Tile<T>,
+    src: &Tile<T>,
+    #[comptime] stage: OperandStage,
+    pipe: &Pipeline,
+) {
+    if comptime!(stage == OperandStage::InPlace) {
+        // In-place procedural tiles have no physical fill. `copy_from` rebinds their runtime
+        // origin to this region without involving the slot pipeline.
+        dst.copy_from(src);
+    } else {
+        pipe.fill(dst, src);
     }
 }
 
@@ -58,21 +86,32 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
         let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
-        // Both operands use the output leaf's staging kind. The helper preserves each tile's
-        // own projection and rejects unsupported Plane/TMA/gather combinations.
-        let requested_stage = comptime!(out.operand_stage(lhs.leaf));
-        let plan = comptime!(slot_plan(requested_stage, &[lhs_delivery, rhs_delivery]));
-        let stage = comptime!(plan.stage);
+        let lhs_plan = lhs.stage();
+        let rhs_plan = rhs.stage();
+        let lhs_requested = comptime!(out.operand_stage(lhs.leaf));
+        let rhs_requested = comptime!(out.operand_stage(rhs.leaf));
+        let lhs_stage = comptime!(lhs_plan.resolve(lhs.leaf, lhs_requested));
+        let rhs_stage = comptime!(rhs_plan.resolve(rhs.leaf, rhs_requested));
+        comptime!(assert!(
+            compatible_slot_stages(&[lhs_stage, rhs_stage]),
+            "Staging: Plane and Smem operands cannot share a slot"
+        ));
+        let materialized = comptime!(rendezvous_deliveries(
+            &[lhs_stage, rhs_stage],
+            &[lhs_delivery, rhs_delivery],
+        ));
+        let plan = comptime!(slot_plan(&materialized));
         let stages = (
-            stage_operand(lhs, comptime!(out.clone()), stage),
-            stage_operand(rhs, comptime!(out.clone()), stage),
+            stage_operand(lhs, comptime!(out.clone()), lhs_stage),
+            stage_operand(rhs, comptime!(out.clone()), rhs_stage),
         );
         Staging::wrap(
             stages,
             Pipeline::new(comptime!(plan.sync), comptime!(plan.collective_full)),
             pin_lhs,
             pin_rhs,
-            stage,
+            lhs_stage,
+            comptime!(Option::Some(rhs_stage)),
         )
     }
 
@@ -82,13 +121,20 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn fill_pinned(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
         let pin_lhs = comptime!(self.pin_lhs);
         let pin_rhs = comptime!(self.pin_rhs);
+        let lhs_stage = comptime!(self.stage_lhs);
+        let rhs_stage = comptime!(match self.stage_rhs {
+            Option::Some(stage) => stage,
+            Option::None => panic!("binary staging slot has an rhs stage"),
+        });
         if comptime!(pin_lhs || pin_rhs) {
             self.fill(|staged_operands, pipe| {
                 if comptime!(pin_lhs) {
-                    pipe.fill(&mut staged_operands.0, &lhs.at(region));
+                    let source = lhs.at(region);
+                    fill_operand(&mut staged_operands.0, &source, lhs_stage, pipe);
                 }
                 if comptime!(pin_rhs) {
-                    pipe.fill(&mut staged_operands.1, &rhs.at(region));
+                    let source = rhs.at(region);
+                    fill_operand(&mut staged_operands.1, &source, rhs_stage, pipe);
                 }
             });
         }
@@ -99,12 +145,19 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
         let pin_lhs = comptime!(self.pin_lhs);
         let pin_rhs = comptime!(self.pin_rhs);
+        let lhs_stage = comptime!(self.stage_lhs);
+        let rhs_stage = comptime!(match self.stage_rhs {
+            Option::Some(stage) => stage,
+            Option::None => panic!("binary staging slot has an rhs stage"),
+        });
         self.fill(|staged_operands, pipe| {
             if comptime!(!pin_lhs) {
-                pipe.fill(&mut staged_operands.0, &lhs.at(region));
+                let source = lhs.at(region);
+                fill_operand(&mut staged_operands.0, &source, lhs_stage, pipe);
             }
             if comptime!(!pin_rhs) {
-                pipe.fill(&mut staged_operands.1, &rhs.at(region));
+                let source = rhs.at(region);
+                fill_operand(&mut staged_operands.1, &source, rhs_stage, pipe);
             }
         });
     }
@@ -177,9 +230,11 @@ impl<T: Numeric> Staging<Tile<T>> {
         // can't decide invariance at comptime. Both fall back to streaming (pin = false).
         let split = comptime!(op_space.is_static() && !delivery.is_tma());
         let pin = comptime!(split && op_space.walk_invariant(&input.space));
-        let requested_stage = comptime!(out.operand_stage(input.leaf));
-        let plan = comptime!(slot_plan(requested_stage, &[delivery]));
-        let stage = comptime!(plan.stage);
+        let input_plan = input.stage();
+        let requested = comptime!(out.operand_stage(input.leaf));
+        let stage = comptime!(input_plan.resolve(input.leaf, requested));
+        let materialized = comptime!(rendezvous_deliveries(&[stage], &[delivery]));
+        let plan = comptime!(slot_plan(&materialized));
         let staged_input = stage_operand(input, comptime!(out.clone()), stage);
         Staging::wrap(
             staged_input,
@@ -187,15 +242,18 @@ impl<T: Numeric> Staging<Tile<T>> {
             pin,
             false,
             stage,
+            comptime!(Option::None),
         )
     }
 
     /// Fill the pinned operand from `region`'s window.
     pub fn fill_pinned(&mut self, input: &Tile<T>, region: &Region) {
         let pin = self.pinned();
+        let stage = self.stage();
         if comptime!(pin) {
             self.fill(|s, pipe| {
-                pipe.fill(s, &input.at(region));
+                let source = input.at(region);
+                fill_operand(s, &source, stage, pipe);
             });
         }
     }
@@ -203,9 +261,11 @@ impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the streamed operand from `region`'s window.
     pub fn fill_streamed(&mut self, input: &Tile<T>, region: &Region) {
         let pin = self.pinned();
+        let stage = self.stage();
         self.fill(|s, pipe| {
             if comptime!(!pin) {
-                pipe.fill(s, &input.at(region));
+                let source = input.at(region);
+                fill_operand(s, &source, stage, pipe);
             }
         });
     }
@@ -278,6 +338,20 @@ fn stage_operand<T: Numeric>(
     let gathered = input.gathered();
     let delivery = input.delivery();
     match comptime!(stage) {
+        OperandStage::InPlace => match &input.tile_kind {
+            TileKind::Procedural(data) => Tile::<T> {
+                tile_kind: TileKind::new_Procedural(data.clone()),
+                space: comptime!(input.space.divide()),
+                leaf: comptime!(input.leaf),
+            },
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => {
+                panic!("Staging: only procedural operands currently execute in place")
+            }
+        },
         OperandStage::Plane => {
             comptime!(assert!(
                 !delivery.is_tma(),
@@ -303,9 +377,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn procedural_upgrades_a_plane_request_to_smem() {
+    fn an_in_place_operand_does_not_join_the_slot_rendezvous() {
+        let deliveries = rendezvous_deliveries(
+            &[OperandStage::InPlace, OperandStage::Smem],
+            &[Delivery::Procedural, Delivery::Copy],
+        );
+        assert_eq!(deliveries, vec![Delivery::Copy]);
+        assert_eq!(slot_plan(&deliveries).sync, Sync::Cube);
+    }
+
+    #[test]
+    fn a_plane_stage_cannot_share_a_slot_with_smem() {
+        assert!(!compatible_slot_stages(&[
+            OperandStage::Plane,
+            OperandStage::Smem,
+        ]));
+        assert!(!compatible_slot_stages(&[
+            OperandStage::Smem,
+            OperandStage::Plane,
+        ]));
+        assert!(compatible_slot_stages(&[
+            OperandStage::Plane,
+            OperandStage::InPlace,
+        ]));
+    }
+
+    #[test]
+    fn materialization_resolves_per_operand() {
         assert_eq!(
-            slot_plan(OperandStage::Plane, &[Delivery::Procedural, Delivery::Copy]).stage,
+            StagePlan::in_place().resolve(Leaf::Memory, OperandStage::Smem),
+            OperandStage::InPlace,
+        );
+        assert_eq!(
+            StagePlan::for_leaf(Leaf::Memory).resolve(Leaf::Memory, OperandStage::Smem),
+            OperandStage::Smem,
+        );
+    }
+
+    #[test]
+    fn a_fragment_consumer_forces_procedural_smem() {
+        assert_eq!(
+            StagePlan::in_place().resolve(Leaf::Cmma, OperandStage::Plane),
             OperandStage::Smem,
         );
     }

@@ -285,7 +285,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 comptime!(StagePlan::strided())
             }
-            TileKind::Procedural(_) => comptime!(StagePlan::strided()),
+            TileKind::Procedural(_) => comptime!(StagePlan::in_place()),
         }
     }
 
@@ -357,6 +357,18 @@ impl<T: Numeric> Tile<T> {
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
         comptime!(!projection.is_direct())
+    }
+
+    /// Whether this tile evaluates values from coordinates instead of a backing buffer.
+    pub(crate) fn is_procedural(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Procedural(_) => comptime!(true),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(false),
+        }
     }
 
     /// Whether this tile can state `axis`'s runtime size for the operation it takes part in: it
@@ -621,7 +633,10 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
                     d.fill_from(s, space)
                 }
-                (TileKind::Smem(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Procedural(s)) => {
+                    d.fill_procedural(s, space)
+                }
+                (TileKind::Procedural(d), TileKind::Procedural(s)) => d.rebind(s),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
                 }

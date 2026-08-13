@@ -67,11 +67,9 @@ impl<Acc: Numeric> Tile<Acc> {
         let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
         // A plane stage selects its tiles by comptime coordinate, so it stands up only under an
         // unrolled walk, and only when the operand merge is itself static-walkable.
-        let stage = staging.stage();
-        let plane_stage = comptime!(
-            stage == OperandStage::Plane
-                && Space::merge(&[&lhs.space, &rhs.space]).static_walkable()
-        );
+        let has_plane_stage = staging.has_plane_stage();
+        let plane_stage =
+            comptime!(has_plane_stage && Space::merge(&[&lhs.space, &rhs.space]).static_walkable());
         let unroll = comptime!(cuts || plane_stage);
 
         let walk = Walk::over(op_space);

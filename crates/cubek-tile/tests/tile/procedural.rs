@@ -6,6 +6,7 @@ use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
+const REDUCE: Axis = Axis(2);
 
 #[cube(launch)]
 fn procedural_kernel<E: Float>(
@@ -27,8 +28,7 @@ fn procedural_kernel<E: Float>(
     output.init(source.procedural_value(pos));
 }
 
-/// Exercise the staging path: the procedural source is cooperatively materialized into smem
-/// before the normal memory-to-memory copy reaches the output.
+/// Exercise a staged schedule whose procedural operand remains coordinate-backed in place.
 #[cube(launch)]
 fn procedural_stage_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
@@ -46,6 +46,24 @@ fn procedural_stage_kernel<E: Float>(
             output.at(&region).copy_from(staged);
         });
     }
+}
+
+/// A staged contraction with an in-place procedural lhs and a materialized tensor rhs.
+#[cube(launch)]
+fn procedural_mma_kernel<E: Float>(
+    rhs: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let lhs = Tile::<E>::procedural(
+        comptime!(space.project(&[ROW, REDUCE])),
+        comptime!(ProceduralRecipe::axis_index(REDUCE)),
+    );
+    let rhs = rhs.tile(comptime!(space.clone()));
+    let mut output = output.tile(space);
+    output.zero();
+    output.mma(&lhs, &rhs);
 }
 
 fn run(recipe: ProceduralRecipe) -> HostData {
@@ -112,6 +130,46 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
     HostData::from_tensor_handle(&client, output, HostDataType::F32)
 }
 
+fn run_mma_sched(sched: Schedule) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let space = Tiling::new()
+        .extents(&[(ROW, 4), (COL, 4), (REDUCE, 4)])
+        .level(WalkOrder::RowMajor, sched, |level| {
+            level
+                .axis(ROW, Cut::sequential(2))
+                .axis(COL, Cut::sequential(2))
+                .axis(REDUCE, Cut::sequential(2))
+        })
+        .build();
+    let rhs = TestInput::builder(client.clone(), shape![4, 4])
+        .dtype(dtype)
+        .arange()
+        .generate_without_host_data();
+    let output = TestInput::builder(client.clone(), shape![4, 4])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    procedural_mma_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            rhs.binding().into_tensor_arg(),
+            TileSpec::direct(&[REDUCE, COL]),
+        ),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, output, HostDataType::F32)
+}
+
 #[test]
 fn evaluates_separable_axis_products_after_region_rebase() {
     // The selected region begins at (2, 3), so AxisIndex(ROW) * AxisIndex(COL) is 6.
@@ -127,7 +185,7 @@ fn evaluates_separable_axis_products_after_region_rebase() {
 }
 
 #[test]
-fn stages_coordinate_varying_values_through_shared_memory() {
+fn staged_schedule_keeps_coordinate_varying_values_in_place() {
     let got = run_copy(ProceduralRecipe::axis_product(vec![
         ProceduralRecipe::axis_index(ROW),
         ProceduralRecipe::axis_index(COL),
@@ -135,6 +193,21 @@ fn stages_coordinate_varying_values_through_shared_memory() {
     for row in 0..4 {
         for col in 0..6 {
             assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
+        }
+    }
+}
+
+fn run_mma() -> HostData {
+    run_mma_sched(Schedule::Staged)
+}
+
+#[test]
+fn staged_mma_materializes_only_the_tensor_operand() {
+    let got = run_mma();
+    for row in 0..4 {
+        for col in 0..4 {
+            let expected = (0..4).map(|k| (k * (k * 4 + col)) as f32).sum::<f32>();
+            assert_eq!(got.get_f32(&[row, col]), expected);
         }
     }
 }
