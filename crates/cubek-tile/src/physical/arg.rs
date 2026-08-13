@@ -31,6 +31,9 @@ pub struct TileSpec {
     /// Explicit stage-layout override; `None` derives from the space's leaf in
     /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
     pub stage: Option<StageStorage>,
+    /// Whether this operand may remain at its source backing when the consumer supports it.
+    /// Default [`Residence::Materialized`] takes the normal staged path.
+    pub residence: Residence,
     /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
     /// two encodings. A format decision, so it belongs to the operand rather than to the
     /// partitioning; [`Tile::of`](crate::Tile::of) carries it onto the tile. Operands that disagree
@@ -52,6 +55,7 @@ impl TileSpec {
             boundary: None,
             units: 0,
             stage: None,
+            residence: Residence::Materialized,
             leaf: Leaf::Memory,
         }
     }
@@ -77,6 +81,13 @@ impl TileSpec {
     /// [`StageStorage::for_space`]).
     pub fn staged(mut self, layout: StageStorage) -> Self {
         self.stage = Some(layout);
+        self
+    }
+
+    /// Permit compatible consumers to read this operand directly from its source backing instead
+    /// of allocating a staging buffer. Opaque fragment loads still resolve to shared memory.
+    pub fn in_place(mut self) -> Self {
+        self.residence = Residence::InPlace;
         self
     }
 

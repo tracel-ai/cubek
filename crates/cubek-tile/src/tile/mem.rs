@@ -258,10 +258,13 @@ impl<T: Numeric> Tile<T> {
             coords.dynamic_offset_count()
         ));
         // Stage layout: the explicit override, else derived from the operand's leaf.
-        let stage = comptime!(StagePlan::materialized(
-            spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
-            spec.units,
-        ));
+        let stage = comptime!(match spec.residence {
+            Residence::InPlace => StagePlan::in_place(),
+            Residence::Materialized => StagePlan::materialized(
+                spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
+                spec.units,
+            ),
+        });
         // The binding type's own width, comptime; a packed store serves `pack` values per
         // stored element.
         let bound_width = tensor.vector_size();
@@ -381,6 +384,17 @@ pub(crate) struct StageMeta {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
+    /// Rebind an in-place memory payload to the source's current window and runtime map. Both
+    /// tiles name the same backing allocation; no values move.
+    pub(crate) fn rebind(&mut self, source: &Self) {
+        self.window.origin.store_from(&source.window.origin);
+        self.window.extent.store_from(&source.window.extent);
+        self.window.bound.store_from(&source.window.bound);
+        self.map.store_from(&source.map);
+        self.offsets.store_from(&source.offsets);
+        self.window_start = source.window_start;
+    }
+
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
     /// tile. The caller must own the destination window for the whole cube: workers write cyclic
     /// positions across it. Staged shared-memory buffers meet that contract; a global destination

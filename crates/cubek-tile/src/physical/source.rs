@@ -10,7 +10,7 @@ use cubecl::quant::scheme::QuantScheme;
 
 use crate::{
     Axis, Boundary, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
+    QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
     validate_scheme,
 };
 
@@ -36,6 +36,7 @@ struct TileSourceData<'a, R: Runtime> {
     v: usize,
     boundary: Option<Option<Boundary>>,
     stage: Option<StageStorage>,
+    residence: Residence,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -71,6 +72,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 v: 1,
                 boundary: None,
                 stage: None,
+                residence: Residence::Materialized,
                 units: 0,
                 quant: None,
                 leaf: Leaf::Memory,
@@ -187,6 +189,13 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// [`StageStorage::for_leaf`]: storage-tiled for a cmma leaf, plain strided otherwise.
     pub fn stage(mut self, stage: StageStorage) -> Self {
         self.data.stage = Some(stage);
+        self
+    }
+
+    /// Let compatible consumers read this operand directly from global memory instead of staging
+    /// it. Fragment transports that load raw lanes still resolve this request to shared memory.
+    pub fn in_place(mut self) -> Self {
+        self.data.residence = Residence::InPlace;
         self
     }
 
@@ -345,6 +354,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             v,
             boundary,
             stage,
+            residence,
             units,
             quant,
             leaf,
@@ -387,6 +397,9 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             .with_boundary(boundary)
             .units(units)
             .leaf(leaf);
+        if matches!(residence, Residence::InPlace) {
+            spec = spec.in_place();
+        }
         if let Some(stage) = stage {
             spec = spec.staged(stage);
         }

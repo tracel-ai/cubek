@@ -39,8 +39,8 @@ fn compatible_slot_stages(stages: &[OperandStage]) -> bool {
     !(has_plane && has_smem)
 }
 
-/// Fill a materialized operand through its slot pipeline, or rebind an in-place procedural
-/// operand to the source region. The pipeline is slot-wide while this decision is per-operand.
+/// Fill a materialized operand through its slot pipeline, or rebind an in-place payload to the
+/// source region. The pipeline is slot-wide while this decision is per-operand.
 #[cube]
 fn fill_operand<T: Numeric>(
     dst: &mut Tile<T>,
@@ -49,9 +49,7 @@ fn fill_operand<T: Numeric>(
     pipe: &Pipeline,
 ) {
     if comptime!(stage == OperandStage::InPlace) {
-        // In-place procedural tiles have no physical fill. `copy_from` rebinds their runtime
-        // origin to this region without involving the slot pipeline.
-        dst.copy_from(src);
+        dst.rebind_from(src);
     } else {
         pipe.fill(dst, src);
     }
@@ -330,8 +328,12 @@ fn stage_operand<T: Numeric>(
                 space: comptime!(input.space.divide()),
                 leaf: comptime!(input.leaf),
             },
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
+            TileKind::Gmem(data) => Tile::<T> {
+                tile_kind: TileKind::new_Gmem(data.clone()),
+                space: comptime!(input.space.divide()),
+                leaf: comptime!(input.leaf),
+            },
+            TileKind::Smem(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_) => {

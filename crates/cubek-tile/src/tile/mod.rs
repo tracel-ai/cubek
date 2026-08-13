@@ -633,10 +633,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Transfer `src` into `self`, or rebind an in-place procedural payload to `src`'s current
-    /// region. Each physical pairing dispatches to its transport leaf; procedural-to-procedural
-    /// is metadata-only and copies no values. A partition source is matched first because it
-    /// needs the whole destination tile, which the pairing match below would keep borrowed.
+    /// Transfer `src` into `self`, each physical pairing dispatched to its transport leaf. A
+    /// partition source is matched first because it needs the whole destination tile, which the
+    /// pairing match below would keep borrowed. In-place staging uses [`rebind_from`](Self::rebind_from)
+    /// instead: it moves only the source window/origin metadata.
     pub fn copy_from(&mut self, src: &Tile<T>) {
         // Bound before the match, which borrows the kind: a memory fill needs the logical space
         // both sides carry (a gathered source is addressed per axis).
@@ -664,12 +664,21 @@ impl<T: Numeric> Tile<T> {
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Procedural(s)) => {
                     d.fill_procedural(s, space)
                 }
-                (TileKind::Procedural(d), TileKind::Procedural(s)) => d.rebind(s),
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
                 }
                 _ => panic!("Tile::copy_from: unsupported kind pairing"),
             },
+        }
+    }
+
+    /// Rebind an in-place staging payload to `src`'s current region without moving values.
+    /// Only sources explicitly resolved to [`OperandStage::InPlace`] reach this operation.
+    pub(crate) fn rebind_from(&mut self, src: &Tile<T>) {
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (TileKind::Procedural(dst), TileKind::Procedural(source)) => dst.rebind(source),
+            (TileKind::Gmem(dst), TileKind::Gmem(source)) => dst.rebind(source),
+            _ => panic!("Tile::rebind_from: incompatible in-place payloads"),
         }
     }
 
