@@ -517,6 +517,12 @@ impl<T: Numeric> MemData<T> {
             coefficients: map.coefficients.clone(),
             residues: const_coords(comptime!(vec![0; form.projection.physical_rank()])),
         };
+        let stage_map =
+            if comptime!(form.projection.is_rational() || form.projection.has_dynamic_scales()) {
+                stage_map.stored()
+            } else {
+                stage_map
+            };
         let meta = comptime!(StageMeta {
             space,
             leaf,
@@ -782,11 +788,12 @@ impl<T: Numeric> MemData<T> {
         src: &MemData<T>,
         #[comptime] space: Space,
     ) {
-        // Direct `Tile::copy_from` callers receive the source's expand-time map here.
-        // For staged and double-buffered pipelines, `Staging::consume` is what guarantees
-        // the correct per-region binding prior to reads across rolled loop iterations.
-        self.map.residues = src.map.residues.clone();
-        self.map.coefficients = src.map.coefficients.clone();
+        // A gathered stage owns mutable map registers alongside its bytes. Store the source
+        // window's coefficients and phase into those registers so bytes and interpretation are
+        // one slot value. Direct stages carry no runtime map state.
+        if comptime!(self.projection.is_rational() || self.projection.has_dynamic_scales()) {
+            self.map.store_from(&src.map);
+        }
         let check = comptime!(src.access.overhang.masks());
         let w = comptime!(self.store.vector_size);
         let compaction = comptime!(stage_compaction(

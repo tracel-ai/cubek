@@ -247,6 +247,19 @@ impl<C: Int> Coords<C> {
         unexpanded!()
     }
 
+    /// Copy these coordinates into mutable kernel registers. Unlike [`clone`](Clone::clone),
+    /// which deliberately keeps the same expression handles, this gives a staging slot durable
+    /// storage whose values can be replaced on every fill.
+    pub(crate) fn stored(&self) -> Coords<C> {
+        unexpanded!()
+    }
+
+    /// Assign every coordinate into this stored carrier. Both lists must have the same comptime
+    /// length; the receiver must have been produced by [`stored`](Coords::stored).
+    pub(crate) fn store_from(&mut self, _src: &Coords<C>) {
+        unexpanded!()
+    }
+
     pub fn __expand_new(_scope: &Scope) -> CoordsExpand<C> {
         CoordsExpand { values: Vec::new() }
     }
@@ -369,5 +382,22 @@ impl<C: Int> CoordsExpand<C> {
             acc = fold_add(scope, acc, self.values[i]);
         }
         acc
+    }
+
+    pub fn __expand_stored_method(&self, scope: &Scope) -> CoordsExpand<C> {
+        CoordsExpand {
+            values: self.values.iter().map(|v| (*v).into_mut(scope)).collect(),
+        }
+    }
+
+    pub fn __expand_store_from_method(&mut self, scope: &Scope, src: &CoordsExpand<C>) {
+        assert_eq!(
+            self.values.len(),
+            src.values.len(),
+            "Coords::store_from: source and destination lengths differ"
+        );
+        for (dst, src) in self.values.iter_mut().zip(&src.values) {
+            dst.__expand_assign_method(scope, *src);
+        }
     }
 }
