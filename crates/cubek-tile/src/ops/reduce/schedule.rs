@@ -1,4 +1,4 @@
-//! The walks behind [`Tile::reduce_axis`](super::Tile::reduce_axis), one per [`Schedule`].
+//! The walks behind [`Tile::reduce_axis`](crate::Tile::reduce_axis), one per [`Schedule`].
 
 use cubecl::prelude::*;
 
@@ -90,6 +90,9 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] inst: ReduceLeafKind,
         op_space: Space,
     ) {
+        // Keep this region-index protocol in lockstep with `Tile::mma_double` in
+        // `ops/matmul/schedule.rs`: only the fill/consume bodies differ by operand arity.
+        // Changes to prologue, alternating prefetch, or epilogue handling must be made in both.
         // Double-buffering fills the operand every region (see the raw `fill`s below), so the
         // pin flag goes unread; pass the operation space only to satisfy `single`.
         let mut even_slot = Staging::single(

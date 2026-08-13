@@ -17,7 +17,7 @@ pub enum ReduceLeafKind {
 /// read past an operand's valid extent must return instead of a shared zero, since zero is Sum's
 /// identity but biases Max toward it (any negative data) and Min away from it (any positive data).
 #[cube]
-pub fn identity<E: Numeric>(#[comptime] inst: ReduceLeafKind) -> E {
+pub fn reduce_identity<E: Numeric>(#[comptime] inst: ReduceLeafKind) -> E {
     match comptime!(inst) {
         ReduceLeafKind::Sum => E::from_int(0),
         ReduceLeafKind::Max => E::min_value(),

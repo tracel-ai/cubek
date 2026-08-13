@@ -232,7 +232,9 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
 }
 
 /// Allocate one staged operand for `stage`. A gathered operand keeps its compacted physical
-/// window and projection; the leaf still performs the gather when it reads the staged tile.
+/// window and projection, so staging does not replicate each logical element for every gather
+/// tap. The leaf performs the gather on read instead; that keeps staging compact but means
+/// adjacent logical regions may re-read overlapping halo cells.
 #[cube]
 fn stage_operand<T: Numeric>(
     input: &Tile<T>,
@@ -249,7 +251,7 @@ fn stage_operand<T: Numeric>(
             ));
             comptime!(assert!(
                 !gathered,
-                "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane); \\
+                "Staging: a gathered operand cannot stage into plane tiles (OperandStage::Plane); \
                  only OperandStage::Smem stages one, as the compacted window its leaf reads"
             ));
             PlanePartition::store(

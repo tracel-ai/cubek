@@ -1,4 +1,4 @@
-//! The walks behind [`Tile::mma`](super::Tile), one per [`Schedule`]. A schedule's body
+//! The walks behind [`Tile::mma`](crate::Tile::mma), one per [`Schedule`]. A schedule's body
 //! is pure structure; kind decisions (slot store, rendezvous, fill dispatch) are
 //! delegated, chiefly to [`Staging::new`].
 
@@ -97,6 +97,9 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         op_space: Space,
     ) {
+        // Keep this region-index protocol in lockstep with `Tile::reduce_double` in
+        // `ops/reduce/schedule.rs`: only the fill/consume bodies differ by operand arity.
+        // Changes to prologue, alternating prefetch, or epilogue handling must be made in both.
         // Double-buffering fills both operands every region (see the raw `fill`s below), so the
         // pin flags go unread; pass the operation space only to satisfy `new`.
         let mut even_slot = Staging::new(

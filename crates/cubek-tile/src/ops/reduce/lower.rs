@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use super::kind::{ReduceLeafKind, identity};
+use super::kind::{ReduceLeafKind, reduce_identity};
 use crate::*;
 
 #[cube]
@@ -67,7 +67,7 @@ pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
     let space = comptime!(acc.space.clone());
     match &mut acc.tile_kind {
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            reduce_register_memory(g, input, space, inst);
+            reduce_memory(g, input, space, inst);
         }
         TileKind::PlaneTile(t) => {
             reduce_plane_tile(t, input, space, inst);
@@ -181,7 +181,7 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
 }
 
 #[cube]
-fn reduce_register_memory<Acc: Numeric, In: Numeric>(
+fn reduce_memory<Acc: Numeric, In: Numeric>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
@@ -193,16 +193,16 @@ fn reduce_register_memory<Acc: Numeric, In: Numeric>(
     let size!(WP) = comptime!(vw / if pack > 0 { pack } else { 1 });
 
     if comptime!(pack == 1) {
-        reduce_register_memory_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, inst);
+        reduce_memory_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, inst);
     } else if comptime!(pack > 1) {
-        reduce_register_memory_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, inst);
+        reduce_memory_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, inst);
     } else {
-        reduce_register_memory_typed::<Acc, In, In, WP, V>(acc, input, acc_space, inst);
+        reduce_memory_typed::<Acc, In, In, WP, V>(acc, input, acc_space, inst);
     }
 }
 
 #[cube]
-fn reduce_register_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
+fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
@@ -214,22 +214,17 @@ fn reduce_register_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size,
     let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
     let total_acc = comptime!(layout.total_acc);
 
-    // Use the accumulator's native store width so flat_accumulate<W> is a
-    // no-op retype (W == vector_size) rather than a pointer retype that the
-    // WGSL backend cannot lower.  The pattern mirrors reduce_register_data_typed:
-    // outer runtime loop over lines, inner comptime-unrolled loop over lanes.
-    let size!(W) = comptime!(acc.store.vector_size);
-    // Capture the integer before the mutable borrow so we can reference it inside.
     let ws = comptime!(acc.store.vector_size);
-    let total_lines = comptime!(total_acc / acc.store.vector_size);
+    // Preserve the native store width: retyping it as another vector width cannot lower on WGSL.
+    let size!(W) = ws;
     comptime!(assert!(
-        total_acc % acc.store.vector_size == 0,
+        total_acc % ws == 0,
         "reduce: MemData total_acc must be divisible by store.vector_size"
     ));
+    let total_lines = comptime!(total_acc / ws);
     let mut acc_view = acc.flat_accumulate::<W>();
 
     for line_idx in 0..total_lines {
-        // Seed the whole W-wide line once per accumulator line.
         let seed_vec = acc_view.seed_reduce(line_idx, inst);
         let mut result = seed_vec;
 
@@ -253,7 +248,6 @@ fn reduce_register_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size,
                 inst,
             );
 
-            // insert() is in-place and returns (); mirror reduce_register_data_typed.
             result.insert(comptime!(lane_idx), curr_val);
         }
 
@@ -295,24 +289,33 @@ fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
             true,
         );
 
-        // `in_view.read`'s own masked fallback is always zero (Sum's identity, not Max's or
-        // Min's), so an overhang cell is selected against `inst`'s own identity here instead.
-        let valid = in_view.is_in_bounds(in_coords.clone());
-        let in_vec = select(
-            valid,
-            in_view.read(in_coords),
-            Vector::<In, V>::cast_from(identity::<In>(inst)),
-        );
-        let in_lane = resolve_reduce_in_lane(
-            comptime!(in_space.clone()),
-            comptime!(acc_space.clone()),
-            comptime!(layout.reduce_axes.clone()),
-            acc_coords,
-            &reduce_coords,
-            vw,
-        );
-
-        let in_val = in_vec.extract_dynamic(in_lane);
+        // `read` already returns Sum's zero identity out of bounds, so its select is dead work.
+        // Max and Min need their own identity; nested view boundaries cannot yet carry a custom
+        // fallback through every layer, so they retain the explicit outer validity predicate.
+        let in_vec = match comptime!(inst) {
+            ReduceLeafKind::Sum => in_view.read(in_coords),
+            ReduceLeafKind::Max | ReduceLeafKind::Min => {
+                let valid = in_view.is_in_bounds(in_coords.clone());
+                select(
+                    valid,
+                    in_view.read(in_coords),
+                    Vector::<In, V>::cast_from(reduce_identity::<In>(inst)),
+                )
+            }
+        };
+        let in_val = if comptime!(vw <= 1) {
+            in_vec.extract(0usize)
+        } else {
+            let in_lane = resolve_reduce_in_lane(
+                comptime!(in_space.clone()),
+                comptime!(acc_space.clone()),
+                comptime!(layout.reduce_axes.clone()),
+                acc_coords,
+                &reduce_coords,
+                vw,
+            );
+            in_vec.extract_dynamic(in_lane)
+        };
         let in_cast = Acc::cast_from(in_val);
 
         match comptime!(inst) {
@@ -350,7 +353,7 @@ impl ReduceLayout {
             .iter()
             .map(|&a| in_space.extent(a))
             .collect::<Vec<usize>>();
-        let kc = in_space.contracted_extent(acc_space);
+        let kc = reduce_extents.iter().product::<usize>();
         let acc_extents = (0..acc_space.rank())
             .map(|p| acc_space.extent_at(p))
             .collect::<Vec<usize>>();

@@ -296,6 +296,39 @@ fn run_reduce(
     run_reduce_with_vw(in_shape, out_shape, in_axes, out_axes, space, op, 1)
 }
 
+/// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
+/// coverage does not duplicate the three identities and comparison loops.
+fn check_2d_reduce(
+    schedule: Schedule,
+    m: usize,
+    k: usize,
+    tm: usize,
+    tk: usize,
+    op: ReduceLeafKind,
+) {
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, schedule, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, op);
+
+    for i in 0..m {
+        let values = (0..k).map(|j| ((i * k + j) % 7) as f32);
+        let want = match op {
+            ReduceLeafKind::Sum => values.sum(),
+            ReduceLeafKind::Max => values.fold(f32::NEG_INFINITY, f32::max),
+            ReduceLeafKind::Min => values.fold(f32::INFINITY, f32::min),
+        };
+        assert_eq!(
+            got.get_f32(&[i]),
+            want,
+            "{schedule:?} {op:?} mismatch at index {i}"
+        );
+    }
+}
+
 fn run_reduce_with_vw(
     in_shape: Shape,
     out_shape: Shape,
@@ -491,172 +524,32 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
 
 #[test]
 fn test_reduce_axis_sum_staged() {
-    let (m, k, tm, tk) = (8, 16, 4, 8);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
-        })
-        .build();
-
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        ReduceLeafKind::Sum,
-    );
-
-    for i in 0..m {
-        let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
-        assert_eq!(got.get_f32(&[i]), want, "Staged sum mismatch at index {i}");
-    }
+    check_2d_reduce(Schedule::Staged, 8, 16, 4, 8, ReduceLeafKind::Sum);
 }
 
 #[test]
 fn test_reduce_axis_sum_double_buffered() {
-    let (m, k, tm, tk) = (8, 16, 4, 4);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
-        })
-        .build();
-
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        ReduceLeafKind::Sum,
-    );
-
-    for i in 0..m {
-        let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
-        assert_eq!(
-            got.get_f32(&[i]),
-            want,
-            "DoubleBuffered sum mismatch at index {i}"
-        );
-    }
+    check_2d_reduce(Schedule::DoubleBuffered, 8, 16, 4, 4, ReduceLeafKind::Sum);
 }
 
 #[test]
 fn test_reduce_axis_max_staged() {
-    let (m, k, tm, tk) = (8, 16, 4, 8);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
-        })
-        .build();
-
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        ReduceLeafKind::Max,
-    );
-
-    for i in 0..m {
-        let want: f32 = (0..k)
-            .map(|j| ((i * k + j) % 7) as f32)
-            .fold(f32::NEG_INFINITY, f32::max);
-        assert_eq!(got.get_f32(&[i]), want, "Staged max mismatch at index {i}");
-    }
+    check_2d_reduce(Schedule::Staged, 8, 16, 4, 8, ReduceLeafKind::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_staged() {
-    let (m, k, tm, tk) = (8, 16, 4, 8);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
-        })
-        .build();
-
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        ReduceLeafKind::Min,
-    );
-
-    for i in 0..m {
-        let want: f32 = (0..k)
-            .map(|j| ((i * k + j) % 7) as f32)
-            .fold(f32::INFINITY, f32::min);
-        assert_eq!(got.get_f32(&[i]), want, "Staged min mismatch at index {i}");
-    }
+    check_2d_reduce(Schedule::Staged, 8, 16, 4, 8, ReduceLeafKind::Min);
 }
 
 #[test]
 fn test_reduce_axis_max_double_buffered() {
-    let (m, k, tm, tk) = (8, 16, 4, 4);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
-        })
-        .build();
-
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        ReduceLeafKind::Max,
-    );
-
-    for i in 0..m {
-        let want: f32 = (0..k)
-            .map(|j| ((i * k + j) % 7) as f32)
-            .fold(f32::NEG_INFINITY, f32::max);
-        assert_eq!(
-            got.get_f32(&[i]),
-            want,
-            "DoubleBuffered max mismatch at index {i}"
-        );
-    }
+    check_2d_reduce(Schedule::DoubleBuffered, 8, 16, 4, 4, ReduceLeafKind::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_double_buffered() {
-    let (m, k, tm, tk) = (8, 16, 4, 4);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
-        })
-        .build();
-
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        ReduceLeafKind::Min,
-    );
-
-    for i in 0..m {
-        let want: f32 = (0..k)
-            .map(|j| ((i * k + j) % 7) as f32)
-            .fold(f32::INFINITY, f32::min);
-        assert_eq!(
-            got.get_f32(&[i]),
-            want,
-            "DoubleBuffered min mismatch at index {i}"
-        );
-    }
+    check_2d_reduce(Schedule::DoubleBuffered, 8, 16, 4, 4, ReduceLeafKind::Min);
 }
 
 /// Reduction over an outer axis while retaining the innermost axis (which lines along vector width).
@@ -886,6 +779,32 @@ fn test_reduce_axis_max_nondivisible_k_negative_data() {
             .copied()
             .fold(f32::NEG_INFINITY, f32::max);
         assert_eq!(got.get_f32(&[i]), want, "Max mismatch at row {i}");
+    }
+}
+
+/// A zero overhang fallback would incorrectly win this Min reduction, whereas the correct
+/// identity is positive infinity.
+#[test]
+fn test_reduce_axis_min_nondivisible_k_positive_data() {
+    let (m, k, tk) = (4, 6, 4);
+    let data: Vec<f32> = (0..m * k).map(|i| 1.0 + i as f32).collect();
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Schedule::Direct),
+        ReduceLeafKind::Min,
+    );
+
+    for i in 0..m {
+        let want = data[i * k..(i + 1) * k]
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        assert_eq!(got.get_f32(&[i]), want, "Min mismatch at row {i}");
     }
 }
 

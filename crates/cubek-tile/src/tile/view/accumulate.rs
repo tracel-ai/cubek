@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::{
     instruction::{max as inst_max, min as inst_min, sum as inst_sum},
-    ops::{ReduceLeafKind, identity},
+    ops::{ReduceLeafKind, reduce_identity},
     *,
 };
 
@@ -47,7 +47,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub fn seed_reduce(&self, pos: C, #[comptime] inst: ReduceLeafKind) -> Vector<E, V> {
         match comptime!(self.lane_share) {
             LaneShare::Plane | LaneShare::Group { .. } => {
-                Vector::<E, V>::cast_from(identity::<E>(inst))
+                Vector::<E, V>::cast_from(reduce_identity::<E>(inst))
             }
             LaneShare::Whole => self.values.read(pos),
         }
