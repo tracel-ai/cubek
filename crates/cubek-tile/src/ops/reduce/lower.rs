@@ -55,6 +55,15 @@ pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
     input: &Tile<In>,
     #[comptime] inst: ReduceLeafKind,
 ) {
+    let input_space = comptime!(input.space.clone());
+    let vector_size = input.vector_size();
+    comptime!(assert!(
+        input_space
+            .extent_at(input_space.rank() - 1)
+            .is_multiple_of(vector_size),
+        "reduce: the input's innermost extent must be divisible by its vector size"
+    ));
+
     let space = comptime!(acc.space.clone());
     match &mut acc.tile_kind {
         TileKind::Gmem(g) | TileKind::Smem(g) => {

@@ -5,7 +5,7 @@ use cubecl::{
 
 use crate::{
     instruction::{max as inst_max, min as inst_min, sum as inst_sum},
-    ops::ReduceLeafKind,
+    ops::{ReduceLeafKind, identity},
     *,
 };
 
@@ -46,11 +46,9 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// under `LaneShare::Whole`.
     pub fn seed_reduce(&self, pos: C, #[comptime] inst: ReduceLeafKind) -> Vector<E, V> {
         match comptime!(self.lane_share) {
-            LaneShare::Plane | LaneShare::Group { .. } => match comptime!(inst) {
-                ReduceLeafKind::Sum => Vector::<E, V>::cast_from(E::from_int(0)),
-                ReduceLeafKind::Max => Vector::<E, V>::cast_from(E::min_value()),
-                ReduceLeafKind::Min => Vector::<E, V>::cast_from(E::max_value()),
-            },
+            LaneShare::Plane | LaneShare::Group { .. } => {
+                Vector::<E, V>::cast_from(identity::<E>(inst))
+            }
             LaneShare::Whole => self.values.read(pos),
         }
     }
@@ -74,12 +72,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 };
                 if UNIT_POS_X == 0 {
                     let old = self.values.read(pos.clone());
-                    let result = match comptime!(inst) {
-                        ReduceLeafKind::Sum => old + combined,
-                        ReduceLeafKind::Max => max(old, combined),
-                        ReduceLeafKind::Min => min(old, combined),
-                    };
-                    self.values.write(pos, result);
+                    self.values.write(pos, merge_reduce(old, combined, inst));
                 }
             }
             LaneShare::Group { fold_mask } => {
@@ -91,15 +84,23 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                 if lane_in_group == 0 {
                     let old = self.values.read(pos.clone());
-                    let result = match comptime!(inst) {
-                        ReduceLeafKind::Sum => old + combined,
-                        ReduceLeafKind::Max => max(old, combined),
-                        ReduceLeafKind::Min => min(old, combined),
-                    };
-                    self.values.write(pos, result);
+                    self.values.write(pos, merge_reduce(old, combined, inst));
                 }
             }
             LaneShare::Whole => self.values.write(pos, value),
         }
+    }
+}
+
+#[cube]
+fn merge_reduce<E: Numeric, V: Size>(
+    lhs: Vector<E, V>,
+    rhs: Vector<E, V>,
+    #[comptime] inst: ReduceLeafKind,
+) -> Vector<E, V> {
+    match comptime!(inst) {
+        ReduceLeafKind::Sum => lhs + rhs,
+        ReduceLeafKind::Max => max(lhs, rhs),
+        ReduceLeafKind::Min => min(lhs, rhs),
     }
 }
