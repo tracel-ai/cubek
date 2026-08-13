@@ -46,7 +46,7 @@ fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
         &client,
         input.binding(),
         output.clone().binding(),
-        scales.binding(),
+        &[scales.binding()],
         &scheme,
         output_dtype,
     )
