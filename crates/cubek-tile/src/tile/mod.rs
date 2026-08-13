@@ -255,9 +255,11 @@ impl<T: Numeric> Tile<T> {
     /// fragment is never a fill source, so it reports strided.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
+            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Copy),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(Delivery::Strided),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::delivery: a resident fragment is not a stage source")
+            }
             // A procedural source is cooperatively materialized into its stage.
             TileKind::Procedural(_) => comptime!(Delivery::Procedural),
         }

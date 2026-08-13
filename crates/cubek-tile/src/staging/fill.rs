@@ -11,6 +11,32 @@ use cubecl::unexpanded;
 
 use crate::*;
 
+/// The one resolved staging policy shared by unary and binary slots. Backing allocation,
+/// rendezvous, and producer-arrival count are derived together from the actual sources.
+#[derive(Clone, Copy)]
+struct SlotPlan {
+    stage: OperandStage,
+    sync: Sync,
+    collective_full: bool,
+}
+
+fn slot_plan(requested: OperandStage, deliveries: &[Delivery]) -> SlotPlan {
+    let stage = if deliveries.contains(&Delivery::Procedural) {
+        OperandStage::Smem
+    } else {
+        requested
+    };
+    let sync = match stage {
+        OperandStage::Plane => Sync::Solo,
+        OperandStage::Smem => Sync::for_deliveries(deliveries),
+    };
+    SlotPlan {
+        stage,
+        sync,
+        collective_full: Sync::collective_full(deliveries),
+    }
+}
+
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Build a slot staging one region of the operands `lhs`/`rhs`. An [`OperandStage::Plane`]
@@ -35,21 +61,19 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         // Both operands use the output leaf's staging kind. The helper preserves each tile's
         // own projection and rejects unsupported Plane/TMA/gather combinations.
         let requested_stage = comptime!(out.operand_stage(lhs.leaf));
-        // A procedural source has no fragment transport. Resolve the effective stage before
-        // allocating either operand and before choosing the pipeline: when either side needs
-        // cooperative materialization, both live in smem under the matching `Cube` pipeline.
-        let stage = resolved_stage(requested_stage, lhs_delivery, rhs_delivery);
+        let plan = comptime!(slot_plan(requested_stage, &[lhs_delivery, rhs_delivery]));
+        let stage = comptime!(plan.stage);
         let stages = (
             stage_operand(lhs, comptime!(out.clone()), stage),
             stage_operand(rhs, comptime!(out.clone()), stage),
         );
-        let sync = match comptime!(stage) {
-            OperandStage::Plane => comptime!(Sync::Solo),
-            OperandStage::Smem => {
-                comptime!(Sync::for_deliveries(&[lhs_delivery, rhs_delivery]))
-            }
-        };
-        Staging::wrap(stages, Pipeline::new(sync), pin_lhs, pin_rhs, stage)
+        Staging::wrap(
+            stages,
+            Pipeline::new(comptime!(plan.sync), comptime!(plan.collective_full)),
+            pin_lhs,
+            pin_rhs,
+            stage,
+        )
     }
 
     /// Fill the pinned operand(s), those the walk leaves invariant, from `region`'s window.
@@ -154,13 +178,16 @@ impl<T: Numeric> Staging<Tile<T>> {
         let split = comptime!(op_space.is_static() && !delivery.is_tma());
         let pin = comptime!(split && op_space.walk_invariant(&input.space));
         let requested_stage = comptime!(out.operand_stage(input.leaf));
-        let stage = resolved_stage(requested_stage, delivery, delivery);
+        let plan = comptime!(slot_plan(requested_stage, &[delivery]));
+        let stage = comptime!(plan.stage);
         let staged_input = stage_operand(input, comptime!(out.clone()), stage);
-        let sync = match comptime!(stage) {
-            OperandStage::Plane => comptime!(Sync::Solo),
-            OperandStage::Smem => comptime!(Sync::for_deliveries(&[delivery])),
-        };
-        Staging::wrap(staged_input, Pipeline::new(sync), pin, false, stage)
+        Staging::wrap(
+            staged_input,
+            Pipeline::new(comptime!(plan.sync), comptime!(plan.collective_full)),
+            pin,
+            false,
+            stage,
+        )
     }
 
     /// Fill the pinned operand from `region`'s window.
@@ -238,24 +265,6 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
     }
 }
 
-/// Resolve a slot's backing before either allocation or synchronization. A procedural source is
-/// cooperatively materialized, so a requested plane stage becomes a cube-synchronized smem stage.
-#[cube]
-fn resolved_stage(
-    #[comptime] requested: OperandStage,
-    #[comptime] lhs_delivery: Delivery,
-    #[comptime] rhs_delivery: Delivery,
-) -> comptime_type!(OperandStage) {
-    if comptime!(
-        matches!(lhs_delivery, Delivery::Procedural)
-            || matches!(rhs_delivery, Delivery::Procedural)
-    ) {
-        comptime!(OperandStage::Smem)
-    } else {
-        requested
-    }
-}
-
 /// Allocate one staged operand for `stage`. A gathered operand keeps its compacted physical
 /// window and projection, so staging does not replicate each logical element for every gather
 /// tap. The leaf performs the gather on read instead; that keeps staging compact but means
@@ -296,8 +305,8 @@ mod tests {
     #[test]
     fn procedural_upgrades_a_plane_request_to_smem() {
         assert_eq!(
-            resolved_stage(OperandStage::Plane, Delivery::Procedural, Delivery::Strided),
-            OperandStage::Smem
+            slot_plan(OperandStage::Plane, &[Delivery::Procedural, Delivery::Copy]).stage,
+            OperandStage::Smem,
         );
     }
 }

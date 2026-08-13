@@ -62,12 +62,16 @@ impl<T: CubeType> Staging<T> {
         }
     }
 
-    /// Producer release: arrive `full` (elected unit) so the consumer's `full` wait can pass. The
-    /// bytes were declared per tile by [`Pipeline::fill`], so this is a bare arrival. No-op for `Cube`.
+    /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
+    /// declared by [`Pipeline::fill`] land. Mixed slots need every unit; pure TMA uses unit 0.
     pub(crate) fn release_write(&self) {
         match &self.pipeline {
-            Pipeline::Barrier { full, .. } => {
-                if UNIT_POS == 0 {
+            Pipeline::Barrier {
+                full,
+                collective_full,
+                ..
+            } => {
+                if comptime!(*collective_full) || UNIT_POS == 0 {
                     full.arrive();
                 }
             }

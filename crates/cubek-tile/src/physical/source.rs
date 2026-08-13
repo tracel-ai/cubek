@@ -549,7 +549,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
 /// [`QuantTileArgLaunch`](crate::QuantTileArgLaunch) one.
 ///
 /// Both transports constrain, but only the leaf can differ here: this operand is
-/// [`Delivery::Strided`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
+/// [`Delivery::Copy`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
 /// and a strided load runs code per element, so it decodes whatever it moves. Only the leaf is left:
 /// a fragment load takes a raw window at one element type, so a leaf that loads fragments needs its
 /// values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this — a bulk
