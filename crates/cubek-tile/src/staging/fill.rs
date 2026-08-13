@@ -86,12 +86,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
             comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
         let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
         let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
-        let lhs_plan = lhs.stage();
-        let rhs_plan = rhs.stage();
-        let lhs_requested = comptime!(out.operand_stage(lhs.leaf));
-        let rhs_requested = comptime!(out.operand_stage(rhs.leaf));
-        let lhs_stage = comptime!(lhs_plan.resolve(lhs.leaf, lhs_requested));
-        let rhs_stage = comptime!(rhs_plan.resolve(rhs.leaf, rhs_requested));
+        let lhs_stage = lhs.operand_stage(comptime!(&out));
+        let rhs_stage = rhs.operand_stage(comptime!(&out));
         comptime!(assert!(
             compatible_slot_stages(&[lhs_stage, rhs_stage]),
             "Staging: Plane and Smem operands cannot share a slot"
@@ -230,9 +226,7 @@ impl<T: Numeric> Staging<Tile<T>> {
         // can't decide invariance at comptime. Both fall back to streaming (pin = false).
         let split = comptime!(op_space.is_static() && !delivery.is_tma());
         let pin = comptime!(split && op_space.walk_invariant(&input.space));
-        let input_plan = input.stage();
-        let requested = comptime!(out.operand_stage(input.leaf));
-        let stage = comptime!(input_plan.resolve(input.leaf, requested));
+        let stage = input.operand_stage(comptime!(&out));
         let materialized = comptime!(rendezvous_deliveries(&[stage], &[delivery]));
         let plan = comptime!(slot_plan(&materialized));
         let staged_input = stage_operand(input, comptime!(out.clone()), stage);
@@ -340,7 +334,7 @@ fn stage_operand<T: Numeric>(
     match comptime!(stage) {
         OperandStage::InPlace => match &input.tile_kind {
             TileKind::Procedural(data) => Tile::<T> {
-                tile_kind: TileKind::new_Procedural(data.clone()),
+                tile_kind: TileKind::new_Procedural(data.at_space(comptime!(input.space.divide()))),
                 space: comptime!(input.space.divide()),
                 leaf: comptime!(input.leaf),
             },
@@ -400,25 +394,5 @@ mod tests {
             OperandStage::Plane,
             OperandStage::InPlace,
         ]));
-    }
-
-    #[test]
-    fn materialization_resolves_per_operand() {
-        assert_eq!(
-            StagePlan::in_place().resolve(Leaf::Memory, OperandStage::Smem),
-            OperandStage::InPlace,
-        );
-        assert_eq!(
-            StagePlan::for_leaf(Leaf::Memory).resolve(Leaf::Memory, OperandStage::Smem),
-            OperandStage::Smem,
-        );
-    }
-
-    #[test]
-    fn a_fragment_consumer_forces_procedural_smem() {
-        assert_eq!(
-            StagePlan::in_place().resolve(Leaf::Cmma, OperandStage::Plane),
-            OperandStage::Smem,
-        );
     }
 }

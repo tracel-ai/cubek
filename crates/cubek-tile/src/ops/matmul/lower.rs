@@ -16,13 +16,10 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                let lhs_plan = lhs.stage();
-                let rhs_plan = rhs.stage();
-                let lhs_requested = comptime!(self.space.operand_stage(lhs.leaf));
-                let rhs_requested = comptime!(self.space.operand_stage(rhs.leaf));
+                let lhs_stage = lhs.operand_stage(comptime!(&self.space));
+                let rhs_stage = rhs.operand_stage(comptime!(&self.space));
                 let all_in_place = comptime!(
-                    lhs_plan.resolve(lhs.leaf, lhs_requested) == OperandStage::InPlace
-                        && rhs_plan.resolve(rhs.leaf, rhs_requested) == OperandStage::InPlace
+                    lhs_stage == OperandStage::InPlace && rhs_stage == OperandStage::InPlace
                 );
                 match comptime!(level.schedule()) {
                     Schedule::Direct => self.mma_direct(lhs, rhs, op_space),

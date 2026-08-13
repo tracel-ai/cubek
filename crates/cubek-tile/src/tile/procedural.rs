@@ -2,7 +2,10 @@
 
 use core::marker::PhantomData;
 
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use cubecl::{
+    prelude::{barrier::Barrier, *},
+    std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
+};
 
 use crate::{Axis, Coords, Fold, FoldExpand, Region, Space};
 
@@ -49,6 +52,8 @@ pub struct ProceduralData<T: Numeric> {
     #[cube(comptime)]
     recipe: ProceduralRecipe,
     #[cube(comptime)]
+    space: Space,
+    #[cube(comptime)]
     _marker: PhantomData<T>,
 }
 
@@ -63,6 +68,7 @@ impl<T: Numeric> ProceduralData<T> {
         ProceduralData::<T> {
             origin,
             recipe,
+            space,
             _marker: PhantomData,
         }
     }
@@ -78,6 +84,7 @@ impl<T: Numeric> ProceduralData<T> {
         ProceduralData::<T> {
             origin,
             recipe: comptime!(self.recipe.clone()),
+            space: comptime!(space.divide()),
             _marker: PhantomData,
         }
     }
@@ -90,6 +97,18 @@ impl<T: Numeric> ProceduralData<T> {
     /// identical by construction; only the runtime origin moves.
     pub(crate) fn rebind(&mut self, source: &Self) {
         self.origin = source.origin.clone();
+    }
+
+    /// Keep the recipe and current origin while changing the tile level that interprets its
+    /// coordinates. An in-place staging payload is allocated for `Tile::divide()`, so its view
+    /// must evaluate positions in that divided space rather than the source's parent space.
+    pub(crate) fn at_space(&self, #[comptime] space: Space) -> Self {
+        ProceduralData::<T> {
+            origin: self.origin.clone(),
+            recipe: comptime!(self.recipe.clone()),
+            space,
+            _marker: PhantomData,
+        }
     }
 
     pub(crate) fn evaluate_dyn(&self, pos: &CoordsDyn, #[comptime] space: Space) -> T {
@@ -131,5 +150,86 @@ impl<T: Numeric> ProceduralData<T> {
                 value
             }
         }
+    }
+}
+
+impl<T: Numeric> Vectorized for ProceduralData<T> {}
+
+impl<T: Numeric> VectorizedExpand for ProceduralDataExpand<T> {
+    fn __expand_vector_size_method(&self, _scope: &Scope) -> VectorSize {
+        1
+    }
+}
+
+impl<T: Numeric, W: Size> ViewOperations<Vector<T, W>, CoordsDyn> for ProceduralData<T> {}
+
+impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
+    for ProceduralDataExpand<T>
+{
+    fn __expand_read_method(
+        &self,
+        scope: &Scope,
+        pos: <CoordsDyn as CubeType>::ExpandType,
+    ) -> NativeExpand<Vector<T, W>> {
+        let value = self
+            .clone()
+            .__expand_evaluate_dyn_method(scope, &pos, self.space.clone());
+        Vector::<T, W>::__expand_cast_from(scope, value)
+    }
+
+    fn __expand_read_checked_method(
+        &self,
+        scope: &Scope,
+        pos: <CoordsDyn as CubeType>::ExpandType,
+    ) -> NativeExpand<Vector<T, W>> {
+        self.__expand_read_method(scope, pos)
+    }
+
+    fn __expand_read_masked_method(
+        &self,
+        scope: &Scope,
+        pos: <CoordsDyn as CubeType>::ExpandType,
+        _mask_value: NativeExpand<Vector<T, W>>,
+    ) -> NativeExpand<Vector<T, W>> {
+        self.__expand_read_method(scope, pos)
+    }
+
+    fn __expand_read_unchecked_method(
+        &self,
+        scope: &Scope,
+        pos: <CoordsDyn as CubeType>::ExpandType,
+    ) -> NativeExpand<Vector<T, W>> {
+        self.__expand_read_method(scope, pos)
+    }
+
+    fn __expand_as_linear_slice_method(
+        &self,
+        _scope: &Scope,
+        _pos: <CoordsDyn as CubeType>::ExpandType,
+        _end: <CoordsDyn as CubeType>::ExpandType,
+    ) -> &SliceExpand<Vector<T, W>> {
+        panic!("ProceduralData: procedural sources have no backing slice")
+    }
+
+    fn __expand_shape_method(&self, scope: &Scope) -> <CoordsDyn as CubeType>::ExpandType {
+        CoordsDyn::__expand_new(scope)
+    }
+
+    fn __expand_is_in_bounds_method(
+        &self,
+        _scope: &Scope,
+        _pos: <CoordsDyn as CubeType>::ExpandType,
+    ) -> NativeExpand<bool> {
+        true.into()
+    }
+
+    fn __expand_tensor_map_load_method(
+        &self,
+        _scope: &Scope,
+        _barrier: &NativeExpand<Barrier>,
+        _shared_memory: &mut SliceExpand<Vector<T, W>>,
+        _pos: <CoordsDyn as CubeType>::ExpandType,
+    ) {
+        panic!("ProceduralData: procedural sources cannot issue TMA loads")
     }
 }

@@ -2,6 +2,7 @@
 //! walk this level under its [`Schedule`].
 
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 
 use super::kind::{ReduceLeafKind, reduce_identity};
 use crate::*;
@@ -22,10 +23,8 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => reduce_leaf(self, input, inst),
             Partitioner::Level(level) => {
                 let op_space = self.reduce_op_space(input);
-                let plan = input.stage();
-                let requested = comptime!(self.space.operand_stage(input.leaf));
-                let in_place =
-                    comptime!(plan.resolve(input.leaf, requested) == OperandStage::InPlace);
+                let input_stage = input.operand_stage(comptime!(&self.space));
+                let in_place = comptime!(input_stage == OperandStage::InPlace);
                 match comptime!(level.schedule()) {
                     Schedule::Direct => self.reduce_direct(input, inst, op_space),
                     Schedule::Staged | Schedule::DoubleBuffered if in_place => {
@@ -157,6 +156,7 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
         total_acc == count * acc.vector_size,
         "reduce: RegisterData shape mismatch with accumulator space"
     ));
+    let input_view = input.nd::<I, WP, V>();
 
     #[unroll]
     for a in 0..total_acc {
@@ -170,7 +170,7 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
         let seed = acc.data[line_idx].extract(comptime!(lane_idx));
 
         let curr_val: Acc = reduce_element::<Acc, In, I, WP, V>(
-            input,
+            &input_view,
             comptime!(in_space.clone()),
             comptime!(acc_space.clone()),
             comptime!(layout.clone()),
@@ -228,6 +228,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
     ));
     let total_lines = comptime!(total_acc / ws);
     let mut acc_view = acc.flat_accumulate::<W>();
+    let input_view = input.nd::<I, WP, V>();
 
     for line_idx in 0..total_lines {
         let seed_vec = acc_view.seed(line_idx, inst);
@@ -243,7 +244,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
 
             let seed = seed_vec.extract(comptime!(lane_idx));
             let curr_val: Acc = reduce_element::<Acc, In, I, WP, V>(
-                input,
+                &input_view,
                 comptime!(in_space.clone()),
                 comptime!(acc_space.clone()),
                 comptime!(layout.clone()),
@@ -266,7 +267,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
 /// through `RegisterData`'s own lanes) and a memory accumulator (through [`AccumulateView`]).
 #[cube]
 fn reduce_element<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
-    input: &Tile<In>,
+    input: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,
@@ -277,7 +278,6 @@ fn reduce_element<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
 ) -> Acc {
     let mut curr_val = seed;
     let kc = comptime!(layout.kc);
-
     for p in 0..kc {
         let reduce_coords = unravel(
             &const_coords(comptime!(layout.reduce_extents.clone())),
@@ -297,12 +297,12 @@ fn reduce_element<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
         // Memory reads already return Sum's zero identity out of bounds; procedural reads are
         // always valid. Max and Min retain their explicit operation-specific fallback.
         let in_vec = match comptime!(inst) {
-            ReduceLeafKind::Sum => input.read_nd::<I, WP, V>(in_coords),
+            ReduceLeafKind::Sum => input.read(in_coords),
             ReduceLeafKind::Max | ReduceLeafKind::Min => {
-                let valid = input.nd_in_bounds::<I, WP, V>(in_coords.clone());
+                let valid = input.is_in_bounds(in_coords.clone());
                 select(
                     valid,
-                    input.read_nd::<I, WP, V>(in_coords),
+                    input.read(in_coords),
                     Vector::<In, V>::cast_from(reduce_identity::<In>(inst)),
                 )
             }

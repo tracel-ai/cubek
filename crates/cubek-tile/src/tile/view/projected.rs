@@ -13,7 +13,10 @@
 
 use cubecl::{
     prelude::*,
-    std::tensor::layout::{Coordinates, CoordsDyn, Layout, LayoutExpand},
+    std::tensor::{
+        View,
+        layout::{Coordinates, CoordsDyn, Layout, LayoutExpand},
+    },
 };
 
 use crate::*;
@@ -274,49 +277,6 @@ impl Layout for StepUp {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Read one logical N-D line from either a memory-backed or procedural operand. Procedural
-    /// recipes are scalar, so their physical/served widths are both one.
-    pub(crate) fn read_nd<I: Numeric, WP: Size, W: Size>(&self, pos: CoordsDyn) -> Vector<T, W> {
-        match &self.tile_kind {
-            TileKind::Procedural(data) => {
-                let width = self.vector_size();
-                comptime!(assert!(
-                    width == 1,
-                    "Tile::read_nd: procedural operands are scalar"
-                ));
-                Vector::cast_from(data.evaluate_dyn(&pos, comptime!(self.space.clone())))
-            }
-            TileKind::Gmem(_) | TileKind::Smem(_) => self.nd::<I, WP, W>().read(pos),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::read_nd: a plane tile has no N-D element view")
-            }
-            TileKind::TmaGmem(_) => panic!("Tile::read_nd: a tma source is not readable in place"),
-        }
-    }
-
-    pub(crate) fn nd_checks(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(g.access.overhang.masks()),
-            TileKind::Procedural(_) => comptime!(false),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
-                panic!("Tile::nd_checks: tile has no N-D element view")
-            }
-        }
-    }
-
-    pub(crate) fn nd_in_bounds<I: Numeric, WP: Size, W: Size>(&self, pos: CoordsDyn) -> bool {
-        match &self.tile_kind {
-            TileKind::Procedural(_) => true.runtime(),
-            TileKind::Gmem(_) | TileKind::Smem(_) => self.nd::<I, WP, W>().is_in_bounds(pos),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::nd_in_bounds: a plane tile has no N-D element view")
-            }
-            TileKind::TmaGmem(_) => {
-                panic!("Tile::nd_in_bounds: a tma source is not readable in place")
-            }
-        }
-    }
-
     /// This tile's whole logical box as a quantization-transparent read view, one coordinate per
     /// axis of its [`Space`](crate::Space) (the innermost a line index). The N-D counterpart of
     /// [`matrix_transparent`](Tile::matrix_transparent), and the only read surface a gathered
@@ -336,8 +296,19 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
-            TileKind::Procedural(_) => {
-                panic!("Tile::nd: use Tile::procedural_value for a procedural tile")
+            TileKind::Procedural(data) => {
+                let layout = axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(Projection::direct_over(&self.space)),
+                    RuntimeMap::integral(comptime!(self.space.rank())),
+                    comptime!(1usize),
+                );
+                MaskedView::new(
+                    View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(
+                        data, layout,
+                    ),
+                    comptime!(false),
+                )
             }
         }
     }

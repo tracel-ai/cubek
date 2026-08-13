@@ -289,6 +289,21 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// How this operand is backed when read by a staged `out` level. The requested backing comes
+    /// from the consumer, while an in-place source can stay memory-free only for compatible
+    /// leaves.
+    pub fn operand_stage(&self, #[comptime] out: &Space) -> comptime_type!(OperandStage) {
+        let requested = comptime!(out.operand_stage(self.leaf));
+        let plan = self.stage();
+        match comptime!(plan.materialization) {
+            Materialization::InPlace => match comptime!(self.leaf) {
+                Leaf::Cmma => OperandStage::Smem,
+                Leaf::Memory | Leaf::Mma { .. } => OperandStage::InPlace,
+            },
+            Materialization::Materialize => requested,
+        }
+    }
+
     /// Physical vectorization of the backing store: the `Vector<T, vector_size>` line
     /// width the leaf reconstructs. A launched memory tile carries its operand's vector
     /// size; a cmma fragment and a tma source are scalar (`1`).

@@ -4,7 +4,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Leaf, OperandStage, Space, Sync, Tile, TileArg, TmaTileArg};
+use crate::{Leaf, Space, Sync, Tile, TileArg, TmaTileArg};
 
 /// How an operand reaches a stage: a buffered cooperative copy, coordinate-backed cooperative
 /// materialization, or a TMA hardware bulk copy. Read off a tile via
@@ -103,18 +103,6 @@ pub struct StagePlan {
 }
 
 impl StagePlan {
-    /// Resolve this operand's backing at one staged level. The opaque cmma transport requires a
-    /// memory slice; memory and manual-mma leaves can evaluate an in-place source directly.
-    pub fn resolve(self, leaf: Leaf, requested: OperandStage) -> OperandStage {
-        match self.materialization {
-            Materialization::InPlace => match leaf {
-                Leaf::Cmma => OperandStage::Smem,
-                Leaf::Memory | Leaf::Mma { .. } => OperandStage::InPlace,
-            },
-            Materialization::Materialize => requested,
-        }
-    }
-
     /// The default layout for an operand that becomes `leaf` (tiled for cmma, else strided) with
     /// an unknown worker count. A [`Launcher`](crate::Launcher) stamps `units` on top.
     pub fn for_leaf(leaf: Leaf) -> Self {

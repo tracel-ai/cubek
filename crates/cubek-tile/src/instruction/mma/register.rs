@@ -232,8 +232,10 @@ fn mma_register_gather<
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
-        let lhs_check = lhs.nd_checks();
-        let rhs_check = rhs.nd_checks();
+        let lhs_view = lhs.nd::<IL, WPL, L>();
+        let rhs_view = rhs.nd::<IR, WPR, V>();
+        let lhs_check = lhs_view.check;
+        let rhs_check = rhs_view.check;
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
@@ -264,7 +266,7 @@ fn mma_register_gather<
                     vw,
                     false,
                 );
-                b[n] = Vector::<E, V>::cast_from(rhs.read_nd::<IR, WPR, V>(pos));
+                b[n] = Vector::<E, V>::cast_from(rhs_view.read(pos));
             }
             #[unroll(unroll)]
             for i in 0..mr {
@@ -278,8 +280,7 @@ fn mma_register_gather<
                     lw,
                     false,
                 );
-                let a =
-                    Vector::<E, V>::cast_from(lhs.read_nd::<IL, WPL, L>(pos).extract_dynamic(lane));
+                let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract_dynamic(lane));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
