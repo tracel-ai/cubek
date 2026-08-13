@@ -7,7 +7,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 use crate::{
     layout::{ScalesView, scales_view},
     scale::Scales,
-    scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
+    scheme::{BlockSize, QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype},
     utils::packed_storage_elem,
 };
 use cubecl::std::quant::check_scale_bindings;
@@ -185,8 +185,16 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
     );
 }
 
-#[allow(clippy::result_large_err)]
 /// Convert the tensor back to a higher precision data type.
+///
+/// `scales` holds one binding per scale level, innermost first. A packed store's `input` is
+/// the stored binding, its packed axis counted in `u32` words.
+///
+/// # Errors
+///
+/// Propagates the kernel's [`LaunchError`]. A scheme neither path can serve panics on the
+/// caller's thread instead, so the plan fails loudly.
+#[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -197,6 +205,115 @@ pub fn launch_ref<R: Runtime>(
 ) -> Result<(), LaunchError> {
     check_scale_bindings(scheme, scales.len());
 
+    let widest_line = client
+        .io_optimized_vector_sizes(size_of::<u32>().max(output_dtype.size()))
+        .next()
+        .unwrap_or(1);
+    match dequant_path(scheme, widest_line, &input.strides, &output.strides) {
+        DequantPath::Tile => launch_tile(client, input, output, scales, scheme, output_dtype),
+        DequantPath::Legacy => launch_legacy(client, input, output, scales, scheme, output_dtype),
+    }
+}
+
+/// Which implementation serves a launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DequantPath {
+    /// The tile-engine kernel.
+    Tile,
+    /// The elementwise kernels, kept for what the tile path cannot express.
+    Legacy,
+}
+
+/// Route a launch from host data alone, so the routing matrix is unit-tested.
+///
+/// The tile path serves f32-scale symmetric schemes over contiguous innermost dims, with
+/// values stored natively or as innermost-packed `u32` words a device line can cover whole
+/// (`widest_line` is the widest line over the storage word); a FULL dim inside a block is
+/// refused because it would put a zero edge into the scale windowing. Everything else keeps
+/// the legacy kernels.
+fn dequant_path(
+    scheme: &QuantScheme,
+    widest_line: usize,
+    input_strides: &[usize],
+    output_strides: &[usize],
+) -> DequantPath {
+    let store_served = match scheme.store {
+        QuantStore::Native => matches!(
+            scheme.value,
+            QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2
+        ),
+        QuantStore::PackedU32(0) => scheme.num_quants() <= widest_line,
+        _ => false,
+    };
+    let block_served = scheme
+        .block_size()
+        .is_none_or(|block| !block.as_slice().contains(&BlockSize::FULL));
+    let contiguous = input_strides.last() == Some(&1) && output_strides.last() == Some(&1);
+
+    if scheme.scale_dtype() == ScaleDtype::F32
+        && scheme.mode == QuantMode::Symmetric
+        && store_served
+        && block_served
+        && contiguous
+    {
+        DequantPath::Tile
+    } else {
+        DequantPath::Legacy
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn launch_tile<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    scales: &[TensorBinding<R>],
+    scheme: &QuantScheme,
+    output_dtype: ElemType,
+) -> Result<(), LaunchError> {
+    let values = match scheme.store {
+        QuantStore::PackedU32(_) => {
+            packed_binding_in_values(input, &output.shape, scheme.num_quants())
+        }
+        _ => input,
+    };
+    crate::dequantize_tiled::launch_ref(client, values, output, scales, scheme, output_dtype)
+}
+
+/// Re-declare a packed binding from storage to values: the caller counts the packed axis in
+/// `u32` words, while the tile path counts the values they hold, so the innermost extent
+/// widens by `num_quants` and every coarser stride re-expresses in values (the innermost
+/// stays 1; the buffer keeps its storage width).
+fn packed_binding_in_values<R: Runtime>(
+    stored: TensorBinding<R>,
+    output_shape: &[usize],
+    num_quants: usize,
+) -> TensorBinding<R> {
+    let mut values = stored;
+    let rank = values.shape.len();
+    values.shape[rank - 1] *= num_quants;
+    assert_eq!(
+        &values.shape[..],
+        output_shape,
+        "dequantize: the stored shape widened by the packing factor must match the output"
+    );
+    for stride in &mut values.strides[..rank - 1] {
+        *stride *= num_quants;
+    }
+    values
+}
+
+/// The elementwise kernels; [`launch_ref`] falls back here when the tile path cannot serve a
+/// launch.
+#[allow(clippy::result_large_err)]
+pub(crate) fn launch_legacy<R: Runtime>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    scales: &[TensorBinding<R>],
+    scheme: &QuantScheme,
+    output_dtype: ElemType,
+) -> Result<(), LaunchError> {
     let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.scale_dtype());
     let (scale, global) = (scales[0].clone(), scales.get(1).cloned());
 
@@ -366,4 +483,110 @@ fn dequantize_native<R: Runtime>(
     };
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONTIGUOUS: &[usize] = &[64, 1];
+    const WIDEST_LINE: usize = 4;
+
+    fn path(scheme: QuantScheme) -> DequantPath {
+        dequant_path(&scheme, WIDEST_LINE, CONTIGUOUS, CONTIGUOUS)
+    }
+
+    fn native_q8s() -> QuantScheme {
+        QuantScheme::default()
+            .with_store(QuantStore::Native)
+            .with_value(QuantValue::Q8S)
+    }
+
+    #[test]
+    fn native_per_tensor_takes_the_tile_path() {
+        assert_eq!(path(native_q8s()), DequantPath::Tile);
+    }
+
+    #[test]
+    fn native_block_takes_the_tile_path() {
+        let scheme = native_q8s().per_block([32], ScaleDtype::F32);
+        assert_eq!(path(scheme), DequantPath::Tile);
+    }
+
+    #[test]
+    fn two_level_takes_the_tile_path() {
+        let scheme = native_q8s()
+            .per_block([16], ScaleDtype::F32)
+            .per_tensor(ScaleDtype::F32);
+        assert_eq!(path(scheme), DequantPath::Tile);
+    }
+
+    #[test]
+    fn packed_within_the_device_line_takes_the_tile_path() {
+        let scheme = QuantScheme::default().with_value(QuantValue::Q8S);
+        assert_eq!(scheme.num_quants(), WIDEST_LINE);
+        assert_eq!(path(scheme), DequantPath::Tile);
+    }
+
+    /// A served line covers whole `u32` words or nothing, so a packing factor past the
+    /// device's widest line has no tile plan and must keep the legacy kernel.
+    #[test]
+    fn packed_past_the_device_line_falls_back() {
+        let scheme = QuantScheme::default().with_value(QuantValue::Q4S);
+        assert_eq!(path(scheme), DequantPath::Legacy);
+        assert_eq!(
+            dequant_path(&scheme, 8, CONTIGUOUS, CONTIGUOUS),
+            DequantPath::Tile
+        );
+    }
+
+    #[test]
+    fn non_f32_scales_fall_back() {
+        let scheme = native_q8s().per_tensor(ScaleDtype::F16);
+        assert_eq!(path(scheme), DequantPath::Legacy);
+    }
+
+    #[test]
+    fn native_sub_byte_values_fall_back() {
+        let scheme = QuantScheme::default()
+            .with_store(QuantStore::Native)
+            .with_value(QuantValue::Q4S);
+        assert_eq!(path(scheme), DequantPath::Legacy);
+    }
+
+    #[test]
+    fn global_dim_packing_falls_back() {
+        let scheme = QuantScheme::default()
+            .with_store(QuantStore::PackedU32(1))
+            .with_value(QuantValue::Q8S);
+        assert_eq!(path(scheme), DequantPath::Legacy);
+    }
+
+    #[test]
+    fn packed_native_falls_back() {
+        let scheme = QuantScheme::default()
+            .with_store(QuantStore::PackedNative(0))
+            .with_value(QuantValue::E2M1);
+        assert_eq!(path(scheme), DequantPath::Legacy);
+    }
+
+    #[test]
+    fn a_full_dim_inside_a_block_falls_back() {
+        let scheme = native_q8s().per_block([BlockSize::FULL, 32], ScaleDtype::F32);
+        assert_eq!(path(scheme), DequantPath::Legacy);
+    }
+
+    #[test]
+    fn a_strided_innermost_dim_falls_back() {
+        let strided: &[usize] = &[128, 2];
+        let scheme = native_q8s();
+        assert_eq!(
+            dequant_path(&scheme, WIDEST_LINE, strided, CONTIGUOUS),
+            DequantPath::Legacy
+        );
+        assert_eq!(
+            dequant_path(&scheme, WIDEST_LINE, CONTIGUOUS, strided),
+            DequantPath::Legacy
+        );
+    }
 }
