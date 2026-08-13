@@ -293,6 +293,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
+            TileKind::Procedural(_) => {
+                panic!("Tile::nd: use Tile::procedural_value for a procedural tile")
+            }
         }
     }
 }

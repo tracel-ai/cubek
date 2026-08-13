@@ -81,6 +81,7 @@ pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
             reduce_plane_tile(&mut t, input, space, inst);
         }
         TileKind::TmaGmem(_) => panic!("reduce: a tma source is not an accumulator sink"),
+        TileKind::Procedural(_) => panic!("reduce: a procedural tile is not an accumulator sink"),
     }
 }
 
