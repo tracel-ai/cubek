@@ -1,7 +1,7 @@
 #![allow(missing_docs)] // pub cube modules
 
+use cubecl::tensor_vector_size_parallel;
 use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
-use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
@@ -225,12 +225,7 @@ pub fn launch_ref<R: Runtime>(
             store: QuantStore::PackedNative(_),
             ..
         } => {
-            if !i8::supported_uses(client).contains(TypeUsage::Conversion) {
-                panic!(
-                    "{:?} is not supported for native quantization",
-                    scheme.value
-                );
-            }
+            crate::utils::check_i8_supported(client, scheme);
 
             dequantize_native(
                 client,
