@@ -1,6 +1,6 @@
 //! Lowering `c.mma(a, b)`: at a final tile, the leaf instruction; while levels remain,
-//! walk this level under its [`Schedule`]. Register residency is the kernel's explicit
-//! bracket ([`promote`](Tile) … [`copy_from`](Tile::copy_from)), not a lowering decision.
+//! walk this level under its [`Buffering`]. Register residency is the kernel's explicit
+//! bracket ([`promote`](Tile) then [`copy_from`](Tile::copy_from)), not a lowering decision.
 
 use cubecl::prelude::*;
 
@@ -16,18 +16,20 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                let lhs_stage = lhs.operand_stage(comptime!(&self.space));
-                let rhs_stage = rhs.operand_stage(comptime!(&self.space));
+                // A level whose every operand stays put materializes nothing, so there is no slot
+                // to buffer and the walk is the plain recursion however deep the level buffers.
+                let lhs_residence = lhs.residence(comptime!(&self.space));
+                let rhs_residence = rhs.residence(comptime!(&self.space));
                 let all_in_place = comptime!(
-                    lhs_stage == OperandStage::InPlace && rhs_stage == OperandStage::InPlace
+                    lhs_residence == Residence::InPlace && rhs_residence == Residence::InPlace
                 );
-                match comptime!(level.schedule()) {
-                    Schedule::Direct => self.mma_direct(lhs, rhs, op_space),
-                    Schedule::Staged | Schedule::DoubleBuffered if all_in_place => {
-                        self.mma_direct(lhs, rhs, op_space)
+                if comptime!(all_in_place) {
+                    self.mma_direct(lhs, rhs, op_space);
+                } else {
+                    match comptime!(level.buffering()) {
+                        Buffering::Single => self.mma_staged(lhs, rhs, op_space),
+                        Buffering::Double => self.mma_double(lhs, rhs, op_space),
                     }
-                    Schedule::Staged => self.mma_staged(lhs, rhs, op_space),
-                    Schedule::DoubleBuffered => self.mma_double(lhs, rhs, op_space),
                 }
             }
         }

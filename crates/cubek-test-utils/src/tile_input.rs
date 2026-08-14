@@ -18,8 +18,8 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Leaf, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
-    TileSpec as CubekTileSpec,
+    DequantAt, Leaf, Projection, QuantTileArgLaunch, Residence, Space, StorageTiling,
+    TileArgLaunch, TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
@@ -32,6 +32,7 @@ pub struct TileInput {
     space: Space,
     levels: usize,
     leaf: Leaf,
+    residence: Vec<Residence>,
 }
 
 impl TileInput {
@@ -47,6 +48,7 @@ impl TileInput {
             space,
             levels: None,
             leaf: Leaf::Memory,
+            residence: Vec::new(),
         }
     }
 
@@ -145,7 +147,9 @@ impl TileInput {
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
         let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling)).leaf(self.leaf)
+        CubekTileSpec::new(Projection::tiled(&axes, tiling))
+            .leaf(self.leaf)
+            .residence(&self.residence)
     }
 
     /// The semantic space the tile lives in.
@@ -177,12 +181,20 @@ pub struct TileInputBuilder {
     space: Space,
     levels: Option<Vec<TileLevel>>,
     leaf: Leaf,
+    residence: Vec<Residence>,
 }
 
 impl TileInputBuilder {
     /// What this operand is at the instruction (default [`Leaf::Memory`], the memory form).
     pub fn leaf(mut self, leaf: Leaf) -> Self {
         self.leaf = leaf;
+        self
+    }
+
+    /// Where this operand lives at each level of the space, coarse to fine (default: every level
+    /// [`Residence::InPlace`], staging nothing).
+    pub fn residence(mut self, residence: &[Residence]) -> Self {
+        self.residence = residence.to_vec();
         self
     }
 
@@ -248,6 +260,7 @@ impl TileInputBuilder {
             space: self.space,
             scheme: *scheme,
             leaf: self.leaf,
+            residence: self.residence,
             dequant_at,
         }
     }
@@ -307,6 +320,7 @@ impl TileInputBuilder {
             space: self.space,
             levels: levels.len(),
             leaf: self.leaf,
+            residence: self.residence,
         }
     }
 }
@@ -317,6 +331,7 @@ impl TileInputBuilder {
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
     leaf: Leaf,
+    residence: Vec<Residence>,
     dequant_at: DequantAt,
     client: ComputeClient<TestRuntime>,
     space: Space,
@@ -358,6 +373,7 @@ impl QuantizedTileInputBuilder {
                 space: self.space,
                 levels: 0,
                 leaf: self.leaf,
+                residence: self.residence,
             },
             scales,
             scheme: self.scheme,

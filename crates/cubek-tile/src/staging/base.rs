@@ -21,11 +21,12 @@ pub struct Staging<T: CubeType> {
     pub(crate) pin_lhs: bool,
     #[cube(comptime)]
     pub(crate) pin_rhs: bool,
-    /// How each operand is backed. Unary slots have no right-hand operand.
+    /// Where each operand lives at this level, resolved when the slot was built. Unary slots have
+    /// no right-hand operand.
     #[cube(comptime)]
-    pub(crate) stage_lhs: OperandStage,
+    pub(crate) residence_lhs: Residence,
     #[cube(comptime)]
-    pub(crate) stage_rhs: Option<OperandStage>,
+    pub(crate) residence_rhs: Option<Residence>,
 }
 
 #[cube]
@@ -38,29 +39,37 @@ impl<T: CubeType> Staging<T> {
         pipeline: Pipeline,
         #[comptime] pin_lhs: bool,
         #[comptime] pin_rhs: bool,
-        #[comptime] stage_lhs: OperandStage,
-        #[comptime] stage_rhs: Option<OperandStage>,
+        #[comptime] residence_lhs: Residence,
+        #[comptime] residence_rhs: Option<Residence>,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
             pin_lhs,
             pin_rhs,
-            stage_lhs,
-            stage_rhs,
+            residence_lhs,
+            residence_rhs,
         }
     }
 
-    /// How this slot's operands are backed, decided when the slot was built.
-    pub(crate) fn stage(&self) -> comptime_type!(OperandStage) {
-        comptime!(self.stage_lhs)
+    /// Where this slot's operand (or left-hand operand) lives.
+    pub(crate) fn residence(&self) -> comptime_type!(Residence) {
+        comptime!(self.residence_lhs)
+    }
+
+    /// Where this slot's right-hand operand lives.
+    pub(crate) fn residence_rhs(&self) -> comptime_type!(Residence) {
+        comptime!(
+            self.residence_rhs
+                .expect("Staging: binary slot has no rhs residence")
+        )
     }
 
     /// Whether either operand uses a plane partition, requiring an unrolled walk.
     pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
         comptime!(
-            self.stage_lhs == OperandStage::Plane
-                || matches!(self.stage_rhs, Option::Some(OperandStage::Plane))
+            self.residence_lhs == Residence::Plane
+                || matches!(self.residence_rhs, Option::Some(Residence::Plane))
         )
     }
 

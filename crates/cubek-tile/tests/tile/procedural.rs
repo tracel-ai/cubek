@@ -71,7 +71,7 @@ fn run(recipe: ProceduralRecipe) -> HostData {
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |level| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(3))
@@ -103,7 +103,7 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |level| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(3))
@@ -130,12 +130,12 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
     HostData::from_tensor_handle(&client, output, HostDataType::F32)
 }
 
-fn run_mma_sched(sched: Schedule) -> HostData {
+fn run_mma() -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 4), (REDUCE, 4)])
-        .level(WalkOrder::RowMajor, sched, |level| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(2))
@@ -157,7 +157,9 @@ fn run_mma_sched(sched: Schedule) -> HostData {
         space.cube_dim(&client),
         TileArgLaunch::new(
             rhs.binding().into_tensor_arg(),
-            TileSpec::direct(&[REDUCE, COL]),
+            // Only the tensor operand takes a stage; the procedural lhs stays coordinate-backed
+            // at its default all-in-place residence, which is the point of the test.
+            TileSpec::direct(&[REDUCE, COL]).residence(&[Residence::Auto]),
         ),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
@@ -185,7 +187,7 @@ fn evaluates_separable_axis_products_after_region_rebase() {
 }
 
 #[test]
-fn staged_schedule_keeps_coordinate_varying_values_in_place() {
+fn staged_buffering_keeps_coordinate_varying_values_in_place() {
     let got = run_copy(ProceduralRecipe::axis_product(vec![
         ProceduralRecipe::axis_index(ROW),
         ProceduralRecipe::axis_index(COL),
@@ -195,10 +197,6 @@ fn staged_schedule_keeps_coordinate_varying_values_in_place() {
             assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
         }
     }
-}
-
-fn run_mma() -> HostData {
-    run_mma_sched(Schedule::Staged)
 }
 
 #[test]

@@ -3,8 +3,9 @@
 //! both argument types.
 
 use cubecl::prelude::*;
+use cubecl::zspace::SmallVec;
 
-use crate::{Leaf, Space, Sync, Tile, TileArg, TmaTileArg};
+use crate::{Leaf, MAX_LEVELS, Space, Sync, Tile, TileArg, TmaTileArg};
 
 /// How an operand reaches a stage: a buffered cooperative copy, coordinate-backed cooperative
 /// materialization, or a TMA hardware bulk copy. Read off a tile via
@@ -60,19 +61,36 @@ impl Delivery {
 
 /// How a derived smem stage lays out its buffer: storage-tiled at the final tile (one
 /// contiguous block per fragment) or plain strided rows (legacy `sync_full_strided`).
-/// A per-operand comptime plan config ([`stage`](crate::StridedTileSource::stage)).
+/// A per-operand comptime plan config ([`storage`](crate::StridedTileSource::storage)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum StageStorage {
     Tiled,
     Strided,
 }
 
-/// Whether an operand prefers to stay in place or take materialized backing. This is the source
-/// request; [`OperandStage`] is the resolved backing a particular consumer actually uses.
+/// Where an operand's cells physically sit while the level below reads or writes them. One
+/// vocabulary for both directions: an input is *filled* from its source into its residence, an
+/// output *drains* from its residence into its sink ([`promote`](crate::Tile::promote)).
+///
+/// Stated per level, coarse to fine, by the operand itself ([`StagePlan`]). A level says only how
+/// deeply its walk is buffered ([`Buffering`](crate::Buffering)); where each of its operands lives
+/// is the operand's own business, so one level can stage `lhs` into shared memory while `rhs`
+/// streams straight from where it already is.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Residence {
+    /// Read where the operand already is: a global window, or a recipe evaluated at the leaf. The
+    /// level's walk materializes nothing, so a level whose every operand is `InPlace` lowers to the
+    /// plain recursive walk.
     InPlace,
-    Materialized,
+    /// A cooperatively filled shared-memory buffer the leaf reads windows from.
+    Smem,
+    /// Plane-private register fragments, selected by comptime coordinate (so the level's walk
+    /// unrolls).
+    Plane,
+    /// Materialize here, letting the structure below choose between [`Plane`](Residence::Plane) and
+    /// [`Smem`](Residence::Smem); see `Space::auto_residence`. A request only:
+    /// [`Tile::residence`](crate::Tile::residence) never returns it.
+    Auto,
 }
 
 impl StageStorage {
@@ -87,14 +105,23 @@ impl StageStorage {
     }
 }
 
-/// How an operand's shared-memory stages are laid out and cooperatively filled: the tile
-/// `layout` and the launch's `units` (cube size). One comptime value threaded from the
-/// operand's [`TileSpec`](crate::TileSpec) to every stage derived from it, so a fill never
-/// re-derives either.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+/// Where an operand lives at each level of its space, plus the two facts a materialized level
+/// needs to lay a buffer out: the `storage` layout and the launch's `units` (cube size). One
+/// comptime value threaded from the operand's [`TileSpec`](crate::TileSpec) through every stage
+/// derived from it, so a fill never re-derives either.
+///
+/// The residences are a stream, not an indexed table: [`head`](StagePlan::head) is the current
+/// level's, and [`descend`](StagePlan::descend) pops it wherever a space is
+/// [`divide`](crate::Space::divide)d. Plan and partitioner therefore stay in step with no depth
+/// arithmetic, and a plan that runs out answers [`InPlace`](Residence::InPlace) forever: below the
+/// last level there is only the leaf, which reads its operands where they are.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct StagePlan {
-    layout: Option<StageStorage>,
-    pub residence: Residence,
+    residence: SmallVec<[Residence; MAX_LEVELS]>,
+    /// How a buffer built from this plan lays itself out, whether the staging walk builds it or a
+    /// caller does. A level whose residence is [`InPlace`](Residence::InPlace) builds none, and
+    /// leaves this unread.
+    pub storage: StageStorage,
     /// The launch's cube size (units per cube), `0` when unknown. A comptime worker count
     /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
     /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
@@ -102,45 +129,57 @@ pub struct StagePlan {
 }
 
 impl StagePlan {
-    /// The default layout for an operand that becomes `leaf` (tiled for cmma, else strided) with
-    /// an unknown worker count. A [`Launcher`](crate::Launcher) stamps `units` on top.
-    pub fn for_leaf(leaf: Leaf) -> Self {
-        StagePlan::materialized(StageStorage::for_leaf(leaf), 0)
-    }
-
-    /// A plain strided stage with an unknown worker count.
-    pub fn strided() -> Self {
-        StagePlan::materialized(StageStorage::Strided, 0)
-    }
-
-    /// A memory-free source evaluated directly by a compatible leaf.
+    /// A plan staging nothing: every level [`InPlace`](Residence::InPlace). The default, so an
+    /// operand that states no residence is read where it already lives.
     pub fn in_place() -> Self {
-        StagePlan {
-            layout: None,
-            residence: Residence::InPlace,
-            units: 0,
-        }
+        StagePlan::new(&[], StageStorage::Strided, 0)
     }
 
-    /// A physical stage's layout and launch worker count.
-    pub fn materialized(layout: StageStorage, units: usize) -> Self {
+    /// A strided layout plan staging nothing; the default when a caller allocates a buffer.
+    /// Identical in value to [`in_place`](Self::in_place), but signals caller-allocation
+    /// of shared memory rather than an operand reading in place.
+    pub fn strided() -> Self {
+        StagePlan::in_place()
+    }
+
+    /// The default for an operand that becomes `leaf` (tiled for cmma, else strided), staging
+    /// nothing and with an unknown worker count. A [`Launcher`](crate::Launcher) stamps `units` and
+    /// the caller its `residence` on top.
+    pub fn for_leaf(leaf: Leaf) -> Self {
+        StagePlan::new(&[], StageStorage::for_leaf(leaf), 0)
+    }
+
+    /// A plan over `residence`, one entry per level of the operand's space, coarse to fine.
+    pub fn new(residence: &[Residence], storage: StageStorage, units: usize) -> Self {
         StagePlan {
-            layout: Some(layout),
-            residence: Residence::Materialized,
+            residence: SmallVec::from_slice(residence),
+            storage,
             units,
         }
     }
 
-    /// The layout of a physical stage. In-place sources have no backing and therefore no layout.
-    pub fn layout(self) -> StageStorage {
-        self.layout
-            .expect("StagePlan::layout: an in-place source has no stage layout")
+    /// This level's residence. An exhausted plan answers [`InPlace`](Residence::InPlace).
+    pub fn head(&self) -> Residence {
+        self.residence
+            .first()
+            .copied()
+            .unwrap_or(Residence::InPlace)
+    }
+
+    /// The plan one level down, this level's residence consumed. Called wherever a space is
+    /// divided, so the two descend together.
+    pub fn descend(&self) -> Self {
+        StagePlan {
+            residence: self.residence.iter().skip(1).copied().collect(),
+            storage: self.storage,
+            units: self.units,
+        }
     }
 }
 
 impl Default for StagePlan {
     fn default() -> Self {
-        StagePlan::strided()
+        StagePlan::in_place()
     }
 }
 
@@ -183,5 +222,44 @@ impl DeliveryFamily for Tma {
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
         arg.tile(space)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The plan is consumed in lockstep with the level chain, so what a tile asks for is always
+    /// the head, and descending is what keeps the two aligned.
+    #[test]
+    fn a_plan_hands_out_one_residence_per_level() {
+        let plan = StagePlan::new(
+            &[Residence::Auto, Residence::InPlace, Residence::Plane],
+            StageStorage::Strided,
+            0,
+        );
+        assert_eq!(plan.head(), Residence::Auto);
+        assert_eq!(plan.descend().head(), Residence::InPlace);
+        assert_eq!(plan.descend().descend().head(), Residence::Plane);
+    }
+
+    /// Below the last level there is only the leaf, which reads its operands where they are, so an
+    /// exhausted plan keeps answering rather than running out of entries.
+    #[test]
+    fn an_exhausted_plan_stays_in_place() {
+        let plan = StagePlan::new(&[Residence::Auto], StageStorage::Strided, 0);
+        assert_eq!(plan.descend().head(), Residence::InPlace);
+        assert_eq!(plan.descend().descend().head(), Residence::InPlace);
+        assert_eq!(StagePlan::in_place().head(), Residence::InPlace);
+    }
+
+    /// The layout and worker count are facts about the operand, not about one level, so they
+    /// survive the descent that consumes the residences.
+    #[test]
+    fn descending_keeps_the_storage_facts() {
+        let plan = StagePlan::new(&[Residence::Auto], StageStorage::Tiled, 128);
+        let below = plan.descend();
+        assert_eq!(below.storage, StageStorage::Tiled);
+        assert_eq!(below.units, 128);
     }
 }

@@ -9,6 +9,7 @@ use cubecl::std::tensor::{
     layout::{CoordsDyn, Layout, LayoutExpand},
     view::launch::ViewArg,
 };
+use cubecl::zspace::SmallVec;
 
 use crate::*;
 
@@ -28,12 +29,13 @@ pub struct TileSpec {
     /// The launch's cube size (units per cube), `0` when unknown; carried into the
     /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
     pub units: usize,
-    /// Explicit stage-layout override; `None` derives from the space's leaf in
-    /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_space`]).
-    pub stage: Option<StageStorage>,
-    /// Whether this operand may remain at its source backing when the consumer supports it.
-    /// Default [`Residence::Materialized`] takes the normal staged path.
-    pub residence: Residence,
+    /// Explicit stage-layout override; `None` derives from this operand's leaf in
+    /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_leaf`]).
+    pub storage: Option<StageStorage>,
+    /// Where this operand lives at each level of the kernel's space, coarse to fine. Empty (the
+    /// default) is every level [`InPlace`](Residence::InPlace): read where it already is, staging
+    /// nothing.
+    pub residence: SmallVec<[Residence; MAX_LEVELS]>,
     /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
     /// two encodings. A format decision, so it belongs to the operand rather than to the
     /// partitioning; [`Tile::of`](crate::Tile::of) carries it onto the tile. Operands that disagree
@@ -43,8 +45,9 @@ pub struct TileSpec {
 
 impl TileSpec {
     /// An operand's spec from its mapping alone; the optional halves are the safe defaults
-    /// (unchecked, cube size unknown, memory leaf) and are set by [`boundary`](Self::boundary),
-    /// [`checked`](Self::checked), [`units`](Self::units), [`staged`](Self::staged), and [`leaf`](Self::leaf).
+    /// (unchecked, cube size unknown, memory leaf, nothing staged) and are set by
+    /// [`boundary`](Self::boundary), [`checked`](Self::checked), [`units`](Self::units),
+    /// [`storage`](Self::storage), [`residence`](Self::residence), and [`leaf`](Self::leaf).
     ///
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
     /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
@@ -54,8 +57,8 @@ impl TileSpec {
             projection,
             boundary: None,
             units: 0,
-            stage: None,
-            residence: Residence::Materialized,
+            storage: None,
+            residence: SmallVec::new(),
             leaf: Leaf::Memory,
         }
     }
@@ -78,17 +81,30 @@ impl TileSpec {
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
-    /// [`StageStorage::for_space`]).
-    pub fn staged(mut self, layout: StageStorage) -> Self {
-        self.stage = Some(layout);
+    /// [`StageStorage::for_leaf`]).
+    pub fn storage(mut self, layout: StageStorage) -> Self {
+        self.storage = Some(layout);
         self
     }
 
-    /// Permit compatible consumers to read this operand directly from its source backing instead
-    /// of allocating a staging buffer. Opaque fragment loads still resolve to shared memory.
-    pub fn in_place(mut self) -> Self {
-        self.residence = Residence::InPlace;
+    /// Where this operand lives at each level of the kernel's space, coarse to fine (default: every
+    /// level [`InPlace`](Residence::InPlace)). Length-checked against the space by
+    /// [`StridedTileSource::build`](crate::StridedTileSource::build), which is the only builder
+    /// that has one; a hand-written spec is trusted.
+    pub fn residence(mut self, residence: &[Residence]) -> Self {
+        self.residence = SmallVec::from_slice(residence);
         self
+    }
+
+    /// This operand's [`StagePlan`]: its per-level residences, plus the stage layout its
+    /// materialized levels take (the explicit override, else derived from its leaf).
+    pub fn stage_plan(&self) -> StagePlan {
+        StagePlan::new(
+            &self.residence,
+            self.storage
+                .unwrap_or_else(|| StageStorage::for_leaf(self.leaf)),
+            self.units,
+        )
     }
 
     /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. A boolean
@@ -213,6 +229,7 @@ impl<E: Numeric> TmaTileArg<E> {
             self.view.clone(),
             comptime!(space.project(self.spec.axes())),
             comptime!(self.spec.leaf),
+            comptime!(self.spec.stage_plan()),
         )
     }
 }
@@ -299,6 +316,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         dims: (u32, u32, u32),
         transposed: bool,
         leaf: Leaf,
+        residence: &[Residence],
     ) -> Self {
         let batched = match axes.len() {
             2 => false,
@@ -309,7 +327,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes).leaf(leaf))
+        Self::new(view, TileSpec::direct(axes).leaf(leaf).residence(residence))
     }
 }
 

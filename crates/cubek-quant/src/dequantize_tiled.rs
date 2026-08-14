@@ -90,7 +90,8 @@ fn sequential_space(extents: &[(Axis, usize)]) -> Space {
         .iter()
         .map(|&(a, _)| (a, Distribution::Sequential))
         .collect();
-    let partitioner = Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).direct();
+    let partitioner =
+        Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).single_buffered();
     Space::new(extents).with_partitioner(partitioner)
 }
 

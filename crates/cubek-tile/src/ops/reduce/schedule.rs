@@ -1,4 +1,5 @@
-//! The walks behind [`Tile::reduce_axis`](crate::Tile::reduce_axis), one per [`Schedule`].
+//! The walks behind [`Tile::reduce_axis`](crate::Tile::reduce_axis): the plain recursion, and one
+//! per [`Buffering`](crate::Buffering).
 
 use cubecl::prelude::*;
 
@@ -7,7 +8,8 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `Direct`: no staging, every read goes directly to where the operand lives.
+    /// The input [`InPlace`](crate::Residence::InPlace): no slot, every read goes directly to where
+    /// the operand already lives.
     pub(crate) fn reduce_direct<In: Numeric>(
         &mut self,
         input: &Tile<In>,
@@ -37,11 +39,11 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `Staged`: per region, fill a [`Staging`] slot with the input operand and consume it into
-    /// the recursion. A walk-invariant operand (its space lacks every walked axis, the same
-    /// structural fact as broadcast omission) fills once, above the loop; re-filling per region
-    /// would just move the same window again. `consume_final` every region, since no later fill
-    /// publishes within an iteration.
+    /// [`Buffering::Single`](crate::Buffering::Single): per region, fill one [`Staging`] slot with
+    /// the input operand and consume it into the recursion. A walk-invariant operand (its space
+    /// lacks every walked axis, the same structural fact as broadcast omission) fills once, above
+    /// the loop; re-filling per region would just move the same window again. `consume_final`
+    /// every region, since no later fill publishes within an iteration.
     ///
     /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects
     /// its block by comptime coordinate) or on a static register-staged level (comptime regions
@@ -63,8 +65,8 @@ impl<Acc: Numeric> Tile<Acc> {
         let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
         // A plane stage selects its tiles by comptime coordinate, so it stands up only under an
         // unrolled walk, and only when the input's own space is itself static-walkable.
-        let stage = staging.stage();
-        let plane_stage = comptime!(stage == OperandStage::Plane && input.space.static_walkable());
+        let residence = staging.residence();
+        let plane_stage = comptime!(residence == Residence::Plane && input.space.static_walkable());
         let unroll = comptime!(cuts || plane_stage);
 
         let walk = Walk::over(op_space);
@@ -82,8 +84,8 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `DoubleBuffered`: two [`Staging`] slots driven `fill`/`consume` on alternating
-    /// regions so one slot's fill overlaps the other's compute.
+    /// [`Buffering::Double`](crate::Buffering::Double): two [`Staging`] slots driven
+    /// `fill`/`consume` on alternating regions so one slot's fill overlaps the other's compute.
     pub(crate) fn reduce_double<In: Numeric>(
         &mut self,
         input: &Tile<In>,
@@ -93,7 +95,7 @@ impl<Acc: Numeric> Tile<Acc> {
         // Keep this region-index protocol in lockstep with `Tile::mma_double` in
         // `ops/matmul/schedule.rs`: only the fill/consume bodies differ by operand arity.
         // Changes to prologue, alternating prefetch, or epilogue handling must be made in both.
-        // Double-buffering fills the operand every region (see the raw `fill`s below), so the
+        // Double-buffering fills the operand every region (see the `fill`s below), so the
         // pin flag goes unread; pass the operation space only to satisfy `single`.
         let mut even_slot = Staging::single(
             input,
@@ -106,6 +108,10 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(self.space.clone()),
         );
 
+        // Per operand rather than per slot: one read in place is rebound to the region rather
+        // than copied.
+        let residence = even_slot.residence();
+
         // Double-buffering needs random access (prefetch the next region), so it indexes the
         // `walk` by hand rather than iterating.
         let walk = Walk::over(op_space);
@@ -114,7 +120,8 @@ impl<Acc: Numeric> Tile<Acc> {
         // Prologue: prime the even slot with region 0.
         let first = walk.region(0);
         even_slot.fill(|staged_input, pipe| {
-            pipe.fill(staged_input, &input.at(&first));
+            let source = input.at(&first);
+            fill_operand(staged_input, &source, residence, pipe);
         });
 
         for p in 0..n / 2 {
@@ -125,7 +132,8 @@ impl<Acc: Numeric> Tile<Acc> {
             // compute the even region from the even slot.
             let odd_region = walk.region(odd);
             odd_slot.fill(|staged_input, pipe| {
-                pipe.fill(staged_input, &input.at(&odd_region));
+                let source = input.at(&odd_region);
+                fill_operand(staged_input, &source, residence, pipe);
             });
             let even_region = walk.region(even);
             even_slot.consume(|a| {
@@ -138,7 +146,8 @@ impl<Acc: Numeric> Tile<Acc> {
             if odd + 1 < n {
                 let next_even = walk.region(odd + 1);
                 even_slot.fill(|staged_input, pipe| {
-                    pipe.fill(staged_input, &input.at(&next_even));
+                    let source = input.at(&next_even);
+                    fill_operand(staged_input, &source, residence, pipe);
                 });
                 odd_slot.consume(|a| {
                     self.at(&odd_region).reduce_axis(a, inst);

@@ -8,8 +8,8 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, StreamFold, TileArg,
-    TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
+    Axis, Buffering, Cut, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
+    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -191,7 +191,7 @@ fn run(
             (R, 1),
             (C, 1),
         ])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(G, Cut::sequential(g))
                 .axis(QP, Cut::sequential(qp))
                 .axis(S, Cut::sequential(block))
@@ -339,7 +339,7 @@ fn attention_fold_split_kernel<W: Size>(
     let score_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (C, block)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
                 l.axis(R, Cut::sequential(rows))
                     .axis(C, Cut::sequential(block))
             })
@@ -348,7 +348,7 @@ fn attention_fold_split_kernel<W: Size>(
     let row_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
                 l.axis(R, Cut::sequential(rows))
             })
             .build()
@@ -356,7 +356,7 @@ fn attention_fold_split_kernel<W: Size>(
     let acc_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (V, val_dim)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
                 l.axis(R, Cut::sequential(rows))
                     .axis(V, Cut::sequential(val_dim))
             })
@@ -556,7 +556,7 @@ fn run_split(
             (R, 1),
             (C, 1),
         ])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(G, Cut::sequential(g))
                 .axis(QP, Cut::sequential(qp))
                 .axis(S, Cut::sequential(block))
@@ -757,7 +757,7 @@ fn run_stream(
     // The one attention space: q/k/v/out project their axes out of it.
     let space = Tiling::new()
         .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(G, Cut::sequential(g))
                 .axis(QP, Cut::sequential(1))
                 .axis(S, Cut::sequential(block))

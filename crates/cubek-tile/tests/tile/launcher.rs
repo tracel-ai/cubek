@@ -6,8 +6,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, Boundary, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap, Projection, Scale,
-    Schedule, StridedOperand, Tiling, WalkOrder,
+    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap,
+    Projection, Residence, Scale, StridedOperand, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -93,13 +93,13 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
     let batches = [B0, B1];
     Tiling::new()
         .extents(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axes(&batches, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axes(&batches, Cut::sequential(1))
                 .axis(M, Cut::plane(8))
                 .axis(N, Cut::plane(8))
@@ -332,7 +332,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -341,6 +341,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
+        .residence(&[Residence::Auto])
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -360,7 +361,7 @@ fn arg_gathered_rational_stages() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -369,6 +370,7 @@ fn arg_gathered_rational_stages() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
+        .residence(&[Residence::Auto])
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -386,7 +388,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -395,6 +397,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
+        .residence(&[Residence::Auto])
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -412,7 +415,7 @@ fn arg_gathered_cancelling_divisor_stages() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -429,6 +432,7 @@ fn arg_gathered_cancelling_divisor_stages() {
     assert!(!projection.is_rational());
     let _ = staged
         .arg(binding(&client, &[512, 64]))
+        .residence(&[Residence::Auto])
         .gathered(projection)
         .build();
 }

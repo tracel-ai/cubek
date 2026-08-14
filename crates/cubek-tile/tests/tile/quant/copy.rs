@@ -5,7 +5,7 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg,
+    Axis, Buffering, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
     TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
@@ -270,7 +270,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
     // A space that tiles into `bm×bn` blocks, one cube walking them.
     let space = Tiling::new()
         .extents(&[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
         })
         .build();

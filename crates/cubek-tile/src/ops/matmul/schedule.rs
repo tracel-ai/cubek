@@ -1,6 +1,7 @@
-//! The walks behind [`Tile::mma`](crate::Tile::mma), one per [`Schedule`]. A schedule's body
-//! is pure structure; kind decisions (slot store, rendezvous, fill dispatch) are
-//! delegated, chiefly to [`Staging::new`].
+//! The walks behind [`Tile::mma`](crate::Tile::mma): the plain recursion, and one per
+//! [`Buffering`](crate::Buffering). A walk's body is pure structure; where each operand lives and
+//! what that costs (slot store, rendezvous, fill dispatch) is delegated, chiefly to
+//! [`Staging::new`].
 
 use cubecl::prelude::*;
 
@@ -8,9 +9,9 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `Direct`: no staging, every read goes to where the operand lives. A fragment
-    /// output demands the unrolled walk (its coordinates fold to constants, which
-    /// select fragments); a memory output keeps the compact runtime loop.
+    /// Every operand [`InPlace`](crate::Residence::InPlace): no slot, every read goes to where the
+    /// operand already lives. A fragment output demands the unrolled walk (its coordinates fold to
+    /// constants, which select fragments); a memory output keeps the compact runtime loop.
     pub(crate) fn mma_direct<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -40,11 +41,11 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `Staged`: per region, fill a [`Staging`] slot with the operands and consume it into
-    /// the recursion. An operand the walk leaves unchanged (its space lacks every walked axis,
-    /// the same structural fact as broadcast omission) fills once, above the loop; re-filling
-    /// per region would just move the same window again. `consume_final` every region, since no
-    /// later fill publishes within an iteration.
+    /// [`Buffering::Single`](crate::Buffering::Single): per region, fill one [`Staging`] slot with
+    /// the operands and consume it into the recursion. An operand the walk leaves unchanged (its
+    /// space lacks every walked axis, the same structural fact as broadcast omission) fills once,
+    /// above the loop; re-filling per region would just move the same window again.
+    /// `consume_final` every region, since no later fill publishes within an iteration.
     ///
     /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects
     /// its block by comptime coordinate) or on a static register-staged level (comptime regions
@@ -87,8 +88,8 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `DoubleBuffered`: two [`Staging`] slots driven `fill`/`consume` on alternating
-    /// regions so one slot's fill overlaps the other's compute.
+    /// [`Buffering::Double`](crate::Buffering::Double): two [`Staging`] slots driven
+    /// `fill`/`consume` on alternating regions so one slot's fill overlaps the other's compute.
     pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -98,7 +99,7 @@ impl<Acc: Numeric> Tile<Acc> {
         // Keep this region-index protocol in lockstep with `Tile::reduce_double` in
         // `ops/reduce/schedule.rs`: only the fill/consume bodies differ by operand arity.
         // Changes to prologue, alternating prefetch, or epilogue handling must be made in both.
-        // Double-buffering fills both operands every region (see the raw `fill`s below), so the
+        // Double-buffering fills both operands every region (see the `fill`s below), so the
         // pin flags go unread; pass the operation space only to satisfy `new`.
         let mut even_slot = Staging::new(
             lhs,
@@ -112,6 +113,10 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(op_space.clone()),
             comptime!(self.space.clone()),
         );
+        // Per operand, not per slot: an operand read in place is rebound to the region rather than
+        // copied, so a slot may hold one staged operand beside one that stayed put.
+        let lhs_residence = even_slot.residence();
+        let rhs_residence = even_slot.residence_rhs();
 
         // Double-buffering needs random access (prefetch the next region), so it indexes the
         // `walk` by hand rather than iterating.
@@ -121,8 +126,10 @@ impl<Acc: Numeric> Tile<Acc> {
         // Prologue: prime the even slot with region 0.
         let first = walk.region(0);
         even_slot.fill(|staged_operands, pipe| {
-            pipe.fill(&mut staged_operands.0, &lhs.at(&first));
-            pipe.fill(&mut staged_operands.1, &rhs.at(&first));
+            let lhs_source = lhs.at(&first);
+            let rhs_source = rhs.at(&first);
+            fill_operand(&mut staged_operands.0, &lhs_source, lhs_residence, pipe);
+            fill_operand(&mut staged_operands.1, &rhs_source, rhs_residence, pipe);
         });
 
         for p in 0..n / 2 {
@@ -133,8 +140,10 @@ impl<Acc: Numeric> Tile<Acc> {
             // compute the even region from the even slot.
             let odd_region = walk.region(odd);
             odd_slot.fill(|staged_operands, pipe| {
-                pipe.fill(&mut staged_operands.0, &lhs.at(&odd_region));
-                pipe.fill(&mut staged_operands.1, &rhs.at(&odd_region));
+                let lhs_source = lhs.at(&odd_region);
+                let rhs_source = rhs.at(&odd_region);
+                fill_operand(&mut staged_operands.0, &lhs_source, lhs_residence, pipe);
+                fill_operand(&mut staged_operands.1, &rhs_source, rhs_residence, pipe);
             });
             let even_region = walk.region(even);
             even_slot.consume(|staged_lhs, staged_rhs| {
@@ -147,8 +156,10 @@ impl<Acc: Numeric> Tile<Acc> {
             if odd + 1 < n {
                 let next_even = walk.region(odd + 1);
                 even_slot.fill(|staged_operands, pipe| {
-                    pipe.fill(&mut staged_operands.0, &lhs.at(&next_even));
-                    pipe.fill(&mut staged_operands.1, &rhs.at(&next_even));
+                    let lhs_source = lhs.at(&next_even);
+                    let rhs_source = rhs.at(&next_even);
+                    fill_operand(&mut staged_operands.0, &lhs_source, lhs_residence, pipe);
+                    fill_operand(&mut staged_operands.1, &rhs_source, rhs_residence, pipe);
                 });
                 odd_slot.consume(|staged_lhs, staged_rhs| {
                     self.at(&odd_region).mma(staged_lhs, staged_rhs)

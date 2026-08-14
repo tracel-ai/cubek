@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Axis, Coords, Fold, FoldExpand, Region, Space};
+use crate::{Axis, Coords, Fold, FoldExpand, Region, Space, StagePlan};
 
 /// Built-in recipes for a [`TileKind::Procedural`](crate::TileKind::Procedural) source.
 ///
@@ -53,13 +53,22 @@ pub struct ProceduralData<T: Numeric> {
     recipe: ProceduralRecipe,
     #[cube(comptime)]
     space: Space,
+    /// Where this source lives at each level below. A recipe has no bytes to leave in place, so the
+    /// default stages nothing; a level asking for a stage cooperatively materializes it
+    /// ([`MemData::fill_procedural`](crate::MemData)).
+    #[cube(comptime)]
+    pub(crate) stage: StagePlan,
     #[cube(comptime)]
     _marker: PhantomData<T>,
 }
 
 #[cube]
 impl<T: Numeric> ProceduralData<T> {
-    pub(crate) fn new(#[comptime] space: Space, #[comptime] recipe: ProceduralRecipe) -> Self {
+    pub(crate) fn new(
+        #[comptime] space: Space,
+        #[comptime] recipe: ProceduralRecipe,
+        #[comptime] stage: StagePlan,
+    ) -> Self {
         let mut origin = Coords::<u32>::new();
         #[unroll]
         for _ in 0..comptime!(space.rank()) {
@@ -69,6 +78,7 @@ impl<T: Numeric> ProceduralData<T> {
             origin,
             recipe,
             space,
+            stage,
             _marker: PhantomData,
         }
     }
@@ -85,6 +95,7 @@ impl<T: Numeric> ProceduralData<T> {
             origin,
             recipe: comptime!(self.recipe.clone()),
             space: comptime!(space.divide()),
+            stage: comptime!(self.stage.descend()),
             _marker: PhantomData,
         }
     }
@@ -107,6 +118,7 @@ impl<T: Numeric> ProceduralData<T> {
             origin: self.origin.clone(),
             recipe: comptime!(self.recipe.clone()),
             space,
+            stage: comptime!(self.stage.descend()),
             _marker: PhantomData,
         }
     }

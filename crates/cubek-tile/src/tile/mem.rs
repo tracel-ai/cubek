@@ -78,15 +78,15 @@ pub struct Store<T: Numeric> {
 /// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
 /// handles overhang, and how a cooperative fill spreads. Plain data held comptime, like the
 /// [`StagePlan`] it carries.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Access {
     /// Whether the window still covers the whole buffer (constructors yes, [`at`](Tile::at) no):
     /// such a tile can be written in physical order.
     pub whole: bool,
     pub overhang: Overhang,
-    /// How this store's stages are laid out and cooperatively filled: the [`StageStorage`] layout
-    /// plus the launch's cube size. Carried from the operand's [`TileSpec`] so a fill re-derives
-    /// neither.
+    /// Where this operand lives at each level below, plus the [`StageStorage`] layout and launch
+    /// cube size its materialized levels take. Carried from the operand's [`TileSpec`] so a fill
+    /// re-derives none of them.
     pub stage: StagePlan,
 }
 
@@ -257,14 +257,7 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
-        // Stage layout: the explicit override, else derived from the operand's leaf.
-        let stage = comptime!(match spec.residence {
-            Residence::InPlace => StagePlan::in_place(),
-            Residence::Materialized => StagePlan::materialized(
-                spec.stage.unwrap_or_else(|| StageStorage::for_leaf(leaf)),
-                spec.units,
-            ),
-        });
+        let stage = comptime!(spec.stage_plan());
         // The binding type's own width, comptime; a packed store serves `pack` values per
         // stored element.
         let bound_width = tensor.vector_size();
@@ -384,6 +377,42 @@ pub(crate) struct StageMeta {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
+    /// This payload as an in-place staging slot for the level below: no values move and no buffer
+    /// is allocated, but the window is copied into mutable registers, because
+    /// [`rebind`](MemData::rebind) replaces it per region and a slot must hold its own region while
+    /// a sibling slot is rebound to another. The [`StagePlan`] descends with it: the payload serves
+    /// the source's [`divide`](Space::divide)d space, so its plan answers for that level rather
+    /// than the one that built it.
+    ///
+    /// The window no longer covers the buffer once rebound, so the straight-through fill is off.
+    pub(crate) fn in_place_slot(&self, #[comptime] space: Space) -> Self {
+        let mut window_start = self.window_start;
+        // `runtime()` keeps a fresh in-place slot assignable even when its source window folded to
+        // a constant offset (a top-level tile starts at 0).
+        window_start += 0u32.runtime();
+        MemData::<T> {
+            store: self.store.clone(),
+            layout: comptime!(self.layout.clone()),
+            window: Window::new(
+                self.window.origin.stored(),
+                self.window.extent.stored(),
+                self.window.bound.stored(),
+                comptime!(self.window.signed),
+                comptime!(self.window.boundary),
+            ),
+            projection: comptime!(self.projection.clone()),
+            map: self.map.stored(),
+            offsets: self.offsets.stored(),
+            window_start,
+            access: comptime!(Access {
+                whole: false,
+                overhang: self.access.overhang,
+                stage: self.access.stage.descend(),
+            }),
+            lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
+        }
+    }
+
     /// Rebind an in-place memory payload to the source's current window and runtime map. Both
     /// tiles name the same backing allocation; no values move.
     pub(crate) fn rebind(&mut self, source: &Self) {
@@ -436,11 +465,10 @@ impl<T: Numeric> MemData<T> {
                 let projection = operand.projection();
                 let leaf = comptime!(operand.leaf);
                 let vector_size = operand.vector_size();
-                let source_stage = operand.stage();
-                let stage = comptime!(StagePlan::materialized(
-                    source_stage.layout(),
-                    source_stage.units,
-                ));
+                // The stage is one level down, so it takes the operand's plan from the next level
+                // on: its own residence was consumed by the decision to build it.
+                let source_plan = operand.stage_plan();
+                let stage = comptime!(source_plan.descend());
 
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, leaf, vector_size, stage)
@@ -469,11 +497,8 @@ impl<T: Numeric> MemData<T> {
         let space = comptime!(operand.space.divide());
         let leaf = comptime!(operand.leaf);
         let vector_size = operand.vector_size();
-        let source_stage = operand.stage();
-        let stage = comptime!(StagePlan::materialized(
-            source_stage.layout(),
-            source_stage.units,
-        ));
+        let source_plan = operand.stage_plan();
+        let stage = comptime!(source_plan.descend());
         match &operand.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]
@@ -532,7 +557,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout()));
+        let form = comptime!(StageForm::dense(&space, vector_size, stage.storage));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
@@ -563,7 +588,7 @@ impl<T: Numeric> MemData<T> {
         let form = comptime!(StageForm::gathered(
             &space,
             vector_size,
-            stage.layout(),
+            stage.storage,
             &projection
         ));
         let stage_map = RuntimeMap {
@@ -611,7 +636,7 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
         // the layout and window below are the same grid either way.
-        let form = comptime!(StageForm::dense(&space, vector_size, stage.layout()));
+        let form = comptime!(StageForm::dense(&space, vector_size, stage.storage));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
@@ -999,9 +1024,10 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// How this store's stages are laid out and filled, carried from the operand's [`TileSpec`].
-    pub(crate) fn stage(&self) -> comptime_type!(StagePlan) {
-        comptime!(self.access.stage)
+    /// Where this operand lives at each level below, and how a materialized level lays its buffer
+    /// out; carried from the operand's [`TileSpec`].
+    pub(crate) fn stage_plan(&self) -> comptime_type!(StagePlan) {
+        comptime!(self.access.stage.clone())
     }
 
     /// How far this store's quantized form travels ([`DequantAt`]). A plain store answers
@@ -1583,10 +1609,12 @@ impl<T: Numeric> MemData<T> {
             map,
             offsets: self.offsets.clone(),
             window_start: start,
-            // The window no longer covers the buffer, so the straight-through fill is off.
+            // The window no longer covers the buffer, so the straight-through fill is off. The
+            // plan descends with the space: this level's residence is behind us now.
             access: comptime!(Access {
                 whole: false,
-                ..self.access
+                overhang: self.access.overhang,
+                stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
         }
@@ -2277,10 +2305,10 @@ mod tests {
         let seq = |edge| Cut::sequential(edge);
         Tiling::new()
             .extents(&[(M, 16), (N, 16)])
-            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
                 l.axis(M, seq(8)).axis(N, seq(8))
             })
-            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
                 l.axis(M, seq(4)).axis(N, seq(4))
             })
             .build()
@@ -2291,7 +2319,7 @@ mod tests {
         let seq = |edge| Cut::sequential(edge);
         Tiling::new()
             .extents(&[(M, 16), (N, 16), (K, 8)])
-            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
                 l.axis(M, seq(8)).axis(N, seq(8)).axis(K, seq(4))
             })
             .build()

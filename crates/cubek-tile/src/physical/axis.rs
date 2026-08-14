@@ -4,6 +4,9 @@
 /// Bump if a problem declares more.
 pub const MAX_AXES: usize = 6;
 
+/// Inline capacity for per-level allocations in small vectors.
+pub const MAX_LEVELS: usize = 6;
+
 /// A labeled axis. The `u8` is a client-assigned index, not a position.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Axis(pub u8);

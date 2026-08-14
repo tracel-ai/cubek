@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Launcher, Leaf, Schedule, Space, Strided, Tiling, Tma, TmaTileArgLaunch,
-    WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Launcher, Leaf, Residence, Space, Strided, Tiling, Tma,
+    TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -131,11 +131,22 @@ fn setup<R: Runtime>(
     Ok((problem, blueprint, out_batches.to_vec()))
 }
 
-/// The routine's 4-level space: the cube grid (double-buffered smem stages along `K`);
-/// one partition per plane; the contraction-step walk staging each step's operand
-/// fragments (`Staged`); the fragment grid the step contracts (`Direct`, walked
-/// statically). `batch` lists the surviving (extent > 1) output batch axes, one per
-/// cube on `Z`.
+/// Where each input lives at the four levels of [`tile_space`], the other half of the plan: shared
+/// memory at the cube grid, plane fragments at the contraction step, and read where it lies at the
+/// two levels between and below, which materialize nothing. [`Auto`](Residence::Auto) rather than
+/// the backings spelled out, because which one each level wants follows from the level beneath it.
+/// The accumulator states none: it is promoted by the kernel, not staged by a walk.
+const INPUT_RESIDENCE: [Residence; 4] = [
+    Residence::Auto,
+    Residence::InPlace,
+    Residence::Auto,
+    Residence::InPlace,
+];
+
+/// The routine's 4-level space: the cube grid (double-buffered along `K`); one partition
+/// per plane; the contraction-step walk; the fragment grid the step contracts, walked
+/// statically. What each level *stages* is [`INPUT_RESIDENCE`]. `batch` lists the
+/// surviving (extent > 1) output batch axes, one per cube on `Z`.
 fn tile_space(
     blueprint: &CmmaBlueprint,
     (m, n, k): (usize, usize, usize),
@@ -154,25 +165,25 @@ fn tile_space(
 
     Tiling::new()
         .extents(&extents)
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Double, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, stage_m))
                 .axis(N, Cut::cube(CubeAxis::Y, stage_n))
                 .axis(K, Cut::sequential(stage_k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::plane(c.m * i.m))
                 .axis(N, Cut::plane(c.n * i.n))
                 .axis(K, Cut::sequential(stage_k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(c.m * i.m))
                 .axis(N, Cut::sequential(c.n * i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(i.m))
                 .axis(N, Cut::sequential(i.n))
@@ -263,7 +274,7 @@ fn launch_strided<R: Runtime>(
     dtypes: &MatmulElems,
     leaf: Leaf,
 ) {
-    let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: ElemType| {
+    let operand = |binding: TensorBinding<R>, axes: [Axis; 2], dtype: ElemType, residence: &[_]| {
         let [outer, inner] = axes;
         let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
         launch
@@ -272,11 +283,12 @@ fn launch_strided<R: Runtime>(
             .batches(out_batch_axes)
             .vectorize(v)
             .leaf(leaf)
+            .residence(residence)
             .build()
     };
-    let a = operand(lhs, [M, K], dtypes.lhs_global);
-    let b = operand(rhs, [K, N], dtypes.rhs_global);
-    let c = operand(out, [M, N], dtypes.acc_global);
+    let a = operand(lhs, [M, K], dtypes.lhs_global, &INPUT_RESIDENCE);
+    let b = operand(rhs, [K, N], dtypes.rhs_global, &INPUT_RESIDENCE);
+    let c = operand(out, [M, N], dtypes.acc_global, &[]);
     cmma_kernel::launch::<Strided, R>(
         client,
         cube_count,
@@ -332,7 +344,14 @@ fn launch_tma<R: Runtime>(
             dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(map, &axes, (1, rows, cols), transposed, leaf)
+        TmaTileArgLaunch::tensor_map(
+            map,
+            &axes,
+            (1, rows, cols),
+            transposed,
+            leaf,
+            &INPUT_RESIDENCE,
+        )
     }
     let a = operand(
         leaf,

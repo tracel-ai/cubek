@@ -96,7 +96,7 @@ fn sequential(edges: &[(Axis, usize)]) -> Partitioner {
         .iter()
         .map(|&(a, _)| (a, Distribution::Sequential))
         .collect::<Vec<_>>();
-    Partitioner::row_major(ByAxis::new(edges), ByAxis::new(&dists)).staged()
+    Partitioner::row_major(ByAxis::new(edges), ByAxis::new(&dists)).single_buffered()
 }
 
 #[test]

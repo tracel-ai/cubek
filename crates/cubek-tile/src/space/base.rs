@@ -4,7 +4,9 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, LevelRole, MAX_AXES, Partitioner};
+use crate::{
+    Axis, ComputeScope, Distribution, LaneShare, Leaf, LevelRole, MAX_AXES, Partitioner, Residence,
+};
 
 use super::ByAxis;
 
@@ -83,17 +85,6 @@ impl Extents {
             Extent::Dynamic => (*self.sizes.index(p)).div_ceil(edge),
         }
     }
-}
-
-/// What backs a staged matmul operand, the [`Space::operand_stage`] classification. `Plane` stages
-/// straight into plane-private tile partitions; `Smem` into a shared buffer the leaf reads windows
-/// from. Read by the staging store ([`Staging::new`]) and the schedule's unroll (a plane stage
-/// selects tiles by comptime coordinate, so its walk must be unrolled).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum OperandStage {
-    InPlace,
-    Plane,
-    Smem,
 }
 
 /// Every axis with its extent, in canonical order. A tile lives in its own space
@@ -233,18 +224,20 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How an operand that becomes `leaf` stages under this plan: [`Plane`](OperandStage::Plane)
-    /// when a plane fragment is fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
-    pub(crate) fn operand_stage(&self, leaf: Leaf) -> OperandStage {
+    /// Where an operand that becomes `leaf` is materialized when it asks this level to choose
+    /// ([`Residence::Auto`]): [`Plane`](Residence::Plane) when a plane fragment is fed by a
+    /// partition grid just below, else [`Smem`](Residence::Smem). Never answers
+    /// [`InPlace`](Residence::InPlace): an operand that wants to stay put says so itself.
+    pub(crate) fn auto_residence(&self, leaf: Leaf) -> Residence {
         match self.partitioner() {
             Partitioner::Level(_) => match (leaf, self.partitioner().next()) {
                 (Leaf::Cmma | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role() {
-                    LevelRole::Partition => OperandStage::Plane,
-                    LevelRole::Instance => OperandStage::Smem,
+                    LevelRole::Partition => Residence::Plane,
+                    LevelRole::Instance => Residence::Smem,
                 },
-                _ => OperandStage::Smem,
+                _ => Residence::Smem,
             },
-            Partitioner::Final => OperandStage::Smem,
+            Partitioner::Final => Residence::Smem,
         }
     }
 
@@ -412,8 +405,8 @@ impl Space {
 
     /// Whether a walk over this level leaves `operand`'s window unchanged: every axis the
     /// walk actually steps (more than one tile) is absent from the operand: the same
-    /// structural fact as broadcast omission. A [`Staged`](crate::Schedule::Staged) walk
-    /// fills such an operand once, above the loop. Host-side, static extents.
+    /// structural fact as broadcast omission. A staged walk fills such an operand once, above
+    /// the loop. Host-side, static extents.
     pub fn walk_invariant(&self, operand: &Space) -> bool {
         self.axes()
             .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
@@ -633,10 +626,10 @@ impl<'a> IntoIterator for &'a Space {
 /// helpers are exercised against, since they read extents and axis order rather than the walk.
 #[cfg(test)]
 pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
-    use crate::{Cut, Schedule, Tiling, WalkOrder};
+    use crate::{Buffering, Cut, Tiling, WalkOrder};
     Tiling::new()
         .extents(extents)
-        .level(WalkOrder::RowMajor, Schedule::Direct, |mut l| {
+        .level(WalkOrder::RowMajor, Buffering::Single, |mut l| {
             for &(axis, e) in extents {
                 l = l.axis(axis, Cut::sequential(e));
             }
@@ -697,5 +690,76 @@ mod contraction_tests {
         let rhs = flat_space(&[(K, 4), (R, 3), (N, 8)]);
         let out = flat_space(&[(M, 8), (N, 8)]);
         assert!(!Space::contraction_agrees(&lhs, &rhs, &out));
+    }
+}
+
+#[cfg(test)]
+mod residence_tests {
+    use crate::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    /// Two levels: a cube grid over `M`/`N`, then the sequential fragment grid under it.
+    fn two_level_space() -> Space {
+        Tiling::new()
+            .extents(&[(M, 16), (N, 16), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+                l.axis(M, Cut::cube(CubeAxis::X, 8))
+                    .axis(N, Cut::cube(CubeAxis::Y, 8))
+                    .axis(K, Cut::sequential(8))
+            })
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+            })
+            .build()
+    }
+
+    /// A fragment leaf fed by a partition grid takes plane-private fragments: the level below hands
+    /// out its tiles sequentially, so each is selected by a comptime coordinate.
+    #[test]
+    fn a_fragment_leaf_over_a_partition_grid_wants_plane_fragments() {
+        let space = two_level_space();
+        assert_eq!(space.auto_residence(Leaf::Cmma), Residence::Plane);
+    }
+
+    /// A memory leaf has no fragments to fill, so it takes a shared buffer whatever sits below.
+    #[test]
+    fn a_memory_leaf_always_wants_shared_memory() {
+        let space = two_level_space();
+        assert_eq!(space.auto_residence(Leaf::Memory), Residence::Smem);
+    }
+
+    /// The level below spreads its tiles across hardware instances rather than partitioning them,
+    /// so there is no fragment grid to fill and the stage is shared memory.
+    #[test]
+    fn a_fragment_leaf_over_an_instance_level_wants_shared_memory() {
+        let space = Tiling::new()
+            .extents(&[(M, 16), (N, 16), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+                l.axis(M, Cut::sequential(8))
+                    .axis(N, Cut::sequential(8))
+                    .axis(K, Cut::sequential(8))
+            })
+            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+                l.axis(M, Cut::plane(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+            })
+            .build();
+        assert_eq!(space.auto_residence(Leaf::Cmma), Residence::Smem);
+    }
+
+    /// `Auto` is a request to materialize, so it never resolves to reading the operand where it
+    /// lies: an operand that wants to stay put says `InPlace` itself.
+    #[test]
+    fn auto_never_resolves_to_in_place() {
+        let space = two_level_space();
+        for leaf in [Leaf::Memory, Leaf::Cmma] {
+            assert_ne!(space.auto_residence(leaf), Residence::InPlace);
+        }
     }
 }

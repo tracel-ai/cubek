@@ -1,5 +1,5 @@
 //! Lowering `c.reduce_axis(input, inst)`: at a final tile, the leaf instruction; while levels remain,
-//! walk this level under its [`Schedule`].
+//! walk this level under its [`Buffering`].
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -23,15 +23,16 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => reduce_leaf(self, input, inst),
             Partitioner::Level(level) => {
                 let op_space = self.reduce_op_space(input);
-                let input_stage = input.operand_stage(comptime!(&self.space));
-                let in_place = comptime!(input_stage == OperandStage::InPlace);
-                match comptime!(level.schedule()) {
-                    Schedule::Direct => self.reduce_direct(input, inst, op_space),
-                    Schedule::Staged | Schedule::DoubleBuffered if in_place => {
-                        self.reduce_direct(input, inst, op_space)
+                // The input staying put leaves nothing to buffer, so the walk is the plain
+                // recursion however deep the level buffers.
+                let residence = input.residence(comptime!(&self.space));
+                if comptime!(residence == Residence::InPlace) {
+                    self.reduce_direct(input, inst, op_space);
+                } else {
+                    match comptime!(level.buffering()) {
+                        Buffering::Single => self.reduce_staged(input, inst, op_space),
+                        Buffering::Double => self.reduce_double(input, inst, op_space),
                     }
-                    Schedule::Staged => self.reduce_staged(input, inst, op_space),
-                    Schedule::DoubleBuffered => self.reduce_double(input, inst, op_space),
                 }
             }
         }
@@ -169,7 +170,7 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
         let lane_idx = comptime!(a % acc.vector_size);
         let seed = acc.data[line_idx].extract(comptime!(lane_idx));
 
-        let curr_val: Acc = reduce_element::<Acc, In, I, WP, V>(
+        let curr_val: Acc = reduce_element::<Acc, In, V>(
             &input_view,
             comptime!(in_space.clone()),
             comptime!(acc_space.clone()),
@@ -243,7 +244,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
             );
 
             let seed = seed_vec.extract(comptime!(lane_idx));
-            let curr_val: Acc = reduce_element::<Acc, In, I, WP, V>(
+            let curr_val: Acc = reduce_element::<Acc, In, V>(
                 &input_view,
                 comptime!(in_space.clone()),
                 comptime!(acc_space.clone()),
@@ -266,7 +267,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
 /// `acc_coords`. Only the seed/commit around this loop differ between a register block (draining
 /// through `RegisterData`'s own lanes) and a memory accumulator (through [`AccumulateView`]).
 #[cube]
-fn reduce_element<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
+fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
     input: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
