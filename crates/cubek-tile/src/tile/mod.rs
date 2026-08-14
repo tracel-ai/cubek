@@ -226,6 +226,29 @@ fn bound_position(projection: &Projection, axis: Axis) -> usize {
     })
 }
 
+/// A procedural operand's residence request, resolved against what a recipe can physically be.
+/// It has no bytes, so it is either evaluated where it is read or cooperatively materialized into
+/// shared memory ([`MemData::fill_procedural`]): [`Auto`](Residence::Auto) answers `Smem` without
+/// asking the level, since [`auto_residence`](Space::auto_residence) would offer a fragment grid a
+/// recipe cannot fill. A stated [`Plane`](Residence::Plane) is refused here rather than deep in the
+/// transport pairing, which is where an unbacked fragment store would otherwise surface.
+///
+/// Every other operand passes through: `requested` is already what it asked for.
+fn procedural_request(requested: Residence, procedural: bool) -> Residence {
+    if !procedural {
+        return requested;
+    }
+    match requested {
+        Residence::Auto | Residence::Smem => Residence::Smem,
+        Residence::InPlace => Residence::InPlace,
+        Residence::Plane => panic!(
+            "Tile::residence: a procedural source has no plane-fragment transport; state \
+             Residence::Smem (or Auto) to materialize it into shared memory, or \
+             Residence::InPlace to evaluate it at the leaf"
+        ),
+    }
+}
+
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Whether the leaf can consume this operand in its current physical form. Opaque fragment
@@ -355,7 +378,8 @@ impl<T: Numeric> Tile<T> {
     /// source it cannot address, which is checked at the level that feeds it.
     pub fn residence(&self, #[comptime] out: &Space) -> comptime_type!(Residence) {
         let plan = self.stage_plan();
-        let requested = comptime!(plan.head());
+        let procedural = self.is_procedural();
+        let requested = comptime!(procedural_request(plan.head(), procedural));
         if comptime!(requested == Residence::Auto) {
             comptime!(out.auto_residence(self.leaf))
         } else if comptime!(requested == Residence::InPlace) {
@@ -832,5 +856,53 @@ mod tests {
         let tiled = Projection::tiled(&[A, B], StorageTiling::per_axis(&[1, 2]));
         assert_eq!(bound_states(&tiled, A), Some(0));
         assert_eq!(bound_states(&tiled, B), None);
+    }
+}
+
+#[cfg(test)]
+mod procedural_request_tests {
+    use super::*;
+
+    /// A recipe has no fragment transport, so `Auto` cannot be left to the level: the structure
+    /// below a cmma leaf would offer a plane grid nothing can fill it with.
+    #[test]
+    fn auto_on_a_recipe_resolves_to_shared_memory() {
+        assert_eq!(
+            procedural_request(Residence::Auto, true),
+            Residence::Smem,
+            "a recipe's Auto is shared memory whatever the level below wants"
+        );
+    }
+
+    /// The two residences a recipe can actually take are honoured as stated: evaluated at the leaf,
+    /// or cooperatively materialized.
+    #[test]
+    fn a_recipe_keeps_the_residences_it_can_take() {
+        assert_eq!(
+            procedural_request(Residence::InPlace, true),
+            Residence::InPlace
+        );
+        assert_eq!(procedural_request(Residence::Smem, true), Residence::Smem);
+    }
+
+    /// Refused here rather than deep in the transport pairing: a plane store would allocate
+    /// fragments no fill can reach, and the panic would name the copy, not the request.
+    #[test]
+    #[should_panic(expected = "no plane-fragment transport")]
+    fn a_recipe_refuses_a_plane_request() {
+        procedural_request(Residence::Plane, true);
+    }
+
+    /// Every other operand is untouched, `Plane` included: only a recipe lacks the transport.
+    #[test]
+    fn a_backed_operand_passes_its_request_through() {
+        for requested in [
+            Residence::InPlace,
+            Residence::Smem,
+            Residence::Plane,
+            Residence::Auto,
+        ] {
+            assert_eq!(procedural_request(requested, false), requested);
+        }
     }
 }

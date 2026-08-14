@@ -746,10 +746,10 @@ fn matmul_multilevel_staged_then_double() {
             (K, Distribution::Sequential),
         ])
     };
-    let l0 =
-        Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).buffered(Buffering::SINGLE);
-    let l1 =
-        Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).buffered(Buffering::DOUBLE);
+    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq())
+        .buffered(Buffering::SINGLE);
+    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq())
+        .buffered(Buffering::DOUBLE);
     check_matmul_multilevel(
         8,
         8,
@@ -772,10 +772,10 @@ fn matmul_multilevel_tiled_stage() {
             (K, Distribution::Sequential),
         ])
     };
-    let l0 =
-        Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).buffered(Buffering::SINGLE);
-    let l1 =
-        Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).buffered(Buffering::SINGLE);
+    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq())
+        .buffered(Buffering::SINGLE);
+    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq())
+        .buffered(Buffering::SINGLE);
     check_matmul_multilevel(
         8,
         8,
@@ -993,6 +993,100 @@ fn cmma_matmul_staged_n_walk_partition() {
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Double-buffered walk over a plane-partition stage (Residence::Plane) under a CMMA leaf.
+/// Exercises the unrolled pipelined walk (unroll == true) with register partition selection.
+#[test]
+fn cmma_matmul_double_buffered_plane_stage() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let (m, n, k) = (32usize, 32usize, 32usize);
+    let (part, i, stage_k) = (16usize, 8usize, 16usize);
+    let seq = |edge| Cut::sequential(edge);
+    let leaf = Leaf::Cmma;
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
+        })
+        // L1: the stage split one `part×part` partition per plane (2×2 planes).
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::plane(part))
+                .axis(N, Cut::plane(part))
+                .axis(K, seq(stage_k))
+        })
+        // L2: the contraction-step walk, windowing only.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i))
+        })
+        // L3: the N-walk with DOUBLE buffering over a plane stage.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
+            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        // L4: the M-only fragment walk.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        .build();
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[
+            Residence::Auto,
+            Residence::InPlace,
+            Residence::InPlace,
+            Residence::Auto,
+            Residence::InPlace,
+        ])
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[
+            Residence::Auto,
+            Residence::InPlace,
+            Residence::InPlace,
+            Residence::Auto,
+            Residence::InPlace,
+        ])
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
             let (i, j) = (idx / n, idx % n);
@@ -2861,15 +2955,83 @@ fn matmul_triple_buffered_vectorized() {
     check_matmul_vectorized(Buffering::TRIPLE, &[Residence::Smem], &[Residence::Smem]);
 }
 
+/// A buffered level that *cuts* a promoted (fragment) accumulator: each region selects its own
+/// block, so the ring's walk has to unroll and hand every region comptime coordinates.
+///
+/// The regression this guards is silent in both directions. `#[unroll(flag)]` only unrolls when
+/// the macro sees `flag` as a comptime binding, and rolls the loop without complaint otherwise;
+/// the lap arithmetic then has to fold, or the coordinates come out runtime even unrolled. Either
+/// slip lands on `Tile::at`'s "must be walked with compile-time coordinates" panic. The other
+/// unrolled shape, a `Residence::Plane` stage, needs a fragment leaf and so only runs on tensor-core
+/// hardware ([`cmma_matmul_staged_n_walk_partition`]); this one runs everywhere.
+#[test]
+fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: the whole output, K in two steps. `promote` mirrors this level's *sub-tile*, so the
+        // accumulator's grid is only cut a level down.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        // L1: the 2x2 cut of that partition, buffered, with both operands staged.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(2))
+                .axis(N, Cut::sequential(2))
+                .axis(K, Cut::sequential(2))
+        })
+        .build();
+
+    let dtype = f32::elem_type_native();
+    let staged = [Residence::InPlace, Residence::Smem];
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&staged)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&staged)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// A depth deeper than the walk has regions: the prologue runs out of regions to prime and every
 /// consume drains. Regression for the ring's `region < total` guards.
 #[test]
 fn matmul_buffered_deeper_than_the_walk() {
-    check_matmul_vectorized(
-        Buffering::depth(16),
-        &[Residence::Smem],
-        &[Residence::Smem],
-    );
+    check_matmul_vectorized(Buffering::new(16), &[Residence::Smem], &[Residence::Smem]);
 }
 
 /// A depth-2 ring whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
@@ -2901,11 +3063,7 @@ fn matmul_triple_buffered_with_a_pinned_operand() {
 /// staged one alone while the other is rebound per region, in every slot of the ring.
 #[test]
 fn matmul_double_buffered_mixed_residence_vectorized() {
-    check_matmul_vectorized(
-        Buffering::DOUBLE,
-        &[Residence::Smem],
-        &[Residence::InPlace],
-    );
+    check_matmul_vectorized(Buffering::DOUBLE, &[Residence::Smem], &[Residence::InPlace]);
 }
 
 fn check_matmul_vectorized(

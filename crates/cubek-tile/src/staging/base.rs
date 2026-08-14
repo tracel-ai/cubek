@@ -37,9 +37,20 @@ impl Fill {
     /// This operand's state in a later ring slot, given its state in the first. A pinned
     /// materialized operand hands its buffer over; anything else is rebuilt per slot.
     pub(crate) fn shared_by(self, residence: Residence) -> Fill {
-        match (self, residence) {
-            (Fill::Pinned, Residence::Smem) => Fill::Shared,
-            _ => self,
+        match self {
+            Fill::Pinned => match residence {
+                Residence::Smem => Fill::Shared,
+                Residence::InPlace | Residence::Plane => Fill::Pinned,
+                Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
+            },
+            Fill::Streamed => match residence {
+                Residence::InPlace | Residence::Smem | Residence::Plane => Fill::Streamed,
+                Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
+            },
+            Fill::Shared => match residence {
+                Residence::InPlace | Residence::Smem | Residence::Plane => Fill::Shared,
+                Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
+            },
         }
     }
 }
@@ -51,13 +62,13 @@ impl Fill {
 pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
-    /// When each operand is filled. Unary slots leave the right-hand entry unread.
+    /// When each operand is filled, and where it lives at this level; both resolved when the slot
+    /// was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entries are
+    /// `None` and asking for them is a bug, not a default.
     #[cube(comptime)]
     pub(crate) fill_lhs: Fill,
     #[cube(comptime)]
-    pub(crate) fill_rhs: Fill,
-    /// Where each operand lives at this level, resolved when the slot was built. Unary slots have
-    /// no right-hand operand.
+    pub(crate) fill_rhs: Option<Fill>,
     #[cube(comptime)]
     pub(crate) residence_lhs: Residence,
     #[cube(comptime)]
@@ -73,7 +84,7 @@ impl<T: CubeType> Staging<T> {
         data: T,
         pipeline: Pipeline,
         #[comptime] fill_lhs: Fill,
-        #[comptime] fill_rhs: Fill,
+        #[comptime] fill_rhs: Option<Fill>,
         #[comptime] residence_lhs: Residence,
         #[comptime] residence_rhs: Option<Residence>,
     ) -> Staging<T> {
@@ -85,6 +96,33 @@ impl<T: CubeType> Staging<T> {
             residence_lhs,
             residence_rhs,
         }
+    }
+
+    /// Whether this slot's operand (or lhs) is pinned.
+    pub(crate) fn is_pinned(&self) -> comptime_type!(bool) {
+        comptime!(self.fill_lhs.is_pinned())
+    }
+
+    /// Whether this slot's operand (or lhs) is streamed.
+    pub(crate) fn is_streamed(&self) -> comptime_type!(bool) {
+        comptime!(self.fill_lhs.is_streamed())
+    }
+
+    /// When this slot's right-hand operand is filled.
+    fn fill_rhs(&self) -> comptime_type!(Fill) {
+        comptime!(self.fill_rhs.expect("Staging: unary slot has no rhs fill"))
+    }
+
+    /// Whether this slot's rhs operand is pinned.
+    pub(crate) fn is_pinned_rhs(&self) -> comptime_type!(bool) {
+        let fill = self.fill_rhs();
+        comptime!(fill.is_pinned())
+    }
+
+    /// Whether this slot's rhs operand is streamed.
+    pub(crate) fn is_streamed_rhs(&self) -> comptime_type!(bool) {
+        let fill = self.fill_rhs();
+        comptime!(fill.is_streamed())
     }
 
     /// Where this slot's operand (or left-hand operand) lives.

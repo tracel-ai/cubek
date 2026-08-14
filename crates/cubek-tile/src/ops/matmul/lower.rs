@@ -26,7 +26,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 if comptime!(all_in_place) {
                     self.mma_direct(lhs, rhs, op_space);
                 } else {
-                    self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().get()));
+                    self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
                 }
             }
         }

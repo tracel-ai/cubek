@@ -137,13 +137,6 @@ impl StagePlan {
         StagePlan::new(&[], StageStorage::Strided, 0)
     }
 
-    /// A strided layout plan staging nothing; the default when a caller allocates a buffer.
-    /// Identical in value to [`in_place`](Self::in_place), but signals caller-allocation
-    /// of shared memory rather than an operand reading in place.
-    pub fn strided() -> Self {
-        StagePlan::in_place()
-    }
-
     /// The default for an operand that becomes `leaf` (tiled for cmma, else strided), staging
     /// nothing and with an unknown worker count. A [`Launcher`](crate::Launcher) stamps `units` and
     /// the caller its `residence` on top.

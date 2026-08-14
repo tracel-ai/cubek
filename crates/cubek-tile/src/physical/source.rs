@@ -400,11 +400,11 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // Validate projection vector width alignment on the host side.
         projection.validate(v);
 
-        // Reject stating more residences than the space's depth: extra levels do not exist in the
-        // space.
+        // Validate that explicit residences match the space's depth: extra or missing levels lead
+        // to silent misconfiguration.
         let depth = space.partitioner().depth();
         assert!(
-            residence.len() <= depth,
+            residence.is_empty() || residence.len() == depth,
             "StridedTileSource::residence: {} residences stated but the space has {depth} levels",
             residence.len()
         );

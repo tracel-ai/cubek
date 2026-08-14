@@ -52,7 +52,7 @@ fn attention_fold_kernel<W: Size>(
         comptime!(q.space.clone()),
         comptime!(q.leaf),
         q.vector_size(),
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
@@ -60,27 +60,27 @@ fn attention_fold_kernel<W: Size>(
         score_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         score_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let row_space = comptime!(Space::new(&[(R, rows)]));
     let mut factors = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(
         acc_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
@@ -329,7 +329,7 @@ fn attention_fold_split_kernel<W: Size>(
         comptime!(q.space.clone()),
         comptime!(q.leaf),
         q.vector_size(),
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
 
@@ -366,43 +366,43 @@ fn attention_fold_split_kernel<W: Size>(
         score_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let p_all = MemData::<f32>::smem(
         score_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut factors_all = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let m_all = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let l_all = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut acc_all = MemData::<f32>::smem(
         acc_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut recip = MemData::<f32>::smem(
         comptime!(Space::new(&[(R, rows)])),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     acc_all.zero();
 

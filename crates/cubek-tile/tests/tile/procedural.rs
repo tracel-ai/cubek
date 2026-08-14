@@ -178,6 +178,103 @@ fn run_mma() -> HostData {
     HostData::from_tensor_handle(&client, output, HostDataType::F32)
 }
 
+/// Exercise a staged schedule whose procedural operand is cooperatively staged into shared memory.
+#[cube(launch)]
+fn procedural_smem_stage_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] recipe: ProceduralRecipe,
+    #[define(E)] _dtype: ElemType,
+) {
+    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
+    let source = Tile::<E>::procedural_resident(comptime!(space.clone()), recipe, stage);
+    let output = output.tile(comptime!(space.clone()));
+    let mut ring = Ring::unary(
+        &source,
+        comptime!(space.clone()),
+        comptime!(space.clone()),
+        1usize,
+    );
+    let walk = Walk::over(source.runtime_space());
+    for region in walk {
+        let staging = ring.slot_mut(0usize);
+        staging.fill_streamed(&source, &region);
+        staging.consume_final(|staged| {
+            output.at(&region).copy_from(staged);
+        });
+    }
+}
+
+/// Exercise direct Tile::copy_from from a procedural tile to a global memory window.
+#[cube(launch)]
+fn procedural_direct_copy_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] recipe: ProceduralRecipe,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let mut output = output.tile(space);
+    output.copy_from(&source);
+}
+
+fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let space = Tiling::new()
+        .extents(&[(ROW, 4), (COL, 6)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+            level
+                .axis(ROW, Cut::sequential(2))
+                .axis(COL, Cut::sequential(3))
+        })
+        .build();
+    let output = TestInput::builder(client.clone(), shape![4, 6])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    procedural_smem_stage_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        recipe,
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, output, HostDataType::F32)
+}
+
+fn run_direct_copy(recipe: ProceduralRecipe) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let space = Space::new(&[(ROW, 4), (COL, 6)]);
+    let output = TestInput::builder(client.clone(), shape![4, 6])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    procedural_direct_copy_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        recipe,
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, output, HostDataType::F32)
+}
+
 #[test]
 fn evaluates_separable_axis_products_after_region_rebase() {
     // The selected region begins at (2, 3), so AxisIndex(ROW) * AxisIndex(COL) is 6.
@@ -195,6 +292,32 @@ fn evaluates_separable_axis_products_after_region_rebase() {
 #[test]
 fn staged_buffering_keeps_coordinate_varying_values_in_place() {
     let got = run_copy(ProceduralRecipe::axis_product(vec![
+        ProceduralRecipe::axis_index(ROW),
+        ProceduralRecipe::axis_index(COL),
+    ]));
+    for row in 0..4 {
+        for col in 0..6 {
+            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
+        }
+    }
+}
+
+#[test]
+fn stages_coordinate_varying_values_through_shared_memory() {
+    let got = run_smem_stage(ProceduralRecipe::axis_product(vec![
+        ProceduralRecipe::axis_index(ROW),
+        ProceduralRecipe::axis_index(COL),
+    ]));
+    for row in 0..4 {
+        for col in 0..6 {
+            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
+        }
+    }
+}
+
+#[test]
+fn copies_procedural_directly_to_global_memory() {
+    let got = run_direct_copy(ProceduralRecipe::axis_product(vec![
         ProceduralRecipe::axis_index(ROW),
         ProceduralRecipe::axis_index(COL),
     ]));

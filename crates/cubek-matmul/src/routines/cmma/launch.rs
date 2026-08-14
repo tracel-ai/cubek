@@ -136,12 +136,17 @@ fn setup<R: Runtime>(
 /// two levels between and below, which materialize nothing. [`Auto`](Residence::Auto) rather than
 /// the backings spelled out, because which one each level wants follows from the level beneath it.
 /// The accumulator states none: it is promoted by the kernel, not staged by a walk.
-const INPUT_RESIDENCE: [Residence; 4] = [
+const INPUT_RESIDENCE: [Residence; LEVELS] = [
     Residence::Auto,
     Residence::InPlace,
     Residence::Auto,
     Residence::InPlace,
 ];
+
+/// How many levels [`tile_space`] stacks. It ties the array above to the space below, which is the
+/// one thing neither can check about the other: a stated residence is positional, so a level added
+/// without an entry silently shifts every residence under it onto the wrong level.
+const LEVELS: usize = 4;
 
 /// The routine's 4-level space: the cube grid (double-buffered along `K`); one partition
 /// per plane; the contraction-step walk; the fragment grid the step contracts, walked
@@ -163,7 +168,7 @@ fn tile_space(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    Tiling::new()
+    let space = Tiling::new()
         .extents(&extents)
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
@@ -189,7 +194,13 @@ fn tile_space(
                 .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .build()
+        .build();
+    assert_eq!(
+        space.partitioner().depth(),
+        LEVELS,
+        "cmma::tile_space: INPUT_RESIDENCE states one residence per level"
+    );
+    space
 }
 
 /// The one entry for both deliveries: the shared geometry (space, launcher, out arg) is

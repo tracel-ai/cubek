@@ -24,7 +24,10 @@ impl<T: CubeType> Ring<T> {
     /// Wrap already-built slots. The public entries are the operand-deducing
     /// [`binary`](Ring::binary) / [`unary`](Ring::unary).
     pub(crate) fn wrap(slots: Sequence<Staging<T>>, #[comptime] depth: usize) -> Ring<T> {
-        comptime!(assert!(depth > 0, "Ring: a pipeline needs at least one slot"));
+        comptime!(assert!(
+            depth > 0,
+            "Ring: a pipeline needs at least one slot"
+        ));
         Ring::<T> { slots, depth }
     }
 
@@ -95,7 +98,10 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
     #[comptime] depth: usize,
 ) {
     let mut ring = op.ring(comptime!(op_space.clone()), out, depth);
-    let unroll = op.unrolled(&ring);
+    // Re-bound through `comptime!`: `#[unroll(flag)]` only unrolls when the macro can see `flag`
+    // as a comptime binding, and silently rolls the loop otherwise.
+    let unrolled = op.unrolled(&ring);
+    let unroll = comptime!(unrolled);
     let walk = Walk::over(op_space);
     let total = walk.total();
 
@@ -116,25 +122,22 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
         }
     }
 
-    let laps = total.div_ceil(depth);
+    let laps = total.fadd(comptime!(depth - 1)).fdiv(depth);
     #[unroll(unroll)]
     for lap in 0..laps {
         #[unroll]
         for j in 0..depth {
-            let region_idx = lap * depth + j;
+            let region_idx = lap.fmul(depth).fadd(j);
             if comptime!(depth == 1) {
                 // Nothing is in flight: this region's fill is the last event before its read.
                 let region = walk.region(region_idx);
                 op.fill_streamed(ring.slot_mut(0usize), &region);
                 op.compute(ring.slot_mut(0usize), &region, true);
             } else {
-                let ahead = region_idx + comptime!(depth - 1);
+                let ahead = region_idx.fadd(comptime!(depth - 1));
                 if ahead < total {
                     let prefetch = walk.region(ahead);
-                    op.fill_streamed(
-                        ring.slot_mut(comptime!((j + depth - 1) % depth)),
-                        &prefetch,
-                    );
+                    op.fill_streamed(ring.slot_mut(comptime!((j + depth - 1) % depth)), &prefetch);
                     let region = walk.region(region_idx);
                     op.compute(ring.slot_mut(j), &region, false);
                 } else if region_idx < total {
@@ -145,4 +148,21 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
             }
         }
     }
+}
+
+/// Whether a buffered walk must unroll, the one answer every [`Pipelined`] operation gives the
+/// same way: the level *cuts* a fragment-partition output (each region selects its block by
+/// comptime coordinate), or a slot stages plane tiles, selected the same way and standing up only
+/// when `op_space` is itself static-walkable. An smem-staged level stays rolled: unrolling would
+/// re-stage its shared memory per copy.
+///
+/// Operations differ only in which space is the operand merge, so they pass it in.
+#[cube]
+pub(crate) fn stage_walk_unrolled<Acc: Numeric>(
+    acc: &Tile<Acc>,
+    #[comptime] op_space: Space,
+    #[comptime] has_plane_stage: bool,
+) -> comptime_type!(bool) {
+    let cuts = acc.tile_kind.cuts_partition(comptime!(acc.space.clone()));
+    comptime!(cuts || (has_plane_stage && op_space.static_walkable()))
 }

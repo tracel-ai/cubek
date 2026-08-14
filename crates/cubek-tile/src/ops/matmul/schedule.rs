@@ -30,20 +30,15 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, R
         Ring::binary(&self.lhs, &self.rhs, op_space, out, depth)
     }
 
-    /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects its
-    /// block by comptime coordinate) or when a slot stages plane tiles, selected the same way. An
-    /// smem-staged level stays rolled: unrolling would re-stage its shared memory per copy.
+    /// [`stage_walk_unrolled`] over the two operands' merge, which is the space a plane stage has
+    /// to be static-walkable in.
     fn unrolled(&self, ring: &Ring<(Tile<Lhs>, Tile<Rhs>)>) -> comptime_type!(bool) {
-        let cuts = self
-            .acc
-            .tile_kind
-            .cuts_partition(comptime!(self.acc.space.clone()));
-        // A plane stage stands up only when the operand merge is itself static-walkable.
         let has_plane_stage = ring.has_plane_stage();
-        let plane_stage = comptime!(
-            has_plane_stage && Space::merge(&[&self.lhs.space, &self.rhs.space]).static_walkable()
-        );
-        comptime!(cuts || plane_stage)
+        stage_walk_unrolled(
+            &self.acc,
+            comptime!(Space::merge(&[&self.lhs.space, &self.rhs.space])),
+            has_plane_stage,
+        )
     }
 
     fn fill_pinned(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {

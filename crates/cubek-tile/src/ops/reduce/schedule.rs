@@ -30,17 +30,14 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         Ring::unary(&self.input, op_space, out, depth)
     }
 
-    /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects its
-    /// block by comptime coordinate) or when a slot stages plane tiles, selected the same way. An
-    /// smem-staged level stays rolled: unrolling would re-stage its shared memory per copy.
+    /// [`stage_walk_unrolled`] over the sole operand's space, which is the whole merge here.
     fn unrolled(&self, ring: &Ring<Tile<In>>) -> comptime_type!(bool) {
-        let cuts = self
-            .acc
-            .tile_kind
-            .cuts_partition(comptime!(self.acc.space.clone()));
         let has_plane_stage = ring.has_plane_stage();
-        let plane_stage = comptime!(has_plane_stage && self.input.space.static_walkable());
-        comptime!(cuts || plane_stage)
+        stage_walk_unrolled(
+            &self.acc,
+            comptime!(self.input.space.clone()),
+            has_plane_stage,
+        )
     }
 
     fn fill_pinned(&self, slot: &mut Staging<Tile<In>>, region: &Region) {

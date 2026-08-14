@@ -136,12 +136,31 @@ fn rendezvous_deliveries(operands: &[SlotOperand]) -> Vec<Delivery> {
         .collect()
 }
 
-/// A plane partition is private to its unit and assumes a solo fill. It cannot share a slot with
-/// a shared-memory stage, whose transfer selects a slot-wide Cube or Barrier pipeline.
+/// Whether two operands can share one slot. Stated per pair rather than by counting kinds, so a
+/// new [`Residence`] has to say how it meets each of the others instead of defaulting to
+/// compatible.
+fn compatible_residence_pair(a: Residence, b: Residence) -> bool {
+    match (a, b) {
+        // A plane partition is private to its unit and assumes a solo fill; a shared-memory stage
+        // selects a slot-wide Cube or Barrier pipeline. One slot cannot rendezvous both ways.
+        (Residence::Plane, Residence::Smem) | (Residence::Smem, Residence::Plane) => false,
+        (Residence::Plane, Residence::Plane | Residence::InPlace) => true,
+        (Residence::Smem, Residence::Smem | Residence::InPlace) => true,
+        (Residence::InPlace, Residence::Plane | Residence::Smem | Residence::InPlace) => true,
+        (Residence::Auto, _) | (_, Residence::Auto) => {
+            panic!("Residence::Auto must be resolved before staging")
+        }
+    }
+}
+
+/// Whether every pair of `residences` can share one slot. The self-pair is included, which is what
+/// catches an unresolved [`Auto`](Residence::Auto) on a slot holding a single operand.
 fn compatible_slot_residences(residences: &[Residence]) -> bool {
-    let has_plane = residences.contains(&Residence::Plane);
-    let has_smem = residences.contains(&Residence::Smem);
-    !(has_plane && has_smem)
+    residences.iter().enumerate().all(|(i, &a)| {
+        residences[i..]
+            .iter()
+            .all(|&b| compatible_residence_pair(a, b))
+    })
 }
 
 /// A slot builds a payload for every operand it holds, and an operand a level above already
@@ -215,12 +234,9 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
-                Pipeline::new(
-                    comptime!(plan.sync()),
-                    comptime!(plan.collective_full())
-                ),
+                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
                 comptime!(plan.fill(0, slot)),
-                comptime!(plan.fill(1, slot)),
+                comptime!(Option::Some(plan.fill(1, slot))),
                 lhs_residence,
                 comptime!(Option::Some(rhs_residence)),
             );
@@ -236,8 +252,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
     /// A no-op when nothing is pinned, and when a later ring slot shares the first's buffers.
     pub fn fill_pinned(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let pin_lhs = comptime!(self.fill_lhs.is_pinned());
-        let pin_rhs = comptime!(self.fill_rhs.is_pinned());
+        let pin_lhs = self.is_pinned();
+        let pin_rhs = self.is_pinned_rhs();
         let lhs_residence = self.residence();
         let rhs_residence = self.residence_rhs();
         if comptime!(pin_lhs || pin_rhs) {
@@ -258,8 +274,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// region inside the walk. The slot still rendezvouses when every operand is fixed: the
     /// pipeline's phase belongs to the slot, not to any one operand.
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let stream_lhs = comptime!(self.fill_lhs.is_streamed());
-        let stream_rhs = comptime!(self.fill_rhs.is_streamed());
+        let stream_lhs = self.is_streamed();
+        let stream_rhs = self.is_streamed_rhs();
         let lhs_residence = self.residence();
         let rhs_residence = self.residence_rhs();
         self.fill(|staged_operands, pipe| {
@@ -278,7 +294,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
 // `fill`/`consume` take closures so the body stays caller-defined (fill each buffer however, run the
 // mma). They're provided for the `(Tile<Lhs>, Tile<Rhs>)` payload (not generic `T`): closure-parameter
 // inference can't resolve the projection `&mut T::ExpandType` through a generic `T`, but resolves the
-// spelled-out tiles fine.
+// concrete `TileExpand` fields of the pair directly.
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Producer: wait the slot is free, run `fill` over the staged buffers and the slot's
     /// [`Pipeline`], then publish. See [`StagingExpand::__expand_fill_method`].
@@ -342,7 +358,12 @@ impl<T: Numeric> Ring<Tile<T>> {
         let delivery = input.delivery();
         let fragment = input.resident_fragment();
         let plan = comptime!(SlotPlan::new(
-            &[SlotOperand::new(residence, delivery, fragment, &input.space)],
+            &[SlotOperand::new(
+                residence,
+                delivery,
+                fragment,
+                &input.space
+            )],
             &op_space,
         ));
 
@@ -358,7 +379,7 @@ impl<T: Numeric> Ring<Tile<T>> {
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
                 comptime!(plan.fill(0, slot)),
-                comptime!(Fill::Streamed),
+                comptime!(Option::None),
                 residence,
                 comptime!(Option::None),
             );
@@ -372,7 +393,7 @@ impl<T: Numeric> Ring<Tile<T>> {
 impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk leaves it fixed.
     pub fn fill_pinned(&mut self, input: &Tile<T>, region: &Region) {
-        let pin = comptime!(self.fill_lhs.is_pinned());
+        let pin = self.is_pinned();
         let residence = self.residence();
         if comptime!(pin) {
             self.fill(|s, pipe| {
@@ -385,7 +406,7 @@ impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk moves it. The slot still rendezvouses
     /// otherwise: the pipeline's phase belongs to the slot, not to the operand.
     pub fn fill_streamed(&mut self, input: &Tile<T>, region: &Region) {
-        let stream = comptime!(self.fill_lhs.is_streamed());
+        let stream = self.is_streamed();
         let residence = self.residence();
         self.fill(|s, pipe| {
             if comptime!(stream) {

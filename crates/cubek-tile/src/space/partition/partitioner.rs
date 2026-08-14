@@ -25,13 +25,13 @@ impl Buffering {
     pub const TRIPLE: Buffering = Buffering(3);
 
     /// A pipeline `depth` slots deep. Panics on `0`, which buffers nothing and computes nothing.
-    pub const fn depth(depth: usize) -> Self {
+    pub const fn new(depth: usize) -> Self {
         assert!(depth > 0, "Buffering: a pipeline needs at least one slot");
         Buffering(depth)
     }
 
     /// How many slots the walk drives.
-    pub const fn get(self) -> usize {
+    pub const fn depth(self) -> usize {
         self.0
     }
 }

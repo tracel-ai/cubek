@@ -29,7 +29,12 @@ impl<Acc: Numeric> Tile<Acc> {
                 if comptime!(residence == Residence::InPlace) {
                     self.reduce_direct(input, inst, op_space);
                 } else {
-                    self.reduce_buffered(input, inst, op_space, comptime!(level.buffering().get()));
+                    self.reduce_buffered(
+                        input,
+                        inst,
+                        op_space,
+                        comptime!(level.buffering().depth()),
+                    );
                 }
             }
         }
@@ -154,7 +159,7 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
         total_acc == count * acc.vector_size,
         "reduce: RegisterData shape mismatch with accumulator space"
     ));
-    let input_view = input.nd::<I, WP, V>();
+    let in_view = input.nd::<I, WP, V>();
 
     #[unroll]
     for a in 0..total_acc {
@@ -168,7 +173,7 @@ fn reduce_register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V
         let seed = acc.data[line_idx].extract(comptime!(lane_idx));
 
         let curr_val: Acc = reduce_element::<Acc, In, V>(
-            &input_view,
+            &in_view,
             comptime!(in_space.clone()),
             comptime!(acc_space.clone()),
             comptime!(layout.clone()),
@@ -226,7 +231,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
     ));
     let total_lines = comptime!(total_acc / ws);
     let mut acc_view = acc.flat_accumulate::<W>();
-    let input_view = input.nd::<I, WP, V>();
+    let in_view = input.nd::<I, WP, V>();
 
     for line_idx in 0..total_lines {
         let seed_vec = acc_view.seed(line_idx, inst);
@@ -242,7 +247,7 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
 
             let seed = seed_vec.extract(comptime!(lane_idx));
             let curr_val: Acc = reduce_element::<Acc, In, V>(
-                &input_view,
+                &in_view,
                 comptime!(in_space.clone()),
                 comptime!(acc_space.clone()),
                 comptime!(layout.clone()),
@@ -259,13 +264,13 @@ fn reduce_memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
     }
 }
 
-/// The per-element inner reduction shared by both accumulator backings: fold `input` across the
+/// The per-element inner reduction shared by both accumulator backings: fold `in_view` across the
 /// contracted axes (`layout.kc` steps) into `seed`, for the single accumulator cell at
 /// `acc_coords`. Only the seed/commit around this loop differ between a register block (draining
 /// through `RegisterData`'s own lanes) and a memory accumulator (through [`AccumulateView`]).
 #[cube]
 fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
-    input: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,
@@ -295,12 +300,12 @@ fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
         // Memory reads already return Sum's zero identity out of bounds; procedural reads are
         // always valid. Max and Min retain their explicit operation-specific fallback.
         let in_vec = match comptime!(inst) {
-            ReduceLeafKind::Sum => input.read(in_coords),
+            ReduceLeafKind::Sum => in_view.read(in_coords),
             ReduceLeafKind::Max | ReduceLeafKind::Min => {
-                let valid = input.is_in_bounds(in_coords.clone());
+                let valid = in_view.is_in_bounds(in_coords.clone());
                 select(
                     valid,
-                    input.read(in_coords),
+                    in_view.read(in_coords),
                     Vector::<In, V>::cast_from(reduce_identity::<In>(inst)),
                 )
             }
