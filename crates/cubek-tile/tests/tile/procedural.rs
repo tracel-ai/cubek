@@ -1,237 +1,276 @@
-//! Procedural tiles evaluate logical coordinates without a tensor-backed source.
+//! Procedural tiles accept user-defined recipes.
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
+use core::f32::consts::PI;
+
+use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::shape};
+use cubecl_common::{ComptimeFloat, Ratio};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
-const REDUCE: Axis = Axis(2);
+const ROWS: usize = 4;
+const COLS: usize = 6;
 
-#[cube(launch)]
-fn procedural_kernel<E: Float>(
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+struct ProductAxes {
+    #[cube(comptime)]
+    row: Axis,
+    #[cube(comptime)]
+    col: Axis,
+}
+
+#[cube]
+impl<T: Float> Recipe<T> for ProductAxes {
+    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T {
+        let row = coordinates.at(comptime!(space.position(self.row)));
+        let col = coordinates.at(comptime!(space.position(self.col)));
+        T::cast_from(row) * T::cast_from(col)
+    }
+}
+
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+struct AxisValue {
+    #[cube(comptime)]
+    axis: Axis,
+    scale: f32,
+}
+
+#[cube]
+impl<T: Float> Recipe<T> for AxisValue {
+    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T {
+        T::cast_from(coordinates.at(comptime!(space.position(self.axis))))
+            * T::cast_from(self.scale)
+    }
+}
+
+/// Walk the whole space, staging each region of `source` and copying it into `output`.
+#[cube]
+fn materialize<E: Numeric>(
+    source: &Tile<E>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] recipe: ProceduralRecipe,
+) {
+    let output = output.tile(comptime!(space.clone()));
+    let mut ring = Ring::unary(
+        source,
+        comptime!(space.clone()),
+        comptime!(space.clone()),
+        1usize,
+    );
+    let walk = Walk::over(source.runtime_space());
+    for region in walk {
+        let staging = ring.slot_mut(0usize);
+        staging.fill_streamed(source, &region);
+        staging.consume(|staged| output.at(&region).copy_from(staged));
+    }
+}
+
+// The `#[cube]` macro cannot parse a nested generic inside a struct-literal turbofish, so the
+// filter instantiations go through aliases.
+type LinearCol<E> = Linear<AffineCoordinates<E>>;
+type CubicCol<E> = Cubic<AffineCoordinates<E>>;
+type LanczosCol<E> = Lanczos<AffineCoordinates<E>>;
+type LinearScaled = Linear<AxisValue>;
+
+/// `x = offset + coordinate[COL]`, built so the recipe carries genuinely runtime scalars across
+/// the staging walk rather than folding to comptime.
+#[cube]
+fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinates<E> {
+    let zero = E::cast_from(0u32.runtime());
+    AffineCoordinates::<E> {
+        offset: E::new(comptime!(offset.get())) + zero,
+        coefficient: E::new(1.0_f32) + zero,
+        axis: COL,
+    }
+}
+
+#[cube(launch)]
+fn product_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
-    // Select the second 2x3 tile, then evaluate its first logical coordinate. This exercises
-    // `Tile::at`'s origin rebasing rather than merely the top-level recipe evaluation.
+    let source = Tile::<E>::procedural::<ProductAxes>(
+        comptime!(space.clone()),
+        ProductAxes { row: ROW, col: COL },
+    );
+    materialize(&source, output, space);
+}
+
+#[cube(launch)]
+fn rebase_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<AxisValue>(
+        comptime!(space.clone()),
+        AxisValue {
+            axis: ROW,
+            scale: 2.0,
+        },
+    );
+    // The second region starts at (2, 3), so its first logical coordinate reads row 2.
     let region = Region::trailing(comptime!(space.clone()), 1usize, 1usize);
     let source = source.at(&region);
     let mut pos = Coords::<u32>::new();
     pos.push(0u32.runtime());
     pos.push(0u32.runtime());
-
     let mut output = output.tile(space);
     output.init(source.procedural_value(pos));
 }
 
-/// Exercise a staged schedule whose procedural operand remains coordinate-backed in place. Such an
-/// operand is never filled, so the slot hands out the recipe whole and this read selects the
-/// region out of it, which is what a lowered walk's `read_operand` does for the same payload.
 #[cube(launch)]
-fn procedural_stage_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[comptime] recipe: ProceduralRecipe,
-    #[define(E)] _dtype: ElemType,
-) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
-    let output = output.tile(comptime!(space.clone()));
-    let mut ring = Ring::unary(
-        &source,
-        comptime!(space.clone()),
-        comptime!(space.clone()),
-        1usize,
-    );
-    let walk = Walk::over(source.runtime_space());
-    for region in walk {
-        let staging = ring.slot_mut(0usize);
-        staging.fill_streamed(&source, &region);
-        staging.publish();
-        staging.consume(|staged| {
-            output.at(&region).copy_from(&staged.at(&region));
-        });
-    }
-}
-
-/// A staged contraction with an in-place procedural lhs and a materialized tensor rhs.
-#[cube(launch)]
-fn procedural_mma_kernel<E: Float>(
-    rhs: &TileArg<'_, E, Const<1>>,
+fn constant_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let lhs = Tile::<E>::procedural(
-        comptime!(space.project(&[ROW, REDUCE])),
-        comptime!(ProceduralRecipe::axis_index(REDUCE)),
+    let source = Tile::<E>::procedural::<Constant<E>>(
+        comptime!(space.clone()),
+        Constant::<E> {
+            value: E::new(-1.25_f32) + E::cast_from(0u32.runtime()),
+        },
     );
-    let rhs = rhs.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    output.zero();
-    output.mma(&lhs, &rhs);
+    materialize(&source, output, space);
 }
 
-fn run(recipe: ProceduralRecipe) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let space = Tiling::new()
-        .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3))
-        })
-        .build();
-    let output = TestInput::builder(client.clone(), shape![4, 6])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    procedural_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        space,
-        recipe,
-        dtype,
-    );
-
-    HostData::from_tensor_handle(&client, output, HostDataType::F32)
-}
-
-fn run_copy(recipe: ProceduralRecipe) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let space = Tiling::new()
-        .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3))
-        })
-        .build();
-    let output = TestInput::builder(client.clone(), shape![4, 6])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    procedural_stage_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        space,
-        recipe,
-        dtype,
-    );
-
-    HostData::from_tensor_handle(&client, output, HostDataType::F32)
-}
-
-fn run_mma(buffering: Buffering) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let space = Tiling::new()
-        .extents(&[(ROW, 4), (COL, 4), (REDUCE, 4)])
-        .level(WalkOrder::RowMajor, buffering, |level| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(2))
-                .axis(REDUCE, Cut::sequential(2))
-        })
-        .build();
-    let rhs = TestInput::builder(client.clone(), shape![4, 4])
-        .dtype(dtype)
-        .arange()
-        .generate_without_host_data();
-    let output = TestInput::builder(client.clone(), shape![4, 4])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    procedural_mma_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            rhs.binding().into_tensor_arg(),
-            // Only the tensor operand takes a stage; the procedural lhs stays coordinate-backed
-            // at its default all-in-place residence, which is the point of the test.
-            TileSpec::direct(&[REDUCE, COL]).residence(&[Residence::Smem]),
-        ),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        space,
-        dtype,
-    );
-
-    HostData::from_tensor_handle(&client, output, HostDataType::F32)
-}
-
-/// Exercise a staged schedule whose procedural operand is cooperatively staged into shared memory.
 #[cube(launch)]
-fn procedural_smem_stage_kernel<E: Float>(
+fn affine_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] recipe: ProceduralRecipe,
+    #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
-    let source = Tile::<E>::procedural_resident(comptime!(space.clone()), recipe, stage);
-    let output = output.tile(comptime!(space.clone()));
-    let mut ring = Ring::unary(
-        &source,
+    let source = Tile::<E>::procedural::<AffineCoordinates<E>>(
         comptime!(space.clone()),
-        comptime!(space.clone()),
-        1usize,
+        along_col::<E>(offset),
     );
-    let walk = Walk::over(source.runtime_space());
-    for region in walk {
-        let staging = ring.slot_mut(0usize);
-        staging.fill_streamed(&source, &region);
-        staging.publish();
-        staging.consume(|staged| {
-            output.at(&region).copy_from(staged);
-        });
-    }
+    materialize(&source, output, space);
 }
 
-/// Exercise direct Tile::copy_from from a procedural tile to a global memory window.
 #[cube(launch)]
-fn procedural_direct_copy_kernel<E: Float>(
+fn linear_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] recipe: ProceduralRecipe,
+    #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let source = Tile::<E>::procedural::<LinearCol<E>>(
+        comptime!(space.clone()),
+        LinearCol::<E> {
+            coordinate: along_col::<E>(offset),
+        },
+    );
+    materialize(&source, output, space);
+}
+
+#[cube(launch)]
+fn cubic_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] offset: ComptimeFloat<f32>,
+    #[comptime] a: Ratio,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<CubicCol<E>>(
+        comptime!(space.clone()),
+        CubicCol::<E> {
+            coordinate: along_col::<E>(offset),
+            a,
+        },
+    );
+    materialize(&source, output, space);
+}
+
+#[cube(launch)]
+fn lanczos_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] offset: ComptimeFloat<f32>,
+    #[comptime] lobes: u8,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<LanczosCol<E>>(
+        comptime!(space.clone()),
+        LanczosCol::<E> {
+            coordinate: along_col::<E>(offset),
+            lobes,
+        },
+    );
+    materialize(&source, output, space);
+}
+
+/// A filter over a recipe that is not an [`AffineCoordinates`], which is what the filters being
+/// generic over their inner recipe buys.
+#[cube(launch)]
+fn linear_over_axis_value_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<LinearScaled>(
+        comptime!(space.clone()),
+        LinearScaled {
+            coordinate: AxisValue {
+                axis: ROW,
+                scale: 0.5,
+            },
+        },
+    );
+    materialize(&source, output, space);
+}
+
+/// A procedural tile over an integer element type: [`Recipe`] is defined over `Numeric`, so
+/// nothing about a procedural source requires floats.
+#[cube(launch)]
+fn integer_kernel<E: Int>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<Constant<E>>(
+        comptime!(space.clone()),
+        Constant::<E> {
+            value: E::new(7) + E::cast_from(0u32.runtime()),
+        },
+    );
+    materialize(&source, output, space);
+}
+
+/// A direct procedural read must use the masked view path on trailing partial tiles.
+#[cube(launch)]
+fn direct_copy_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<Constant<E>>(
+        comptime!(space.clone()),
+        Constant::<E> {
+            value: E::new(1.0_f32) + E::cast_from(0u32.runtime()),
+        },
+    );
     let mut output = output.tile(space);
     output.copy_from(&source);
 }
 
-/// Descend once before reading: `Space::divide` makes child extents static, while a procedural
-/// bound must retain the parent axis positions that were dynamic at construction.
+/// Descend once before a direct read: the procedural bound remains in the parent coordinates.
 #[cube(launch)]
-fn procedural_divided_copy_kernel<E: Float>(
+fn divided_direct_copy_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] recipe: ProceduralRecipe,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let source = Tile::<E>::procedural::<Constant<E>>(
+        comptime!(space.clone()),
+        Constant::<E> {
+            value: E::new(1.0_f32) + E::cast_from(0u32.runtime()),
+        },
+    );
     let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
     let source = source.at(&region);
     let output = output.tile(comptime!(space.clone()));
@@ -239,156 +278,320 @@ fn procedural_divided_copy_kernel<E: Float>(
     output.copy_from(&source);
 }
 
-fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
+struct Harness {
+    client: ComputeClient<TestRuntime>,
+    dtype: ElemType,
+    space: Space,
+}
+
+impl Harness {
+    fn new() -> Self {
+        Self {
+            client: <TestRuntime as Runtime>::client(&Default::default()),
+            dtype: f32::elem_type_native(),
+            space: Tiling::new()
+                .extents(&[(ROW, ROWS), (COL, COLS)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+                    level
+                        .axis(ROW, Cut::sequential(2))
+                        .axis(COL, Cut::sequential(3))
+                })
+                .build(),
+        }
+    }
+
+    fn output(&self) -> TensorHandle<TestRuntime> {
+        TestInput::builder(self.client.clone(), shape![ROWS, COLS])
+            .dtype(self.dtype)
+            .zeros()
+            .generate_without_host_data()
+    }
+
+    fn read(&self, output: TensorHandle<TestRuntime>) -> HostData {
+        HostData::from_tensor_handle(&self.client, output, HostDataType::F32)
+    }
+}
+
+/// The output launch argument. Each kernel gets its own opaque element type, so this cannot be a
+/// function.
+macro_rules! output_arg {
+    ($output:expr) => {
+        TileArgLaunch::new(
+            $output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        )
+    };
+}
+
+/// Assert every cell equals `expected(row, col)`, tolerating float rounding.
+fn assert_grid(got: &HostData, expected: impl Fn(usize, usize) -> f32) {
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            let want = expected(row, col);
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-5,
+                "at ({row}, {col}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// A finite comptime offset for [`along_col`].
+fn offset(value: f32) -> ComptimeFloat<f32> {
+    ComptimeFloat::new(value).unwrap()
+}
+
+/// `sin(pi t) / (pi t)`, the definition [`Lanczos`] is derived from.
+fn sinc(t: f32) -> f32 {
+    if t.abs() < 1e-7 {
+        1.0
+    } else {
+        (PI * t).sin() / (PI * t)
+    }
+}
+
+#[test]
+fn user_recipe_materializes_through_a_staged_walk() {
+    let h = Harness::new();
+    let output = h.output();
+    product_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        h.dtype,
+    );
+    assert_grid(&h.read(output), |row, col| (row * col) as f32);
+}
+
+#[test]
+fn selecting_a_region_rebases_the_recipe_origin() {
+    let h = Harness::new();
+    let output = h.output();
+    rebase_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        h.dtype,
+    );
+    assert_grid(&h.read(output), |_, _| 4.0);
+}
+
+#[test]
+fn constant_evaluates_its_value_everywhere() {
+    let h = Harness::new();
+    let output = h.output();
+    constant_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        h.dtype,
+    );
+    assert_grid(&h.read(output), |_, _| -1.25);
+}
+
+#[test]
+fn affine_coordinates_evaluate_absolute_positions() {
+    let h = Harness::new();
+    let output = h.output();
+    affine_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        offset(-2.5),
+        h.dtype,
+    );
+    // Constant down each column: the recipe reads COL only, and the value must hold for the lower
+    // regions of the walk, whose origin the rebasing has moved.
+    assert_grid(&h.read(output), |_, col| -2.5 + col as f32);
+}
+
+#[test]
+fn linear_is_a_triangle_with_unit_support() {
+    let h = Harness::new();
+    let output = h.output();
+    linear_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        offset(-2.5),
+        h.dtype,
+    );
+    // x runs -2.5 ..= 2.5, so both the support and the cutoff are sampled.
+    assert_grid(&h.read(output), |_, col| {
+        let x = (-2.5 + col as f32).abs();
+        if x < 1.0 { 1.0 - x } else { 0.0 }
+    });
+}
+
+#[test]
+fn a_procedural_tile_works_over_an_integer_element_type() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = i32::elem_type_native();
+    let space = Harness::new().space;
+    let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    integer_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        output_arg!(output),
+        space.clone(),
+        dtype,
+    );
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::I32);
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            assert_eq!(got.get_i32(&[row, col]), 7);
+        }
+    }
+}
+
+#[test]
+fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
+    let h = Harness::new();
+    let output = h.output();
+    linear_over_axis_value_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        h.dtype,
+    );
+    // x = row / 2, so the triangle falls to zero at row 2 and stays there.
+    assert_grid(&h.read(output), |row, _| {
+        let x = row as f32 / 2.0;
+        if x < 1.0 { 1.0 - x } else { 0.0 }
+    });
+}
+
+#[test]
+fn cubic_matches_the_keys_convolution() {
+    // Both `a` values the presets pick: catmull_rom is -1/2, sharp is -3/4.
+    for ratio in [Ratio::new(-1, 2), Ratio::new(-3, 4)] {
+        let a = ratio.as_f32();
+        let h = Harness::new();
+        let output = h.output();
+        cubic_kernel::launch::<TestRuntime>(
+            &h.client,
+            h.space.cube_count(),
+            h.space.cube_dim(&h.client),
+            output_arg!(output),
+            h.space.clone(),
+            offset(-2.5),
+            ratio,
+            h.dtype,
+        );
+        // x runs -2.5 ..= 2.5, covering all three pieces of the kernel.
+        assert_grid(&h.read(output), |_, col| {
+            let x = (-2.5 + col as f32).abs();
+            if x <= 1.0 {
+                (a + 2.0) * x * x * x - (a + 3.0) * x * x + 1.0
+            } else if x <= 2.0 {
+                a * x * x * x - 5.0 * a * x * x + 8.0 * a * x - 4.0 * a
+            } else {
+                0.0
+            }
+        });
+    }
+}
+
+#[test]
+fn lanczos_matches_the_windowed_sinc() {
+    // The first case samples half-integers and the |x| = lobes cutoff; the second lands a sample
+    // on the x = 0 singularity and on the sinc zeros.
+    for (start, lobes) in [(-2.5f32, 2u8), (-2.0f32, 3u8)] {
+        let h = Harness::new();
+        let output = h.output();
+        lanczos_kernel::launch::<TestRuntime>(
+            &h.client,
+            h.space.cube_count(),
+            h.space.cube_dim(&h.client),
+            output_arg!(output),
+            h.space.clone(),
+            offset(start),
+            lobes,
+            h.dtype,
+        );
+        assert_grid(&h.read(output), |_, col| {
+            let x = start + col as f32;
+            let lobes = lobes as f32;
+            if x.abs() >= lobes {
+                0.0
+            } else {
+                sinc(x) * sinc(x / lobes)
+            }
+        });
+    }
+}
+
+fn host_coordinate() -> AffineCoordinates<f32> {
+    AffineCoordinates {
+        offset: 0.0,
+        coefficient: 1.0,
+        axis: COL,
+    }
+}
+
+#[test]
+fn presets_pick_their_documented_parameters() {
+    assert_eq!(Cubic::catmull_rom(host_coordinate()).a, Ratio::new(-1, 2));
+    assert_eq!(Cubic::sharp(host_coordinate()).a, Ratio::new(-3, 4));
+    assert_eq!(Lanczos::lanczos_2(host_coordinate()).lobes, 2);
+    assert_eq!(Lanczos::lanczos_3(host_coordinate()).lobes, 3);
+}
+
+#[test]
+fn direct_copy_masks_the_trailing_partial_tile() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
-        .extents(&[(ROW, 4), (COL, 6)])
+        .extents(&[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3))
+                .axis(COL, Cut::sequential(4))
         })
         .build();
-    let output = TestInput::builder(client.clone(), shape![4, 6])
+    let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
 
-    procedural_smem_stage_kernel::launch::<TestRuntime>(
+    direct_copy_kernel::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
+        output_arg!(output),
         space,
-        recipe,
         dtype,
     );
 
-    HostData::from_tensor_handle(&client, output, HostDataType::F32)
-}
-
-fn run_direct_copy(recipe: ProceduralRecipe) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let space = Space::new(&[(ROW, 4), (COL, 6)]);
-    let output = TestInput::builder(client.clone(), shape![4, 6])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    procedural_direct_copy_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        space,
-        recipe,
-        dtype,
+    assert_grid(
+        &HostData::from_tensor_handle(&client, output, HostDataType::F32),
+        |_, _| 1.0,
     );
-
-    HostData::from_tensor_handle(&client, output, HostDataType::F32)
 }
 
 #[test]
-fn evaluates_separable_axis_products_after_region_rebase() {
-    // The selected region begins at (2, 3), so AxisIndex(ROW) * AxisIndex(COL) is 6.
-    let got = run(ProceduralRecipe::axis_product(vec![
-        ProceduralRecipe::axis_index(ROW),
-        ProceduralRecipe::axis_index(COL),
-    ]));
-    for row in 0..4 {
-        for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), 6.0);
-        }
-    }
-}
-
-#[test]
-fn staged_buffering_keeps_coordinate_varying_values_in_place() {
-    let got = run_copy(ProceduralRecipe::axis_product(vec![
-        ProceduralRecipe::axis_index(ROW),
-        ProceduralRecipe::axis_index(COL),
-    ]));
-    for row in 0..4 {
-        for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
-        }
-    }
-}
-
-#[test]
-fn stages_coordinate_varying_values_through_shared_memory() {
-    let got = run_smem_stage(ProceduralRecipe::axis_product(vec![
-        ProceduralRecipe::axis_index(ROW),
-        ProceduralRecipe::axis_index(COL),
-    ]));
-    for row in 0..4 {
-        for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
-        }
-    }
-}
-
-#[test]
-fn copies_procedural_directly_to_global_memory() {
-    let got = run_direct_copy(ProceduralRecipe::axis_product(vec![
-        ProceduralRecipe::axis_index(ROW),
-        ProceduralRecipe::axis_index(COL),
-    ]));
-    for row in 0..4 {
-        for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
-        }
-    }
-}
-
-#[test]
-fn dynamic_procedural_axis_does_not_require_a_source_bound() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let concrete = Space::new(&[(ROW, 4), (COL, 6)]);
-    let space = concrete.clone().with_dynamic(&[ROW]);
-    let output = TestInput::builder(client.clone(), shape![4, 6])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    // `Tile::procedural` receives the dynamic kernel space directly. Unlike the output tile,
-    // it cannot witness ROW's runtime extent, so construction must leave that axis unmasked.
-    procedural_direct_copy_kernel::launch::<TestRuntime>(
-        &client,
-        concrete.cube_count(),
-        concrete.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        space,
-        ProceduralRecipe::one(),
-        dtype,
-    );
-
-    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
-    for row in 0..4 {
-        for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), 1.0);
-        }
-    }
-}
-
-#[test]
-fn dynamic_axis_keeps_static_procedural_bound_aligned_after_divide() {
+fn divided_direct_copy_preserves_the_parent_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let concrete = Tiling::new()
-        .extents(&[(ROW, 4), (COL, 6)])
+        .extents(&[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
@@ -396,63 +599,22 @@ fn dynamic_axis_keeps_static_procedural_bound_aligned_after_divide() {
         })
         .build();
     let space = concrete.clone().with_dynamic(&[ROW]);
-    let output = TestInput::builder(client.clone(), shape![4, 6])
+    let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
 
-    procedural_divided_copy_kernel::launch::<TestRuntime>(
+    divided_direct_copy_kernel::launch::<TestRuntime>(
         &client,
         concrete.cube_count(),
         concrete.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
+        output_arg!(output),
         space,
-        ProceduralRecipe::one(),
         dtype,
     );
 
-    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
-    for row in 0..4 {
-        for col in 0..6 {
-            let expected = if row < 2 && col < 4 { 1.0 } else { 0.0 };
-            assert_eq!(got.get_f32(&[row, col]), expected);
-        }
-    }
-}
-
-#[test]
-fn staged_mma_materializes_only_the_tensor_operand() {
-    let got = run_mma(Buffering::SINGLE);
-    for row in 0..4 {
-        for col in 0..4 {
-            let expected = (0..4).map(|k| (k * (k * 4 + col)) as f32).sum::<f32>();
-            assert_eq!(got.get_f32(&[row, col]), expected);
-        }
-    }
-}
-
-#[test]
-fn double_buffered_mma_with_in_place_procedural_operand() {
-    let got = run_mma(Buffering::DOUBLE);
-    for row in 0..4 {
-        for col in 0..4 {
-            let expected = (0..4).map(|k| (k * (k * 4 + col)) as f32).sum::<f32>();
-            assert_eq!(got.get_f32(&[row, col]), expected);
-        }
-    }
-}
-
-#[test]
-fn evaluates_zero_one_and_uniform_recipes() {
-    for (recipe, expected) in [
-        (ProceduralRecipe::zero(), 0.0),
-        (ProceduralRecipe::one(), 1.0),
-        (ProceduralRecipe::uniform(4), 0.25),
-    ] {
-        let got = run(recipe);
-        assert_eq!(got.get_f32(&[0, 0]), expected);
-    }
+    assert_grid(
+        &HostData::from_tensor_handle(&client, output, HostDataType::F32),
+        |row, col| if row < 2 && col < 4 { 1.0 } else { 0.0 },
+    );
 }

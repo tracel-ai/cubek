@@ -86,9 +86,13 @@ fn procedural_reduce_kernel<E: Float>(
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = Tile::<E>::procedural(
+    let input = Tile::<E>::procedural::<AffineCoordinates<E>>(
         comptime!(space.clone()),
-        comptime!(ProceduralRecipe::axis_index(K)),
+        AffineCoordinates::<E> {
+            offset: E::new(0.0_f32),
+            coefficient: E::new(1.0_f32),
+            axis: K,
+        },
     );
     let mut output = output.tile(space);
     reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
@@ -102,11 +106,13 @@ fn staged_procedural_reduce_kernel<E: Float>(
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
-    let input = Tile::<E>::procedural_resident(
+    let input = Tile::<E>::procedural::<AffineCoordinates<E>>(
         comptime!(space.clone()),
-        comptime!(ProceduralRecipe::axis_index(K)),
-        stage,
+        AffineCoordinates::<E> {
+            offset: E::new(0.0_f32),
+            coefficient: E::new(1.0_f32),
+            axis: K,
+        },
     );
     let mut output = output.tile(space);
     reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
