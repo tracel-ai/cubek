@@ -3326,4 +3326,3 @@ fn run_register_matmul_quant_rhs(
         .as_test_outcome()
         .enforce()
 }
-
