@@ -4,14 +4,13 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, DequantAt, QuantTileArg, Schedule, Space, TileArg, Tiling, Walk,
-    WalkOrder, witnessed_space,
+    Axis, CubeAxis, Cut, DequantAt, QuantTileArg, Schedule, Space, TileArg, Tiling, WalkOrder,
 };
 
 use crate::utils;
 
 /// Dequantize `values` into `output` through the tile engine: the input tile serves the
-/// output element and decodes on read, so the kernel is a walk of region copies.
+/// output element and decodes on read, so the kernel body is one copy.
 ///
 /// `values` is declared **in values**: for a packed store its shape and strides count the
 /// quantized values (innermost stride 1) while its buffer is narrower by the packing factor.
@@ -114,9 +113,9 @@ pub fn launch_ref<R: Runtime>(
 }
 
 #[cube(launch)]
-/// The input tile serves `O` and dequantizes on read, so each region's body is a plain copy;
-/// `I` (the storage element) only names the binding's element, the scheme recovers the served
-/// value. `VI` is the binding width (served over the packing factor), `VO` the served width.
+/// The input tile serves `O` and dequantizes on read, so the body is a plain copy; `I` (the
+/// storage element) only names the binding's element, the scheme recovers the served value.
+/// `VI` is the binding width (served over the packing factor), `VO` the served width.
 pub fn dequantize<I: Numeric, O: Numeric, VI: Size, VO: Size>(
     input: &QuantTileArg<'_, I, VI>,
     output: &TileArg<'_, O, VO>,
@@ -125,12 +124,8 @@ pub fn dequantize<I: Numeric, O: Numeric, VI: Size, VO: Size>(
     #[define(O)] _output_dtype: ElemType,
 ) {
     let input = input.tile::<O>(comptime!(space.clone()));
-    let output = output.tile(comptime!(space.clone()));
-    let walk = witnessed_space(space, &output, &input, &input);
-    for region in Walk::over(walk) {
-        let mut window = output.at(&region);
-        window.copy_from(&input.at(&region));
-    }
+    let mut output = output.tile(space);
+    output.copy(&input);
 }
 
 /// The unit count one cube aims for; plane counts derive from it per device.
