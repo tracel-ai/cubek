@@ -2,7 +2,7 @@ use cubecl::{
     Runtime, TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, std::tensor::TensorHandle,
     zspace::Shape,
 };
-use cubek_quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels};
+use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, assert_equals_approx,
 };
@@ -22,7 +22,7 @@ fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
     }
 
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::tensor(QuantParam::F32))
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 

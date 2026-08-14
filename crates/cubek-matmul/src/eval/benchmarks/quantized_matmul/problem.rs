@@ -1,6 +1,4 @@
-use cubek_quant::scheme::{
-    QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels,
-};
+use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::CatalogEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,13 +57,13 @@ pub struct QuantizedMatmulProblem {
 fn scheme_tensor(value: QuantValue) -> QuantScheme {
     QuantScheme::default()
         .with_mode(QuantMode::Symmetric)
-        .with_scales(ScaleLevels::tensor(QuantParam::F32))
+        .per_tensor(ScaleDtype::F32)
         .with_value(value)
         .with_store(QuantStore::PackedU32(0))
 }
 
 fn scheme_block(value: QuantValue, block: u8) -> QuantScheme {
-    scheme_tensor(value).with_scales(ScaleLevels::block([block], QuantParam::F32))
+    scheme_tensor(value).per_block([block], ScaleDtype::F32)
 }
 
 fn quant_schemes() -> Vec<(&'static str, QuantScheme)> {

@@ -3,7 +3,7 @@
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantParam, QuantScheme, QuantStore};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::std::tensor::{
     ViewMut,
     layout::{CoordsDyn, Layout, LayoutExpand, linear::LinearView},
@@ -261,9 +261,9 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
     // The scales ride a plain `f32` tensor read straight through, so a narrower param
     // would reinterpret its bytes.
     assert!(
-        scheme.param() == QuantParam::F32,
+        scheme.scale_dtype() == ScaleDtype::F32,
         "StridedTileSource::quantized: scales are read as f32, got {:?}",
-        scheme.param()
+        scheme.scale_dtype()
     );
 
     let rank = space.rank();

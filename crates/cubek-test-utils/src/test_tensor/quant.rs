@@ -60,7 +60,7 @@ pub(crate) fn apply_quantization(
         output_storage_type,
     );
 
-    let scale_dtype = ElemType::from_quant_param(scheme.param());
+    let scale_dtype = ElemType::from_scale_dtype(scheme.scale_dtype());
     let out_scale_bytes = cast_f32_to_dtype(&scales_data, scale_dtype);
     let out_scale_handle = TensorHandle::new_contiguous(
         scales_shape,

@@ -255,10 +255,9 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         let scales_layout = {
             let shape = (rows as u32, cols as u32);
 
-            let levels = scheme.scale_levels();
-            if levels.len() > 1 {
+            if scheme.num_levels() > 1 {
                 unimplemented!(
-                    "two-level quantization is not supported by the quantized matmul, got {levels:?}"
+                    "two-level quantization is not supported by the quantized matmul, got {scheme:?}"
                 );
             }
 

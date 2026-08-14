@@ -223,9 +223,8 @@ pub fn scales_layout<R: Runtime>(
 ) -> ScalesLayoutArgs<R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
 
-    let levels = scheme.scale_levels();
-    if levels.len() > 1 {
-        unimplemented!("two-level quantization is not supported here, got {levels:?}");
+    if scheme.num_levels() > 1 {
+        unimplemented!("two-level quantization is not supported here, got {scheme:?}");
     }
 
     match scheme.block_size() {

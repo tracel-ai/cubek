@@ -176,10 +176,15 @@ pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
 /// ([`MemData::stage_scales`] folds the outer level in), so a two-level scheme stages as its
 /// one-level block form and reads below the stage carry no outer scale.
 pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
-    match scheme.scale_levels().inner() {
-        Some(inner) => scheme.with_scales(inner),
-        None => scheme,
-    }
+    let Some(block) = scheme.block_scale() else {
+        return scheme;
+    };
+    // Rebuilt rather than cleared: the levels are set additively and there is no way to drop one.
+    QuantScheme::default()
+        .with_value(scheme.value)
+        .with_store(scheme.store)
+        .with_mode(scheme.mode)
+        .per_block(block.size.as_slice(), block.dtype)
 }
 
 #[cube]

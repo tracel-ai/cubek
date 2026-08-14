@@ -6,7 +6,7 @@ use cubecl::{
     client::ComputeClient,
     future,
     prelude::*,
-    quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
 use cubek_tile::*;
@@ -44,7 +44,7 @@ pub fn bench(
     let client = <TestRuntime as Runtime>::client(&device);
 
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([1, problem.bn as u8], QuantParam::F32))
+        .per_block([1, problem.bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(QuantValue::Q8S);
     let pack = scheme.num_quants();

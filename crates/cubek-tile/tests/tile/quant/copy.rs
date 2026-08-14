@@ -2,7 +2,7 @@ use cubecl::{
     TestRuntime, features::TypeUsage, ir::ElemType, prelude::*,
     std::tensor::layout::linear::linear_view, zspace::Shape,
 };
-use cubek_quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels};
+use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
     ValidationResult, assert_equals_approx,
@@ -60,7 +60,7 @@ fn copy_quantized_per_tensor_matches_reference() {
     }
 
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::tensor(QuantParam::F32))
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -157,7 +157,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, bn as u8], QuantParam::F32))
+        .per_block([bm as u8, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(value);
     let pack = scheme.num_quants();
@@ -290,9 +290,8 @@ fn two_level_without_outer_scale_refused_by_the_builder() {
 
 fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
     QuantScheme::default()
-        .with_scales(
-            ScaleLevels::block([bm as u8, bn as u8], QuantParam::F32).and_tensor(QuantParam::F32),
-        )
+        .per_block([bm as u8, bn as u8], ScaleDtype::F32)
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S)
 }
@@ -390,7 +389,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
     }
 
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, bn as u8], QuantParam::F32))
+        .per_block([bm as u8, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 

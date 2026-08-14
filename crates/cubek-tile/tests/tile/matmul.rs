@@ -9,7 +9,7 @@ use cubecl::{
     prelude::*,
     zspace::shape,
 };
-use cubek_quant::scheme::{QuantParam, QuantScheme, QuantStore, QuantValue, ScaleLevels};
+use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx,
@@ -1426,7 +1426,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::tensor(QuantParam::F32))
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2040,7 +2040,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
 
     let bm = 4usize; // 2 blocks along M, each 4×8; one scale each
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, 8], QuantParam::F32))
+        .per_block([bm as u8, 8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2123,7 +2123,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 
     let bk = 4usize; // 2 blocks along K, each 8×4; the scale changes at p = 4
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([8, bk as u8], QuantParam::F32))
+        .per_block([8, bk as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2239,7 +2239,7 @@ fn mma_matmul_quant_until_read() {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::tensor(QuantParam::F32))
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2326,7 +2326,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::tensor(QuantParam::F32))
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2420,7 +2420,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
 
     // One scale per M-block, over the full K: block `[bm, k]`, scales shaped (m/bm, 1).
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
@@ -2514,7 +2514,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([m as u8, bk as u8], QuantParam::F32))
+        .per_block([m as u8, bk as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
@@ -2608,7 +2608,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([m as u8, bk as u8], QuantParam::F32))
+        .per_block([m as u8, bk as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
@@ -2817,7 +2817,7 @@ fn register_matmul_quant_native_block_m() {
 
     let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2867,7 +2867,7 @@ fn register_matmul_quant_native_direct_serve() {
 
     let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
 
@@ -2924,7 +2924,7 @@ fn run_register_matmul_quant_packed(
     bm: usize,
 ) {
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([bm as u8, k as u8], QuantParam::F32))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(value);
     let pack = scheme.num_quants();
@@ -3268,7 +3268,7 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 fn quant_until_read_refused_by_a_cmma_leaf() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([1, 4], QuantParam::F32))
+        .per_block([1, 4], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(QuantValue::Q8S);
     let leaf = Leaf::Cmma;
@@ -3313,13 +3313,11 @@ fn run_register_matmul_quant_rhs(
     // The data is minted against the one-level scheme either way: a two-level tensor holds the
     // same value and block-scale bytes, plus the outer scale in its own binding.
     let mint_scheme = QuantScheme::default()
-        .with_scales(ScaleLevels::block([1, bn as u8], QuantParam::F32))
+        .per_block([1, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(value);
     let scheme = match outer {
-        Some(_) => mint_scheme.with_scales(
-            ScaleLevels::block([1, bn as u8], QuantParam::F32).and_tensor(QuantParam::F32),
-        ),
+        Some(_) => mint_scheme.per_tensor(ScaleDtype::F32),
         None => mint_scheme,
     };
     let pack = scheme.num_quants();

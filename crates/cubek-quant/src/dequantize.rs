@@ -200,7 +200,7 @@ pub fn launch_ref<R: Runtime>(
     scheme: &QuantScheme,
     output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
-    let scale_dtype: ElemType = ElemType::from_quant_param(scheme.param());
+    let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.scale_dtype());
 
     match scheme {
         QuantScheme {
@@ -291,7 +291,7 @@ fn dequantize_packed<R: Runtime>(
             store: QuantStore::PackedU32(_),
             mode: QuantMode::Symmetric,
             ..
-        } if scheme.levels().len() == 1 => unsafe {
+        } if scheme.num_levels() == 1 => unsafe {
             dequantize_symmetric_packed_kernel::launch_unchecked(
                 client,
                 cube_count,
@@ -341,7 +341,7 @@ fn dequantize_native<R: Runtime>(
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
-        } if scheme.levels().len() == 1 => {
+        } if scheme.num_levels() == 1 => {
             let address_type = input
                 .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))

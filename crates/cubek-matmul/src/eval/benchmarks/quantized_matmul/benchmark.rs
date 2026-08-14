@@ -119,9 +119,8 @@ struct QuantMatmulInputs {
 }
 
 fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    let levels = scheme.scale_levels();
-    if levels.len() > 1 {
-        unimplemented!("two-level quantization is not supported here, got {levels:?}");
+    if scheme.num_levels() > 1 {
+        unimplemented!("two-level quantization is not supported here, got {scheme:?}");
     }
 
     let Some(block) = scheme.block_size() else {

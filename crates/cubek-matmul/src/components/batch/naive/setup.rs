@@ -138,7 +138,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.lhs_scheme
-            && scheme.levels().len() == 1
+            && scheme.num_levels() == 1
             && let Some(block_size) = scheme.block_size()
         {
             let vector_size = vector_sizes.lhs * scheme.num_quants();
@@ -152,7 +152,7 @@ impl BatchMatmulFamily<()> for NaiveBatchMatmulFamily {
         }
 
         if let Some(scheme) = problem.rhs_scheme
-            && scheme.levels().len() == 1
+            && scheme.num_levels() == 1
             && let Some(block_size) = scheme.block_size()
         {
             let vector_size = vector_sizes.rhs * scheme.num_quants();
