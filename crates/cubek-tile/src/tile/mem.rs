@@ -193,7 +193,7 @@ impl<T: Numeric> Tile<T> {
         let mut strides = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            if comptime!(scheme.block_size().is_full()) {
+            if comptime!(scheme.block_size().is_none()) {
                 strides.push(0u32);
             } else {
                 strides.push(scales.stride(p) as u32);
@@ -1843,7 +1843,7 @@ fn smem_scale_grid(
     scheme: QuantScheme,
 ) -> (Vec<usize>, Vec<usize>) {
     let rank = space.rank();
-    let per_tensor = scheme.block_size().is_full();
+    let per_tensor = scheme.block_size().is_none();
     let nb: Vec<usize> = (0..rank)
         .map(|p| {
             if per_tensor {

@@ -262,11 +262,9 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                 );
             }
 
-            let block_size = scheme.block_size();
-            if block_size.is_full() {
-                GlobalScaleLayoutArgs::PerTensor { shape }
-            } else {
-                {
+            match scheme.block_size() {
+                None => GlobalScaleLayoutArgs::PerTensor { shape },
+                Some(block_size) => {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =

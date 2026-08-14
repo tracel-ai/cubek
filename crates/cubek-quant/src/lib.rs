@@ -23,8 +23,7 @@ pub(crate) mod utils {
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
-        let block_size = scheme.block_size();
-        if !block_size.is_full() {
+        if let Some(block_size) = scheme.block_size() {
             let block_size = *block_size.as_slice().last().unwrap() as usize;
             assert!(
                 block_size.is_multiple_of(div),

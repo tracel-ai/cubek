@@ -228,19 +228,19 @@ pub fn scales_layout<R: Runtime>(
         unimplemented!("two-level quantization is not supported here, got {levels:?}");
     }
 
-    let block_size = scheme.block_size();
-    if block_size.is_full() {
-        ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len))
-    } else {
-        let tensor_shape = shape_divmod_quant(&values.shape, scheme.num_quants());
-        let scales_strides = strides_seq(&scales.strides);
-        ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
-            tensor_shape,
-            values_len,
-            scales_strides,
-            block_size.to_dim_vec(values.shape.len()),
-            scales_vector_size,
-        ))
+    match scheme.block_size() {
+        None => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
+        Some(block_size) => {
+            let tensor_shape = shape_divmod_quant(&values.shape, scheme.num_quants());
+            let scales_strides = strides_seq(&scales.strides);
+            ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
+                tensor_shape,
+                values_len,
+                scales_strides,
+                block_size.to_dim_vec(values.shape.len()),
+                scales_vector_size,
+            ))
+        }
     }
 }
 

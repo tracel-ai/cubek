@@ -124,10 +124,9 @@ fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
         unimplemented!("two-level quantization is not supported here, got {levels:?}");
     }
 
-    let block = scheme.block_size();
-    if block.is_full() {
+    let Some(block) = scheme.block_size() else {
         return vec![1; shape.len()];
-    }
+    };
 
     let block_dims = block.to_dim_vec(shape.len());
     shape
@@ -337,7 +336,7 @@ fn validate_spec(problem: &QuantizedMatmulProblem) -> Result<(), String> {
                 "{label} pack axis={last} incompatible with num_quants={nq}"
             ));
         }
-        if !scheme.block_size().is_full() {
+        if scheme.block_size().is_some() {
             let scales = scales_shape(&scheme, shape);
             if scales.contains(&0) {
                 return Err(format!("{label} block size exceeds a dim in {shape:?}"));

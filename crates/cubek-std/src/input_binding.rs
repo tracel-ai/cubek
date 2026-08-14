@@ -73,7 +73,7 @@ impl<R: Runtime> InputBinding<R> {
                 data.strides.swap(dim0, dim1);
 
                 // Swap dims for scale and block size if block scaled quant is used
-                if !scheme.block_size().is_full() {
+                if scheme.block_size().is_some() {
                     scale.shape.swap(dim0, dim1);
                     scale.strides.swap(dim0, dim1);
                     scheme.swap_block_dims(rank, dim0, dim1);

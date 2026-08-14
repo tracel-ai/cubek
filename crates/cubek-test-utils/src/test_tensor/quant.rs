@@ -115,7 +115,7 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
         .into_iter()
         .collect();
 
-    let scales = if scheme.block_size().is_full() {
+    let scales = if scheme.block_size().is_none() {
         vec![1.0 / max_abs_q]
     } else {
         {

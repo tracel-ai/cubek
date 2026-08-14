@@ -185,7 +185,10 @@ pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
     if levels.len() > 1 {
         unimplemented!("two-level quantization is not supported here, got {levels:?}");
     }
-    scheme.block_size().resolved_dims(shape)
+    match scheme.block_size() {
+        None => shape.to_vec(),
+        Some(block) => block.resolved_dims(shape),
+    }
 }
 
 /// Shape of the per-block scale grid: each dimension divided by its block

@@ -29,7 +29,7 @@ pub fn launch_ref<R: Runtime>(
         "only native quantization is supported for now."
     );
     assert!(
-        scheme.levels().len() == 1 && scheme.block_size().is_full(),
+        scheme.levels().len() == 1 && scheme.block_size().is_none(),
         "only per tensor quantization is supported for now."
     );
     assert!(

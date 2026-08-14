@@ -133,10 +133,9 @@ pub struct QuantInfo {
 /// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
 /// strides); a block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
-    let block = scheme.block_size();
-    if block.is_full() {
+    let Some(block) = scheme.block_size() else {
         return vec![1; rank];
-    }
+    };
     block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
 }
 
