@@ -6,7 +6,7 @@ use cubecl::std::{
     },
 };
 use cubecl::zspace::Shape;
-use cubecl_common::quant::scheme::QuantScheme;
+use cubecl_common::quant::scheme::{BlockSize, QuantScheme};
 use cubek_std::MatrixLayout;
 
 use crate::{
@@ -222,7 +222,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         scheme: QuantScheme,
         vector_size: VectorSize,
         config: GlobalLayoutConfig,
-    ) -> (GlobalLayoutLaunch<R>, GlobalScaleLayoutArgs<R>) {
+    ) -> (GlobalLayoutLaunch<R>, GlobalScaleLayoutLaunch<R>) {
         let rank = values.shape.len();
         let (rows, cols) = (shape[rank - 2], shape[rank - 1]);
         let values_layout = {
@@ -261,24 +261,35 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                 );
             }
 
-            match scheme.block_size() {
-                None => GlobalScaleLayoutArgs::PerTensor { shape },
-                Some(block_size) => {
-                    let [block_row, block_col] = block_size.as_dim();
-                    // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
-                    let scales_layout =
-                        GlobalLayoutLaunch::from_handle_batched(scales, problem, 1, config);
-                    GlobalScaleLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
-                        shape,
-                        scales_layout,
-                        (block_row as u32, block_col as u32),
-                    ))
-                }
-            }
+            // Whole-tensor granularity covers both axes, the case `addressing_block` drops.
+            let [block_row, block_col] = match scheme.block_size() {
+                None => [BlockSize::FULL; 2],
+                Some(block) => block.as_dim(),
+            };
+            let block_size = (
+                addressing_block(block_row, rows),
+                addressing_block(block_col, cols),
+            );
+            // Broadcast batch strides are zeroed by `BatchLayoutLaunch::from_handle`, so this asks
+            // whether any batch of scales is distinct from the first.
+            let batched = scales.shape[..scales.shape.len().saturating_sub(2)]
+                .iter()
+                .any(|&dim| dim > 1);
+
+            // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
+            let scales_layout = GlobalLayoutLaunch::from_handle_batched(scales, problem, 1, config);
+            GlobalScaleLayoutLaunch::new(shape, scales_layout, block_size, batched)
         };
 
         (values_layout, scales_layout)
     }
+}
+
+/// Keeps a block extent only where it still tells two scales apart. [`BlockSize::FULL`] covers the
+/// axis, and so does any extent reaching it, which is also what keeps `FULL`'s zero out of the
+/// division below.
+fn addressing_block(block: u8, extent: usize) -> Option<u32> {
+    (block != BlockSize::FULL && (block as usize) < extent).then_some(block as u32)
 }
 
 #[derive(CubeType, CubeLaunch)]
@@ -384,33 +395,55 @@ impl<R: Runtime> BatchLayoutLaunch<R> {
     }
 }
 
-#[derive(CubeType, CubeLaunch)]
-pub enum GlobalScaleLayout {
-    PerTensor { shape: Coords2d },
-    BlockScaled(BlockScaledLayout),
-}
-
-/// Workaround for enums not supporting `comptime`, should fix that in the future
+/// Maps a value coordinate to the flat index of its block's scale.
+///
+/// Per-tensor is the degenerate case where the block covers both axes and the scales do not vary
+/// across batches: every term folds away at comptime and a read is a constant-index broadcast, so
+/// it needs no layout of its own.
 #[derive(CubeType, CubeLaunch, Clone)]
 #[expand(derive(Clone))]
-pub struct BlockScaledLayout {
+pub struct GlobalScaleLayout {
     shape: Coords2d,
     scales_layout: GlobalLayout,
+    /// Per-axis block extent, `None` on an axis its block covers, whose quotient is always `0`.
+    /// Never the axis extent: holding that would key the kernel on the matrix shape.
     #[cube(comptime)]
-    block_size: Coords2d,
+    block_size: (Option<u32>, Option<u32>),
+    /// Whether the scales vary across batches. They do not when the handle is broadcast over them,
+    /// and the batch term is then the one part no block can rule out on its own.
+    #[cube(comptime)]
+    batched: bool,
 }
 
 #[cube]
-impl BlockScaledLayout {
+impl GlobalScaleLayout {
     pub fn new(
         shape: Coords2d,
         scales_layout: GlobalLayout,
-        #[comptime] block_size: Coords2d,
+        #[comptime] block_size: (Option<u32>, Option<u32>),
+        #[comptime] batched: bool,
     ) -> Self {
-        BlockScaledLayout {
+        GlobalScaleLayout {
             shape,
             scales_layout,
             block_size,
+            batched,
+        }
+    }
+
+    /// Whether any coordinate can move the index off `0`, which decides whether an address is
+    /// worth computing at all.
+    fn addresses(&self) -> comptime_type!(bool) {
+        comptime!(self.batched || self.block_size.0.is_some() || self.block_size.1.is_some())
+    }
+
+    /// The axis coordinate's block index, dropped at comptime on an axis holding a single scale
+    /// rather than dividing a runtime coordinate that can only answer `0`.
+    fn block_index(&self, pos: u32, #[comptime] block: Option<u32>) -> u32 {
+        if comptime!(block.is_some()) {
+            pos / comptime!(block.unwrap())
+        } else {
+            0u32.runtime()
         }
     }
 }
@@ -421,20 +454,15 @@ impl Layout for GlobalScaleLayout {
     type SourceCoordinates = Coords1d;
 
     fn to_source_pos(&self, coords: Self::Coordinates) -> usize {
-        match self {
-            GlobalScaleLayout::PerTensor { .. } => 0usize.runtime(),
-            GlobalScaleLayout::BlockScaled(layout) => {
-                let BlockScaledLayout {
-                    scales_layout,
-                    block_size,
-                    ..
-                } = layout.clone();
-
-                let (batch, row, col) = coords;
-                let (block_row, block_col) = block_size;
-                let (row, col) = (row / block_row, col / block_col);
-                scales_layout.to_source_pos((batch, row, col))
-            }
+        let addresses = self.addresses();
+        if comptime!(!addresses) {
+            // One scale for the whole tensor, so no coordinate can reach another.
+            0usize.runtime()
+        } else {
+            let (batch, row, col) = coords;
+            let row = self.block_index(row, comptime!(self.block_size.0));
+            let col = self.block_index(col, comptime!(self.block_size.1));
+            self.scales_layout.to_source_pos((batch, row, col))
         }
     }
 
@@ -443,31 +471,24 @@ impl Layout for GlobalScaleLayout {
     }
 
     fn shape(&self) -> Self::Coordinates {
-        match self {
-            GlobalScaleLayout::PerTensor { shape } => {
-                (u32::MAX.runtime() as usize, shape.0, shape.1)
-            }
-            GlobalScaleLayout::BlockScaled(layout) => {
-                let (row, col) = layout.shape;
-                (u32::MAX.runtime() as usize, row, col)
-            }
-        }
+        (u32::MAX.runtime() as usize, self.shape.0, self.shape.1)
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        match self {
-            GlobalScaleLayout::PerTensor { .. } => true.runtime(),
-            GlobalScaleLayout::BlockScaled(layout) => {
-                let (_, row, col) = pos;
-                let config = &layout.scales_layout.config.comptime();
-                let (rows, cols) = layout.shape;
+        let addresses = self.addresses();
+        if comptime!(!addresses) {
+            // The single scale sits at index 0, which no coordinate can leave.
+            true.runtime()
+        } else {
+            let (_, row, col) = pos;
+            let config = &self.scales_layout.config.comptime();
+            let (rows, cols) = self.shape;
 
-                match (config.check_row_bounds, config.check_col_bounds) {
-                    (true, true) => row < rows && col < cols,
-                    (true, false) => row < rows,
-                    (false, true) => col < cols,
-                    (false, false) => true,
-                }
+            match (config.check_row_bounds, config.check_col_bounds) {
+                (true, true) => row < rows && col < cols,
+                (true, false) => row < rows,
+                (false, true) => col < cols,
+                (false, false) => true,
             }
         }
     }
