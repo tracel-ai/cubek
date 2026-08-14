@@ -538,11 +538,7 @@ fn quantize(v: usize, scheme: QuantScheme) {
         .subspace(&[M, K])
         .vectorize(v)
         .checked(false)
-        .quantized(
-            binding(&client, &[1, 8]).into_tensor_arg(),
-            scheme,
-            DequantAt::Read,
-        )
+        .quantized(&[binding(&client, &[1, 8])], scheme, DequantAt::Read)
         .build();
 }
 

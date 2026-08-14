@@ -243,7 +243,7 @@ pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
 }
 
 /// Two-level: block scales normalized by one per-tensor scale, both folded into every read,
-/// `out == q * scale[i/bm, j/bn] * global`. The expectation carries the global, so an
+/// `out == q * scale[i/bm, j/bn] * outer`. The expectation carries the outer scale, so an
 /// implementation that drops it fails by exactly that factor.
 #[test]
 fn copy_quantized_two_level_matches_reference() {
@@ -253,19 +253,19 @@ fn copy_quantized_two_level_matches_reference() {
 }
 
 /// The mutation check on the same path: a zero per-tensor scale zeroes every reconstruction, so
-/// the global provably participates in each read rather than defaulting to one.
+/// the outer scale provably participates in each read rather than defaulting to one.
 #[test]
-fn copy_quantized_two_level_zero_global_zeroes_output() {
+fn copy_quantized_two_level_zero_outer_scale_zeroes_output() {
     run_quantized_two_level(8, 8, 4, 4, 0.0);
 }
 
-/// A two-level scheme with no global binding is refused by the builder, host-side and on the
+/// A two-level scheme with no outer binding is refused by the builder, host-side and on the
 /// caller's thread: a missing per-tensor scale would otherwise reconstruct every value short by
 /// that factor. (The kernel-side backstop in `QuantTileArg::tile` cannot be pinned here: it fires
 /// on the compile server, where a panic is swallowed rather than propagated.)
 #[test]
 #[should_panic(expected = "takes as many scale bindings")]
-fn two_level_without_global_refused_by_the_builder() {
+fn two_level_without_outer_scale_refused_by_the_builder() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n) = (8, 8);
     let scheme = two_level_scheme(4, 4);
@@ -284,7 +284,7 @@ fn two_level_without_global_refused_by_the_builder() {
     launcher
         .arg(input.binding())
         .subspace(&[M, N])
-        .quantized(scales.binding().into_tensor_arg(), scheme, DequantAt::Read)
+        .quantized(&[scales.binding()], scheme, DequantAt::Read)
         .build();
 }
 
@@ -298,8 +298,8 @@ fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
 }
 
 /// [`run_quantized_block`] with a two-level scheme: the same block grid, its scales normalized
-/// by `global`, bound as a third 1-element tensor.
-fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, global: f32) {
+/// by `outer`, bound as a third 1-element tensor.
+fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, outer: f32) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -333,8 +333,8 @@ fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, global: f32
     let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let global_scale = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
-        .custom(vec![global])
+    let outer_scale = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
+        .custom(vec![outer])
         .generate_without_host_data();
 
     let out_dtype = f32::elem_type_native();
@@ -346,7 +346,7 @@ fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, global: f32
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            Some(linear_view(global_scale.binding())).into(),
+            Some(linear_view(outer_scale.binding())).into(),
             TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,
@@ -364,7 +364,7 @@ fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, global: f32
                 .iter_indices()
                 .map(|idx| {
                     let scale = scale_vals[(idx[0] / bm) * sn + (idx[1] / bn)];
-                    input_host.get_f32(&idx) * scale * global
+                    input_host.get_f32(&idx) * scale * outer
                 })
                 .collect(),
         ),

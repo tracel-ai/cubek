@@ -7,7 +7,7 @@
 
 use cubecl::prelude::{Numeric, Size};
 use cubecl::{
-    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg,
+    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg, prelude::TensorBinding,
     quant::scheme::QuantScheme, zspace::Shape,
 };
 use cubecl::{
@@ -384,9 +384,9 @@ pub struct QuantizedTileInput {
 }
 
 impl QuantizedTileInput {
-    /// Launch arg for the scales tensor.
-    pub fn scales_arg(&self) -> TensorArg<TestRuntime> {
-        self.scales.clone().binding().into_tensor_arg()
+    /// Binding for the innermost level's scales tensor.
+    pub fn scales_binding(&self) -> TensorBinding<TestRuntime> {
+        self.scales.clone().binding()
     }
 
     /// The quantized tile as one launch argument: values, scales, spec, scheme, and how far the
@@ -394,7 +394,7 @@ impl QuantizedTileInput {
     pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V, TestRuntime> {
         QuantTileArgLaunch::new(
             self.tile.tensor_arg(1),
-            self.scales_arg(),
+            self.scales_binding().into_tensor_arg(),
             None.into(),
             self.tile.spec(),
             self.scheme,

@@ -102,10 +102,10 @@ pub enum DequantAt {
 #[expand(derive(Clone))]
 pub struct QuantInfo {
     pub(crate) buffer: Box<[f32]>,
-    /// Per-tensor scale of a two-level scheme, already read from its binding. `None` on a staged
+    /// The outer level's whole-tensor scale, already read from its binding. `None` on a staged
     /// side-channel even for a two-level scheme: [`MemData::stage_scales`] folds it into the grid,
     /// so everything below a stage sees a one-level scheme.
-    pub(crate) global: ComptimeOption<f32>,
+    pub(crate) outer: ComptimeOption<f32>,
     pub(crate) strides: Coords<u32>,
     pub(crate) window_start: u32,
     #[cube(comptime)]
@@ -174,8 +174,8 @@ pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
 }
 
 /// The scheme a staged side-channel serves: its grid holds *effective* scales
-/// ([`MemData::stage_scales`] folds the per-tensor factor in), so a two-level scheme stages as
-/// its one-level block form and reads below the stage carry no global.
+/// ([`MemData::stage_scales`] folds the outer level in), so a two-level scheme stages as its
+/// one-level block form and reads below the stage carry no outer scale.
 pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
     match scheme.scale_levels().inner() {
         Some(inner) => scheme.with_scales(inner),
@@ -185,22 +185,22 @@ pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
 
 #[cube]
 impl QuantInfo {
-    /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
-    /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
-    /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
-    /// the window's own block index in here lets [`ScaleLayout`] add only the within-window offset,
-    /// sound because a window never straddles a block (`validate_scheme` enforces it).
-    /// The one scale this whole window reconstructs against, per-tensor factor folded in. Only
+    /// The one scale this whole window reconstructs against, outer level folded in. Only
     /// meaningful where [`uniform`](QuantInfoExpand::uniform) holds; one load for the whole tile.
     pub(crate) fn uniform_scale(&self) -> f32 {
         let scale = self.buffer[self.window_start.fcast::<usize>()];
-        if comptime!(self.global.is_some()) {
-            scale * self.global.unwrap()
+        if comptime!(self.outer.is_some()) {
+            scale * self.outer.unwrap()
         } else {
             scale
         }
     }
 
+    /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
+    /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
+    /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
+    /// the window's own block index in here lets [`ScaleLayout`] add only the within-window offset,
+    /// sound because a window never straddles a block (`validate_scheme` enforces it).
     pub(crate) fn window(
         &self,
         origin: &Coords<u32>,
@@ -219,7 +219,7 @@ impl QuantInfo {
         }
         QuantInfo {
             buffer: unsafe { self.buffer.as_boxed_unchecked() },
-            global: self.global,
+            outer: self.outer,
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),

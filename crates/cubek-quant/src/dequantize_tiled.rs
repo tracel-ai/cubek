@@ -62,7 +62,7 @@ pub fn launch_ref<R: Runtime>(
         .subspace(&[M, N])
         .checked(false)
         // Nothing stages this operand, so its read is what decodes it.
-        .quantized(scales.into_tensor_arg(), *scheme, DequantAt::Read)
+        .quantized(&[scales], *scheme, DequantAt::Read)
         .build();
     let output_op = StridedOperand::source(output)
         .space(&space)

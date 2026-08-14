@@ -2952,7 +2952,7 @@ fn run_register_matmul_quant_packed(
         a.tile.tensor_arg(1),
         a_dtype,
         scheme,
-        a.scales_arg(),
+        a.scales_binding().into_tensor_arg(),
         a.scale_values.clone(),
         bm,
         q,
@@ -3206,9 +3206,9 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
 }
 
 /// Two-level through the staged `DequantAt::Read` path: the stage keeps the packed weight, and
-/// `stage_scales` writes `global * local` into the smem scale grid, so the reads below see
-/// effective one-level scales. The expectation carries the global, so a fold that never happens
-/// (or happens twice) fails by that factor.
+/// `stage_scales` writes `outer * local` into the smem scale grid, so the reads below see
+/// effective one-level scales. The expectation carries the outer scale, so a fold that never
+/// happens (or happens twice) fails by that factor.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -3234,7 +3234,7 @@ fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
 }
 
 /// Two-level through the staged `DequantAt::Load` path: the fill dequantizes into the stage, so
-/// the global folds in the gmem read itself and the stage carries plain served values.
+/// the outer scale folds in the gmem read itself and the stage carries plain served values.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -3295,7 +3295,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
         .subspace(&[K, N])
         .vectorize(scheme.num_quants())
         .leaf(leaf)
-        .quantized(b.scales_arg(), scheme, DequantAt::Read)
+        .quantized(&[b.scales_binding()], scheme, DequantAt::Read)
         .build();
 }
 
@@ -3308,15 +3308,15 @@ fn run_register_matmul_quant_rhs(
     value: QuantValue,
     bn: usize,
     dequant_at: DequantAt,
-    global: Option<f32>,
+    outer: Option<f32>,
 ) {
     // The data is minted against the one-level scheme either way: a two-level tensor holds the
-    // same value and block-scale bytes, plus the global in its own binding.
+    // same value and block-scale bytes, plus the outer scale in its own binding.
     let mint_scheme = QuantScheme::default()
         .with_scales(ScaleLevels::block([1, bn as u8], QuantParam::F32))
         .with_store(QuantStore::PackedU32(0))
         .with_value(value);
-    let scheme = match global {
+    let scheme = match outer {
         Some(_) => mint_scheme.with_scales(
             ScaleLevels::block([1, bn as u8], QuantParam::F32).and_tensor(QuantParam::F32),
         ),
@@ -3343,7 +3343,7 @@ fn run_register_matmul_quant_rhs(
         .untiled()
         .packed(&mint_scheme, dequant_at)
         .arange();
-    let global_scale = global.map(|g| {
+    let outer_scale = outer.map(|g| {
         TestInput::builder(client.clone(), shape![1])
             .custom(vec![g])
             .generate_without_host_data()
@@ -3362,12 +3362,9 @@ fn run_register_matmul_quant_rhs(
         .arg(b.tile.handle().binding())
         .subspace(&[K, N])
         .vectorize(pack);
-    let b_op = match global_scale {
-        Some(g) => b_src
-            .quantized_two_level(b.scales_arg(), g.binding(), scheme, dequant_at)
-            .build(),
-        None => b_src.quantized(b.scales_arg(), scheme, dequant_at).build(),
-    };
+    let mut scales = vec![b.scales_binding()];
+    scales.extend(outer_scale.map(|g| g.binding()));
+    let b_op = b_src.quantized(&scales, scheme, dequant_at).build();
     // The register microkernel lines the accumulator at the RHS's served width.
     let c_op = launcher
         .arg(c.handle().binding())
@@ -3391,7 +3388,7 @@ fn run_register_matmul_quant_rhs(
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     // A is arange over (m, k): a[i, p] = i·k + p.
     let sn = n / bn;
-    let g = global.unwrap_or(1.0);
+    let g = outer.unwrap_or(1.0);
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
             let (i, j) = (idx / n, idx % n);

@@ -179,7 +179,7 @@ impl<T: Numeric> Tile<T> {
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
-        global: ComptimeOption<f32>,
+        outer: ComptimeOption<f32>,
         #[comptime] scheme: QuantScheme,
         #[comptime] dequant_at: DequantAt,
         #[comptime] space: Space,
@@ -201,7 +201,7 @@ impl<T: Numeric> Tile<T> {
         }
         let info = QuantInfo {
             buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
-            global,
+            outer,
             strides,
             window_start: 0u32,
             block: comptime!(block),
@@ -907,11 +907,11 @@ impl<T: Numeric> MemData<T> {
                     .frem(comptime!(nb[p] as u32));
                 src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
             }
-            // The grid holds *effective* scales: a two-level source's per-tensor factor folds in
-            // here, once per block per stage, so everything below the stage serves a one-level
-            // scheme and no global threads past this point.
-            if comptime!(sinfo.global.is_some()) {
-                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()] * sinfo.global.unwrap();
+            // The grid holds *effective* scales: a two-level source's outer level folds in here,
+            // once per block per stage, so everything below the stage serves a one-level scheme
+            // and no outer scale threads past this point.
+            if comptime!(sinfo.outer.is_some()) {
+                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()] * sinfo.outer.unwrap();
             } else {
                 dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
             }
@@ -1259,11 +1259,11 @@ impl<T: Numeric> MemData<T> {
                         info.uniform_scale(),
                         comptime!(info.scheme),
                     )
-                } else if comptime!(info.global.is_some()) {
+                } else if comptime!(info.outer.is_some()) {
                     DequantView::<I, WP, f32, T, W, Coords1d>::new_with_outer_scale(
                         values,
                         scales,
-                        info.global.unwrap(),
+                        info.outer.unwrap(),
                         comptime!(info.scheme),
                     )
                 } else {
@@ -1329,11 +1329,11 @@ impl<T: Numeric> MemData<T> {
                         info.uniform_scale(),
                         comptime!(info.scheme),
                     )
-                } else if comptime!(info.global.is_some()) {
+                } else if comptime!(info.outer.is_some()) {
                     DequantView::<I, WP, f32, T, W, C>::new_with_outer_scale(
                         values,
                         scales,
-                        info.global.unwrap(),
+                        info.outer.unwrap(),
                         comptime!(info.scheme),
                     )
                 } else {
@@ -1818,10 +1818,10 @@ fn smem_quant_info(
     }
     ComptimeOption::new_Some(QuantInfo {
         buffer,
-        // The fill folds a two-level source's global into the staged grid
+        // The fill folds a two-level source's outer level into the staged grid
         // ([`MemData::stage_scales`]), so the stage serves effective scales under the one-level
         // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
-        global: ComptimeOption::new_None(),
+        outer: ComptimeOption::new_None(),
         strides,
         window_start: 0u32,
         block: comptime!(block),
