@@ -1,11 +1,74 @@
-//! The walks behind [`Tile::mma`](crate::Tile::mma): the plain recursion, and one per
-//! [`Buffering`](crate::Buffering). A walk's body is pure structure; where each operand lives and
-//! what that costs (slot store, rendezvous, fill dispatch) is delegated, chiefly to
-//! [`Staging::new`].
+//! The walks behind [`Tile::mma`](crate::Tile::mma): the plain recursion, and the buffered one.
+//! A buffered walk's structure is [`pipelined_walk`]'s whatever its
+//! [`Buffering`](crate::Buffering) depth; this file supplies only what a slot holds for a matmul
+//! and what consuming one computes.
 
 use cubecl::prelude::*;
 
 use crate::*;
+
+/// One level's matmul as a [`Pipelined`] operation: the accumulator it writes and the two operands
+/// its slots stage. The tiles are handles, so the walk addressing them addresses the same storage
+/// the caller passed in.
+#[derive(CubeType)]
+pub(crate) struct MmaWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> {
+    acc: Tile<Acc>,
+    lhs: Tile<Lhs>,
+    rhs: Tile<Rhs>,
+}
+
+#[cube]
+impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, Rhs> {
+    type Slot = (Tile<Lhs>, Tile<Rhs>);
+
+    fn ring(
+        &self,
+        #[comptime] op_space: Space,
+        #[comptime] out: Space,
+        #[comptime] depth: usize,
+    ) -> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+        Ring::binary(&self.lhs, &self.rhs, op_space, out, depth)
+    }
+
+    /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects its
+    /// block by comptime coordinate) or when a slot stages plane tiles, selected the same way. An
+    /// smem-staged level stays rolled: unrolling would re-stage its shared memory per copy.
+    fn unrolled(&self, ring: &Ring<(Tile<Lhs>, Tile<Rhs>)>) -> comptime_type!(bool) {
+        let cuts = self
+            .acc
+            .tile_kind
+            .cuts_partition(comptime!(self.acc.space.clone()));
+        // A plane stage stands up only when the operand merge is itself static-walkable.
+        let has_plane_stage = ring.has_plane_stage();
+        let plane_stage = comptime!(
+            has_plane_stage && Space::merge(&[&self.lhs.space, &self.rhs.space]).static_walkable()
+        );
+        comptime!(cuts || plane_stage)
+    }
+
+    fn fill_pinned(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
+        slot.fill_pinned(&self.lhs, &self.rhs, region);
+    }
+
+    fn fill_streamed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
+        slot.fill_streamed(&self.lhs, &self.rhs, region);
+    }
+
+    fn compute(
+        &mut self,
+        slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>,
+        region: &Region,
+        #[comptime] publish: bool,
+    ) {
+        if comptime!(publish) {
+            slot.consume_final(|staged_lhs, staged_rhs| {
+                self.acc.at(region).mma(staged_lhs, staged_rhs)
+            });
+        } else {
+            slot.consume(|staged_lhs, staged_rhs| self.acc.at(region).mma(staged_lhs, staged_rhs));
+        }
+    }
+}
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
@@ -41,142 +104,22 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// [`Buffering::Single`](crate::Buffering::Single): per region, fill one [`Staging`] slot with
-    /// the operands and consume it into the recursion. An operand the walk leaves unchanged (its
-    /// space lacks every walked axis, the same structural fact as broadcast omission) fills once,
-    /// above the loop; re-filling per region would just move the same window again.
-    /// `consume_final` every region, since no later fill publishes within an iteration.
-    ///
-    /// The walk unrolls when the level *cuts* a fragment-partition output (each region selects
-    /// its block by comptime coordinate) or on a static register-staged level (comptime regions
-    /// land window offsets as immediates). An smem-staged level stays rolled: unrolling would
-    /// re-stage its shared memory per copy.
-    pub(crate) fn mma_staged<Lhs: Numeric, Rhs: Numeric>(
+    /// The level's regions through a ring of `depth` [`Staging`] slots: depth 1 fills a slot and
+    /// consumes it per region, deeper rings overlap each region's fill with an earlier region's
+    /// compute. [`pipelined_walk`] owns that schedule.
+    pub(crate) fn mma_buffered<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         op_space: Space,
+        #[comptime] depth: usize,
     ) {
-        // `Staging` decides which operand (if any) is pinned: walk-invariant, so its window
-        // never moves and it fills once, above the loop. The rest stream, refilled per region.
-        let mut staging = Staging::new(
-            lhs,
-            rhs,
-            comptime!(op_space.clone()),
-            comptime!(self.space.clone()),
-        );
-        let cuts = self.tile_kind.cuts_partition(comptime!(self.space.clone()));
-        // A plane stage selects its tiles by comptime coordinate, so it stands up only under an
-        // unrolled walk, and only when the operand merge is itself static-walkable.
-        let has_plane_stage = staging.has_plane_stage();
-        let plane_stage =
-            comptime!(has_plane_stage && Space::merge(&[&lhs.space, &rhs.space]).static_walkable());
-        let unroll = comptime!(cuts || plane_stage);
-
-        let walk = Walk::over(op_space);
-        staging.fill_pinned(lhs, rhs, &walk.region(0));
-        let walk = if comptime!(unroll) {
-            walk.unrolled()
-        } else {
-            walk
+        let out = comptime!(self.space.clone());
+        let mut walk = MmaWalk::<Acc, Lhs, Rhs> {
+            acc: self.clone(),
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
         };
-        for region in walk {
-            staging.fill_streamed(lhs, rhs, &region);
-            staging.consume_final(|staged_lhs, staged_rhs| {
-                self.at(&region).mma(staged_lhs, staged_rhs)
-            });
-        }
-    }
-
-    /// [`Buffering::Double`](crate::Buffering::Double): two [`Staging`] slots driven
-    /// `fill`/`consume` on alternating regions so one slot's fill overlaps the other's compute.
-    pub(crate) fn mma_double<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        op_space: Space,
-    ) {
-        // Keep this region-index protocol in lockstep with `Tile::reduce_double` in
-        // `ops/reduce/schedule.rs`: only the fill/consume bodies differ by operand arity.
-        // Changes to prologue, alternating prefetch, or epilogue handling must be made in both.
-        // Double-buffering fills both operands every region (see the `fill`s below), so the
-        // pin flags go unread; pass the operation space only to satisfy `new`.
-        let mut even_slot = Staging::new(
-            lhs,
-            rhs,
-            comptime!(op_space.clone()),
-            comptime!(self.space.clone()),
-        );
-        let mut odd_slot = Staging::new(
-            lhs,
-            rhs,
-            comptime!(op_space.clone()),
-            comptime!(self.space.clone()),
-        );
-        // Per operand, not per slot: an operand read in place is rebound to the region rather than
-        // copied, so a slot may hold one staged operand beside one that stayed put.
-        let lhs_residence = even_slot.residence();
-        let rhs_residence = even_slot.residence_rhs();
-
-        // Double-buffering needs random access (prefetch the next region), so it indexes the
-        // `walk` by hand rather than iterating.
-        let walk = Walk::over(op_space);
-        let n = walk.total();
-
-        // Prologue: prime the even slot with region 0.
-        let first = walk.region(0);
-        even_slot.fill(|staged_operands, pipe| {
-            let lhs_source = lhs.at(&first);
-            let rhs_source = rhs.at(&first);
-            fill_operand(&mut staged_operands.0, &lhs_source, lhs_residence, pipe);
-            fill_operand(&mut staged_operands.1, &rhs_source, rhs_residence, pipe);
-        });
-
-        for p in 0..n / 2 {
-            let even = p * 2;
-            let odd = even + 1;
-
-            // Prefetch the odd region into its slot (its fill overlaps the compute below), then
-            // compute the even region from the even slot.
-            let odd_region = walk.region(odd);
-            odd_slot.fill(|staged_operands, pipe| {
-                let lhs_source = lhs.at(&odd_region);
-                let rhs_source = rhs.at(&odd_region);
-                fill_operand(&mut staged_operands.0, &lhs_source, lhs_residence, pipe);
-                fill_operand(&mut staged_operands.1, &rhs_source, rhs_residence, pipe);
-            });
-            let even_region = walk.region(even);
-            even_slot.consume(|staged_lhs, staged_rhs| {
-                self.at(&even_region).mma(staged_lhs, staged_rhs)
-            });
-
-            // Prefetch the next even region back into the even slot (if it exists), then compute
-            // the odd region from the odd slot; on the walk's final region no fill follows, so
-            // `consume_final` publishes the odd slot itself.
-            if odd + 1 < n {
-                let next_even = walk.region(odd + 1);
-                even_slot.fill(|staged_operands, pipe| {
-                    let lhs_source = lhs.at(&next_even);
-                    let rhs_source = rhs.at(&next_even);
-                    fill_operand(&mut staged_operands.0, &lhs_source, lhs_residence, pipe);
-                    fill_operand(&mut staged_operands.1, &rhs_source, rhs_residence, pipe);
-                });
-                odd_slot.consume(|staged_lhs, staged_rhs| {
-                    self.at(&odd_region).mma(staged_lhs, staged_rhs)
-                });
-            } else {
-                odd_slot.consume_final(|staged_lhs, staged_rhs| {
-                    self.at(&odd_region).mma(staged_lhs, staged_rhs)
-                });
-            }
-        }
-
-        // An odd total leaves the last region primed in the even slot with no consumer in the
-        // loop; no fill follows, so `consume_final` publishes it.
-        if n % 2 == 1 {
-            let last = walk.region(n - 1);
-            even_slot
-                .consume_final(|staged_lhs, staged_rhs| self.at(&last).mma(staged_lhs, staged_rhs));
-        }
+        pipelined_walk::<MmaWalk<Acc, Lhs, Rhs>>(&mut walk, op_space, out, depth);
     }
 }

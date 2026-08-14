@@ -26,10 +26,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 if comptime!(all_in_place) {
                     self.mma_direct(lhs, rhs, op_space);
                 } else {
-                    match comptime!(level.buffering()) {
-                        Buffering::Single => self.mma_staged(lhs, rhs, op_space),
-                        Buffering::Double => self.mma_double(lhs, rhs, op_space),
-                    }
+                    self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().get()));
                 }
             }
         }

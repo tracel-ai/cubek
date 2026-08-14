@@ -29,10 +29,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 if comptime!(residence == Residence::InPlace) {
                     self.reduce_direct(input, inst, op_space);
                 } else {
-                    match comptime!(level.buffering()) {
-                        Buffering::Single => self.reduce_staged(input, inst, op_space),
-                        Buffering::Double => self.reduce_double(input, inst, op_space),
-                    }
+                    self.reduce_buffered(input, inst, op_space, comptime!(level.buffering().get()));
                 }
             }
         }

@@ -103,12 +103,12 @@ impl TileQuantStageBench {
         let tn = lanes * un;
         Tiling::new()
             .extents(&[(M, self.m), (N, self.n), (K, self.k)])
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::cube(CubeAxis::X, tn))
                     .axis(K, Cut::sequential(self.tk))
             })
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::unit(un))
                     .axis(K, Cut::sequential(self.tk))

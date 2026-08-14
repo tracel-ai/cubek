@@ -1,7 +1,8 @@
-//! Filling a staging slot with matmul operands: the operand-deducing [`new`](Staging::new), the
-//! pin split ([`fill_pinned`](Staging::fill_pinned) / [`fill_streamed`](Staging::fill_streamed)),
-//! and the closure-driven [`fill`](Staging::fill) / [`consume`](Staging::consume) with their
-//! hand-written expands.
+//! Building and filling the staging slots of a ring: the operand-deducing [`SlotPlan`], the
+//! ring constructors ([`Ring::binary`] / [`Ring::unary`]), the pin split
+//! ([`fill_pinned`](Staging::fill_pinned) / [`fill_streamed`](Staging::fill_streamed)), and the
+//! closure-driven [`fill`](Staging::fill) / [`consume`](Staging::consume) with their hand-written
+//! expands.
 //!
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
@@ -12,9 +13,111 @@ use cubecl::unexpanded;
 
 use crate::*;
 
+/// One operand's comptime facts, read off its [`Tile`] before any slot is built.
+pub(crate) struct SlotOperand<'a> {
+    residence: Residence,
+    delivery: Delivery,
+    /// Already materialized as a plane fragment a level above, so it has no payload to build.
+    fragment: bool,
+    space: &'a Space,
+}
+
+impl<'a> SlotOperand<'a> {
+    pub(crate) fn new(
+        residence: Residence,
+        delivery: Delivery,
+        fragment: bool,
+        space: &'a Space,
+    ) -> Self {
+        SlotOperand {
+            residence,
+            delivery,
+            fragment,
+            space,
+        }
+    }
+}
+
+/// What every slot of one ring decides at comptime: how it rendezvouses, and per operand where it
+/// lives and when it is filled. Deduced once from the operands, so a ring's slots agree by
+/// construction rather than by each re-deriving the same answers off the same tiles.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct SlotPlan {
+    residence: Vec<Residence>,
+    fill: Vec<Fill>,
+    sync: Sync,
+    collective_full: bool,
+}
+
+impl SlotPlan {
+    pub(crate) fn new(operands: &[SlotOperand], op_space: &Space) -> SlotPlan {
+        // Admission first: an operand's delivery is only meaningful once it is known to be a fill
+        // source at all, and a resident fragment never is.
+        assert!(
+            slot_admits_operands(operands),
+            "Staging: an operand already materialized as a plane fragment cannot share a slot; \
+             another operand asked to materialize at this level, so give it Residence::InPlace \
+             here (materializing it at a level above instead)"
+        );
+        let residence: Vec<_> = operands.iter().map(|op| op.residence).collect();
+        assert!(
+            compatible_slot_residences(&residence),
+            "Staging: Plane and Smem operands cannot share a slot"
+        );
+        // Pin an operand only when its window is genuinely fixed across the walk. A barrier
+        // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
+        // splitting an invariant out would corrupt its phase. A dynamic level can't decide
+        // invariance at comptime. Both fall back to streaming.
+        let split = op_space.is_static() && !operands.iter().any(|op| op.delivery.is_tma());
+        let fill = operands
+            .iter()
+            .map(|op| {
+                if split && op_space.walk_invariant(op.space) {
+                    Fill::Pinned
+                } else {
+                    Fill::Streamed
+                }
+            })
+            .collect();
+        let (sync, collective_full) = slot_sync(&rendezvous_deliveries(operands));
+        SlotPlan {
+            residence,
+            fill,
+            sync,
+            collective_full,
+        }
+    }
+
+    pub(crate) fn residence(&self, operand: usize) -> Residence {
+        self.residence[operand]
+    }
+
+    /// When operand `operand` is filled in ring slot `slot`. The first slot owns every payload;
+    /// a later slot shares whatever the walk never rewrites.
+    pub(crate) fn fill(&self, operand: usize, slot: usize) -> Fill {
+        match slot {
+            0 => self.fill[operand],
+            _ => self.fill[operand].shared_by(self.residence[operand]),
+        }
+    }
+
+    /// Whether slot `slot` takes the first slot's buffer for `operand` instead of allocating one.
+    pub(crate) fn shares(&self, operand: usize, slot: usize) -> bool {
+        self.fill(operand, slot) == Fill::Shared
+    }
+
+    pub(crate) fn sync(&self) -> Sync {
+        self.sync
+    }
+
+    pub(crate) fn collective_full(&self) -> bool {
+        self.collective_full
+    }
+}
+
 /// The slot-wide sync and whether all units publish its full barrier, derived only from operands
-/// that physically materialize.
-fn slot_plan(deliveries: &[Delivery]) -> (Sync, bool) {
+/// that physically materialize. A slot materializing nothing has nothing to synchronize.
+fn slot_sync(deliveries: &[Delivery]) -> (Sync, bool) {
     let sync = if deliveries.is_empty() {
         Sync::Solo
     } else {
@@ -23,11 +126,13 @@ fn slot_plan(deliveries: &[Delivery]) -> (Sync, bool) {
     (sync, Sync::collective_full(deliveries))
 }
 
-fn rendezvous_deliveries(residences: &[Residence], deliveries: &[Delivery]) -> Vec<Delivery> {
-    residences
+/// Only operands that physically materialize join the slot's rendezvous: an in-place payload is
+/// rebound to the source region, moving no bytes and needing no barrier.
+fn rendezvous_deliveries(operands: &[SlotOperand]) -> Vec<Delivery> {
+    operands
         .iter()
-        .zip(deliveries)
-        .filter_map(|(residence, delivery)| (*residence == Residence::Smem).then_some(*delivery))
+        .filter(|op| op.residence == Residence::Smem)
+        .map(|op| op.delivery)
         .collect()
 }
 
@@ -44,8 +149,8 @@ fn compatible_slot_residences(residences: &[Residence]) -> bool {
 /// the pipeline nor rebound per region. Such a level has to leave every operand
 /// [`InPlace`](Residence::InPlace), which lowers to the plain recursive walk and builds no slot at
 /// all, so reaching here means one operand asked to materialize beside a fragment.
-fn slot_admits_operands(fragments: &[bool]) -> bool {
-    !fragments.contains(&true)
+fn slot_admits_operands(operands: &[SlotOperand]) -> bool {
+    !operands.iter().any(|op| op.fragment)
 }
 
 /// Fill a materialized operand through its slot pipeline, or rebind an in-place payload to the
@@ -66,67 +171,73 @@ pub(crate) fn fill_operand<T: Numeric>(
 }
 
 #[cube]
-impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build a slot staging one region of the operands `lhs`/`rhs`. An [`Residence::Plane`]
+impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Build the `depth` slots staging the operands `lhs`/`rhs`. An [`Residence::Plane`] operand
     /// stages into plane-private tile partitions ([`Solo`](Sync::Solo)); [`Smem`](Residence::Smem)
     /// takes fresh shared memory, with [`Sync`] deduced from the operands' delivery.
-    pub fn new(
+    ///
+    /// Slot 0 allocates every payload. A later slot allocates only what the walk refills: an
+    /// operand whose window the walk leaves fixed is filled once and never rewritten, so one
+    /// buffer serves the whole ring ([`Fill::Shared`]).
+    pub fn binary(
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         #[comptime] op_space: Space,
         #[comptime] out: Space,
-    ) -> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-        // Admission first: an operand's delivery is only meaningful once it is known to be a fill
-        // source at all, and a resident fragment never is.
-        let lhs_fragment = lhs.resident_fragment();
-        let rhs_fragment = rhs.resident_fragment();
-        comptime!(assert!(
-            slot_admits_operands(&[lhs_fragment, rhs_fragment]),
-            "Staging: an operand already materialized as a plane fragment cannot share a slot; \
-             the other operand asked to materialize at this level, so give it Residence::InPlace \
-             here (materializing it at a level above instead)"
-        ));
+        #[comptime] depth: usize,
+    ) -> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_residence = lhs.residence(comptime!(&out));
         let rhs_residence = rhs.residence(comptime!(&out));
-        comptime!(assert!(
-            compatible_slot_residences(&[lhs_residence, rhs_residence]),
-            "Staging: Plane and Smem operands cannot share a slot"
-        ));
         let lhs_delivery = lhs.delivery();
         let rhs_delivery = rhs.delivery();
-        // Pin an operand only when its window is genuinely fixed across the walk. A barrier
-        // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
-        // splitting an invariant out would corrupt its phase. A dynamic level can't decide
-        // invariance at comptime. Both fall back to streaming (pin = false).
-        let split =
-            comptime!(op_space.is_static() && !lhs_delivery.is_tma() && !rhs_delivery.is_tma());
-        let pin_lhs = comptime!(split && op_space.walk_invariant(&lhs.space));
-        let pin_rhs = comptime!(split && op_space.walk_invariant(&rhs.space));
-        let materialized = comptime!(rendezvous_deliveries(
-            &[lhs_residence, rhs_residence],
-            &[lhs_delivery, rhs_delivery],
+        let lhs_fragment = lhs.resident_fragment();
+        let rhs_fragment = rhs.resident_fragment();
+        let plan = comptime!(SlotPlan::new(
+            &[
+                SlotOperand::new(lhs_residence, lhs_delivery, lhs_fragment, &lhs.space),
+                SlotOperand::new(rhs_residence, rhs_delivery, rhs_fragment, &rhs.space),
+            ],
+            &op_space,
         ));
-        let (sync, collective_full) = comptime!(slot_plan(&materialized));
-        let stages = (
-            stage_operand(lhs, comptime!(out.clone()), lhs_residence),
-            stage_operand(rhs, comptime!(out.clone()), rhs_residence),
-        );
-        Staging::wrap(
-            stages,
-            Pipeline::new(sync, collective_full),
-            pin_lhs,
-            pin_rhs,
-            lhs_residence,
-            comptime!(Option::Some(rhs_residence)),
-        )
-    }
 
+        let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>)>>::new();
+        #[unroll]
+        for slot in 0..depth {
+            let staged_lhs = if comptime!(plan.shares(0, slot)) {
+                slots.index(0).data.0.clone()
+            } else {
+                stage_operand(lhs, comptime!(out.clone()), lhs_residence)
+            };
+            let staged_rhs = if comptime!(plan.shares(1, slot)) {
+                slots.index(0).data.1.clone()
+            } else {
+                stage_operand(rhs, comptime!(out.clone()), rhs_residence)
+            };
+            let staging = Staging::wrap(
+                (staged_lhs, staged_rhs),
+                Pipeline::new(
+                    comptime!(plan.sync()),
+                    comptime!(plan.collective_full())
+                ),
+                comptime!(plan.fill(0, slot)),
+                comptime!(plan.fill(1, slot)),
+                lhs_residence,
+                comptime!(Option::Some(rhs_residence)),
+            );
+            slots.push(staging);
+        }
+        Ring::wrap(slots, depth)
+    }
+}
+
+#[cube]
+impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Fill the pinned operand(s), those the walk leaves invariant, from `region`'s window.
     /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
-    /// A no-op when nothing is pinned (both operands stream).
+    /// A no-op when nothing is pinned, and when a later ring slot shares the first's buffers.
     pub fn fill_pinned(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let pin_lhs = comptime!(self.pin_lhs);
-        let pin_rhs = comptime!(self.pin_rhs);
+        let pin_lhs = comptime!(self.fill_lhs.is_pinned());
+        let pin_rhs = comptime!(self.fill_rhs.is_pinned());
         let lhs_residence = self.residence();
         let rhs_residence = self.residence_rhs();
         if comptime!(pin_lhs || pin_rhs) {
@@ -143,19 +254,20 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
         }
     }
 
-    /// Fill the streamed operand(s), everything not pinned, from `region`'s window. Runs per
-    /// region inside the walk.
+    /// Fill the streamed operand(s), everything the walk moves, from `region`'s window. Runs per
+    /// region inside the walk. The slot still rendezvouses when every operand is fixed: the
+    /// pipeline's phase belongs to the slot, not to any one operand.
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let pin_lhs = comptime!(self.pin_lhs);
-        let pin_rhs = comptime!(self.pin_rhs);
+        let stream_lhs = comptime!(self.fill_lhs.is_streamed());
+        let stream_rhs = comptime!(self.fill_rhs.is_streamed());
         let lhs_residence = self.residence();
         let rhs_residence = self.residence_rhs();
         self.fill(|staged_operands, pipe| {
-            if comptime!(!pin_lhs) {
+            if comptime!(stream_lhs) {
                 let source = lhs.at(region);
                 fill_operand(&mut staged_operands.0, &source, lhs_residence, pipe);
             }
-            if comptime!(!pin_rhs) {
+            if comptime!(stream_rhs) {
                 let source = rhs.at(region);
                 fill_operand(&mut staged_operands.1, &source, rhs_residence, pipe);
             }
@@ -217,42 +329,50 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
 }
 
 #[cube]
-impl<T: Numeric> Staging<Tile<T>> {
-    /// Build a slot staging one region of operand `input`.
-    pub fn single(
+impl<T: Numeric> Ring<Tile<T>> {
+    /// Build the `depth` slots staging the sole operand `input`. See [`Ring::binary`] for how a
+    /// later slot shares the first's buffer.
+    pub fn unary(
         input: &Tile<T>,
         #[comptime] op_space: Space,
         #[comptime] out: Space,
-    ) -> Staging<Tile<T>> {
-        let fragment = input.resident_fragment();
-        comptime!(assert!(
-            slot_admits_operands(&[fragment]),
-            "Staging: an operand already materialized as a plane fragment cannot be held by a \
-             slot; give it Residence::InPlace at this level"
-        ));
+        #[comptime] depth: usize,
+    ) -> Ring<Tile<T>> {
         let residence = input.residence(comptime!(&out));
         let delivery = input.delivery();
-        // Pin only when the window is genuinely fixed across the walk: a TMA pair keeps the joint
-        // per-region fill (its barrier pipeline arrives `full` once per fill), and a dynamic level
-        // can't decide invariance at comptime. Both fall back to streaming (pin = false).
-        let split = comptime!(op_space.is_static() && !delivery.is_tma());
-        let pin = comptime!(split && op_space.walk_invariant(&input.space));
-        let materialized = comptime!(rendezvous_deliveries(&[residence], &[delivery]));
-        let (sync, collective_full) = comptime!(slot_plan(&materialized));
-        let staged_input = stage_operand(input, comptime!(out.clone()), residence);
-        Staging::wrap(
-            staged_input,
-            Pipeline::new(sync, collective_full),
-            pin,
-            false,
-            residence,
-            comptime!(Option::None),
-        )
-    }
+        let fragment = input.resident_fragment();
+        let plan = comptime!(SlotPlan::new(
+            &[SlotOperand::new(residence, delivery, fragment, &input.space)],
+            &op_space,
+        ));
 
-    /// Fill the pinned operand from `region`'s window.
+        let mut slots = Sequence::<Staging<Tile<T>>>::new();
+        #[unroll]
+        for slot in 0..depth {
+            let staged_input = if comptime!(plan.shares(0, slot)) {
+                slots.index(0).data.clone()
+            } else {
+                stage_operand(input, comptime!(out.clone()), residence)
+            };
+            let staging = Staging::wrap(
+                staged_input,
+                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                comptime!(plan.fill(0, slot)),
+                comptime!(Fill::Streamed),
+                residence,
+                comptime!(Option::None),
+            );
+            slots.push(staging);
+        }
+        Ring::wrap(slots, depth)
+    }
+}
+
+#[cube]
+impl<T: Numeric> Staging<Tile<T>> {
+    /// Fill the operand from `region`'s window if the walk leaves it fixed.
     pub fn fill_pinned(&mut self, input: &Tile<T>, region: &Region) {
-        let pin = self.pinned();
+        let pin = comptime!(self.fill_lhs.is_pinned());
         let residence = self.residence();
         if comptime!(pin) {
             self.fill(|s, pipe| {
@@ -262,23 +382,17 @@ impl<T: Numeric> Staging<Tile<T>> {
         }
     }
 
-    /// Fill the streamed operand from `region`'s window.
+    /// Fill the operand from `region`'s window if the walk moves it. The slot still rendezvouses
+    /// otherwise: the pipeline's phase belongs to the slot, not to the operand.
     pub fn fill_streamed(&mut self, input: &Tile<T>, region: &Region) {
-        let pin = self.pinned();
+        let stream = comptime!(self.fill_lhs.is_streamed());
         let residence = self.residence();
         self.fill(|s, pipe| {
-            if comptime!(!pin) {
+            if comptime!(stream) {
                 let source = input.at(region);
                 fill_operand(s, &source, residence, pipe);
             }
         });
-    }
-
-    /// Whether the sole operand is pinned. `pin_lhs` is the `(Tile, Tile)` payload's field name;
-    /// a unary payload has no `rhs` to pair it with, so this names what the field means here
-    /// instead of reading a `lhs` that isn't one.
-    fn pinned(&self) -> comptime_type!(bool) {
-        comptime!(self.pin_lhs)
     }
 }
 
@@ -397,14 +511,39 @@ fn stage_operand<T: Numeric>(
 mod tests {
     use super::*;
 
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    /// A one-level space over `M`/`N`/`K`, plus a projection per operand so a slot can be planned
+    /// against it. `lhs` spans `M`/`K`, `rhs` spans `K`/`N`, so a `K` walk moves both.
+    fn spaces() -> (Space, Space, Space) {
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+            })
+            .build();
+        let lhs = space.project(&[M, K]);
+        let rhs = space.project(&[K, N]);
+        (space, lhs, rhs)
+    }
+
+    fn operand(residence: Residence, delivery: Delivery, space: &Space) -> SlotOperand<'_> {
+        SlotOperand::new(residence, delivery, false, space)
+    }
+
     #[test]
     fn an_in_place_operand_does_not_join_the_slot_rendezvous() {
-        let deliveries = rendezvous_deliveries(
-            &[Residence::InPlace, Residence::Smem],
-            &[Delivery::Procedural, Delivery::Copy],
-        );
+        let (_, lhs, rhs) = spaces();
+        let deliveries = rendezvous_deliveries(&[
+            operand(Residence::InPlace, Delivery::Procedural, &lhs),
+            operand(Residence::Smem, Delivery::Copy, &rhs),
+        ]);
         assert_eq!(deliveries, vec![Delivery::Copy]);
-        assert_eq!(slot_plan(&deliveries).0, Sync::Cube);
+        assert_eq!(slot_sync(&deliveries).0, Sync::Cube);
     }
 
     #[test]
@@ -428,10 +567,11 @@ mod tests {
     /// only the physical kind tells the pair apart.
     #[test]
     fn a_resident_fragment_is_turned_away_from_a_slot() {
-        assert!(!slot_admits_operands(&[true, false]));
-        assert!(!slot_admits_operands(&[false, true]));
-        assert!(!slot_admits_operands(&[true]));
-        assert!(slot_admits_operands(&[false, false]));
+        let (_, lhs, rhs) = spaces();
+        let fragment = SlotOperand::new(Residence::InPlace, Delivery::Copy, true, &lhs);
+        let staged = operand(Residence::Smem, Delivery::Copy, &rhs);
+        assert!(!slot_admits_operands(&[fragment]));
+        assert!(slot_admits_operands(&[staged]));
         // The residence check on its own waves the same pair through.
         assert!(compatible_slot_residences(&[
             Residence::InPlace,
@@ -443,9 +583,11 @@ mod tests {
     /// The slot then rendezvouses for the staged one alone, which is what lets the pair share it.
     #[test]
     fn a_staged_operand_shares_a_slot_with_one_read_in_place() {
-        let residences = [Residence::Smem, Residence::InPlace];
-        assert!(compatible_slot_residences(&residences));
-        let deliveries = rendezvous_deliveries(&residences, &[Delivery::Copy, Delivery::Copy]);
+        let (_, lhs, rhs) = spaces();
+        let deliveries = rendezvous_deliveries(&[
+            operand(Residence::Smem, Delivery::Copy, &lhs),
+            operand(Residence::InPlace, Delivery::Copy, &rhs),
+        ]);
         assert_eq!(deliveries, vec![Delivery::Copy]);
     }
 
@@ -453,11 +595,90 @@ mod tests {
     /// makes an all-in-place level equivalent to the plain recursive walk.
     #[test]
     fn an_all_in_place_slot_synchronizes_nothing() {
-        let deliveries = rendezvous_deliveries(
-            &[Residence::InPlace, Residence::InPlace],
-            &[Delivery::Copy, Delivery::Procedural],
-        );
+        let (_, lhs, rhs) = spaces();
+        let deliveries = rendezvous_deliveries(&[
+            operand(Residence::InPlace, Delivery::Copy, &lhs),
+            operand(Residence::InPlace, Delivery::Procedural, &rhs),
+        ]);
         assert!(deliveries.is_empty());
-        assert_eq!(slot_plan(&deliveries).0, Sync::Solo);
+        assert_eq!(slot_sync(&deliveries).0, Sync::Solo);
+    }
+
+    /// The walk moves both operands' windows here (every axis is cut), so nothing is pinned and
+    /// every slot of the ring needs its own buffer.
+    #[test]
+    fn a_streamed_operand_is_rebuilt_in_every_slot() {
+        let (space, lhs, rhs) = spaces();
+        let plan = SlotPlan::new(
+            &[
+                operand(Residence::Smem, Delivery::Copy, &lhs),
+                operand(Residence::Smem, Delivery::Copy, &rhs),
+            ],
+            &space,
+        );
+        for slot in 0..3 {
+            assert_eq!(plan.fill(0, slot), Fill::Streamed);
+            assert_eq!(plan.fill(1, slot), Fill::Streamed);
+            assert!(!plan.shares(0, slot));
+            assert!(!plan.shares(1, slot));
+        }
+    }
+
+    /// A `K`-only walk leaves the `M`/`N` output operand's window fixed. It is filled once, so one
+    /// buffer serves the whole ring however deep: the first slot owns it, the rest borrow it.
+    #[test]
+    fn a_pinned_smem_operand_lends_its_buffer_to_the_rest_of_the_ring() {
+        let (space, lhs, _) = spaces();
+        let invariant = space.project(&[M, N]);
+        let plan = SlotPlan::new(
+            &[
+                operand(Residence::Smem, Delivery::Copy, &lhs),
+                operand(Residence::Smem, Delivery::Copy, &invariant),
+            ],
+            &space.project(&[K]),
+        );
+        assert_eq!(plan.fill(0, 0), Fill::Streamed);
+        assert_eq!(plan.fill(1, 0), Fill::Pinned);
+        assert_eq!(plan.fill(1, 1), Fill::Shared);
+        assert_eq!(plan.fill(1, 2), Fill::Shared);
+        assert!(plan.shares(1, 1));
+        assert!(!plan.shares(1, 0));
+    }
+
+    /// An in-place payload allocates nothing, so a later slot has no buffer to borrow: it builds
+    /// its own view and rebinds it, or the rebind would only ever reach the first slot.
+    #[test]
+    fn a_pinned_in_place_operand_is_never_shared() {
+        let (space, lhs, _) = spaces();
+        let invariant = space.project(&[M, N]);
+        let plan = SlotPlan::new(
+            &[
+                operand(Residence::Smem, Delivery::Copy, &lhs),
+                operand(Residence::InPlace, Delivery::Copy, &invariant),
+            ],
+            &space.project(&[K]),
+        );
+        assert_eq!(plan.fill(1, 0), Fill::Pinned);
+        assert_eq!(plan.fill(1, 1), Fill::Pinned);
+        assert!(!plan.shares(1, 1));
+    }
+
+    /// A TMA pair keeps the joint per-region fill, so no operand is pinned and no buffer is shared:
+    /// its barrier arrives `full` once per fill, and splitting an invariant out would corrupt the
+    /// phase.
+    #[test]
+    fn a_tma_slot_pins_nothing() {
+        let (space, lhs, _) = spaces();
+        let invariant = space.project(&[M, N]);
+        let plan = SlotPlan::new(
+            &[
+                operand(Residence::Smem, Delivery::Tma, &lhs),
+                operand(Residence::Smem, Delivery::Tma, &invariant),
+            ],
+            &space.project(&[K]),
+        );
+        assert_eq!(plan.fill(1, 0), Fill::Streamed);
+        assert_eq!(plan.fill(1, 1), Fill::Streamed);
+        assert_eq!(plan.sync(), Sync::Barrier);
     }
 }

@@ -154,10 +154,7 @@ impl LeveledTiling {
                     Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
                 }
             };
-            let partitioner = match level.buffering {
-                Buffering::Single => builder.single_buffered(),
-                Buffering::Double => builder.double_buffered(),
-            };
+            let partitioner = builder.buffered(level.buffering);
             space = space.with_partitioner(partitioner);
         }
         space

@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space, StridedOperand,
-    TileArg,
+    Axis, Buffering, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space,
+    StridedOperand, TileArg,
 };
 
 // Input axes
@@ -91,7 +91,7 @@ fn sequential_space(extents: &[(Axis, usize)]) -> Space {
         .map(|&(a, _)| (a, Distribution::Sequential))
         .collect();
     let partitioner =
-        Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).single_buffered();
+        Partitioner::row_major(ByAxis::new(extents), ByAxis::new(&dists)).buffered(Buffering::SINGLE);
     Space::new(extents).with_partitioner(partitioner)
 }
 

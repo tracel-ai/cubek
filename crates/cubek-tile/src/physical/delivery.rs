@@ -82,7 +82,9 @@ pub enum Residence {
     /// level's walk materializes nothing, so a level whose every operand is `InPlace` lowers to the
     /// plain recursive walk.
     InPlace,
-    /// A cooperatively filled shared-memory buffer the leaf reads windows from.
+    /// A cooperatively filled shared-memory buffer the leaf reads windows from. How many physical
+    /// buffers back it is the ring's business, not the operand's: one per slot while the walk moves
+    /// its window, one for the whole ring once the walk leaves it fixed (see [`Fill`](crate::Fill)).
     Smem,
     /// Plane-private register fragments, selected by comptime coordinate (so the level's walk
     /// unrolls).

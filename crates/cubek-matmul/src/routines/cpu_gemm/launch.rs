@@ -160,13 +160,13 @@ pub fn launch_ref<R: Runtime>(
     // sequentially; K is contracted sequentially in both leaves.
     let space = Tiling::new()
         .extents(&extents)
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, cube_m))
                 .axis(N, Cut::cube(CubeAxis::Y, cube_n))
                 .axis(K, Cut::sequential(k))
         })
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::plane(leaf.m))
                 .axis(N, Cut::plane(leaf.n))

@@ -165,25 +165,25 @@ fn tile_space(
 
     Tiling::new()
         .extents(&extents)
-        .level(WalkOrder::RowMajor, Buffering::Double, |l| {
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, stage_m))
                 .axis(N, Cut::cube(CubeAxis::Y, stage_n))
                 .axis(K, Cut::sequential(stage_k))
         })
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::plane(c.m * i.m))
                 .axis(N, Cut::plane(c.n * i.n))
                 .axis(K, Cut::sequential(stage_k))
         })
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(c.m * i.m))
                 .axis(N, Cut::sequential(c.n * i.n))
                 .axis(K, Cut::sequential(i.k))
         })
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(i.m))
                 .axis(N, Cut::sequential(i.n))

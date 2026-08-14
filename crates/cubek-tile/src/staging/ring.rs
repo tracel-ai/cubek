@@ -1,0 +1,148 @@
+//! The one buffered walk: `depth` [`Staging`] slots driven as a circular software pipeline, so
+//! `depth - 1` regions are in flight while one computes.
+//!
+//! Single and double buffering are this schedule at `depth` 1 and 2, not two hand-written walks.
+//! At depth 1 a region's fill is the last event before its own read, so the consume publishes it;
+//! at any greater depth the fill that runs one lap ahead does. That difference, the prologue, and
+//! the drain are the whole protocol, and it lives here once. An operation supplies only what a
+//! slot holds and what consuming one computes, through [`Pipelined`].
+
+use cubecl::prelude::*;
+
+use crate::*;
+
+/// The `depth` slots of one buffered walk.
+#[derive(CubeType)]
+pub struct Ring<T: CubeType> {
+    pub(crate) slots: Sequence<Staging<T>>,
+    #[cube(comptime)]
+    pub(crate) depth: usize,
+}
+
+#[cube]
+impl<T: CubeType> Ring<T> {
+    /// Wrap already-built slots. The public entries are the operand-deducing
+    /// [`binary`](Ring::binary) / [`unary`](Ring::unary).
+    pub(crate) fn wrap(slots: Sequence<Staging<T>>, #[comptime] depth: usize) -> Ring<T> {
+        comptime!(assert!(depth > 0, "Ring: a pipeline needs at least one slot"));
+        Ring::<T> { slots, depth }
+    }
+
+    /// Slot `index`, which every caller knows at comptime: the ring's schedule unrolls over its
+    /// slots even when the walk itself stays rolled.
+    pub fn slot_mut(&mut self, #[comptime] index: usize) -> &mut Staging<T> {
+        self.slots.index_mut(index)
+    }
+
+    /// Whether any slot stages a plane partition, which selects its tiles by comptime coordinate
+    /// and so stands up only under an unrolled walk.
+    pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
+        self.slots.index(0).has_plane_stage()
+    }
+}
+
+/// The operation-specific half of a buffered walk. Everything about *when* a slot is filled,
+/// consumed, or published is [`pipelined_walk`]'s; an implementor says only what a slot holds and
+/// what filling or consuming one means.
+#[cube]
+pub trait Pipelined: CubeType {
+    /// The operand bundle one slot stages.
+    type Slot: CubeType;
+
+    /// Build the walk's `depth` slots over this operation's operands.
+    fn ring(
+        &self,
+        #[comptime] op_space: Space,
+        #[comptime] out: Space,
+        #[comptime] depth: usize,
+    ) -> Ring<Self::Slot>;
+
+    /// Whether the walk must unroll, so every region's coordinates fold to comptime constants.
+    /// Asked once, of the ring the operation just built.
+    fn unrolled(&self, ring: &Ring<Self::Slot>) -> comptime_type!(bool);
+
+    /// Fill the operands whose window the walk leaves fixed. Runs once per slot, above the loop.
+    fn fill_pinned(&self, slot: &mut Staging<Self::Slot>, region: &Region);
+
+    /// Fill the operands the walk moves, for `region`.
+    fn fill_streamed(&self, slot: &mut Staging<Self::Slot>, region: &Region);
+
+    /// Consume `region` out of `slot`. `publish` when no later fill will publish this one, so the
+    /// consume has to.
+    fn compute(
+        &mut self,
+        slot: &mut Staging<Self::Slot>,
+        region: &Region,
+        #[comptime] publish: bool,
+    );
+}
+
+/// Walk `op_space` region by region through a ring of `depth` slots.
+///
+/// The prologue primes slots `0..depth - 1` with the first `depth - 1` regions. Lap `p` then
+/// visits regions `p * depth + j` for each slot `j`: it fills the region one lap ahead into the
+/// slot that just came free, then consumes this one. Both slot indices are comptime (`j` and
+/// `(j + depth - 1) % depth`), which is what lets one rolled loop drive a ring of any depth.
+///
+/// A consume publishes its own fill when no fill follows it: always at `depth == 1`, where the
+/// fill and the read of a region are adjacent, and at the walk's last `depth - 1` regions, where
+/// there is nothing left to prefetch.
+#[cube]
+pub(crate) fn pipelined_walk<P: Pipelined>(
+    op: &mut P,
+    op_space: Space,
+    #[comptime] out: Space,
+    #[comptime] depth: usize,
+) {
+    let mut ring = op.ring(comptime!(op_space.clone()), out, depth);
+    let unroll = op.unrolled(&ring);
+    let walk = Walk::over(op_space);
+    let total = walk.total();
+
+    // A pinned operand's window never moves, so region 0's is every region's. Slots sharing the
+    // first's buffer for it read `Fill::Shared` and skip the copy.
+    let first = walk.region(0);
+    #[unroll]
+    for slot in 0..depth {
+        op.fill_pinned(ring.slot_mut(slot), &first);
+    }
+
+    // Prime every slot but the last, which the first lap's prefetch fills.
+    #[unroll]
+    for slot in 0..comptime!(depth - 1) {
+        if slot < total {
+            let region = walk.region(slot);
+            op.fill_streamed(ring.slot_mut(slot), &region);
+        }
+    }
+
+    let laps = total.div_ceil(depth);
+    #[unroll(unroll)]
+    for lap in 0..laps {
+        #[unroll]
+        for j in 0..depth {
+            let region_idx = lap * depth + j;
+            if comptime!(depth == 1) {
+                // Nothing is in flight: this region's fill is the last event before its read.
+                let region = walk.region(region_idx);
+                op.fill_streamed(ring.slot_mut(0usize), &region);
+                op.compute(ring.slot_mut(0usize), &region, true);
+            } else {
+                let ahead = region_idx + comptime!(depth - 1);
+                if ahead < total {
+                    let prefetch = walk.region(ahead);
+                    op.fill_streamed(
+                        ring.slot_mut(comptime!((j + depth - 1) % depth)),
+                        &prefetch,
+                    );
+                    let region = walk.region(region_idx);
+                    op.compute(ring.slot_mut(j), &region, false);
+                } else if region_idx < total {
+                    // The walk is draining: no fill follows, so this consume publishes.
+                    let region = walk.region(region_idx);
+                    op.compute(ring.slot_mut(j), &region, true);
+                }
+            }
+        }
+    }
+}

@@ -93,13 +93,13 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
     let batches = [B0, B1];
     Tiling::new()
         .extents(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batches, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(k))
         })
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batches, Cut::sequential(1))
                 .axis(M, Cut::plane(8))
                 .axis(N, Cut::plane(8))
@@ -332,7 +332,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -361,7 +361,7 @@ fn arg_gathered_rational_stages() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -388,7 +388,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))
@@ -415,7 +415,7 @@ fn arg_gathered_cancelling_divisor_stages() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(16))

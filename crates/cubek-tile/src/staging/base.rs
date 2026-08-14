@@ -7,6 +7,43 @@ use cubecl::prelude::*;
 
 use crate::*;
 
+/// When one operand of a slot is filled across the walk. The walk moves each operand's window or
+/// it does not, and a window that never moves need be neither refilled nor duplicated per slot;
+/// those two savings are the same fact, so one state carries both.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Fill {
+    /// The walk moves this operand's window, so every region refills it.
+    Streamed,
+    /// The window is fixed across the walk: filled once, above the loop.
+    Pinned,
+    /// Fixed, and this slot's buffer is the ring's first slot's, which already filled it. Nobody
+    /// fills it here. Only a materialized ([`Smem`](Residence::Smem)) operand reaches this: an
+    /// in-place payload allocates nothing, so there is no buffer to share and every slot rebinds
+    /// its own.
+    Shared,
+}
+
+impl Fill {
+    /// Whether [`fill_pinned`](Staging::fill_pinned) fills this operand: it owns a fixed window.
+    pub(crate) fn is_pinned(self) -> bool {
+        matches!(self, Fill::Pinned)
+    }
+
+    /// Whether [`fill_streamed`](Staging::fill_streamed) fills this operand.
+    pub(crate) fn is_streamed(self) -> bool {
+        matches!(self, Fill::Streamed)
+    }
+
+    /// This operand's state in a later ring slot, given its state in the first. A pinned
+    /// materialized operand hands its buffer over; anything else is rebuilt per slot.
+    pub(crate) fn shared_by(self, residence: Residence) -> Fill {
+        match (self, residence) {
+            (Fill::Pinned, Residence::Smem) => Fill::Shared,
+            _ => self,
+        }
+    }
+}
+
 /// One slot of the staged `mma` pipeline: its payload `T` and the [`Pipeline`] sequencing fill vs
 /// read. Generic over `T`, so the slot is matmul-agnostic; it just hands out a synchronized `&mut T`
 /// to fill (`write`) and a synchronized `&T` to consume (`read`).
@@ -14,13 +51,11 @@ use crate::*;
 pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
-    /// Operands the walk leaves invariant: filled once by [`fill_pinned`](Staging::fill_pinned),
-    /// skipped by [`fill_streamed`](Staging::fill_streamed). Only the `(Tile, Tile)` payload sets
-    /// these; a generic slot pins nothing.
+    /// When each operand is filled. Unary slots leave the right-hand entry unread.
     #[cube(comptime)]
-    pub(crate) pin_lhs: bool,
+    pub(crate) fill_lhs: Fill,
     #[cube(comptime)]
-    pub(crate) pin_rhs: bool,
+    pub(crate) fill_rhs: Fill,
     /// Where each operand lives at this level, resolved when the slot was built. Unary slots have
     /// no right-hand operand.
     #[cube(comptime)]
@@ -37,16 +72,16 @@ impl<T: CubeType> Staging<T> {
     pub(crate) fn wrap(
         data: T,
         pipeline: Pipeline,
-        #[comptime] pin_lhs: bool,
-        #[comptime] pin_rhs: bool,
+        #[comptime] fill_lhs: Fill,
+        #[comptime] fill_rhs: Fill,
         #[comptime] residence_lhs: Residence,
         #[comptime] residence_rhs: Option<Residence>,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
-            pin_lhs,
-            pin_rhs,
+            fill_lhs,
+            fill_rhs,
             residence_lhs,
             residence_rhs,
         }

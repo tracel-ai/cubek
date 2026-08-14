@@ -31,7 +31,12 @@ use crate::*;
 /// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a
 /// [`cmma::Matrix`](cubecl::cmma::Matrix)); [`view`](Tile::view) rebuilds a borrowed view on
 /// demand.
-#[derive(CubeType)]
+///
+/// `Clone` copies the handle, not the cells: two clones name the same storage, so writing through
+/// one is visible through the other. That is what a ring shares a pinned buffer with, and it is
+/// only sound where nothing rewrites the buffer afterwards.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub enum TileKind<T: Numeric> {
     Gmem(MemData<T>),
     Smem(MemData<T>),
@@ -188,7 +193,8 @@ impl QuantInfo {
 /// operand whose format they are. The partitioning says how the problem is cut and nothing about
 /// what the pieces become. Operands that disagree meet the kind-pairing panics at the instruction,
 /// which is the same way every other mismatched pair is caught.
-#[derive(CubeType)]
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]

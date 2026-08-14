@@ -177,7 +177,7 @@ impl Conv1d {
     }
 
     fn check(&self, tile_oh: usize, tile_co: usize) {
-        self.check_at(tile_oh, tile_co, 1, false, Buffering::Single, &[])
+        self.check_at(tile_oh, tile_co, 1, false, Buffering::SINGLE, &[])
     }
 
     /// `check` with the input served in `in_v`-wide lines and, when `checked`, both the input and
@@ -341,7 +341,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(OH, Cut::sequential(3))
                 .axis(CO, Cut::sequential(4))
                 .axis(RH, Cut::sequential(rh))
@@ -419,7 +419,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(OH, Cut::sequential(3))
                 .axis(CO, Cut::sequential(4))
                 .axis(RH, Cut::sequential(rh))
@@ -493,7 +493,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(OH, Cut::sequential(3))
                 .axis(CO, Cut::sequential(4))
                 .axis(RH, Cut::sequential(rh))
@@ -569,7 +569,7 @@ fn conv1d_vectorized_input() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 2, false, Buffering::Single, &[]);
+    .check_at(4, 4, 2, false, Buffering::SINGLE, &[]);
 }
 
 /// Vectorized with stride and dilation both off `1`, so the line fold and the affine advance are
@@ -584,7 +584,7 @@ fn conv1d_vectorized_strided_and_dilated() {
         stride: 2,
         dilation: 2,
     }
-    .check_at(3, 2, 2, false, Buffering::Single, &[]);
+    .check_at(3, 2, 2, false, Buffering::SINGLE, &[]);
 }
 
 /// An output extent the tile edge does not divide: the last tile's receptive field runs past the
@@ -601,7 +601,7 @@ fn conv1d_masked_overhang() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, true, Buffering::Single, &[]);
+    .check_at(4, 4, 1, true, Buffering::SINGLE, &[]);
 }
 
 /// The same overhang with a stride, where the window runs further past the end: the mask is on the
@@ -616,7 +616,7 @@ fn conv1d_masked_overhang_strided() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(2, 4, 1, true, Buffering::Single, &[]);
+    .check_at(2, 4, 1, true, Buffering::SINGLE, &[]);
 }
 
 // ---- through the Launcher --------------------------------------------------
@@ -752,7 +752,7 @@ fn conv1d_launched_static_window() {
         stride: 2,
         dilation: 1,
     }
-    .check_launched_over(3, 4, 0, Buffering::Single, Some(&[CO, CI]), &[]);
+    .check_launched_over(3, 4, 0, Buffering::SINGLE, Some(&[CO, CI]), &[]);
 }
 
 /// The same convolution with `OH` and `RH` runtime as well, at a tiling neither divides: the walk
@@ -768,7 +768,7 @@ fn conv1d_launched_dynamic_window_masked_overhang() {
         stride: 2,
         dilation: 2,
     }
-    .check_launched(4, 4, 1, Buffering::Single, &[]);
+    .check_launched(4, 4, 1, Buffering::SINGLE, &[]);
 }
 
 /// The plainest gather off the builder: nothing overhangs and the origin cannot go negative, so
@@ -783,7 +783,7 @@ fn conv1d_launched_dense_window() {
         stride: 1,
         dilation: 1,
     }
-    .check_launched(4, 4, 0, Buffering::Single, &[]);
+    .check_launched(4, 4, 0, Buffering::SINGLE, &[]);
 }
 
 /// Stride and dilation both off `1`, staged: the affine advance and the compaction have to survive
@@ -798,7 +798,7 @@ fn conv1d_launched_staged_strided_and_dilated() {
         stride: 3,
         dilation: 2,
     }
-    .check_launched(2, 2, 0, Buffering::Single, &[Residence::Auto]);
+    .check_launched(2, 2, 0, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// A padded window with no overhang anywhere: nothing about the tiling says the operand needs a
@@ -813,7 +813,7 @@ fn conv1d_launched_padding_arms_the_check() {
         stride: 1,
         dilation: 1,
     }
-    .check_launched(3, 4, 1, Buffering::Single, &[]);
+    .check_launched(3, 4, 1, Buffering::SINGLE, &[]);
 }
 
 /// An output extent the tile edge does not divide, so the overhang arms the check through the
@@ -829,7 +829,7 @@ fn conv1d_launched_masked_overhang() {
         stride: 1,
         dilation: 1,
     }
-    .check_launched(4, 4, 0, Buffering::Single, &[]);
+    .check_launched(4, 4, 0, Buffering::SINGLE, &[]);
 }
 
 // ---- runtime coefficients --------------------------------------------------
@@ -868,7 +868,7 @@ impl Conv1d {
 
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(OH, Cut::sequential(tile_oh))
                     .axis(CO, Cut::sequential(tile_co))
                     .axis(RH, Cut::sequential(self.rh))
@@ -1179,7 +1179,7 @@ fn conv1d_dynamic_padding_direct() {
         stride: 1,
         dilation: 1,
     }
-    .check_dynamic_padded(3, 4, 1, 6, Buffering::Single, false, &[]);
+    .check_dynamic_padded(3, 4, 1, 6, Buffering::SINGLE, false, &[]);
 }
 
 /// The same padding staged: a dynamic offset costs no comptime window geometry at all, so it
@@ -1194,7 +1194,7 @@ fn conv1d_dynamic_padding_staged() {
         stride: 1,
         dilation: 1,
     }
-    .check_dynamic_padded(3, 4, 1, 6, Buffering::Single, false, &[Residence::Auto]);
+    .check_dynamic_padded(3, 4, 1, 6, Buffering::SINGLE, false, &[Residence::Auto]);
 }
 
 /// Stride, dilation and padding all runtime at once: the whole affine map arrives with the launch.
@@ -1208,7 +1208,7 @@ fn conv1d_all_dynamic() {
         stride: 2,
         dilation: 1,
     }
-    .check_dynamic_padded(3, 4, 1, 8, Buffering::Single, true, &[]);
+    .check_dynamic_padded(3, 4, 1, 8, Buffering::SINGLE, true, &[]);
 }
 
 /// The same thing staged: the runtime coefficients size their smem box off their declared bounds,
@@ -1223,7 +1223,7 @@ fn conv1d_all_dynamic_staged() {
         stride: 2,
         dilation: 1,
     }
-    .check_dynamic_padded(3, 4, 1, 8, Buffering::Single, true, &[Residence::Auto]);
+    .check_dynamic_padded(3, 4, 1, 8, Buffering::SINGLE, true, &[Residence::Auto]);
 }
 
 // ---- 2-D -------------------------------------------------------------------
@@ -1277,7 +1277,7 @@ impl Conv2d {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_co: usize) {
-        self.check_at(tile_oh, tile_ow, tile_co, Buffering::Single, &[])
+        self.check_at(tile_oh, tile_ow, tile_co, Buffering::SINGLE, &[])
     }
 
     /// `check` under `buffering`: `InPlace` gathers straight out of gmem, `Auto` compacts the two
@@ -1420,7 +1420,7 @@ fn conv1d_staged_dense_window() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// Stride and dilation both off `1`: the fill's per-axis advance and the receptive-field span are
@@ -1435,7 +1435,7 @@ fn conv1d_staged_strided_and_dilated() {
         stride: 3,
         dilation: 2,
     }
-    .check_at(2, 2, 1, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(2, 2, 1, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// A single tap at unit stride: the window is exactly the output's own extent, so the stage is the
@@ -1451,7 +1451,7 @@ fn conv1d_staged_single_tap() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// One region covering everything: the walk runs once, so the fill is the whole kernel.
@@ -1465,7 +1465,7 @@ fn conv1d_staged_single_tile() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(6, 4, 1, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(6, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// Staged in two-wide lines: the fill moves whole lines, and the innermost axis is the one the
@@ -1480,7 +1480,7 @@ fn conv1d_staged_vectorized_input() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 2, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(4, 4, 2, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// Vectorized with stride and dilation both off `1`.
@@ -1494,7 +1494,7 @@ fn conv1d_staged_vectorized_strided_and_dilated() {
         stride: 2,
         dilation: 2,
     }
-    .check_at(3, 2, 2, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(3, 2, 2, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// The overhanging last tile: the mask sits under the projection, so a tap past the input's real
@@ -1509,7 +1509,7 @@ fn conv1d_staged_masked_overhang() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, true, Buffering::Single, &[Residence::Auto]);
+    .check_at(4, 4, 1, true, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// The same overhang with a stride, where the window runs further past the end.
@@ -1523,7 +1523,7 @@ fn conv1d_staged_masked_overhang_strided() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(2, 4, 1, true, Buffering::Single, &[Residence::Auto]);
+    .check_at(2, 4, 1, true, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// A single tap at stride 2 reaches only every second input position, so the stage keeps half of
@@ -1540,7 +1540,7 @@ fn conv1d_staged_single_tap_strided() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(4, 4, 1, false, Buffering::Single, &[Residence::Auto]);
+    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// The overhang masked *and* the input lined: the fill steps whole lines through a window whose
@@ -1555,7 +1555,7 @@ fn conv1d_staged_vectorized_masked_overhang() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 2, true, Buffering::Single, &[Residence::Auto]);
+    .check_at(4, 4, 2, true, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// Double buffering drives the same fill from two slots on alternating regions, so a gathered
@@ -1570,7 +1570,7 @@ fn conv1d_staged_double_buffered() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(2, 4, 1, false, Buffering::Double, &[Residence::Auto]);
+    .check_at(2, 4, 1, false, Buffering::DOUBLE, &[Residence::Auto]);
 }
 
 /// Two gathered physical axes staged at once: the fill decodes one destination coordinate per
@@ -1589,7 +1589,7 @@ fn conv2d_staged_dense_window() {
         dh: 1,
         dw: 1,
     }
-    .check_at(2, 2, 4, Buffering::Single, &[Residence::Auto]);
+    .check_at(2, 2, 4, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// Different stride and dilation per spatial axis, so the two staged physical axes cannot be
@@ -1608,7 +1608,7 @@ fn conv2d_staged_asymmetric_stride_and_dilation() {
         dh: 1,
         dw: 2,
     }
-    .check_at(2, 3, 2, Buffering::Single, &[Residence::Auto]);
+    .check_at(2, 3, 2, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 /// One compacted physical axis per step: `h` has `gcd(2, 2) = 2`, so its stage keeps every second
@@ -1628,7 +1628,7 @@ fn conv2d_staged_mixed_steps() {
         dh: 2,
         dw: 1,
     }
-    .check_at(2, 2, 4, Buffering::Single, &[Residence::Auto]);
+    .check_at(2, 2, 4, Buffering::SINGLE, &[Residence::Auto]);
 }
 
 // ---- the projected 2-D view ------------------------------------------------
@@ -1686,7 +1686,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(OH, Cut::sequential(oh))
                 .axis(OW, Cut::sequential(ow))
                 .axis(RH, Cut::sequential(rh))
@@ -1905,7 +1905,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(OH, Cut::sequential(oh))
                 .axis(CO, Cut::sequential(co))
                 .axis(RH, Cut::sequential(rh))
@@ -2025,14 +2025,14 @@ impl Resize1d {
     /// entries nest a second descent, which is where a rational window's leftover phase has to
     /// accumulate rather than restart.
     fn space(&self, oh_edges: &[usize]) -> Space {
-        self.space_with_buffering(oh_edges, Buffering::Single)
+        self.space_with_buffering(oh_edges, Buffering::SINGLE)
     }
 
     fn space_with_buffering(&self, oh_edges: &[usize], buffering: Buffering) -> Space {
         let mut tiling =
             Tiling::new().extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
         for (i, &edge) in oh_edges.iter().enumerate() {
-            let sched = if i == 0 { buffering } else { Buffering::Single };
+            let sched = if i == 0 { buffering } else { Buffering::SINGLE };
             tiling = tiling.level(WalkOrder::RowMajor, sched, |l| {
                 l.axis(OH, Cut::sequential(edge))
                     .axis(CO, Cut::sequential(self.co))
@@ -2044,7 +2044,7 @@ impl Resize1d {
     }
 
     fn check(&self, oh_edges: &[usize]) {
-        self.check_with(oh_edges, Buffering::Single, 1, &[]);
+        self.check_with(oh_edges, Buffering::SINGLE, 1, &[]);
     }
 
     fn check_with(
@@ -2130,7 +2130,7 @@ fn resize1d_staged_static() {
         offset: -2,
         divisor: 6,
     }
-    .check_with(&[2], Buffering::Single, 1, &[Residence::Auto]);
+    .check_with(&[2], Buffering::SINGLE, 1, &[Residence::Auto]);
 }
 
 /// Rational gather driven under double buffering on alternating slots.
@@ -2147,7 +2147,7 @@ fn resize1d_staged_double_buffered() {
         offset: -2,
         divisor: 6,
     }
-    .check_with(&[2], Buffering::Double, 1, &[Residence::Auto]);
+    .check_with(&[2], Buffering::DOUBLE, 1, &[Residence::Auto]);
 }
 
 /// A tap coefficient the divisor does not cancel: the window itself is fractionally dilated, so
@@ -2184,8 +2184,8 @@ fn resize1d_staged_fractional_taps() {
         offset: -2,
         divisor: 3,
     };
-    resize.check_with(&[3], Buffering::Single, 1, &[Residence::Auto]);
-    resize.check_with(&[3, 1], Buffering::Single, 1, &[Residence::Auto]);
+    resize.check_with(&[3], Buffering::SINGLE, 1, &[Residence::Auto]);
+    resize.check_with(&[3, 1], Buffering::SINGLE, 1, &[Residence::Auto]);
 }
 
 /// Staged rational gather served in two-wide lines on the ungathered `CI` axis.
@@ -2202,7 +2202,7 @@ fn resize1d_staged_vectorized() {
         offset: -2,
         divisor: 6,
     }
-    .check_with(&[2], Buffering::Single, 2, &[Residence::Auto]);
+    .check_with(&[2], Buffering::SINGLE, 2, &[Residence::Auto]);
 }
 
 /// A rational gathered operand whose divisor and offset arrive at runtime.

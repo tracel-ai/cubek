@@ -9,12 +9,37 @@ use super::{Distribution, WalkOrder};
 /// materialized at all, and into what, is the operand's own
 /// [`Residence`](crate::Residence), stated per level. A level every operand rides
 /// [`InPlace`](crate::Residence::InPlace) lowers to the plain recursive walk whatever this says.
+///
+/// A depth, not a menu: the walk is one circular software pipeline of `depth` slots
+/// ([`Ring`](crate::Ring)), so single and double buffering are the `1` and `2` of the same
+/// schedule rather than two hand-written ones.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Buffering {
+pub struct Buffering(usize);
+
+impl Buffering {
     /// One slot: fill a region, consume it, repeat.
-    Single,
+    pub const SINGLE: Buffering = Buffering(1);
     /// Two slots alternating, so one region's fill overlaps the other's compute.
-    Double,
+    pub const DOUBLE: Buffering = Buffering(2);
+    /// Three slots circular, so two fills are in flight over one compute.
+    pub const TRIPLE: Buffering = Buffering(3);
+
+    /// A pipeline `depth` slots deep. Panics on `0`, which buffers nothing and computes nothing.
+    pub const fn depth(depth: usize) -> Self {
+        assert!(depth > 0, "Buffering: a pipeline needs at least one slot");
+        Buffering(depth)
+    }
+
+    /// How many slots the walk drives.
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Default for Buffering {
+    fn default() -> Self {
+        Self::SINGLE
+    }
 }
 
 /// What an operand *is* at the instruction: a memory window, or a plane fragment in one of the two
@@ -223,11 +248,9 @@ impl PartitionerBuilder {
         }))
     }
 
-    pub fn single_buffered(self) -> Partitioner {
-        self.finish(Buffering::Single)
-    }
-
-    pub fn double_buffered(self) -> Partitioner {
-        self.finish(Buffering::Double)
+    /// Close the level with the depth its walk buffers to. The one way to state it: a depth is a
+    /// number, so naming a few of them would only hide that.
+    pub fn buffered(self, buffering: Buffering) -> Partitioner {
+        self.finish(buffering)
     }
 }

@@ -629,7 +629,7 @@ pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
     use crate::{Buffering, Cut, Tiling, WalkOrder};
     Tiling::new()
         .extents(extents)
-        .level(WalkOrder::RowMajor, Buffering::Single, |mut l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
             for &(axis, e) in extents {
                 l = l.axis(axis, Cut::sequential(e));
             }
@@ -705,12 +705,12 @@ mod residence_tests {
     fn two_level_space() -> Space {
         Tiling::new()
             .extents(&[(M, 16), (N, 16), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::cube(CubeAxis::X, 8))
                     .axis(N, Cut::cube(CubeAxis::Y, 8))
                     .axis(K, Cut::sequential(8))
             })
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))
                     .axis(K, Cut::sequential(4))
@@ -739,12 +739,12 @@ mod residence_tests {
     fn a_fragment_leaf_over_an_instance_level_wants_shared_memory() {
         let space = Tiling::new()
             .extents(&[(M, 16), (N, 16), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(8))
                     .axis(N, Cut::sequential(8))
                     .axis(K, Cut::sequential(8))
             })
-            .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::plane(4))
                     .axis(N, Cut::sequential(4))
                     .axis(K, Cut::sequential(4))

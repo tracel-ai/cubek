@@ -38,9 +38,15 @@ fn procedural_stage_kernel<E: Float>(
 ) {
     let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
     let output = output.tile(comptime!(space.clone()));
-    let mut staging = Staging::single(&source, comptime!(space.clone()), comptime!(space.clone()));
+    let mut ring = Ring::unary(
+        &source,
+        comptime!(space.clone()),
+        comptime!(space.clone()),
+        1usize,
+    );
     let walk = Walk::over(source.runtime_space());
     for region in walk {
+        let staging = ring.slot_mut(0usize);
         staging.fill_streamed(&source, &region);
         staging.consume_final(|staged| {
             output.at(&region).copy_from(staged);
@@ -71,7 +77,7 @@ fn run(recipe: ProceduralRecipe) -> HostData {
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |level| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(3))
@@ -103,7 +109,7 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |level| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(3))
@@ -135,7 +141,7 @@ fn run_mma() -> HostData {
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 4), (REDUCE, 4)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |level| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(2))

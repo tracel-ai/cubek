@@ -270,7 +270,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
     // A space that tiles into `bm×bn` blocks, one cube walking them.
     let space = Tiling::new()
         .extents(&[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Buffering::Single, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
         })
         .build();
