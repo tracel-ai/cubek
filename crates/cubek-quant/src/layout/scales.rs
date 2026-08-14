@@ -20,13 +20,11 @@ pub struct ScalesLayout {
     tensor_shape: Sequence<FastDivmod<usize>>,
     tensor_len: usize,
     scales_strides: Sequence<usize>,
-    /// Per-axis block edges in elements, resolved against the tensor so no dimension is
-    /// [`BlockSize::FULL`], which divides as a zero.
+    /// Per-axis block extent in elements, `None` on an axis its block covers, whose term is
+    /// dropped. Deliberately never the axis extent: a covered axis resolves to the tensor's own
+    /// shape, and holding that here would compile a separate kernel per shape.
     #[cube(comptime)]
-    block_size: Vec<usize>,
-    /// Per-axis extent in elements, so the last axis counts quants rather than packed stores.
-    #[cube(comptime)]
-    element_shape: Vec<usize>,
+    block_size: Vec<Option<usize>>,
     #[cube(comptime)]
     scales_vector_size: usize,
 }
@@ -37,8 +35,7 @@ impl ScalesLayout {
         tensor_shape: Sequence<FastDivmod<usize>>,
         tensor_len: usize,
         scales_strides: Sequence<usize>,
-        #[comptime] block_size: Vec<usize>,
-        #[comptime] element_shape: Vec<usize>,
+        #[comptime] block_size: Vec<Option<usize>>,
         #[comptime] scales_vector_size: usize,
     ) -> Self {
         ScalesLayout {
@@ -46,7 +43,6 @@ impl ScalesLayout {
             tensor_len,
             scales_strides,
             block_size,
-            element_shape,
             scales_vector_size,
         }
     }
@@ -55,7 +51,7 @@ impl ScalesLayout {
     /// scale for the whole axis, so the term is dropped at comptime rather than dividing a runtime
     /// coordinate that can only answer `0`.
     fn addresses(&self, #[comptime] p: usize) -> comptime_type!(bool) {
-        comptime!(self.element_shape[p] > self.block_size[p])
+        comptime!(self.block_size[p].is_some())
     }
 
     /// The outermost axis that still addresses a scale, or the rank when none does. The divmod
@@ -63,7 +59,7 @@ impl ScalesLayout {
     fn outermost_addressed(&self) -> comptime_type!(usize) {
         comptime!(
             (0..self.block_size.len())
-                .find(|&p| self.element_shape[p] > self.block_size[p])
+                .find(|&p| self.block_size[p].is_some())
                 .unwrap_or(self.block_size.len())
         )
     }
@@ -93,7 +89,7 @@ impl Layout for ScalesLayout {
 
                 // An unaddressed axis still has to divide, since the axes outside it read `rem`.
                 if self.addresses(dim) {
-                    let block_size_local = comptime!(self.block_size[dim]);
+                    let block_size_local = comptime!(self.block_size[dim].unwrap());
                     scale_offs += (offs_local / block_size_local) * self.scales_strides[dim];
                 }
             }
@@ -141,7 +137,7 @@ impl ScalesLayout {
                 // first element, and `offs_local` never reaching the block edge reduces that
                 // modulo to a comparison.
                 if self.addresses(dim) {
-                    let block_size_local = comptime!(self.block_size[dim]);
+                    let block_size_local = comptime!(self.block_size[dim].unwrap());
                     is_start &= offs_local.is_multiple_of(block_size_local);
                 } else {
                     is_start &= offs_local == 0;
@@ -186,21 +182,31 @@ pub fn scales_layout<R: Runtime>(
 
     let element_shape = element_shape(&values.shape, scheme.num_quants());
     let values_len = element_shape.iter().product::<usize>();
-    // Whole-tensor granularity is one block spanning every axis, which is what makes the layout
-    // below branchless.
-    let block_size = match scheme.block_size() {
+    // Whole-tensor granularity is one block spanning every axis, so every term drops below.
+    let resolved = match scheme.block_size() {
         None => element_shape.clone(),
         Some(block) => block.resolved_dims(&element_shape),
     };
+    let block_size = addressing_blocks(&resolved, &element_shape);
 
     ScalesLayoutLaunch::new(
         shape_divmod(&element_shape),
         values_len,
         strides_seq(&scales.strides),
         block_size,
-        element_shape,
         scales_vector_size,
     )
+}
+
+/// Keeps a resolved block only on the axes that still tell two scales apart. An axis its block
+/// covers holds one scale, so its extent would be dead weight in the kernel key: a full block
+/// resolves to the shape, and a per-shape key recompiles the kernel for every tensor.
+fn addressing_blocks(resolved: &[usize], element_shape: &[usize]) -> Vec<Option<usize>> {
+    resolved
+        .iter()
+        .zip(element_shape)
+        .map(|(&block, &extent)| (block < extent).then_some(block))
+        .collect()
 }
 
 /// The values' extents in elements. Its last axis is stored packed, `num_quants` to an entry, and
