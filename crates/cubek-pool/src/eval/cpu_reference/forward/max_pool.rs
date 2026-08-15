@@ -1,9 +1,6 @@
 use crate::{
     definition::MaxPoolOptions,
-    eval::cpu_reference::{
-        decode_index,
-        forward::{decode_index_simple, get_window_coords},
-    },
+    eval::cpu_reference::{decode_index, decode_index_simple, forward::get_window_coords},
 };
 use cubek_test_utils::HostData;
 

@@ -31,12 +31,7 @@ pub fn strategy_result(
     let dtype = f32_elem_type();
     let indices_dtype = i32_elem_type();
     let out_grad_shape = problem.out_grad_shape.to_vec();
-    let input_shape = vec![
-        out_grad_shape[0],
-        problem.input_size[0],
-        problem.input_size[1],
-        out_grad_shape[3],
-    ];
+    let input_shape = problem.input_shape().to_vec();
 
     let (input_handle, _input_host) = make_random_f32_host(&client, input_shape.clone(), seed);
     let (out_grad_handle, _out_grad_host) =
@@ -114,12 +109,7 @@ pub fn cpu_reference_result(
     }
 
     let out_grad_shape = problem.out_grad_shape.to_vec();
-    let input_shape = vec![
-        out_grad_shape[0],
-        problem.input_size[0],
-        problem.input_size[1],
-        out_grad_shape[3],
-    ];
+    let input_shape = problem.input_shape().to_vec();
 
     if let Some(p) = progress {
         let total: usize = input_shape.iter().product();

@@ -36,6 +36,17 @@ pub struct PoolBackwardProblem<const N: usize> {
     pub mode: PoolMode<N>,
 }
 
+#[cfg(feature = "benchmarks")]
+impl<const N: usize> PoolBackwardProblem<N> {
+    /// Reconstruct the channels-last input shape from the stored problem dimensions.
+    pub(crate) fn input_shape(&self) -> Shape {
+        let mut shape = vec![self.out_grad_shape[0]];
+        shape.extend_from_slice(&self.input_size);
+        shape.push(self.out_grad_shape[N + 1]);
+        Shape::from(shape)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum PoolMode<const N: usize> {
     Max(MaxPoolOptions<N>),
