@@ -430,6 +430,10 @@ impl<T: Numeric> MemData<T> {
     /// must be the cube's exclusive output window.
     pub(crate) fn fill_procedural(&mut self, src: &ProceduralData<T>, #[comptime] space: Space) {
         comptime!(assert!(
+            self.access.whole,
+            "MemData::fill_procedural: procedural sources require a whole, unpartitioned destination (a full stage or output tile)"
+        ));
+        comptime!(assert!(
             self.store.quant.is_none()
                 && self.projection.is_direct()
                 && self.store.vector_size == 1,
@@ -438,17 +442,44 @@ impl<T: Numeric> MemData<T> {
         // Read the destination's runtime window rather than the comptime space so direct copies
         // also work when another operand witnesses a Dynamic extent.
         let shape = self.window.extent.clone();
+        let units = comptime!(self.access.stage.units);
         let mut dst = self.flat_mut::<Const<1>>();
         let total = dst.shape();
-        let workers = CUBE_DIM as usize;
-        let mut i = UNIT_POS as usize;
-        while i < total {
-            let pos = unravel(&shape, i.fcast::<u32>());
-            dst.write(
-                i,
-                Vector::cast_from(src.evaluate(&pos, comptime!(space.clone()))),
-            );
-            i += workers;
+        let total_c = total.constant();
+        let straight =
+            comptime!(matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8));
+        if comptime!(straight) {
+            let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
+            #[unroll]
+            for t in 0..tasks {
+                let i = UNIT_POS as usize + comptime!(t * units);
+                if comptime!((t + 1) * units > total_c.unwrap() as usize) {
+                    if i < total {
+                        let pos = unravel(&shape, i.fcast::<u32>());
+                        dst.write(
+                            i,
+                            Vector::cast_from(src.evaluate(&pos, comptime!(space.clone()))),
+                        );
+                    }
+                } else {
+                    let pos = unravel(&shape, i.fcast::<u32>());
+                    dst.write(
+                        i,
+                        Vector::cast_from(src.evaluate(&pos, comptime!(space.clone()))),
+                    );
+                }
+            }
+        } else {
+            let workers = CUBE_DIM as usize;
+            let mut i = UNIT_POS as usize;
+            while i < total {
+                let pos = unravel(&shape, i.fcast::<u32>());
+                dst.write(
+                    i,
+                    Vector::cast_from(src.evaluate(&pos, comptime!(space.clone()))),
+                );
+                i += workers;
+            }
         }
     }
 

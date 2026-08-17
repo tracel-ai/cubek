@@ -184,9 +184,14 @@ fn procedural_smem_stage_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[comptime] recipe: ProceduralRecipe,
+    #[comptime] units: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
+    let stage = comptime!(StagePlan::new(
+        &[Residence::Smem],
+        StageStorage::Strided,
+        units
+    ));
     let source = Tile::<E>::procedural_resident(comptime!(space.clone()), recipe, stage);
     let output = output.tile(comptime!(space.clone()));
     let mut ring = Ring::unary(
@@ -218,7 +223,7 @@ fn procedural_direct_copy_kernel<E: Float>(
     output.copy_from(&source);
 }
 
-fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
+fn run_smem_stage(recipe: ProceduralRecipe, units: usize) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
@@ -244,6 +249,7 @@ fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
         ),
         space,
         recipe,
+        units,
         dtype,
     );
 
@@ -304,15 +310,81 @@ fn staged_buffering_keeps_coordinate_varying_values_in_place() {
 
 #[test]
 fn stages_coordinate_varying_values_through_shared_memory() {
-    let got = run_smem_stage(ProceduralRecipe::axis_product(vec![
-        ProceduralRecipe::axis_index(ROW),
-        ProceduralRecipe::axis_index(COL),
-    ]));
+    let got = run_smem_stage(
+        ProceduralRecipe::axis_product(vec![
+            ProceduralRecipe::axis_index(ROW),
+            ProceduralRecipe::axis_index(COL),
+        ]),
+        0,
+    );
     for row in 0..4 {
         for col in 0..6 {
             assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
         }
     }
+}
+
+#[test]
+fn unrolled_stages_coordinate_varying_values_through_shared_memory() {
+    let got = run_smem_stage(
+        ProceduralRecipe::axis_product(vec![
+            ProceduralRecipe::axis_index(ROW),
+            ProceduralRecipe::axis_index(COL),
+        ]),
+        6,
+    );
+    for row in 0..4 {
+        for col in 0..6 {
+            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
+        }
+    }
+}
+
+/// A sub-tile window cannot be the destination of fill_procedural because the fill is cube-wide cooperative.
+#[cube(launch)]
+fn procedural_subwindow_copy_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] recipe: ProceduralRecipe,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural(comptime!(space.divide()), recipe);
+    let output = output.tile(space.clone());
+    let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
+    let mut sub_window = output.at(&region);
+    sub_window.copy_from(&source);
+}
+
+#[test]
+#[should_panic(expected = "procedural sources require a whole, unpartitioned destination")]
+fn procedural_copy_refuses_narrowed_destination() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let space = Tiling::new()
+        .extents(&[(ROW, 4), (COL, 6)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+            level
+                .axis(ROW, Cut::sequential(2))
+                .axis(COL, Cut::sequential(3))
+        })
+        .build();
+    let output = TestInput::builder(client.clone(), shape![4, 6])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    procedural_subwindow_copy_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        ProceduralRecipe::zero(),
+        dtype,
+    );
 }
 
 #[test]
