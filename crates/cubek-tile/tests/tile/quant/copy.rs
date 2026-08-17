@@ -8,7 +8,7 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg,
+    Axis, CubeAxis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg,
     TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
@@ -36,6 +36,48 @@ fn copy_non_quantized_matches_reference() {
         output.arg(),
         space,
         dtype,
+    );
+
+    let input_host = HostData::from_tensor_handle(&client, input.handle(), HostDataType::F32);
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    assert_equals_approx(&got, &input_host, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
+/// The op walks the levels that hand regions to different cubes and stops at the plane level,
+/// which the transport spreads over the cube itself. Stepping the plane level would leave every
+/// plane but the first unwritten, since the fill indexes by the flat unit.
+#[test]
+fn copy_spread_across_cubes_and_planes_matches_reference() {
+    let (m, n) = (4, 512);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = Tiling::new()
+        .extents(&[(M, m), (N, n)])
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::cube(CubeAxis::Y, 1))
+                .axis(N, Cut::cube(CubeAxis::X, 128))
+        })
+        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            l.axis(M, Cut::sequential(1)).axis(N, Cut::plane(32))
+        })
+        .build()
+        .launcher_over(&client, &[]);
+    let space = launch.space().clone();
+
+    let input = TileInput::builder(&client, space.clone())
+        .untiled()
+        .arange();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    plain_copy::launch::<TestRuntime>(
+        &client,
+        launch.cube_count(),
+        launch.cube_dim(),
+        input.arg(),
+        output.arg(),
+        space,
+        f32::elem_type_native(),
     );
 
     let input_host = HostData::from_tensor_handle(&client, input.handle(), HostDataType::F32);
@@ -374,7 +416,7 @@ pub fn plain_copy<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    output.copy_from(&input);
+    output.copy(&input);
 }
 
 #[cube(launch)]
