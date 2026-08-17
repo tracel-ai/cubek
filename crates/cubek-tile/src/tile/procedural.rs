@@ -49,8 +49,9 @@ impl ProceduralRecipe {
 #[expand(derive(Clone))]
 pub struct ProceduralData<T: Numeric> {
     origin: Coords<u32>,
-    /// The source's real logical extent. Unlike `space`, this remains the full operation extent
-    /// as [`Tile::at`](crate::Tile::at) descends into nominally sized trailing partial tiles.
+    /// The source's static logical extent. Dynamic axes hold `u32::MAX`, deliberately leaving
+    /// them unmasked; unlike `space`, this stays in the parent's coordinate system as
+    /// [`Tile::at`](crate::Tile::at) descends into nominally sized trailing partial tiles.
     bound: Coords<u32>,
     /// Whether any level can select a partial tile. It stays with the source while its `space`
     /// descends, because the leaf space alone no longer records an ancestor's overhang.
@@ -82,11 +83,15 @@ impl<T: Numeric> ProceduralData<T> {
         for p in 0..comptime!(space.rank()) {
             origin.push(0u32.runtime());
             let axis = comptime!(space.axis_at(p));
-            // A procedural recipe has no operand-bound to supply the runtime extent of a
-            // dynamic axis. That extent is only present on the operation's witnessed space.
-            if comptime!(!space.is_dynamic(axis)) {
-                bound.push(space.runtime_extent_at(comptime!(p)) as u32);
-            }
+            // Keep `bound` rank-aligned with `origin` even after `Space::divide` turns child
+            // axes static. A recipe has no runtime bound for a dynamic axis, so its sentinel
+            // deliberately leaves that axis unmasked.
+            let extent = comptime!(if space.is_dynamic(axis) {
+                u32::MAX.runtime()
+            } else {
+                space.runtime_extent_at(p) as u32
+            });
+            bound.push(extent);
         }
         let bounds_check = comptime!(
             space
@@ -203,18 +208,7 @@ impl<T: Numeric> ProceduralData<T> {
         let mut in_bounds = true;
         #[unroll]
         for p in 0..comptime!(self.space.rank()) {
-            let axis = comptime!(self.space.axis_at(p));
-            if comptime!(!self.space.is_dynamic(axis)) {
-                let bound_p = comptime!(
-                    self.space
-                        .axes()
-                        .take(p)
-                        .filter(|a| !self.space.is_dynamic(*a))
-                        .count()
-                );
-                in_bounds = in_bounds
-                    && self.origin.at(p) + pos.at(p) < self.bound.at(comptime!(bound_p));
-            }
+            in_bounds = in_bounds && self.origin.at(p) + pos.at(p) < self.bound.at(p);
         }
         in_bounds
     }
@@ -304,25 +298,14 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
     ) -> NativeExpand<bool> {
         let mut in_bounds: NativeExpand<bool> = true.into();
         for p in 0..comptime!(self.space.rank()) {
-            let axis = comptime!(self.space.axis_at(p));
-            if comptime!(!self.space.is_dynamic(axis)) {
-                let bound_p = comptime!(
-                    self.space
-                        .axes()
-                        .take(p)
-                        .filter(|a| !self.space.is_dynamic(*a))
-                        .count()
-                );
-                let index = p.into_expand(scope);
-                let origin = self.origin.__expand_at_method(scope, index);
-                let bound_index = bound_p.into_expand(scope);
-                let bound = self.bound.__expand_at_method(scope, bound_index);
-                let pos = pos.clone();
-                let coord = pos.__expand_index_method(scope, index);
-                let absolute = origin.__expand_add_method(scope, *coord);
-                let axis_in_bounds = absolute.__expand_lt_method(scope, &bound);
-                in_bounds = in_bounds.__expand_and_method(scope, axis_in_bounds);
-            }
+            let index = p.into_expand(scope);
+            let origin = self.origin.__expand_at_method(scope, index);
+            let bound = self.bound.__expand_at_method(scope, index);
+            let pos = pos.clone();
+            let coord = pos.__expand_index_method(scope, index);
+            let absolute = origin.__expand_add_method(scope, *coord);
+            let axis_in_bounds = absolute.__expand_lt_method(scope, &bound);
+            in_bounds = in_bounds.__expand_and_method(scope, axis_in_bounds);
         }
         in_bounds
     }

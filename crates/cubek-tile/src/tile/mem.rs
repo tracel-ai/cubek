@@ -444,6 +444,11 @@ impl<T: Numeric> MemData<T> {
         let mut i = UNIT_POS as usize;
         while i < total {
             let pos = unravel(&shape, i.fcast::<u32>());
+            // TODO: Staging has no knowledge of its eventual consumer, so this generic masked
+            // fill uses ProceduralData's zero fallback. That is not the identity for every
+            // reduction (notably Max over negative values and Min over positive values). A
+            // reduction-aware staging contract must carry either validity or the consumer's
+            // identity into this fill before staged procedural reductions can be fully correct.
             dst.write(
                 i,
                 Vector::cast_from(src.evaluate_masked(&pos, comptime!(space.clone()))),

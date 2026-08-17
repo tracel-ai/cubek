@@ -363,6 +363,45 @@ fn dynamic_procedural_axis_does_not_require_a_source_bound() {
 }
 
 #[test]
+fn dynamic_axis_keeps_static_procedural_bound_aligned_after_divide() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let concrete = Tiling::new()
+        .extents(&[(ROW, 4), (COL, 6)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+            level
+                .axis(ROW, Cut::sequential(2))
+                .axis(COL, Cut::sequential(4))
+        })
+        .build();
+    let space = concrete.clone().with_dynamic(&[ROW]);
+    let output = TestInput::builder(client.clone(), shape![4, 6])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    procedural_direct_copy_kernel::launch::<TestRuntime>(
+        &client,
+        concrete.cube_count(),
+        concrete.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        ProceduralRecipe::one(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for row in 0..4 {
+        for col in 0..6 {
+            assert_eq!(got.get_f32(&[row, col]), 1.0);
+        }
+    }
+}
+
+#[test]
 fn staged_mma_materializes_only_the_tensor_operand() {
     let got = run_mma(Buffering::SINGLE);
     for row in 0..4 {
