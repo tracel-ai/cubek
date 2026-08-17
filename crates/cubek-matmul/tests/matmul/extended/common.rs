@@ -110,6 +110,7 @@ pub(crate) fn plane_blueprint(
         .build()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_blueprint_with(
     client: &ComputeClient<TestRuntime>,
     problem: &MatmulProblem,

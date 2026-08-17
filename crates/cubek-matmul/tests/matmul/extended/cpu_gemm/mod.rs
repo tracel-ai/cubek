@@ -333,7 +333,7 @@ fn transposed_lhs_m_not_vector_multiple() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -362,7 +362,7 @@ fn transposed_lhs_batched() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
