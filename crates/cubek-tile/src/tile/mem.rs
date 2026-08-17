@@ -1943,7 +1943,7 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
 
 /// The storage-tiling nesting a stage over `space` gets: the blocks its buffer lays down
 /// contiguously, coarse to fine, each dividing the one before it (`space` is the implicit
-/// globalmost). Empty is a plain row-major buffer.
+/// outermost). Empty is a plain row-major buffer.
 ///
 /// A `Tiled` stage groups the final tile, the block a cmma transaction reads unstrided. A final
 /// space has no grid left to tile, so it stays plain whatever the layout asks for.
@@ -1960,10 +1960,10 @@ fn stage_nesting(space: &Space, stage: StageStorage) -> Vec<Space> {
 fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<usize> {
     let rank = space.rank();
     let mut extents = Vec::new();
-    let mut global = space;
+    let mut outer = space;
     for block in nesting {
         for p in 0..rank {
-            let (e, b) = (global.extent_at(p), block.extent_at(p));
+            let (e, b) = (outer.extent_at(p), block.extent_at(p));
             assert!(
                 e.is_multiple_of(b),
                 "MemData::smem: a {b}-element storage block must divide the {e}-element block \
@@ -1971,10 +1971,10 @@ fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<
             );
             extents.push(e / b);
         }
-        global = block;
+        outer = block;
     }
     for p in 0..rank {
-        extents.push(global.extent_at(p));
+        extents.push(outer.extent_at(p));
     }
     let last = extents.len() - 1;
     extents[last] /= vector_size;
@@ -2041,7 +2041,7 @@ impl Layout for GmemLayout {
                 let term = comptime!(map.terms()[t]);
                 let p = comptime!(self.projection.position(term.axis));
                 let (finer, modulo) = comptime!(self.projection.digit(pa, term.axis));
-                // Strip the finer digits, then take this one. The globalmost fragment of an axis
+                // Strip the finer digits, then take this one. The outermost fragment of an axis
                 // (and any untiled axis) has no radix and keeps the full quotient.
                 let quot = pos[p].fdiv(self.physical_shape.fproduct(comptime!(finer.to_vec())));
                 let digit = match comptime!(modulo) {

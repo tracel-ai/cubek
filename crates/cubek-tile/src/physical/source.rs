@@ -93,7 +93,7 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
 
     /// The inner block of axes the operand iterates, its `[row, col]` for a matmul (required
     /// unless [`gathered`](Self::gathered) states the mapping instead, non-empty). Complementary
-    /// to [`batches`](Self::batches), the global dims.
+    /// to [`batches`](Self::batches), the outer dims.
     pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, Q, R> {
         self.data.subspace = axes;
         StridedTileSource {
@@ -132,7 +132,7 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         }
     }
 
-    /// The global (batch) axes in the output's order, right-aligned to this operand's leading
+    /// The outer (batch) axes in the output's order, right-aligned to this operand's leading
     /// dims (numpy broadcast): pass the full list, extra leading axes are the ones this operand
     /// omits, and a size-1 dim drops out. Default none (unbatched).
     pub fn batches(mut self, axes: &'a [Axis]) -> Self {
