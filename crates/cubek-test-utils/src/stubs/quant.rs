@@ -179,19 +179,23 @@ fn quant_mask(size_quant: usize) -> u32 {
     }
 }
 
+/// Refuse a scheme this reference cannot stand in for.
+///
+/// It quantizes with one scale per value, so a two-level scheme would give a reference that
+/// ignores the outer factor. A kernel that drops it too would then agree with the reference, and
+/// the test would pass with both of them wrong.
+pub(crate) fn assert_supported(scheme: &QuantScheme) {
+    assert!(
+        scheme.num_levels() <= 1,
+        "two-level quantization is not supported by the reference quantizer, got {scheme:?}"
+    );
+}
+
 /// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
 pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    if scheme.num_levels() > 1 {
-        unimplemented!("two-level quantization is not supported here, got {scheme:?}");
-    }
-    match scheme.block_size() {
-        None => shape.to_vec(),
-        Some(block) => block
-            .to_dim_vec(shape.len())
-            .into_iter()
-            .map(usize::from)
-            .collect(),
-    }
+    assert_supported(scheme);
+
+    crate::quant_layout::block_dims(scheme, shape)
 }
 
 /// Shape of the per-block scale grid: each dimension divided by its block
