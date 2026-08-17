@@ -425,14 +425,10 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
-    /// tile. The caller must own the destination window for the whole cube: workers write cyclic
-    /// positions across it. Staged shared-memory buffers meet that contract; a global destination
-    /// must be the cube's exclusive output window.
+    /// tile. The caller must ensure that every unit in the cube owns this destination window:
+    /// workers write cyclic positions across it. That is a property of the level's distribution,
+    /// rather than whether this window covers its backing buffer.
     pub(crate) fn fill_procedural(&mut self, src: &ProceduralData<T>, #[comptime] space: Space) {
-        comptime!(assert!(
-            self.access.whole,
-            "MemData::fill_procedural: procedural sources require a whole, unpartitioned destination (a full stage or output tile)"
-        ));
         comptime!(assert!(
             self.store.quant.is_none()
                 && self.projection.is_direct()

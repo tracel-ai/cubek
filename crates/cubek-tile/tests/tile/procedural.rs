@@ -340,53 +340,6 @@ fn unrolled_stages_coordinate_varying_values_through_shared_memory() {
     }
 }
 
-/// A sub-tile window cannot be the destination of fill_procedural because the fill is cube-wide cooperative.
-#[cube(launch)]
-fn procedural_subwindow_copy_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[comptime] recipe: ProceduralRecipe,
-    #[define(E)] _dtype: ElemType,
-) {
-    let source = Tile::<E>::procedural(comptime!(space.divide()), recipe);
-    let output = output.tile(space.clone());
-    let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
-    let mut sub_window = output.at(&region);
-    sub_window.copy_from(&source);
-}
-
-#[test]
-#[should_panic(expected = "procedural sources require a whole, unpartitioned destination")]
-fn procedural_copy_refuses_narrowed_destination() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let space = Tiling::new()
-        .extents(&[(ROW, 4), (COL, 6)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3))
-        })
-        .build();
-    let output = TestInput::builder(client.clone(), shape![4, 6])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    procedural_subwindow_copy_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
-        ),
-        space,
-        ProceduralRecipe::zero(),
-        dtype,
-    );
-}
-
 #[test]
 fn copies_procedural_directly_to_global_memory() {
     let got = run_direct_copy(ProceduralRecipe::axis_product(vec![
