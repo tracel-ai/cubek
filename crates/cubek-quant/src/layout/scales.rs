@@ -223,10 +223,8 @@ pub fn scales_layout<R: Runtime>(
 ) -> ScalesLayoutArgs<R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
 
-    if scheme.num_levels() > 1 {
-        unimplemented!("two-level quantization is not supported here, got {scheme:?}");
-    }
-
+    // The innermost level's grid, which a two-level scheme lays out exactly like a one-level block
+    // scheme. Its global scale covers the whole tensor and rides its own binding, not this layout.
     match scheme.block_size() {
         None => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
         Some(block_size) => {

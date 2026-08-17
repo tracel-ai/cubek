@@ -70,8 +70,8 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
         &client,
         input.binding(),
         values.binding(),
-        scale.binding(),
-        stored.clone().binding(),
+        &[scale.binding()],
+        &[stored.clone().binding()],
         &scheme,
         ElemType::Float(FloatKind::F32),
     )
