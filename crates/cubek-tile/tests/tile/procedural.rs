@@ -184,14 +184,9 @@ fn procedural_smem_stage_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[comptime] recipe: ProceduralRecipe,
-    #[comptime] units: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let stage = comptime!(StagePlan::new(
-        &[Residence::Smem],
-        StageStorage::Strided,
-        units
-    ));
+    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
     let source = Tile::<E>::procedural_resident(comptime!(space.clone()), recipe, stage);
     let output = output.tile(comptime!(space.clone()));
     let mut ring = Ring::unary(
@@ -223,7 +218,7 @@ fn procedural_direct_copy_kernel<E: Float>(
     output.copy_from(&source);
 }
 
-fn run_smem_stage(recipe: ProceduralRecipe, units: usize) -> HostData {
+fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
@@ -249,7 +244,6 @@ fn run_smem_stage(recipe: ProceduralRecipe, units: usize) -> HostData {
         ),
         space,
         recipe,
-        units,
         dtype,
     );
 
@@ -310,29 +304,10 @@ fn staged_buffering_keeps_coordinate_varying_values_in_place() {
 
 #[test]
 fn stages_coordinate_varying_values_through_shared_memory() {
-    let got = run_smem_stage(
-        ProceduralRecipe::axis_product(vec![
-            ProceduralRecipe::axis_index(ROW),
-            ProceduralRecipe::axis_index(COL),
-        ]),
-        0,
-    );
-    for row in 0..4 {
-        for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
-        }
-    }
-}
-
-#[test]
-fn unrolled_stages_coordinate_varying_values_through_shared_memory() {
-    let got = run_smem_stage(
-        ProceduralRecipe::axis_product(vec![
-            ProceduralRecipe::axis_index(ROW),
-            ProceduralRecipe::axis_index(COL),
-        ]),
-        6,
-    );
+    let got = run_smem_stage(ProceduralRecipe::axis_product(vec![
+        ProceduralRecipe::axis_index(ROW),
+        ProceduralRecipe::axis_index(COL),
+    ]));
     for row in 0..4 {
         for col in 0..6 {
             assert_eq!(got.get_f32(&[row, col]), (row * col) as f32);
