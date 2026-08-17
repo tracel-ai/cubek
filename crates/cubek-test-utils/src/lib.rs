@@ -1,6 +1,7 @@
 mod config;
 mod correctness;
 mod progress;
+pub mod quant_layout;
 mod registry;
 mod stubs;
 mod test_mode;

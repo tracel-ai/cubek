@@ -1,11 +1,10 @@
 use cubecl::{
-    TestRuntime, client::ComputeClient, ir::ElemType, quant::scheme::QuantStore,
-    std::tensor::TensorHandle, zspace::Shape,
+    TestRuntime, client::ComputeClient, ir::ElemType, std::tensor::TensorHandle, zspace::Shape,
 };
 use cubecl_common::quant::scheme::QuantScheme;
 
 use crate::{
-    HostData, QuantizationInfo, TestTensor, stubs::quant::quantize,
+    HostData, QuantizationInfo, TestTensor, quant_layout, stubs::quant::quantize,
     test_tensor::custom::cast_f32_to_dtype,
 };
 
@@ -27,31 +26,12 @@ pub(crate) fn apply_quantization(
     // the quant range without clipping.
     let (scales_shape, scales_data, block_dims) = compute_input_scales(&tensor.host, &scheme);
 
-    // Determine the correct storage type for the quantized output buffer.
-    let output_storage_type = match &scheme.store {
-        QuantStore::PackedU32(_) => ElemType::UInt(cubecl::ir::UIntKind::U32),
-        QuantStore::PackedNative(_) | QuantStore::Native => {
-            ElemType::from_quant_value(scheme.value)
-        }
-    };
-
-    let mut quant_shape = original_shape.clone();
-    let num_quants = scheme.num_quants();
-    // Only divide last dim for PackedU32/PackedNative; Native stores 1:1.
-    match &scheme.store {
-        QuantStore::PackedU32(_) | QuantStore::PackedNative(_) => {
-            if num_quants > 1 {
-                let last_dim = quant_shape.len() - 1;
-                quant_shape[last_dim] /= num_quants;
-            }
-        }
-        QuantStore::Native => {}
-    }
-
     // Quantize on the host (see `crate::stubs::quant`). The kernel's `out_scale`
     // is simply the input scales cast to the param precision, so we build it
     // directly from `scales_data` instead of having the stub recompute it.
     let shape: Vec<usize> = original_shape.iter().copied().collect();
+    let output_storage_type = quant_layout::values_dtype(&scheme);
+    let quant_shape = Shape::from(quant_layout::values_shape(&scheme, &shape));
     let values = logical_values_f32(&tensor.host);
     let output_bytes = quantize(&values, &shape, &scales_data, &block_dims, &scheme);
     let output_handle = TensorHandle::new_contiguous(
