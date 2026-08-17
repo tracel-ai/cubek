@@ -19,7 +19,12 @@ pub use register::*;
 pub use tma::*;
 pub use view::*;
 
-use cubecl::{prelude::*, quant::scheme::QuantScheme};
+use cubecl::{
+    prelude::*,
+    quant::scheme::QuantScheme,
+    std::quant::view::QuantizedView as DequantView,
+    std::tensor::{View, layout::Coordinates},
+};
 
 use crate::*;
 
@@ -130,11 +135,12 @@ pub struct QuantInfo {
 }
 
 /// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
-/// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
-/// strides); a block scheme's edges come straight from the scheme.
+/// tensor, so every axis reports `usize::MAX`: with `0` strides ([`Tile::of_dequant`]) the value
+/// never addresses a real block, and it makes [`uniform_window`] report the whole window as
+/// uniform, which per-tensor always is. A block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     let Some(block) = scheme.block_size() else {
-        return vec![1; rank];
+        return vec![usize::MAX; rank];
     };
     block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
 }
@@ -197,6 +203,43 @@ impl QuantInfo {
             scale * self.outer.unwrap()
         } else {
             scale
+        }
+    }
+
+    /// The [`DequantView`] this info's scale data resolves to for a values/scales view pair over
+    /// the same coordinates: one scale for the whole window, the outer level folded into a
+    /// register, or a per-position lookup, in that preference order. Shared by
+    /// [`flat_transparent`](MemData::flat_transparent) and [`transparent`](MemData::transparent).
+    pub(crate) fn dequant_view<
+        'a,
+        I: Numeric,
+        WP: Size,
+        T: Numeric,
+        W: Size,
+        C: Coordinates + 'static,
+    >(
+        &self,
+        values: View<'a, Vector<I, WP>, C>,
+        scales: View<'a, f32, C>,
+    ) -> DequantView<'a, I, WP, f32, T, W, C> {
+        if comptime!(self.uniform()) {
+            // One scale for the whole window: read once here, so no read below pays for the
+            // scales view at all.
+            DequantView::<I, WP, f32, T, W, C>::new_with_whole_scale(
+                values,
+                scales,
+                self.uniform_scale(),
+                comptime!(self.scheme),
+            )
+        } else if comptime!(self.outer.is_some()) {
+            DequantView::<I, WP, f32, T, W, C>::new_with_outer_scale(
+                values,
+                scales,
+                self.outer.unwrap(),
+                comptime!(self.scheme),
+            )
+        } else {
+            DequantView::<I, WP, f32, T, W, C>::new(values, scales, comptime!(self.scheme))
         }
     }
 

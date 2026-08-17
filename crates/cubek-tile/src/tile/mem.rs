@@ -4,7 +4,6 @@
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
-    std::quant::view::QuantizedView as DequantView,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
@@ -1250,29 +1249,7 @@ impl<T: Numeric> MemData<T> {
                         comptime!(info.extent.clone()),
                     ))
                     .view(FlatLayout::new(self.window.extent.clone()));
-                let dequant = if comptime!(info.uniform()) {
-                    // One scale for the whole window: read once here, so no read below pays
-                    // for the scales view at all.
-                    DequantView::<I, WP, f32, T, W, Coords1d>::new_with_whole_scale(
-                        values,
-                        scales,
-                        info.uniform_scale(),
-                        comptime!(info.scheme),
-                    )
-                } else if comptime!(info.outer.is_some()) {
-                    DequantView::<I, WP, f32, T, W, Coords1d>::new_with_outer_scale(
-                        values,
-                        scales,
-                        info.outer.unwrap(),
-                        comptime!(info.scheme),
-                    )
-                } else {
-                    DequantView::<I, WP, f32, T, W, Coords1d>::new(
-                        values,
-                        scales,
-                        comptime!(info.scheme),
-                    )
-                };
+                let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
                 FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
             }
             ComptimeOption::None => self.flat::<W>(),
@@ -1320,25 +1297,7 @@ impl<T: Numeric> MemData<T> {
                         comptime!(info.extent.clone()),
                     ))
                     .view(layout);
-                let dequant = if comptime!(info.uniform()) {
-                    // One scale for the whole window: read once here, so no read below pays
-                    // for the scales view at all.
-                    DequantView::<I, WP, f32, T, W, C>::new_with_whole_scale(
-                        values,
-                        scales,
-                        info.uniform_scale(),
-                        comptime!(info.scheme),
-                    )
-                } else if comptime!(info.outer.is_some()) {
-                    DequantView::<I, WP, f32, T, W, C>::new_with_outer_scale(
-                        values,
-                        scales,
-                        info.outer.unwrap(),
-                        comptime!(info.scheme),
-                    )
-                } else {
-                    DequantView::<I, WP, f32, T, W, C>::new(values, scales, comptime!(info.scheme))
-                };
+                let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
                 MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
             }
             ComptimeOption::None => self.masked::<W, C, L>(layout),

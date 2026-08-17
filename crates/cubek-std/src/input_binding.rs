@@ -67,6 +67,10 @@ impl<R: Runtime> InputBinding<R> {
                 data_dtype: _,
                 scale_dtype: _,
             } => {
+                if scheme.num_levels() > 1 {
+                    unimplemented!("two-level quantization is not supported here, got {scheme:?}");
+                }
+
                 let rank = data.shape.len();
 
                 data.shape.swap(dim0, dim1);

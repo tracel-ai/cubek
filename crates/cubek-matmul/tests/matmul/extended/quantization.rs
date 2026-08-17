@@ -70,7 +70,11 @@ fn tensor_scheme_store(value: QuantValue, store: QuantStore) -> QuantScheme {
 }
 
 fn block_scheme(value: QuantValue, block_size: impl AsRef<[u8]>) -> QuantScheme {
-    tensor_scheme(value).per_block(block_size, ScaleDtype::F32)
+    QuantScheme::default()
+        .with_mode(QuantMode::Symmetric)
+        .per_block(block_size, ScaleDtype::F32)
+        .with_value(value)
+        .with_store(QuantStore::PackedU32(0))
 }
 
 /// Skips a test when the runtime lacks `i8` conversion support, which

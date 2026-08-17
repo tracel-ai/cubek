@@ -246,14 +246,15 @@ pub struct Quantization<R: Runtime> {
 impl<R: Runtime> Quantization<R> {
     /// `scales` holds one binding per scheme level, innermost first. Only the innermost level's
     /// scales are addressed per position; an outer level covers the whole tensor, so its binding
-    /// is read once from its first element.
+    /// is read once from its first element. This only checks the slice holds 1 or 2 bindings;
+    /// whether that count actually matches `scheme`'s own level count is [`validate`](Self::validate)'s
+    /// job, via `check_scale_bindings`.
     pub fn new(scales: &[TensorBinding<R>], scheme: QuantScheme, dequant_at: DequantAt) -> Self {
         let (inner, outer) = match scales {
             [inner] => (inner, None),
             [inner, outer] => (inner, Some(outer.clone())),
             _ => panic!(
-                "StridedTileSource::quantized: {} scale bindings, expected one per level \
-                 (innermost first)",
+                "StridedTileSource::quantized: {} scale bindings, expected 1 or 2 (innermost first)",
                 scales.len()
             ),
         };

@@ -22,6 +22,11 @@ pub(crate) mod utils {
     use cubecl::ir::{ElemType, UIntKind};
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
+        assert!(
+            scheme.num_levels() <= 1,
+            "two-level quantization is not supported here, got {scheme:?}"
+        );
+
         // Validate block size compatibility
         if let Some(block_size) = scheme.block_size() {
             let block_size = *block_size.as_slice().last().unwrap() as usize;

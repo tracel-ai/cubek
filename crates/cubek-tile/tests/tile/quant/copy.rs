@@ -120,11 +120,11 @@ fn copy_quantized_per_tensor_matches_reference() {
 /// live values (and their scales) intact, not that the overhang itself is suppressed.
 #[test]
 fn copy_quantized_block_matches_reference() {
-    run_quantized_block(8, 8, 4, 4); // square 2×2 grid of blocks
-    run_quantized_block(8, 8, 8, 4); // blocks along N only (per-column-group)
-    run_quantized_block(8, 8, 4, 8); // blocks along M only (per-row-group)
-    run_quantized_block(16, 8, 4, 4); // non-square tensor, 4×2 grid
-    run_quantized_block(6, 8, 4, 4); // M's last block is half-filled: the overhang is masked
+    run_quantized_block(8, 8, 4, 4, None); // square 2×2 grid of blocks
+    run_quantized_block(8, 8, 8, 4, None); // blocks along N only (per-column-group)
+    run_quantized_block(8, 8, 4, 8, None); // blocks along M only (per-row-group)
+    run_quantized_block(16, 8, 4, 4, None); // non-square tensor, 4×2 grid
+    run_quantized_block(6, 8, 4, 4, None); // M's last block is half-filled: the overhang is masked
 }
 
 /// Packed-u32 block-quantized: the buffer holds `num_quants` values per `u32`, which the view
@@ -247,16 +247,19 @@ pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
 /// implementation that drops it fails by exactly that factor.
 #[test]
 fn copy_quantized_two_level_matches_reference() {
-    run_quantized_two_level(8, 8, 4, 4, 0.5);
-    run_quantized_two_level(16, 8, 4, 4, 0.25);
-    run_quantized_two_level(6, 8, 4, 4, 0.5); // M's last block is half-filled: masked overhang
+    run_quantized_block(8, 8, 4, 4, Some(0.5));
+    run_quantized_block(16, 8, 4, 4, Some(0.25));
+    run_quantized_block(6, 8, 4, 4, Some(0.5)); // M's last block is half-filled: masked overhang
+    // The whole window fits inside one block: `QuantInfo::uniform()` holds, so this exercises
+    // `uniform_scale()`'s outer-scale fold instead of `new_with_outer_scale`'s per-position one.
+    run_quantized_block(4, 4, 4, 4, Some(0.5));
 }
 
 /// The mutation check on the same path: a zero per-tensor scale zeroes every reconstruction, so
 /// the outer scale provably participates in each read rather than defaulting to one.
 #[test]
 fn copy_quantized_two_level_zero_outer_scale_zeroes_output() {
-    run_quantized_two_level(8, 8, 4, 4, 0.0);
+    run_quantized_block(8, 8, 4, 4, Some(0.0));
 }
 
 /// A two-level scheme with no outer binding is refused by the builder, host-side and on the
@@ -296,89 +299,11 @@ fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
         .with_value(QuantValue::Q8S)
 }
 
-/// [`run_quantized_block`] with a two-level scheme: the same block grid, its scales normalized
-/// by `outer`, bound as a third 1-element tensor.
-fn run_quantized_two_level(m: usize, n: usize, bm: usize, bn: usize, outer: f32) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no native i8".to_string(),
-        ))
-        .enforce();
-        return;
-    }
-
-    let scheme = two_level_scheme(bm, bn);
-
-    let shape = Shape::from(vec![m, n]);
-    let input_dtype = ElemType::from_quant_value(scheme.value);
-    let (lo, hi) = scheme.value.range();
-    let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
-        .dtype(input_dtype)
-        .uniform(0x1, lo, hi)
-        .generate_with_f32_host_data();
-
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn))
-        })
-        .build();
-    let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
-
-    let (sm, sn) = (m.div_ceil(bm), n.div_ceil(bn));
-    let scale_vals: Vec<f32> = (0..sm * sn).map(|k| 0.05 * (k + 1) as f32).collect();
-    let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
-        .custom(scale_vals.clone())
-        .generate_without_host_data();
-    let outer_scale = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
-        .custom(vec![outer])
-        .generate_without_host_data();
-
-    let out_dtype = f32::elem_type_native();
-    dequant_copy::launch::<TestRuntime>(
-        &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
-        1,
-        QuantTileArgLaunch::new(
-            input.binding().into_tensor_arg(),
-            scales.binding().into_tensor_arg(),
-            Some(linear_view(outer_scale.binding())).into(),
-            TileSpec::direct(&[M, N]),
-            scheme,
-            DequantAt::Read,
-        ),
-        TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
-        space,
-        input_dtype,
-        out_dtype,
-    );
-
-    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
-    let expected = HostData {
-        data: HostDataVec::F32(
-            input_host
-                .iter_indices()
-                .map(|idx| {
-                    let scale = scale_vals[(idx[0] / bm) * sn + (idx[1] / bn)];
-                    input_host.get_f32(&idx) * scale * outer
-                })
-                .collect(),
-        ),
-        strides: StridedLayout::RowMajor.compute_strides(&shape),
-        shape,
-    };
-    assert_equals_approx(&got, &expected, 1e-6)
-        .as_test_outcome()
-        .enforce();
-}
-
 /// Copy a `bm×bn` block-scaled Q8S input and check each element used its own block's scale:
-/// `out == q * scale[i/bm, j/bn]`. The space tiles into block-sized leaves, so a tensor that
-/// doesn't fill its last block overhangs it.
-fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
+/// `out == q * scale[i/bm, j/bn]`, or with `outer` set (two-level), `out == q * scale[..] *
+/// outer`, the outer scale bound as a third 1-element tensor. The space tiles into block-sized
+/// leaves, so a tensor that doesn't fill its last block overhangs it.
+fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, outer: Option<f32>) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -388,10 +313,14 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         return;
     }
 
-    let scheme = QuantScheme::default()
+    let block_scheme = QuantScheme::default()
         .per_block([bm as u8, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
+    let scheme = match outer {
+        Some(_) => block_scheme.per_tensor(ScaleDtype::F32),
+        None => block_scheme,
+    };
 
     let shape = Shape::from(vec![m, n]);
     let input_dtype = ElemType::from_quant_value(scheme.value);
@@ -418,6 +347,11 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
     let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
         .custom(scale_vals.clone())
         .generate_without_host_data();
+    let outer_scale = outer.map(|g| {
+        TestInput::builder(client.clone(), Shape::from(vec![1usize]))
+            .custom(vec![g])
+            .generate_without_host_data()
+    });
 
     let out_dtype = f32::elem_type_native();
     dequant_copy::launch::<TestRuntime>(
@@ -428,7 +362,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            None.into(),
+            outer_scale.map(|g| linear_view(g.binding())).into(),
             TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,
@@ -440,13 +374,14 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
     );
 
     let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let g = outer.unwrap_or(1.0);
     let expected = HostData {
         data: HostDataVec::F32(
             input_host
                 .iter_indices()
                 .map(|idx| {
                     let scale = scale_vals[(idx[0] / bm) * sn + (idx[1] / bn)];
-                    input_host.get_f32(&idx) * scale
+                    input_host.get_f32(&idx) * scale * g
                 })
                 .collect(),
         ),

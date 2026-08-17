@@ -56,15 +56,6 @@ impl ScaleLayout {
     fn addresses(&self, #[comptime] p: usize) -> comptime_type!(bool) {
         comptime!(self.extent[p] > self.block[p])
     }
-
-    /// How many axes [`addresses`](Self::addresses) keeps, so the sum knows its own arity.
-    fn kept(&self) -> comptime_type!(usize) {
-        comptime!(
-            (0..self.block.len())
-                .filter(|&p| self.extent[p] > self.block[p])
-                .count()
-        )
-    }
 }
 
 #[cube]
@@ -86,7 +77,7 @@ impl Layout for ScaleLayout {
                 terms.push(pos[p].fmul(w).fdiv(block).fmul(self.strides.at(p)));
             }
         }
-        let kept = self.kept();
+        let kept = terms.len();
         if comptime!(kept == 0) {
             // Every axis holds one scale: the window's own, already in `window_start`.
             self.window_start.fcast::<usize>()

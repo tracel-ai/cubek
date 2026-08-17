@@ -63,7 +63,11 @@ fn scheme_tensor(value: QuantValue) -> QuantScheme {
 }
 
 fn scheme_block(value: QuantValue, block: u8) -> QuantScheme {
-    scheme_tensor(value).per_block([block], ScaleDtype::F32)
+    QuantScheme::default()
+        .with_mode(QuantMode::Symmetric)
+        .per_block([block], ScaleDtype::F32)
+        .with_value(value)
+        .with_store(QuantStore::PackedU32(0))
 }
 
 fn quant_schemes() -> Vec<(&'static str, QuantScheme)> {
