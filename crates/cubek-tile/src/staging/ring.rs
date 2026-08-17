@@ -43,10 +43,10 @@ impl<T: CubeType> Ring<T> {
         self.slots.index(FIRST_SLOT).has_fixed()
     }
 
-    /// Whether any slot stages a plane partition, which selects its tiles by comptime coordinate
+    /// Whether any slot reads an operand by selecting fragments, which takes comptime coordinates
     /// and so stands up only under an unrolled walk. Uniform across slots since all slots share one plan.
-    pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
-        self.slots.index(FIRST_SLOT).has_plane_stage()
+    pub(crate) fn has_fragment_read(&self) -> comptime_type!(bool) {
+        self.slots.index(FIRST_SLOT).has_fragment_read()
     }
 }
 
@@ -113,7 +113,7 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
     let total = walk.total();
 
     // A fixed operand's window never moves, so region 0's is every region's. Later slots reusing
-    // the first slot's buffer for it read `FillMode::Reused` and skip the copy.
+    // the first slot's buffer for it read `WindowMode::Reused` and skip the copy.
     if comptime!(has_fixed) {
         let first = walk.region(FIRST_SLOT);
         #[unroll]
@@ -161,20 +161,24 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
 
 /// Whether a buffered walk must unroll, the one answer every [`Pipelined`] operation gives the
 /// same way: the level *cuts* a fragment-partition output (each region selects its block by
-/// comptime coordinate), or a slot stages plane tiles, selected the same way and standing up only
-/// when `op_space` is itself static-walkable. An smem-staged level stays rolled: unrolling would
-/// re-stage its shared memory per copy.
+/// comptime coordinate), or a slot reads an operand as fragments, selected the same way and
+/// standing up only when `op_space` is itself static-walkable. An smem-staged level stays rolled:
+/// unrolling would re-stage its shared memory per copy.
+///
+/// The output and the operands are asked separately because either can be fragments on its own:
+/// a level can cut a fragment output over memory operands, or read a resident fragment into a
+/// memory output.
 ///
 /// Operations differ only in which space is the operand merge, so they pass it in.
 #[cube]
 pub(crate) fn stage_walk_unrolled<Acc: Numeric>(
     acc: &Tile<Acc>,
     #[comptime] op_space: Space,
-    #[comptime] has_plane_stage: bool,
+    #[comptime] has_fragment_read: bool,
 ) -> comptime_type!(bool) {
     let cuts = acc.tile_kind.cuts_partition(comptime!(acc.space.clone()));
     comptime!({
-        let unroll = cuts || (has_plane_stage && op_space.static_walkable());
+        let unroll = cuts || (has_fragment_read && op_space.static_walkable());
         if unroll {
             assert!(
                 op_space.is_static(),

@@ -1,6 +1,6 @@
 //! How an operand lives across the contraction, i.e. what its [`Residence`](crate::Residence)
 //! costs: a staging slot ([`base`]) sequenced by a [`pipeline`], built and driven by [`fill`]
-//! (streamed vs fixed, materialized vs rebound), and scheduled as a depth-`n` software pipeline
+//! (streamed vs fixed, materialized vs read where it lies), and scheduled as a depth-`n` software pipeline
 //! by [`ring`]. [`resident`] (`promote`) is the output counterpart, bracketing the whole operation
 //! instead of refilling per region.
 

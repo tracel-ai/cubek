@@ -184,7 +184,7 @@ impl Conv1d {
     /// the output bounds-masked: the two axes of the gather path a plain `check` leaves at their
     /// degenerate values. `buffering` says how deeply the level is buffered; `residence` says
     /// whether the leaf gathers straight out of gmem (`InPlace`) or out of a compacted stage
-    /// (`Auto`).
+    /// (`Smem`).
     fn check_at(
         &self,
         tile_oh: usize,
@@ -512,7 +512,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         ],
     ))
     .checked(true)
-    .residence(&[Residence::Auto]);
+    .residence(&[Residence::Smem]);
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -798,7 +798,7 @@ fn conv1d_launched_staged_strided_and_dilated() {
         stride: 3,
         dilation: 2,
     }
-    .check_launched(2, 2, 0, Buffering::SINGLE, &[Residence::Auto]);
+    .check_launched(2, 2, 0, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// A padded window with no overhang anywhere: nothing about the tiling says the operand needs a
@@ -1194,7 +1194,7 @@ fn conv1d_dynamic_padding_staged() {
         stride: 1,
         dilation: 1,
     }
-    .check_dynamic_padded(3, 4, 1, 6, Buffering::SINGLE, false, &[Residence::Auto]);
+    .check_dynamic_padded(3, 4, 1, 6, Buffering::SINGLE, false, &[Residence::Smem]);
 }
 
 /// Stride, dilation and padding all runtime at once: the whole affine map arrives with the launch.
@@ -1223,7 +1223,7 @@ fn conv1d_all_dynamic_staged() {
         stride: 2,
         dilation: 1,
     }
-    .check_dynamic_padded(3, 4, 1, 8, Buffering::SINGLE, true, &[Residence::Auto]);
+    .check_dynamic_padded(3, 4, 1, 8, Buffering::SINGLE, true, &[Residence::Smem]);
 }
 
 // ---- 2-D -------------------------------------------------------------------
@@ -1280,7 +1280,7 @@ impl Conv2d {
         self.check_at(tile_oh, tile_ow, tile_co, Buffering::SINGLE, &[])
     }
 
-    /// `check` under `buffering`: `InPlace` gathers straight out of gmem, `Auto` compacts the two
+    /// `check` under `buffering`: `InPlace` gathers straight out of gmem, `Smem` compacts the two
     /// gathered physical axes into a dense stage first.
     fn check_at(
         &self,
@@ -1402,7 +1402,7 @@ fn conv2d_single_tile() {
 
 // ---- staged ----------------------------------------------------------------
 
-// The same convolutions with the input staged ([`Residence::Auto`]). A gathered operand's region is
+// The same convolutions with the input staged ([`Residence::Smem`]). A gathered operand's region is
 // copied into a shared-memory tile shaped like the physical *window* it reads (`span(oh, rh) × ci`),
 // compacted onto the lattice its stride and dilation reach, so each input element is stored once. The
 // stage keeps the operand's own projection, so the leaf gathers out of smem exactly as it gathered
@@ -1420,7 +1420,7 @@ fn conv1d_staged_dense_window() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// Stride and dilation both off `1`: the fill's per-axis advance and the receptive-field span are
@@ -1435,7 +1435,7 @@ fn conv1d_staged_strided_and_dilated() {
         stride: 3,
         dilation: 2,
     }
-    .check_at(2, 2, 1, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(2, 2, 1, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// A single tap at unit stride: the window is exactly the output's own extent, so the stage is the
@@ -1451,7 +1451,7 @@ fn conv1d_staged_single_tap() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// One region covering everything: the walk runs once, so the fill is the whole kernel.
@@ -1465,7 +1465,7 @@ fn conv1d_staged_single_tile() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(6, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(6, 4, 1, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// Staged in two-wide lines: the fill moves whole lines, and the innermost axis is the one the
@@ -1480,7 +1480,7 @@ fn conv1d_staged_vectorized_input() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 2, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(4, 4, 2, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// Vectorized with stride and dilation both off `1`.
@@ -1494,7 +1494,7 @@ fn conv1d_staged_vectorized_strided_and_dilated() {
         stride: 2,
         dilation: 2,
     }
-    .check_at(3, 2, 2, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(3, 2, 2, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// The overhanging last tile: the mask sits under the projection, so a tap past the input's real
@@ -1509,7 +1509,7 @@ fn conv1d_staged_masked_overhang() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 1, true, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(4, 4, 1, true, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// The same overhang with a stride, where the window runs further past the end.
@@ -1523,7 +1523,7 @@ fn conv1d_staged_masked_overhang_strided() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(2, 4, 1, true, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(2, 4, 1, true, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// A single tap at stride 2 reaches only every second input position, so the stage keeps half of
@@ -1540,7 +1540,7 @@ fn conv1d_staged_single_tap_strided() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(4, 4, 1, false, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// The overhang masked *and* the input lined: the fill steps whole lines through a window whose
@@ -1555,7 +1555,7 @@ fn conv1d_staged_vectorized_masked_overhang() {
         stride: 1,
         dilation: 1,
     }
-    .check_at(4, 4, 2, true, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(4, 4, 2, true, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// Double buffering drives the same fill from two slots on alternating regions, so a gathered
@@ -1570,7 +1570,7 @@ fn conv1d_staged_double_buffered() {
         stride: 2,
         dilation: 1,
     }
-    .check_at(2, 4, 1, false, Buffering::DOUBLE, &[Residence::Auto]);
+    .check_at(2, 4, 1, false, Buffering::DOUBLE, &[Residence::Smem]);
 }
 
 /// Two gathered physical axes staged at once: the fill decodes one destination coordinate per
@@ -1589,7 +1589,7 @@ fn conv2d_staged_dense_window() {
         dh: 1,
         dw: 1,
     }
-    .check_at(2, 2, 4, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(2, 2, 4, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// Different stride and dilation per spatial axis, so the two staged physical axes cannot be
@@ -1608,7 +1608,7 @@ fn conv2d_staged_asymmetric_stride_and_dilation() {
         dh: 1,
         dw: 2,
     }
-    .check_at(2, 3, 2, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(2, 3, 2, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 /// One compacted physical axis per step: `h` has `gcd(2, 2) = 2`, so its stage keeps every second
@@ -1628,7 +1628,7 @@ fn conv2d_staged_mixed_steps() {
         dh: 2,
         dw: 1,
     }
-    .check_at(2, 2, 4, Buffering::SINGLE, &[Residence::Auto]);
+    .check_at(2, 2, 4, Buffering::SINGLE, &[Residence::Smem]);
 }
 
 // ---- the projected 2-D view ------------------------------------------------
@@ -1921,7 +1921,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         ],
     ))
     .leaf(leaf)
-    .residence(&[Residence::Auto]);
+    .residence(&[Residence::Smem]);
 
     let f32_ty = f32::elem_type_native();
     let in_data = ramp(in_len * ci, 7);
@@ -1949,7 +1949,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
             w_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[RH, CI, CO])
                 .leaf(leaf)
-                .residence(&[Residence::Auto]),
+                .residence(&[Residence::Smem]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
@@ -2115,7 +2115,7 @@ fn resize1d_rational_static() {
     .check(&[2]);
 }
 
-/// The same resample with `Residence::Auto`: the input tile stages uncompacted into shared
+/// The same resample with `Residence::Smem`: the input tile stages uncompacted into shared
 /// memory.
 #[test]
 fn resize1d_staged_static() {
@@ -2130,7 +2130,7 @@ fn resize1d_staged_static() {
         offset: -2,
         divisor: 6,
     }
-    .check_with(&[2], Buffering::SINGLE, 1, &[Residence::Auto]);
+    .check_with(&[2], Buffering::SINGLE, 1, &[Residence::Smem]);
 }
 
 /// Rational gather driven under double buffering on alternating slots.
@@ -2147,7 +2147,7 @@ fn resize1d_staged_double_buffered() {
         offset: -2,
         divisor: 6,
     }
-    .check_with(&[2], Buffering::DOUBLE, 1, &[Residence::Auto]);
+    .check_with(&[2], Buffering::DOUBLE, 1, &[Residence::Smem]);
 }
 
 /// A tap coefficient the divisor does not cancel: the window itself is fractionally dilated, so
@@ -2184,8 +2184,8 @@ fn resize1d_staged_fractional_taps() {
         offset: -2,
         divisor: 3,
     };
-    resize.check_with(&[3], Buffering::SINGLE, 1, &[Residence::Auto]);
-    resize.check_with(&[3, 1], Buffering::SINGLE, 1, &[Residence::Auto]);
+    resize.check_with(&[3], Buffering::SINGLE, 1, &[Residence::Smem]);
+    resize.check_with(&[3, 1], Buffering::SINGLE, 1, &[Residence::Smem]);
 }
 
 /// Staged rational gather served in two-wide lines on the ungathered `CI` axis.
@@ -2202,7 +2202,7 @@ fn resize1d_staged_vectorized() {
         offset: -2,
         divisor: 6,
     }
-    .check_with(&[2], Buffering::SINGLE, 2, &[Residence::Auto]);
+    .check_with(&[2], Buffering::SINGLE, 2, &[Residence::Smem]);
 }
 
 /// A rational gathered operand whose divisor and offset arrive at runtime.

@@ -16,25 +16,22 @@ use crate::*;
 /// One operand's comptime facts, read off its [`Tile`] before any slot is built.
 pub(crate) struct SlotOperand<'a> {
     residence: Residence,
-    delivery: Delivery,
-    /// Already materialized as a plane fragment a level above, so it has no payload to build.
-    fragment: bool,
+    source: StageSource,
     space: &'a Space,
 }
 
 impl<'a> SlotOperand<'a> {
-    pub(crate) fn new(
-        residence: Residence,
-        delivery: Delivery,
-        fragment: bool,
-        space: &'a Space,
-    ) -> Self {
+    pub(crate) fn new(residence: Residence, source: StageSource, space: &'a Space) -> Self {
         SlotOperand {
             residence,
-            delivery,
-            fragment,
+            source,
             space,
         }
+    }
+
+    /// Whether a level above already materialized this operand into plane-private registers.
+    fn is_resident_fragment(&self) -> bool {
+        self.source.is_resident_fragment()
     }
 }
 
@@ -43,27 +40,26 @@ impl<'a> SlotOperand<'a> {
 /// construction rather than by each re-deriving the same answers off the same tiles.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct SlotPlan {
-    residence: Vec<Residence>,
-    fill_modes: Vec<FillMode>,
+    operands: Vec<OperandPlan>,
     sync: Sync,
     collective_full: bool,
 }
 
 impl SlotPlan {
     pub(crate) fn new(operands: &[SlotOperand], op_space: &Space) -> SlotPlan {
-        // Admission first: an operand's delivery is only meaningful once it is known to be a fill
-        // source at all, and a resident fragment never is.
+        // Admission first: the rest of the plan reads an operand as a fill source, which a
+        // resident fragment can only be if something asked to materialize it here.
         assert!(
             slot_admits_operands(operands),
-            "Staging: an operand already materialized as a plane fragment cannot share a slot; \
-             another operand asked to materialize at this level, so give it Residence::InPlace \
-             here (materializing it at a level above instead)"
+            "Staging: an operand already materialized as a plane fragment has no source to \
+             materialize from, so it can only be read where it lies (Residence::InPlace); \
+             materialize it at a level above instead"
         );
-        let residence: Vec<_> = operands.iter().map(|op| op.residence).collect();
-        if !compatible_slot_residences(&residence) {
+        let residences: Vec<_> = operands.iter().map(|op| op.residence).collect();
+        if !compatible_slot_residences(&residences) {
             if operands
                 .iter()
-                .any(|op| op.delivery == Delivery::Procedural)
+                .any(|op| op.source.delivery() == Some(Delivery::Procedural))
             {
                 panic!(
                     "Staging: a procedural recipe stages in Smem and cannot share a slot with a Plane operand"
@@ -76,43 +72,49 @@ impl SlotPlan {
         // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
         // splitting an invariant out would corrupt its phase. A dynamic level can't decide
         // invariance at comptime. Both fall back to streaming.
-        let can_fix_invariants =
-            op_space.is_static() && !operands.iter().any(|op| op.delivery.is_tma());
-        let fill_modes = operands
+        let can_fix_invariants = op_space.is_static()
+            && !operands
+                .iter()
+                .filter_map(|op| op.source.delivery())
+                .any(|delivery| delivery.is_tma());
+        let planned_operands = operands
             .iter()
             .map(|op| {
-                if can_fix_invariants && op_space.walk_invariant(op.space) {
-                    FillMode::Fixed
+                // An in-place operand is never windowed: no buffer is allocated for it, so there
+                // is nothing to fill and nothing whose invariance could save a fill.
+                let payload = if op.residence == Residence::InPlace {
+                    SlotPayload::AtRegion
+                } else if can_fix_invariants && op_space.walk_invariant(op.space) {
+                    SlotPayload::Windowed(WindowMode::Fixed)
                 } else {
-                    FillMode::Streamed
-                }
+                    SlotPayload::Windowed(WindowMode::Streamed)
+                };
+                OperandPlan::new(payload, op.residence, op.source)
             })
             .collect();
         let (sync, collective_full) = slot_sync(&rendezvous_deliveries(operands));
         SlotPlan {
-            residence,
-            fill_modes,
+            operands: planned_operands,
             sync,
             collective_full,
         }
     }
 
-    pub(crate) fn residence(&self, operand: usize) -> Residence {
-        self.residence[operand]
-    }
-
-    /// When operand `operand` is filled in ring slot `slot`. The first slot owns every payload;
+    /// What ring slot `slot` holds for operand `operand`. The first slot owns every payload;
     /// a later slot reuses the first slot's buffer for whatever the walk never rewrites.
-    pub(crate) fn fill_mode(&self, operand: usize, slot: usize) -> FillMode {
-        match slot {
-            FIRST_SLOT => self.fill_modes[operand],
-            _ => self.fill_modes[operand].in_later_slot(self.residence[operand]),
+    pub(crate) fn operand_plan(&self, operand: usize, slot: usize) -> OperandPlan {
+        let mut plan = self.operands[operand];
+        if slot != FIRST_SLOT {
+            plan.payload = plan.payload.in_later_slot(plan.residence);
         }
+        plan
     }
 
     /// Whether slot `slot` takes the first slot's buffer for `operand` instead of allocating one.
     pub(crate) fn reuses_first_buffer(&self, operand: usize, slot: usize) -> bool {
-        self.fill_mode(operand, slot) == FillMode::Reused
+        self.operand_plan(operand, slot)
+            .payload
+            .reuses_first_buffer()
     }
 
     pub(crate) fn sync(&self) -> Sync {
@@ -135,13 +137,13 @@ fn slot_sync(deliveries: &[Delivery]) -> (Sync, bool) {
     (sync, Sync::collective_full(deliveries))
 }
 
-/// Only operands that physically materialize join the slot's rendezvous: an in-place payload is
-/// rebound to the source region, moving no bytes and needing no barrier.
+/// Only operands that physically materialize join the slot's rendezvous: an in-place operand is
+/// read where it lies, moving no bytes and needing no barrier.
 fn rendezvous_deliveries(operands: &[SlotOperand]) -> Vec<Delivery> {
     operands
         .iter()
         .filter(|op| op.residence == Residence::Smem)
-        .map(|op| op.delivery)
+        .filter_map(|op| op.source.delivery())
         .collect()
 }
 
@@ -156,14 +158,11 @@ fn compatible_residence_pair(a: Residence, b: Residence) -> bool {
         (Residence::Plane, Residence::Plane | Residence::InPlace) => true,
         (Residence::Smem, Residence::Smem | Residence::InPlace) => true,
         (Residence::InPlace, Residence::Plane | Residence::Smem | Residence::InPlace) => true,
-        (Residence::Auto, _) | (_, Residence::Auto) => {
-            panic!("Residence::Auto must be resolved before staging")
-        }
     }
 }
 
-/// Whether every pair of `residences` can share one slot. The self-pair is included, which is what
-/// catches an unresolved [`Auto`](Residence::Auto) on a slot holding a single operand.
+/// Whether every pair of `residences` can share one slot. The self-pair is included, so every
+/// residence must be compatible with itself.
 fn compatible_slot_residences(residences: &[Residence]) -> bool {
     residences.iter().enumerate().all(|(i, &a)| {
         residences[i..]
@@ -172,41 +171,27 @@ fn compatible_slot_residences(residences: &[Residence]) -> bool {
     })
 }
 
-/// A slot builds a payload for every operand it holds, and an operand a level above already
-/// materialized into plane-private registers has none to build: it can be neither filled through
-/// the pipeline nor rebound per region. Such a level has to leave every operand
-/// [`InPlace`](Residence::InPlace), which lowers to the plain recursive walk and builds no slot at
-/// all, so reaching here means one operand asked to materialize beside a fragment.
+/// A slot fills every operand it materializes from a source, and an operand a level above already
+/// materialized into plane-private registers has none: its cells are registers, which no transport
+/// reads. Such an operand can only be read where it lies ([`InPlace`](Residence::InPlace), so
+/// [`AtRegion`](SlotPayload::AtRegion)), and reaching here with any other residence means something
+/// asked to re-materialize a fragment.
 fn slot_admits_operands(operands: &[SlotOperand]) -> bool {
-    !operands.iter().any(|op| op.fragment)
-}
-
-/// Fill a materialized operand through its slot pipeline, or rebind an in-place payload to the
-/// source region. The pipeline is slot-wide while this decision is per-operand, which is what lets
-/// one slot hold a staged operand beside one read where it lies.
-#[cube]
-pub(crate) fn fill_operand<T: Numeric>(
-    dst: &mut Tile<T>,
-    src: &Tile<T>,
-    #[comptime] residence: Residence,
-    pipe: &Pipeline,
-) {
-    if comptime!(residence == Residence::InPlace) {
-        dst.rebind_from(src);
-    } else {
-        pipe.fill(dst, src);
-    }
+    operands
+        .iter()
+        .all(|op| !op.is_resident_fragment() || op.residence == Residence::InPlace)
 }
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     /// Build the `depth` slots staging the operands `lhs`/`rhs`. An [`Residence::Plane`] operand
     /// stages into plane-private tile partitions ([`Solo`](Sync::Solo)); [`Smem`](Residence::Smem)
-    /// takes fresh shared memory, with [`Sync`] deduced from the operands' delivery.
+    /// takes fresh shared memory, with [`Sync`] deduced from the operands' delivery; an
+    /// [`InPlace`](Residence::InPlace) one takes no buffer at all.
     ///
     /// Slot 0 allocates every payload. A later slot allocates only what the walk refills: an
     /// operand whose window the walk leaves fixed is filled once and never rewritten, so one
-    /// buffer serves the whole ring ([`FillMode::Reused`]).
+    /// buffer serves the whole ring ([`Reused`](WindowMode::Reused)).
     pub fn binary(
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
@@ -216,14 +201,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     ) -> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let lhs_residence = lhs.residence(comptime!(&out));
         let rhs_residence = rhs.residence(comptime!(&out));
-        let lhs_delivery = lhs.delivery();
-        let rhs_delivery = rhs.delivery();
-        let lhs_fragment = lhs.resident_fragment();
-        let rhs_fragment = rhs.resident_fragment();
+        let lhs_source = lhs.stage_source();
+        let rhs_source = rhs.stage_source();
         let plan = comptime!(SlotPlan::new(
             &[
-                SlotOperand::new(lhs_residence, lhs_delivery, lhs_fragment, &lhs.space),
-                SlotOperand::new(rhs_residence, rhs_delivery, rhs_fragment, &rhs.space),
+                SlotOperand::new(lhs_residence, lhs_source, &lhs.space),
+                SlotOperand::new(rhs_residence, rhs_source, &rhs.space),
             ],
             &op_space,
         ));
@@ -244,11 +227,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(OperandPlan::new(plan.fill_mode(LHS, slot), lhs_residence)),
-                comptime!(Option::Some(OperandPlan::new(
-                    plan.fill_mode(RHS, slot),
-                    rhs_residence
-                ))),
+                comptime!(plan.operand_plan(LHS, slot)),
+                comptime!(Option::Some(plan.operand_plan(RHS, slot))),
             );
             slots.push(staging);
         }
@@ -262,19 +242,17 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
     /// A no-op when nothing is fixed, and when a later ring slot reuses the first's buffers.
     pub fn fill_fixed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let fixed_lhs = self.is_fixed();
-        let fixed_rhs = self.is_fixed_rhs();
-        let lhs_residence = self.residence();
-        let rhs_residence = self.residence_rhs();
+        let lhs_plan = self.plan(LHS);
+        let rhs_plan = self.plan(RHS);
+        let fixed_lhs = comptime!(lhs_plan.payload.is_fixed());
+        let fixed_rhs = comptime!(rhs_plan.payload.is_fixed());
         if comptime!(fixed_lhs || fixed_rhs) {
             self.fill(|staged_operands, pipe| {
                 if comptime!(fixed_lhs) {
-                    let source = lhs.at(region);
-                    fill_operand(&mut staged_operands.0, &source, lhs_residence, pipe);
+                    pipe.fill(&mut staged_operands.0, &lhs.at(region));
                 }
                 if comptime!(fixed_rhs) {
-                    let source = rhs.at(region);
-                    fill_operand(&mut staged_operands.1, &source, rhs_residence, pipe);
+                    pipe.fill(&mut staged_operands.1, &rhs.at(region));
                 }
             });
         }
@@ -284,18 +262,16 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// region inside the walk. The slot still rendezvouses when every operand is fixed: the
     /// pipeline's phase belongs to the slot, not to any one operand.
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let stream_lhs = self.is_streamed();
-        let stream_rhs = self.is_streamed_rhs();
-        let lhs_residence = self.residence();
-        let rhs_residence = self.residence_rhs();
+        let lhs_plan = self.plan(LHS);
+        let rhs_plan = self.plan(RHS);
+        let stream_lhs = comptime!(lhs_plan.payload.is_streamed());
+        let stream_rhs = comptime!(rhs_plan.payload.is_streamed());
         self.fill(|staged_operands, pipe| {
             if comptime!(stream_lhs) {
-                let source = lhs.at(region);
-                fill_operand(&mut staged_operands.0, &source, lhs_residence, pipe);
+                pipe.fill(&mut staged_operands.0, &lhs.at(region));
             }
             if comptime!(stream_rhs) {
-                let source = rhs.at(region);
-                fill_operand(&mut staged_operands.1, &source, rhs_residence, pipe);
+                pipe.fill(&mut staged_operands.1, &rhs.at(region));
             }
         });
     }
@@ -313,15 +289,11 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     }
 
     /// Consumer: wait the slot's fill, hand the two staged tiles to `compute`, then free the slot.
-    /// Each tile's bytes and runtime map were stored together by the producer.
+    /// Each tile's bytes and runtime map were stored together by the producer. A payload the slot
+    /// filled is already this region's; an in-place one is the operand whole, and the caller
+    /// selects the region out of it ([`read_operand`]).
     /// See [`StagingExpand::__expand_consume_method`].
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
-        unexpanded!()
-    }
-
-    /// Consumer for a fill no later fill will publish (the walk's final regions): publish
-    /// the slot first, then consume. See [`StagingExpand::__expand_consume_final_method`].
-    pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
         unexpanded!()
     }
 }
@@ -344,14 +316,6 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
         compute(scope, &self.data.0, &self.data.1);
         self.__expand_release_read_method(scope);
     }
-
-    pub fn __expand_consume_final_method<F>(&mut self, scope: &Scope, compute: F)
-    where
-        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
-    {
-        self.__expand_publish_method(scope);
-        self.__expand_consume_method(scope, compute);
-    }
 }
 
 #[cube]
@@ -365,15 +329,9 @@ impl<T: Numeric> Ring<Tile<T>> {
         #[comptime] depth: usize,
     ) -> Ring<Tile<T>> {
         let residence = input.residence(comptime!(&out));
-        let delivery = input.delivery();
-        let fragment = input.resident_fragment();
+        let source = input.stage_source();
         let plan = comptime!(SlotPlan::new(
-            &[SlotOperand::new(
-                residence,
-                delivery,
-                fragment,
-                &input.space
-            )],
+            &[SlotOperand::new(residence, source, &input.space)],
             &op_space,
         ));
 
@@ -388,7 +346,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staging = Staging::wrap(
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(OperandPlan::new(plan.fill_mode(LHS, slot), residence)),
+                comptime!(plan.operand_plan(LHS, slot)),
                 comptime!(Option::None),
             );
             slots.push(staging);
@@ -401,12 +359,11 @@ impl<T: Numeric> Ring<Tile<T>> {
 impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk leaves it fixed.
     pub fn fill_fixed(&mut self, input: &Tile<T>, region: &Region) {
-        let fixed = self.is_fixed();
-        let residence = self.residence();
+        let plan = self.plan(LHS);
+        let fixed = comptime!(plan.payload.is_fixed());
         if comptime!(fixed) {
             self.fill(|s, pipe| {
-                let source = input.at(region);
-                fill_operand(s, &source, residence, pipe);
+                pipe.fill(s, &input.at(region));
             });
         }
     }
@@ -414,12 +371,11 @@ impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk moves it. The slot still rendezvouses
     /// otherwise: the pipeline's phase belongs to the slot, not to the operand.
     pub fn fill_streamed(&mut self, input: &Tile<T>, region: &Region) {
-        let stream = self.is_streamed();
-        let residence = self.residence();
+        let plan = self.plan(LHS);
+        let stream = comptime!(plan.payload.is_streamed());
         self.fill(|s, pipe| {
             if comptime!(stream) {
-                let source = input.at(region);
-                fill_operand(s, &source, residence, pipe);
+                pipe.fill(s, &input.at(region));
             }
         });
     }
@@ -433,13 +389,10 @@ impl<T: Numeric> Staging<Tile<T>> {
     }
 
     /// Consumer: wait the slot's fill, hand the staged tile to `compute`, then free the slot.
-    /// Each tile's bytes and runtime map were stored together by the producer.
+    /// Each tile's bytes and runtime map were stored together by the producer. A payload the slot
+    /// filled is already this region's; an in-place one is the operand whole, and the caller
+    /// selects the region out of it ([`read_operand`]).
     pub fn consume(&mut self, _compute: impl FnOnce(&Tile<T>)) {
-        unexpanded!()
-    }
-
-    /// Consumer for a fill no later fill will publish: publish the slot first, then consume.
-    pub fn consume_final(&mut self, _compute: impl FnOnce(&Tile<T>)) {
         unexpanded!()
     }
 }
@@ -462,14 +415,6 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
         compute(scope, &self.data);
         self.__expand_release_read_method(scope);
     }
-
-    pub fn __expand_consume_final_method<F>(&mut self, scope: &Scope, compute: F)
-    where
-        F: FnOnce(&Scope, &TileExpand<T>),
-    {
-        self.__expand_publish_method(scope);
-        self.__expand_consume_method(scope, compute);
-    }
 }
 
 /// Allocate one staged operand for `residence`. A gathered operand keeps its compacted physical
@@ -483,38 +428,24 @@ fn stage_operand<T: Numeric>(
     #[comptime] residence: Residence,
 ) -> Tile<T> {
     let gathered = input.gathered();
-    let delivery = input.delivery();
     match comptime!(residence) {
-        // Nothing is allocated: the payload names the same bytes (or the same recipe) as the
-        // source, one level down, and each region rebinds it rather than filling it.
+        // Nothing is allocated and nothing is stored: the payload *is* the operand. It keeps the
+        // source's own space, undivided, so the read has a grid to select this region's window
+        // (or block of fragments) out of, which is [`read_operand`]'s job rather than a fill's.
         Residence::InPlace => match &input.tile_kind {
-            TileKind::Procedural(data) => Tile::<T> {
-                tile_kind: TileKind::new_Procedural(data.at_space(comptime!(input.space.divide()))),
-                space: comptime!(input.space.divide()),
-                leaf: comptime!(input.leaf),
-            },
-            TileKind::Gmem(data) => Tile::<T> {
-                tile_kind: TileKind::new_Gmem(data.in_place_slot(comptime!(input.space.clone()))),
-                space: comptime!(input.space.divide()),
-                leaf: comptime!(input.leaf),
-            },
-            TileKind::Smem(data) => Tile::<T> {
-                tile_kind: TileKind::new_Smem(data.in_place_slot(comptime!(input.space.clone()))),
-                space: comptime!(input.space.divide()),
-                leaf: comptime!(input.leaf),
-            },
-            // A tensor map is not element-addressable: there is no window to hand down, and its
-            // only sink is a hardware bulk copy into shared memory.
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::Procedural(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_) => input.clone(),
+            // A tensor map is not element-addressable: there is no window to select down to, and
+            // its only sink is a hardware bulk copy into shared memory.
             TileKind::TmaGmem(_) => {
                 panic!("Staging: a TMA source cannot be read in place; give it Residence::Smem")
             }
-            // Unreachable: `slot_admits_operands` turns a resident fragment away before any
-            // payload is built, since it has no window to rebind.
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Staging: a resident fragment cannot be held by a slot")
-            }
         },
         Residence::Plane => {
+            let delivery = input.delivery();
             comptime!(assert!(
                 !delivery.is_tma(),
                 "Staging: a TMA source cannot stage into plane tiles"
@@ -531,8 +462,6 @@ fn stage_operand<T: Numeric>(
             )
         }
         Residence::Smem => MemData::smem_like(input),
-        // `Tile::residence` resolves it against the level below before anything reaches here.
-        Residence::Auto => panic!("Staging: Residence::Auto is a request, not a backing"),
     }
 }
 
@@ -561,7 +490,13 @@ mod tests {
     }
 
     fn operand(residence: Residence, delivery: Delivery, space: &Space) -> SlotOperand<'_> {
-        SlotOperand::new(residence, delivery, false, space)
+        SlotOperand::new(residence, StageSource::Transport(delivery), space)
+    }
+
+    /// An operand a level above already materialized into registers: no delivery, since nothing
+    /// moves it.
+    fn fragment(residence: Residence, space: &Space) -> SlotOperand<'_> {
+        SlotOperand::new(residence, StageSource::ResidentFragment, space)
     }
 
     #[test]
@@ -619,21 +554,84 @@ mod tests {
         );
     }
 
-    /// An asymmetric plan can leave one operand a fragment while the other still asks to
-    /// materialize. Both read `InPlace` at that point, so the residences alone look compatible;
-    /// only the physical kind tells the pair apart.
+    /// A slot holds a resident fragment where it lies, beside an operand that materializes: it is
+    /// only re-materializing one that has no source to read.
     #[test]
-    fn a_resident_fragment_is_turned_away_from_a_slot() {
+    fn a_resident_fragment_is_held_only_where_it_lies() {
         let (_, lhs, rhs) = spaces();
-        let fragment = SlotOperand::new(Residence::InPlace, Delivery::Copy, true, &lhs);
-        let staged = operand(Residence::Smem, Delivery::Copy, &rhs);
-        assert!(!slot_admits_operands(&[fragment]));
-        assert!(slot_admits_operands(&[staged]));
-        // The residence check on its own waves the same pair through.
-        assert!(compatible_slot_residences(&[
-            Residence::InPlace,
-            Residence::Smem,
+        assert!(slot_admits_operands(&[
+            fragment(Residence::InPlace, &lhs),
+            operand(Residence::Smem, Delivery::Copy, &rhs),
         ]));
+        assert!(!slot_admits_operands(&[fragment(Residence::Smem, &lhs)]));
+        assert!(!slot_admits_operands(&[fragment(Residence::Plane, &lhs)]));
+    }
+
+    /// Registers hold it already, so nothing fills it: every slot of the ring names the same
+    /// fragments and each region selects its own block at the read.
+    #[test]
+    fn a_resident_fragment_is_never_filled() {
+        let (space, lhs, rhs) = spaces();
+        let plan = SlotPlan::new(
+            &[
+                fragment(Residence::InPlace, &lhs),
+                operand(Residence::Smem, Delivery::Copy, &rhs),
+            ],
+            &space,
+        );
+        assert_eq!(
+            plan.operand_plan(LHS, FIRST_SLOT).payload,
+            SlotPayload::AtRegion
+        );
+        assert_eq!(plan.operand_plan(LHS, 1).payload, SlotPayload::AtRegion);
+        assert!(!plan.reuses_first_buffer(LHS, 1));
+        // It joins no rendezvous either: only the staged operand's delivery sets the sync.
+        assert_eq!(plan.sync(), Sync::Cube);
+    }
+
+    /// An in-place operand allocates nothing, so no slot can fill it and no walk can fix it: the
+    /// read goes to the source for every region, which is what the ring costs such a level.
+    #[test]
+    fn an_in_place_operand_is_read_at_its_region_however_the_walk_moves() {
+        let (space, lhs, rhs) = spaces();
+        // `rhs` spans no walked axis here, so a materialized operand would come out `Fixed`.
+        let invariant = space.project(&[K]);
+        for op_space in [&space, &invariant] {
+            let plan = SlotPlan::new(
+                &[
+                    operand(Residence::InPlace, Delivery::Copy, &lhs),
+                    operand(Residence::InPlace, Delivery::Copy, &rhs),
+                ],
+                op_space,
+            );
+            for slot in 0..2 {
+                assert_eq!(plan.operand_plan(LHS, slot).payload, SlotPayload::AtRegion);
+                assert_eq!(plan.operand_plan(RHS, slot).payload, SlotPayload::AtRegion);
+                assert!(!plan.reuses_first_buffer(RHS, slot));
+            }
+        }
+    }
+
+    /// The two ends fragment selection arrives from: a slot that staged the operand into plane
+    /// tiles, and one holding a grid a level above left resident. Either forces the unrolled walk
+    /// ([`stage_walk_unrolled`]), so a resident fragment cannot be left to the output's own kind to
+    /// answer for.
+    #[test]
+    fn either_end_of_a_fragment_read_asks_for_the_unrolled_walk() {
+        let (space, lhs, rhs) = spaces();
+        let resident = SlotPlan::new(&[fragment(Residence::InPlace, &lhs)], &space);
+        assert!(resident.operand_plan(LHS, FIRST_SLOT).reads_fragments());
+
+        let staged = SlotPlan::new(&[operand(Residence::Plane, Delivery::Copy, &lhs)], &space);
+        assert!(staged.operand_plan(LHS, FIRST_SLOT).reads_fragments());
+
+        // A window is a window wherever it lives: nothing here is selected by coordinate.
+        for windowed in [
+            SlotPlan::new(&[operand(Residence::Smem, Delivery::Copy, &rhs)], &space),
+            SlotPlan::new(&[operand(Residence::InPlace, Delivery::Copy, &rhs)], &space),
+        ] {
+            assert!(!windowed.operand_plan(LHS, FIRST_SLOT).reads_fragments());
+        }
     }
 
     /// The headline mix: one operand takes a shared stage while the other is read where it lies.
@@ -649,7 +647,7 @@ mod tests {
     }
 
     /// Nothing materializes, so there is nothing to synchronize: the slot goes solo, which is what
-    /// makes an all-in-place level equivalent to the plain recursive walk.
+    /// costs an all-in-place level nothing beyond the reads it would have made anyway.
     #[test]
     fn an_all_in_place_slot_synchronizes_nothing() {
         let (_, lhs, rhs) = spaces();
@@ -674,8 +672,14 @@ mod tests {
             &space,
         );
         for slot in 0..3 {
-            assert_eq!(plan.fill_mode(LHS, slot), FillMode::Streamed);
-            assert_eq!(plan.fill_mode(RHS, slot), FillMode::Streamed);
+            assert_eq!(
+                plan.operand_plan(LHS, slot).payload,
+                SlotPayload::Windowed(WindowMode::Streamed)
+            );
+            assert_eq!(
+                plan.operand_plan(RHS, slot).payload,
+                SlotPayload::Windowed(WindowMode::Streamed)
+            );
             assert!(!plan.reuses_first_buffer(LHS, slot));
             assert!(!plan.reuses_first_buffer(RHS, slot));
         }
@@ -694,29 +698,55 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill_mode(LHS, FIRST_SLOT), FillMode::Streamed);
-        assert_eq!(plan.fill_mode(RHS, FIRST_SLOT), FillMode::Fixed);
-        assert_eq!(plan.fill_mode(RHS, 1), FillMode::Reused);
-        assert_eq!(plan.fill_mode(RHS, 2), FillMode::Reused);
+        assert_eq!(
+            plan.operand_plan(LHS, FIRST_SLOT).payload,
+            SlotPayload::Windowed(WindowMode::Streamed)
+        );
+        assert_eq!(
+            plan.operand_plan(RHS, FIRST_SLOT).payload,
+            SlotPayload::Windowed(WindowMode::Fixed)
+        );
+        assert_eq!(
+            plan.operand_plan(RHS, 1).payload,
+            SlotPayload::Windowed(WindowMode::Reused)
+        );
+        assert_eq!(
+            plan.operand_plan(RHS, 2).payload,
+            SlotPayload::Windowed(WindowMode::Reused)
+        );
         assert!(plan.reuses_first_buffer(RHS, 1));
         assert!(!plan.reuses_first_buffer(RHS, FIRST_SLOT));
     }
 
-    /// An in-place payload allocates nothing, so a later slot has no buffer to reuse: it builds
-    /// its own view and rebinds it, or the rebind would only ever reach the first slot.
+    /// Two operands the walk leaves equally invariant, one shared and one in place. Fixing is a
+    /// saving on a *fill*, so only the shared one takes it: the in-place one has no buffer to fill
+    /// once and none for a later slot to reuse, so it reads at its region like any other.
     #[test]
-    fn a_fixed_in_place_operand_never_reuses_a_buffer() {
-        let (space, lhs, _) = spaces();
+    fn only_a_shared_operand_is_fixed_beside_an_in_place_one() {
+        let (space, _, _) = spaces();
         let invariant = space.project(&[M, N]);
         let plan = SlotPlan::new(
             &[
-                operand(Residence::Smem, Delivery::Copy, &lhs),
+                operand(Residence::Smem, Delivery::Copy, &invariant),
                 operand(Residence::InPlace, Delivery::Copy, &invariant),
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill_mode(RHS, FIRST_SLOT), FillMode::Fixed);
-        assert_eq!(plan.fill_mode(RHS, 1), FillMode::Fixed);
+        assert_eq!(
+            plan.operand_plan(LHS, FIRST_SLOT).payload,
+            SlotPayload::Windowed(WindowMode::Fixed)
+        );
+        assert_eq!(
+            plan.operand_plan(LHS, 1).payload,
+            SlotPayload::Windowed(WindowMode::Reused)
+        );
+        assert!(plan.reuses_first_buffer(LHS, 1));
+
+        assert_eq!(
+            plan.operand_plan(RHS, FIRST_SLOT).payload,
+            SlotPayload::AtRegion
+        );
+        assert_eq!(plan.operand_plan(RHS, 1).payload, SlotPayload::AtRegion);
         assert!(!plan.reuses_first_buffer(RHS, 1));
     }
 
@@ -734,8 +764,14 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill_mode(RHS, FIRST_SLOT), FillMode::Streamed);
-        assert_eq!(plan.fill_mode(RHS, 1), FillMode::Streamed);
+        assert_eq!(
+            plan.operand_plan(RHS, FIRST_SLOT).payload,
+            SlotPayload::Windowed(WindowMode::Streamed)
+        );
+        assert_eq!(
+            plan.operand_plan(RHS, 1).payload,
+            SlotPayload::Windowed(WindowMode::Streamed)
+        );
         assert_eq!(plan.sync(), Sync::Barrier);
     }
 }

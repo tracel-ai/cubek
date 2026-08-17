@@ -377,53 +377,6 @@ pub(crate) struct StageMeta {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// This payload as an in-place staging slot for the level below: no values move and no buffer
-    /// is allocated, but the window is copied into mutable registers, because
-    /// [`rebind`](MemData::rebind) replaces it per region and a slot must hold its own region while
-    /// a sibling slot is rebound to another. The [`StagePlan`] descends with it: the payload serves
-    /// the source's [`divide`](Space::divide)d space, so its plan answers for that level rather
-    /// than the one that built it.
-    ///
-    /// The window no longer covers the buffer once rebound, so the straight-through fill is off.
-    pub(crate) fn in_place_slot(&self, #[comptime] space: Space) -> Self {
-        let mut window_start = self.window_start;
-        // `runtime()` keeps a fresh in-place slot assignable even when its source window folded to
-        // a constant offset (a top-level tile starts at 0).
-        window_start += 0u32.runtime();
-        MemData::<T> {
-            store: self.store.clone(),
-            layout: comptime!(self.layout.clone()),
-            window: Window::new(
-                self.window.origin.stored(),
-                self.window.extent.stored(),
-                self.window.bound.stored(),
-                comptime!(self.window.signed),
-                comptime!(self.window.boundary),
-            ),
-            projection: comptime!(self.projection.clone()),
-            map: self.map.stored(),
-            offsets: self.offsets.stored(),
-            window_start,
-            access: comptime!(Access {
-                whole: false,
-                overhang: self.access.overhang,
-                stage: self.access.stage.descend(),
-            }),
-            lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
-        }
-    }
-
-    /// Rebind an in-place memory payload to the source's current window and runtime map. Both
-    /// tiles name the same backing allocation; no values move.
-    pub(crate) fn rebind(&mut self, source: &Self) {
-        self.window.origin.store_from(&source.window.origin);
-        self.window.extent.store_from(&source.window.extent);
-        self.window.bound.store_from(&source.window.bound);
-        self.map.store_from(&source.map);
-        self.offsets.store_from(&source.offsets);
-        self.window_start = source.window_start;
-    }
-
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
     /// tile. The caller must ensure that every unit in the cube owns this destination window:
     /// workers write cyclic positions across it. That is a property of the level's distribution,

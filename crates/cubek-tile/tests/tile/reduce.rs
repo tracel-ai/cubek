@@ -376,7 +376,7 @@ fn check_2d_reduce(
         &[M],
         space,
         op,
-        &[Residence::Auto],
+        &[Residence::Smem],
     );
 
     for i in 0..m {
@@ -778,12 +778,41 @@ fn test_reduce_axis_sum_nondivisible_k_staged() {
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
         ReduceLeafKind::Sum,
-        &[Residence::Auto],
+        &[Residence::Smem],
     );
 
     for i in 0..m {
         let want: f32 = data[i * k..(i + 1) * k].iter().sum();
         assert_eq!(got.get_f32(&[i]), want, "Staged sum mismatch at row {i}");
+    }
+}
+
+/// The input read where it lies, two slots deep: the ring materializes nothing, so its slots hold
+/// windows alone, read at its own region. The depth stays the level's to state, whatever the input
+/// costs.
+#[test]
+fn test_reduce_axis_sum_in_place_double_buffered() {
+    let (m, k, tk) = (4, 10, 4);
+    let data = ramp(m * k, 7);
+
+    let got = run_reduce_checked(
+        data.clone(),
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
+        ReduceLeafKind::Sum,
+        &[Residence::InPlace],
+    );
+
+    for i in 0..m {
+        let want: f32 = data[i * k..(i + 1) * k].iter().sum();
+        assert_eq!(
+            got.get_f32(&[i]),
+            want,
+            "In-place double-buffered sum mismatch at row {i}"
+        );
     }
 }
 
@@ -800,7 +829,7 @@ fn test_reduce_axis_sum_nondivisible_k_double_buffered() {
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
         ReduceLeafKind::Sum,
-        &[Residence::Auto],
+        &[Residence::Smem],
     );
 
     for i in 0..m {

@@ -142,7 +142,7 @@ impl Benchmark for TileQuantStageBench {
         let space = self.space();
         let launcher = space.launcher(&self.client);
         // L0 takes a shared stage, L1 reads windows of it: the staging this bench measures.
-        let staged = [Residence::Auto, Residence::InPlace];
+        let staged = [Residence::Smem, Residence::InPlace];
         let a = launcher
             .arg(a.handle().binding())
             .subspace(&[M, K])

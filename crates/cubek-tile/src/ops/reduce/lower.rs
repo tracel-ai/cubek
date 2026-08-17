@@ -1,5 +1,6 @@
 //! Lowering `c.reduce_axis(input, inst)`: at a final tile, the leaf instruction; while levels remain,
-//! walk this level under its [`Buffering`].
+//! walk this level under its [`Buffering`]. One walk serves every level: what the input costs is
+//! its own [`Residence`], and an input that stays put rides a ring of slots that allocate nothing.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -23,19 +24,7 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => reduce_leaf(self, input, inst),
             Partitioner::Level(level) => {
                 let op_space = self.reduce_op_space(input);
-                // The input staying put leaves nothing to buffer, so the walk is the plain
-                // recursion however deep the level buffers.
-                let residence = input.residence(comptime!(&self.space));
-                if comptime!(residence == Residence::InPlace) {
-                    self.reduce_direct(input, inst, op_space);
-                } else {
-                    self.reduce_buffered(
-                        input,
-                        inst,
-                        op_space,
-                        comptime!(level.buffering().depth()),
-                    );
-                }
+                self.reduce_buffered(input, inst, op_space, comptime!(level.buffering().depth()));
             }
         }
     }

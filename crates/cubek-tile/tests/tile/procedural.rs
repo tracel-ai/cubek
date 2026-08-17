@@ -28,7 +28,9 @@ fn procedural_kernel<E: Float>(
     output.init(source.procedural_value(pos));
 }
 
-/// Exercise a staged schedule whose procedural operand remains coordinate-backed in place.
+/// Exercise a staged schedule whose procedural operand remains coordinate-backed in place. Such an
+/// operand is never filled, so the slot hands out the recipe whole and this read selects the
+/// region out of it, which is what a lowered walk's `read_operand` does for the same payload.
 #[cube(launch)]
 fn procedural_stage_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
@@ -48,8 +50,9 @@ fn procedural_stage_kernel<E: Float>(
     for region in walk {
         let staging = ring.slot_mut(0usize);
         staging.fill_streamed(&source, &region);
-        staging.consume_final(|staged| {
-            output.at(&region).copy_from(staged);
+        staging.publish();
+        staging.consume(|staged| {
+            output.at(&region).copy_from(&staged.at(&region));
         });
     }
 }
@@ -199,7 +202,8 @@ fn procedural_smem_stage_kernel<E: Float>(
     for region in walk {
         let staging = ring.slot_mut(0usize);
         staging.fill_streamed(&source, &region);
-        staging.consume_final(|staged| {
+        staging.publish();
+        staging.consume(|staged| {
             output.at(&region).copy_from(staged);
         });
     }

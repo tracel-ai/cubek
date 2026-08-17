@@ -341,7 +341,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
-        .residence(&[Residence::Auto])
+        .residence(&[Residence::Smem])
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -370,7 +370,7 @@ fn arg_gathered_rational_stages() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
-        .residence(&[Residence::Auto])
+        .residence(&[Residence::Smem])
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -397,7 +397,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
-        .residence(&[Residence::Auto])
+        .residence(&[Residence::Smem])
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -432,7 +432,7 @@ fn arg_gathered_cancelling_divisor_stages() {
     assert!(!projection.is_rational());
     let _ = staged
         .arg(binding(&client, &[512, 64]))
-        .residence(&[Residence::Auto])
+        .residence(&[Residence::Smem])
         .gathered(projection)
         .build();
 }

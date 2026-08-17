@@ -226,29 +226,6 @@ fn bound_position(projection: &Projection, axis: Axis) -> usize {
     })
 }
 
-/// A procedural operand's residence request, resolved against what a recipe can physically be.
-/// It has no bytes, so it is either evaluated where it is read or cooperatively materialized into
-/// shared memory ([`MemData::fill_procedural`]): [`Auto`](Residence::Auto) answers `Smem` without
-/// asking the level, since [`auto_residence`](Space::auto_residence) would offer a fragment grid a
-/// recipe cannot fill. A stated [`Plane`](Residence::Plane) is refused here rather than deep in the
-/// transport pairing, which is where an unbacked fragment store would otherwise surface.
-///
-/// Every other operand passes through: `requested` is already what it asked for.
-fn procedural_request(requested: Residence, procedural: bool) -> Residence {
-    if !procedural {
-        return requested;
-    }
-    match requested {
-        Residence::Auto | Residence::Smem => Residence::Smem,
-        Residence::InPlace => Residence::InPlace,
-        Residence::Plane => panic!(
-            "Tile::residence: a procedural source has no plane-fragment transport; state \
-             Residence::Smem (or Auto) to materialize it into shared memory, or \
-             Residence::InPlace to evaluate it at the leaf"
-        ),
-    }
-}
-
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Whether the leaf can consume this operand in its current physical form. Opaque fragment
@@ -317,8 +294,9 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Whether a level above already materialized this operand into plane-private registers.
-    /// Such a payload has no bytes to move and no window to rebind, so it can only be read where
-    /// it lies; [`Staging`] rejects it rather than trying to build a slot payload for it.
+    /// Such a payload has no bytes any transport can move, so a slot holds the fragments themselves
+    /// and each read selects the region's block out of them by comptime coordinate
+    /// ([`AtRegion`](crate::SlotPayload::AtRegion)).
     pub fn resident_fragment(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(true),
@@ -342,6 +320,18 @@ impl<T: Numeric> Tile<T> {
             }
             // A procedural source is cooperatively materialized into its stage.
             TileKind::Procedural(_) => comptime!(Delivery::Procedural),
+        }
+    }
+
+    /// How a staging slot obtains this operand: transport from a backing store, or fragments a
+    /// level above already placed in registers.
+    pub fn stage_source(&self) -> comptime_type!(StageSource) {
+        let fragment = self.resident_fragment();
+        if comptime!(fragment) {
+            comptime!(StageSource::ResidentFragment)
+        } else {
+            let delivery = self.delivery();
+            comptime!(StageSource::Transport(delivery))
         }
     }
 
@@ -370,31 +360,34 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Where this operand lives at the level whose output space is `out`: its own request, with
-    /// [`Auto`](Residence::Auto) deferring to what the structure below that level wants.
-    ///
-    /// Never answers `Auto`. `InPlace` is honoured as stated, so a level materializes an operand
-    /// only when the operand asked it to; the one thing that cannot be honoured is a leaf reading a
-    /// source it cannot address, which is checked at the level that feeds it.
+    /// Where this operand lives at the level whose output space is `out`.
+    /// `InPlace` is honoured as stated, so a level materializes an operand only when the operand
+    /// asked it to; the one thing that cannot be honoured is a leaf reading a source it cannot
+    /// address, which is checked at the level that feeds it.
     pub fn residence(&self, #[comptime] out: &Space) -> comptime_type!(Residence) {
         let plan = self.stage_plan();
-        let procedural = self.is_procedural();
-        let requested = comptime!(procedural_request(plan.head(), procedural));
-        if comptime!(requested == Residence::Auto) {
-            comptime!(out.auto_residence(self.leaf))
-        } else if comptime!(requested == Residence::InPlace) {
+        let requested = comptime!(plan.head());
+        if comptime!(requested == Residence::InPlace) {
             let reads_in_place = self.reads_in_place();
             comptime!(if out.partitioner().next().is_final() && !reads_in_place {
                 panic!(
                     "Tile::residence: a {:?} leaf cannot read this operand's current physical \
-                     form in place; materialize it with Residence::Smem or Residence::Auto at \
+                     form in place; materialize it with Residence::Smem at \
                      some level above the leaf",
                     self.leaf
                 );
             });
             comptime!(Residence::InPlace)
         } else {
-            requested
+            let procedural = self.is_procedural();
+            comptime!(if procedural && requested == Residence::Plane {
+                panic!(
+                    "Tile::residence: a procedural source has no plane-fragment transport; state \
+                     Residence::Smem to materialize it into shared memory, or Residence::InPlace \
+                     to evaluate it at the leaf"
+                );
+            });
+            comptime!(requested)
         }
     }
 
@@ -717,8 +710,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Transfer `src` into `self`, each physical pairing dispatched to its transport leaf. A
     /// partition source is matched first because it needs the whole destination tile, which the
-    /// pairing match below would keep borrowed. In-place staging uses [`rebind_from`](Self::rebind_from)
-    /// instead: it moves only the source window/origin metadata.
+    /// pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
         // Bound before the match, which borrows the kind: a memory fill needs the logical space
         // both sides carry (a gathered source is addressed per axis).
@@ -751,18 +743,6 @@ impl<T: Numeric> Tile<T> {
                 }
                 _ => panic!("Tile::copy_from: unsupported kind pairing"),
             },
-        }
-    }
-
-    /// Rebind an in-place staging payload to `src`'s current region without moving values. Only
-    /// operands resolved to [`Residence::InPlace`] reach this, and their payload names the same
-    /// bytes (or the same recipe) as the source, so a region change is a window change.
-    pub(crate) fn rebind_from(&mut self, src: &Tile<T>) {
-        match (&mut self.tile_kind, &src.tile_kind) {
-            (TileKind::Procedural(dst), TileKind::Procedural(source)) => dst.rebind(source),
-            (TileKind::Gmem(dst), TileKind::Gmem(source)) => dst.rebind(source),
-            (TileKind::Smem(dst), TileKind::Smem(source)) => dst.rebind(source),
-            _ => panic!("Tile::rebind_from: incompatible in-place payloads"),
         }
     }
 
@@ -856,53 +836,5 @@ mod tests {
         let tiled = Projection::tiled(&[A, B], StorageTiling::per_axis(&[1, 2]));
         assert_eq!(bound_states(&tiled, A), Some(0));
         assert_eq!(bound_states(&tiled, B), None);
-    }
-}
-
-#[cfg(test)]
-mod procedural_request_tests {
-    use super::*;
-
-    /// A recipe has no fragment transport, so `Auto` cannot be left to the level: the structure
-    /// below a cmma leaf would offer a plane grid nothing can fill it with.
-    #[test]
-    fn auto_on_a_recipe_resolves_to_shared_memory() {
-        assert_eq!(
-            procedural_request(Residence::Auto, true),
-            Residence::Smem,
-            "a recipe's Auto is shared memory whatever the level below wants"
-        );
-    }
-
-    /// The two residences a recipe can actually take are honoured as stated: evaluated at the leaf,
-    /// or cooperatively materialized.
-    #[test]
-    fn a_recipe_keeps_the_residences_it_can_take() {
-        assert_eq!(
-            procedural_request(Residence::InPlace, true),
-            Residence::InPlace
-        );
-        assert_eq!(procedural_request(Residence::Smem, true), Residence::Smem);
-    }
-
-    /// Refused here rather than deep in the transport pairing: a plane store would allocate
-    /// fragments no fill can reach, and the panic would name the copy, not the request.
-    #[test]
-    #[should_panic(expected = "no plane-fragment transport")]
-    fn a_recipe_refuses_a_plane_request() {
-        procedural_request(Residence::Plane, true);
-    }
-
-    /// Every other operand is untouched, `Plane` included: only a recipe lacks the transport.
-    #[test]
-    fn a_backed_operand_passes_its_request_through() {
-        for requested in [
-            Residence::InPlace,
-            Residence::Smem,
-            Residence::Plane,
-            Residence::Auto,
-        ] {
-            assert_eq!(procedural_request(requested, false), requested);
-        }
     }
 }

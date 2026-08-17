@@ -133,13 +133,12 @@ fn setup<R: Runtime>(
 
 /// Where each input lives at the four levels of [`tile_space`], the other half of the plan: shared
 /// memory at the cube grid, plane fragments at the contraction step, and read where it lies at the
-/// two levels between and below, which materialize nothing. [`Auto`](Residence::Auto) rather than
-/// the backings spelled out, because which one each level wants follows from the level beneath it.
-/// The accumulator states none: it is promoted by the kernel, not staged by a walk.
+/// two levels between and below, which materialize nothing. The accumulator states none: it is
+/// promoted by the kernel, not staged by a walk.
 const INPUT_RESIDENCE: [Residence; LEVELS] = [
-    Residence::Auto,
+    Residence::Smem,
     Residence::InPlace,
-    Residence::Auto,
+    Residence::Plane,
     Residence::InPlace,
 ];
 

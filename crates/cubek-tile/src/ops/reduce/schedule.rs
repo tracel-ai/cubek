@@ -1,6 +1,6 @@
-//! The walks behind [`Tile::reduce_axis`](crate::Tile::reduce_axis): the plain recursion, and the
-//! buffered one. The buffered schedule is [`pipelined_walk`]'s, shared with the matmul; this file
-//! supplies only what a slot holds for a reduction and what consuming one computes.
+//! The walk behind [`Tile::reduce_axis`](crate::Tile::reduce_axis). The schedule is
+//! [`pipelined_walk`]'s, shared with the matmul; this file supplies only what a slot holds for a
+//! reduction and what consuming one computes.
 
 use cubecl::prelude::*;
 
@@ -32,11 +32,11 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
 
     /// [`stage_walk_unrolled`] over the sole operand's space, which is the whole merge here.
     fn unrolled(&self, ring: &Ring<Tile<In>>) -> comptime_type!(bool) {
-        let has_plane_stage = ring.has_plane_stage();
+        let has_fragment_read = ring.has_fragment_read();
         stage_walk_unrolled(
             &self.acc,
             comptime!(self.input.space.clone()),
-            has_plane_stage,
+            has_fragment_read,
         )
     }
 
@@ -48,6 +48,7 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         slot.fill_streamed(&self.input, region);
     }
 
+    /// Fold `region` out of the slot, [`read_operand`] bringing the payload to it.
     fn compute(
         &mut self,
         slot: &mut Staging<Tile<In>>,
@@ -55,51 +56,20 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         #[comptime] publish: bool,
     ) {
         let inst = comptime!(self.inst);
+        let plan = slot.plan(LHS);
+        let payload = comptime!(plan.payload);
         if comptime!(publish) {
-            slot.consume_final(|staged| {
-                self.acc.at(region).reduce_axis(staged, inst);
-            });
-        } else {
-            slot.consume(|staged| {
-                self.acc.at(region).reduce_axis(staged, inst);
-            });
+            slot.publish();
         }
+        slot.consume(|staged| {
+            let input = read_operand(staged, region, payload);
+            self.acc.at(region).reduce_axis(&input, inst);
+        });
     }
 }
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// The input [`InPlace`](crate::Residence::InPlace): no slot, every read goes directly to where
-    /// the operand already lives.
-    pub(crate) fn reduce_direct<In: Numeric>(
-        &mut self,
-        input: &Tile<In>,
-        #[comptime] inst: ReduceLeafKind,
-        op_space: Space,
-    ) {
-        if self.tile_kind.static_level(comptime!(self.space.clone())) {
-            let merged = comptime!({
-                let merged = input.space.clone();
-                assert!(
-                    merged.is_static(),
-                    "Tile::reduce_axis: a fragment output's walk unrolls over the operand merge, \
-                     which must be static (a Dynamic extent cannot fold to the comptime \
-                     coordinates fragment selection takes)"
-                );
-                merged
-            });
-            let walk =
-                Walk::over_fastest(merged, comptime!(self.space.axis_at(self.space.rank() - 1)));
-            for region in walk.unrolled() {
-                self.at(&region).reduce_axis(&input.at(&region), inst);
-            }
-        } else {
-            for region in Walk::over(op_space) {
-                self.at(&region).reduce_axis(&input.at(&region), inst);
-            }
-        }
-    }
-
     /// The level's regions through a ring of `depth` [`Staging`] slots: depth 1 fills a slot and
     /// consumes it per region, deeper rings overlap each region's fill with an earlier region's
     /// compute. [`pipelined_walk`] owns that schedule.

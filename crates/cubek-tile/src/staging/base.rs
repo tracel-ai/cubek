@@ -12,60 +12,134 @@ pub(crate) const FIRST_SLOT: usize = 0;
 pub(crate) const LHS: usize = 0;
 pub(crate) const RHS: usize = 1;
 
-/// When one operand of a slot is filled across the walk. The walk moves each operand's window or
-/// it does not, and a window that never moves need be neither refilled nor duplicated per slot;
-/// those two savings are the same fact, so one state carries both.
+/// What one operand's slot payload *is*, which decides what consuming the slot has to do with it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum FillMode {
+pub enum SlotPayload {
+    /// A buffer this slot filled, already the current region's when the slot is consumed:
+    /// [`WindowMode`] says how it got there.
+    Windowed(WindowMode),
+    /// No buffer: the payload is the operand where it already lies, so the slot holds it whole and
+    /// each read selects the region out of it. Nothing is filled and nothing is stored, which is
+    /// what makes an [`InPlace`](Residence::InPlace) level cost exactly the reads it would have
+    /// made without a ring.
+    AtRegion,
+}
+
+/// Whether a slot can transport an operand from its current backing, or merely retains fragments
+/// already resident in registers.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum StageSource {
+    Transport(Delivery),
+    ResidentFragment,
+}
+
+impl StageSource {
+    pub(crate) fn delivery(self) -> Option<Delivery> {
+        match self {
+            StageSource::Transport(delivery) => Some(delivery),
+            StageSource::ResidentFragment => None,
+        }
+    }
+
+    pub(crate) fn is_resident_fragment(self) -> bool {
+        matches!(self, StageSource::ResidentFragment)
+    }
+}
+
+/// When a windowed payload is brought to its region across the walk. The walk moves each operand's
+/// window or it does not, and a window that never moves need be neither refilled nor duplicated per
+/// slot; those two savings are the same fact, so one mode carries both.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum WindowMode {
     /// The walk moves this operand's window, so every region refills it.
     Streamed,
     /// The window is fixed across the walk: filled once, above the loop.
     Fixed,
     /// Fixed, with this slot reusing the first slot's buffer, which is already filled. Nobody fills
-    /// it here. Only a materialized ([`Smem`](Residence::Smem)) operand reaches this: an in-place
-    /// payload allocates nothing, so there is no buffer to reuse and every slot rebinds its own.
+    /// it here. Only a shared ([`Smem`](Residence::Smem)) operand reaches this: plane tiles are
+    /// private to their slot, and an in-place operand has no buffer to reuse.
     Reused,
 }
 
-impl FillMode {
+impl SlotPayload {
     /// Whether [`fill_fixed`](Staging::fill_fixed) fills this operand: it owns a fixed window.
     pub(crate) fn is_fixed(self) -> bool {
-        matches!(self, FillMode::Fixed)
+        matches!(self, SlotPayload::Windowed(WindowMode::Fixed))
     }
 
     /// Whether [`fill_streamed`](Staging::fill_streamed) fills this operand.
     pub(crate) fn is_streamed(self) -> bool {
-        matches!(self, FillMode::Streamed)
+        matches!(self, SlotPayload::Windowed(WindowMode::Streamed))
     }
 
-    /// This operand's state in a later ring slot, given its state in the first. A fixed
-    /// materialized operand reuses the first slot's buffer; anything else is rebuilt per slot.
-    pub(crate) fn in_later_slot(self, residence: Residence) -> FillMode {
+    /// Whether this slot takes the first slot's buffer for this operand instead of allocating one.
+    pub(crate) fn reuses_first_buffer(self) -> bool {
+        matches!(self, SlotPayload::Windowed(WindowMode::Reused))
+    }
+
+    /// This operand's payload in a later ring slot, given its payload in the first. A fixed shared
+    /// operand reuses the first slot's buffer; anything else is rebuilt per slot.
+    pub(crate) fn in_later_slot(self, residence: Residence) -> SlotPayload {
         match self {
-            FillMode::Fixed => match residence {
-                Residence::Smem => FillMode::Reused,
-                Residence::InPlace | Residence::Plane => FillMode::Fixed,
-                Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
+            SlotPayload::Windowed(WindowMode::Fixed) => match residence {
+                Residence::Smem => SlotPayload::Windowed(WindowMode::Reused),
+                Residence::Plane => self,
+                Residence::InPlace => unreachable!("an in-place operand is never windowed"),
             },
-            FillMode::Streamed => match residence {
-                Residence::InPlace | Residence::Smem | Residence::Plane => FillMode::Streamed,
-                Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
-            },
-            FillMode::Reused => unreachable!("Reused is produced only in later slots"),
+            // Nothing was allocated for the first slot either: every slot names the same operand.
+            SlotPayload::Windowed(WindowMode::Streamed) | SlotPayload::AtRegion => self,
+            SlotPayload::Windowed(WindowMode::Reused) => {
+                unreachable!("Reused is produced only in later slots")
+            }
         }
     }
 }
 
-/// The fill and residence plan for one operand within a staging slot.
+/// Read one operand out of its slot for `region`. A buffer the slot filled is already this
+/// region's; an [`AtRegion`](SlotPayload::AtRegion) payload is the whole operand, out of which the
+/// region selects its own window (or, for plane-private cells, its own block of fragments).
+///
+/// A free function, not a `SlotPayload` method: the payload is comptime-only (never a
+/// [`CubeType`]), so the runtime read it drives lives in an ordinary `#[cube]` function.
+#[cube]
+pub(crate) fn read_operand<T: Numeric>(
+    staged: &Tile<T>,
+    region: &Region,
+    #[comptime] payload: SlotPayload,
+) -> Tile<T> {
+    match comptime!(payload) {
+        SlotPayload::AtRegion => staged.at(region),
+        SlotPayload::Windowed(_) => staged.clone(),
+    }
+}
+
+/// What one operand's payload is within a staging slot, where its cells live, and what a slot can
+/// obtain it from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct OperandPlan {
-    pub fill: FillMode,
+    pub payload: SlotPayload,
     pub residence: Residence,
+    pub source: StageSource,
 }
 
 impl OperandPlan {
-    pub(crate) const fn new(fill: FillMode, residence: Residence) -> Self {
-        Self { fill, residence }
+    pub(crate) const fn new(
+        payload: SlotPayload,
+        residence: Residence,
+        source: StageSource,
+    ) -> Self {
+        Self {
+            payload,
+            residence,
+            source,
+        }
+    }
+
+    /// Whether reading this operand selects fragments by comptime coordinate: the slot staged it
+    /// into plane tiles, or a level above left it resident in registers. The two arrive at the
+    /// selection from opposite ends, so neither alone answers for the walk.
+    pub(crate) fn reads_fragments(self) -> bool {
+        self.residence == Residence::Plane || self.source.is_resident_fragment()
     }
 }
 
@@ -76,9 +150,9 @@ impl OperandPlan {
 pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
-    /// When each operand is filled, and where it lives at this level; both resolved when the slot
-    /// was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entry is
-    /// `None` and asking for it is a bug, not a default.
+    /// What each operand's payload is, and where it lives at this level; both resolved when the
+    /// slot was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entry
+    /// is `None` and asking for it is a bug, not a default.
     #[cube(comptime)]
     pub(crate) lhs: OperandPlan,
     #[cube(comptime)]
@@ -104,56 +178,28 @@ impl<T: CubeType> Staging<T> {
         }
     }
 
-    /// Whether this slot's operand (or lhs) is fixed.
-    pub(crate) fn is_fixed(&self) -> comptime_type!(bool) {
-        comptime!(self.lhs.fill.is_fixed())
-    }
-
-    /// Whether this slot's operand (or lhs) is streamed.
-    pub(crate) fn is_streamed(&self) -> comptime_type!(bool) {
-        comptime!(self.lhs.fill.is_streamed())
-    }
-
-    /// When this slot's right-hand operand plan is queried.
-    fn rhs_plan(&self) -> comptime_type!(OperandPlan) {
-        comptime!(self.rhs.expect("Staging: unary slot has no rhs"))
-    }
-
-    /// Whether this slot's rhs operand is fixed.
-    pub(crate) fn is_fixed_rhs(&self) -> comptime_type!(bool) {
-        let plan = self.rhs_plan();
-        comptime!(plan.fill.is_fixed())
-    }
-
-    /// Whether this slot's rhs operand is streamed.
-    pub(crate) fn is_streamed_rhs(&self) -> comptime_type!(bool) {
-        let plan = self.rhs_plan();
-        comptime!(plan.fill.is_streamed())
-    }
-
-    /// Where this slot's operand (or left-hand operand) lives.
-    pub(crate) fn residence(&self) -> comptime_type!(Residence) {
-        comptime!(self.lhs.residence)
-    }
-
-    /// Where this slot's right-hand operand lives.
-    pub(crate) fn residence_rhs(&self) -> comptime_type!(Residence) {
-        let plan = self.rhs_plan();
-        comptime!(plan.residence)
+    /// The resolved plan for `operand`. Unary slots have only [`LHS`].
+    pub(crate) fn plan(&self, #[comptime] operand: usize) -> comptime_type!(OperandPlan) {
+        comptime!(match operand {
+            LHS => self.lhs,
+            RHS => self.rhs.expect("Staging: unary slot has no rhs"),
+            _ => panic!("Staging: invalid operand index"),
+        })
     }
 
     /// Whether this slot has any fixed operand.
     pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
         comptime!(
-            self.lhs.fill.is_fixed() || matches!(self.rhs, Option::Some(p) if p.fill.is_fixed())
+            self.lhs.payload.is_fixed()
+                || matches!(self.rhs, Option::Some(p) if p.payload.is_fixed())
         )
     }
 
-    /// Whether either operand uses a plane partition, requiring an unrolled walk.
-    pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
+    /// Whether either operand is read by selecting fragments, requiring an unrolled walk.
+    pub(crate) fn has_fragment_read(&self) -> comptime_type!(bool) {
         comptime!(
-            self.lhs.residence == Residence::Plane
-                || matches!(self.rhs, Option::Some(p) if p.residence == Residence::Plane)
+            self.lhs.reads_fragments()
+                || matches!(self.rhs, Option::Some(p) if p.reads_fragments())
         )
     }
 
@@ -206,9 +252,9 @@ impl<T: CubeType> Staging<T> {
     }
 
     /// Publish this slot's last fill when no successor fill's rendezvous will (the walk's final
-    /// regions). Only a collective `Cube` slot needs it; reached only through
-    /// [`consume_final`](Staging::consume_final).
-    pub(crate) fn publish(&self) {
+    /// regions). Only a collective `Cube` slot needs it; callers invoke this immediately before
+    /// [`consume`](Staging::consume).
+    pub fn publish(&self) {
         match &self.pipeline {
             Pipeline::Cube => sync_cube(),
             Pipeline::Solo | Pipeline::Barrier { .. } => {}

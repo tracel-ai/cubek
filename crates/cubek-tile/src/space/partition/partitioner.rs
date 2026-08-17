@@ -7,8 +7,9 @@ use super::{Distribution, WalkOrder};
 
 /// How deeply a level's walk buffers its regions, and nothing else: whether an operand is
 /// materialized at all, and into what, is the operand's own
-/// [`Residence`](crate::Residence), stated per level. A level every operand rides
-/// [`InPlace`](crate::Residence::InPlace) lowers to the plain recursive walk whatever this says.
+/// [`Residence`](crate::Residence), stated per level. The two are independent: a level every
+/// operand rides [`InPlace`](crate::Residence::InPlace) still runs the depth stated here, over
+/// slots that allocate nothing.
 ///
 /// A depth, not a menu: the walk is one circular software pipeline of `depth` slots
 /// ([`Ring`](crate::Ring)), so single and double buffering are the `1` and `2` of the same

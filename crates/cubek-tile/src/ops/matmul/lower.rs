@@ -1,6 +1,8 @@
 //! Lowering `c.mma(a, b)`: at a final tile, the leaf instruction; while levels remain,
-//! walk this level under its [`Buffering`]. Register residency is the kernel's explicit
-//! bracket ([`promote`](Tile) then [`copy_from`](Tile::copy_from)), not a lowering decision.
+//! walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
+//! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
+//! allocate nothing. Register residency is the kernel's explicit bracket
+//! ([`promote`](Tile) then [`copy_from`](Tile::copy_from)), not a lowering decision.
 
 use cubecl::prelude::*;
 
@@ -16,18 +18,7 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                // A level whose every operand stays put materializes nothing, so there is no slot
-                // to buffer and the walk is the plain recursion however deep the level buffers.
-                let lhs_residence = lhs.residence(comptime!(&self.space));
-                let rhs_residence = rhs.residence(comptime!(&self.space));
-                let all_in_place = comptime!(
-                    lhs_residence == Residence::InPlace && rhs_residence == Residence::InPlace
-                );
-                if comptime!(all_in_place) {
-                    self.mma_direct(lhs, rhs, op_space);
-                } else {
-                    self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
-                }
+                self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
             }
         }
     }

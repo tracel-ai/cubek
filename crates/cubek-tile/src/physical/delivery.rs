@@ -78,22 +78,19 @@ pub enum StageStorage {
 /// streams straight from where it already is.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Residence {
-    /// Read where the operand already is: a global window, or a recipe evaluated at the leaf. The
-    /// level's walk materializes nothing, so a level whose every operand is `InPlace` lowers to the
-    /// plain recursive walk.
+    /// Read where the operand already is: a global window, a recipe evaluated at the leaf, or
+    /// registers a level above already holds. The level's walk still runs its ring, but its slots
+    /// allocate nothing and fill nothing: each holds the operand whole, and the read selects the
+    /// region's own window (or block of fragments) out of it.
     InPlace,
     /// A cooperatively filled shared-memory buffer the leaf reads windows from. How many physical
     /// buffers back it is the ring's business, not the operand's: one per slot while the walk moves
     /// its window, one for the whole ring once the walk leaves it fixed (see
-    /// [`FillMode`](crate::FillMode)).
+    /// [`WindowMode`](crate::WindowMode)).
     Smem,
     /// Plane-private register fragments, selected by comptime coordinate (so the level's walk
     /// unrolls).
     Plane,
-    /// Materialize here, letting the structure below choose between [`Plane`](Residence::Plane) and
-    /// [`Smem`](Residence::Smem); see `Space::auto_residence`. A request only:
-    /// [`Tile::residence`](crate::Tile::residence) never returns it.
-    Auto,
 }
 
 impl StageStorage {
@@ -230,11 +227,11 @@ mod tests {
     #[test]
     fn a_plan_hands_out_one_residence_per_level() {
         let plan = StagePlan::new(
-            &[Residence::Auto, Residence::InPlace, Residence::Plane],
+            &[Residence::Smem, Residence::InPlace, Residence::Plane],
             StageStorage::Strided,
             0,
         );
-        assert_eq!(plan.head(), Residence::Auto);
+        assert_eq!(plan.head(), Residence::Smem);
         assert_eq!(plan.descend().head(), Residence::InPlace);
         assert_eq!(plan.descend().descend().head(), Residence::Plane);
     }
@@ -243,7 +240,7 @@ mod tests {
     /// exhausted plan keeps answering rather than running out of entries.
     #[test]
     fn an_exhausted_plan_stays_in_place() {
-        let plan = StagePlan::new(&[Residence::Auto], StageStorage::Strided, 0);
+        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0);
         assert_eq!(plan.descend().head(), Residence::InPlace);
         assert_eq!(plan.descend().descend().head(), Residence::InPlace);
         assert_eq!(StagePlan::in_place().head(), Residence::InPlace);
@@ -253,7 +250,7 @@ mod tests {
     /// survive the descent that consumes the residences.
     #[test]
     fn descending_keeps_the_storage_facts() {
-        let plan = StagePlan::new(&[Residence::Auto], StageStorage::Tiled, 128);
+        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Tiled, 128);
         let below = plan.descend();
         assert_eq!(below.storage, StageStorage::Tiled);
         assert_eq!(below.units, 128);
