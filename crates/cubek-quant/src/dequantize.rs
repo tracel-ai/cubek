@@ -6,23 +6,15 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
+    scale::Scales,
     scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
+use cubecl::std::quant::check_scale_bindings;
 use cubecl::std::tensor::{
     View,
     layout::linear::{LinearView, linear_view},
 };
-
-/// Dequantize a vector of values into floating-point values using the provided scale.
-#[cube]
-pub fn dequantize_symmetric<F: Float, FS: CubePrimitive, N: Size>(
-    value: Vector<F, N>,
-    scale: FS,
-) -> Vector<F, N> {
-    // x = scale * x_q
-    Vector::cast_from(scale) * value
-}
 
 /// Dequantize the value at a specified position using the provided quantization scheme.
 ///
@@ -38,7 +30,7 @@ pub fn dequantize_symmetric_packed_values<
 >(
     position: usize,
     values: &View<Vector<QI, NQ>, usize>,
-    scales: &View<FS, usize>,
+    scales: &Scales<'_, FS>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value_at::<F, NF, FS, QI, NQ>(
@@ -63,7 +55,7 @@ pub fn dequantize_symmetric_packed_value_at<
 >(
     position: usize,
     values: Vector<QI, NQ>,
-    scales: &View<FS, usize>,
+    scales: &Scales<'_, FS>,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
     dequantize_symmetric_packed_value::<F, NF, FS, QI, NQ>(values, scales, position, scheme)
@@ -82,7 +74,7 @@ pub fn dequantize_symmetric_packed_value<
     NQ: Size,
 >(
     values: Vector<QS, NQ>,
-    scales: &View<FS, usize>,
+    scales: &Scales<'_, FS>,
     position: usize,
     #[comptime] scheme: QuantScheme,
 ) -> Array<Vector<F, NF>> {
@@ -94,8 +86,7 @@ pub fn dequantize_symmetric_packed_value<
     for i in 0..vector_size_values {
         let floats = unpack_q::<F, NF, QS>(values.extract(i), scheme.value, scheme.store);
         let scale = scales.read((position * vector_size_values) + i * num_quants);
-        let values = dequantize_symmetric::<F, FS, NF>(floats, scale);
-        tmp[i] = values;
+        tmp[i] = scale.dequantize_symmetric::<F, NF>(floats);
     }
 
     tmp
@@ -142,6 +133,7 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
 fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, NQ: Size>(
     input: LinearView<'_, Vector<QS, NQ>>,
     scales: ScalesView<'_, FS>,
+    global: ComptimeOption<LinearView<'_, f32>>,
     mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, QS)] _dtypes: [ElemType; 3],
@@ -160,6 +152,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     let values = input.read(ABSOLUTE_POS);
     let packed_pos = ABSOLUTE_POS * scheme.num_quants();
 
+    let scales = Scales::<FS>::new(&scales, global);
     let out =
         dequantize_symmetric_packed_value::<F, NF, FS, QS, NQ>(values, &scales, packed_pos, scheme);
 
@@ -173,6 +166,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
 fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<Q, N>>,
     scale: ScalesView<'_, FS>,
+    global: ComptimeOption<LinearView<'_, f32>>,
     mut output: LinearViewMut<'_, Vector<F, N>>,
     #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
@@ -181,12 +175,13 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
     }
 
     let native_packing = Q::packing_factor();
-    // Absolute pos represents the logical block (scale) used to dequantize, not layout
-    let scale = scale.read(ABSOLUTE_POS * input.vector_size() * native_packing);
+    let scales = Scales::<FS>::new(&scale, global);
+    // Absolute pos is the logical position the scale is looked up by, not a layout index
+    let scale = scales.read(ABSOLUTE_POS * input.vector_size() * native_packing);
 
     output.write(
         ABSOLUTE_POS,
-        dequantize_symmetric::<F, FS, N>(Vector::cast_from(input.read(ABSOLUTE_POS)), scale),
+        scale.dequantize_symmetric::<F, N>(Vector::cast_from(input.read(ABSOLUTE_POS))),
     );
 }
 
@@ -196,11 +191,14 @@ pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
-    scale: TensorBinding<R>,
+    scales: &[TensorBinding<R>],
     scheme: &QuantScheme,
     output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
+    check_scale_bindings(scheme, scales.len());
+
     let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.scale_dtype());
+    let (scale, global) = (scales[0].clone(), scales.get(1).cloned());
 
     match scheme {
         QuantScheme {
@@ -211,6 +209,7 @@ pub fn launch_ref<R: Runtime>(
             input,
             *scheme,
             scale,
+            global,
             output,
             output_dtype,
             scale_dtype,
@@ -237,6 +236,7 @@ pub fn launch_ref<R: Runtime>(
                 input,
                 *scheme,
                 scale,
+                global,
                 output,
                 output_dtype,
                 scale_dtype,
@@ -252,11 +252,13 @@ pub fn launch_ref<R: Runtime>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dequantize_packed<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     scheme: QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     output_dtype: ElemType,
     scale_dtype: ElemType,
@@ -291,7 +293,7 @@ fn dequantize_packed<R: Runtime>(
             store: QuantStore::PackedU32(_),
             mode: QuantMode::Symmetric,
             ..
-        } if scheme.num_levels() == 1 => unsafe {
+        } => unsafe {
             dequantize_symmetric_packed_kernel::launch_unchecked(
                 client,
                 cube_count,
@@ -301,6 +303,7 @@ fn dequantize_packed<R: Runtime>(
                 vector_size_in,
                 linear_view(input.clone()),
                 scales_view(input, scale, 1, &scheme),
+                global.map(linear_view).into(),
                 linear_view(output),
                 scheme,
                 [output_dtype, scale_dtype, input_dtype],
@@ -312,11 +315,13 @@ fn dequantize_packed<R: Runtime>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dequantize_native<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     scheme: QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     output_dtype: ElemType,
     scale_dtype: ElemType,
@@ -341,7 +346,7 @@ fn dequantize_native<R: Runtime>(
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
-        } if scheme.num_levels() == 1 => {
+        } => {
             let address_type = input
                 .required_address_type(input_dtype.size())
                 .max(scale.required_address_type(scale_dtype.size()))
@@ -356,6 +361,7 @@ fn dequantize_native<R: Runtime>(
                     vector_size,
                     linear_view(input.clone()),
                     scales_view(input, scale, 1, &scheme),
+                    global.map(linear_view).into(),
                     linear_view(output),
                     [output_dtype, scale_dtype, input_dtype],
                 )

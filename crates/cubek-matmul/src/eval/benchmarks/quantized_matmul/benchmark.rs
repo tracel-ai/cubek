@@ -173,8 +173,11 @@ fn quantize_operand(
         client,
         input.binding(),
         data.clone().binding(),
-        scale_in.binding(),
-        scale_out.clone().binding(),
+        // A `QuantOperand` carries one scale, so a two-level scheme has nowhere to put its outer
+        // one; `check_scale_bindings` refuses it here rather than quantizing against a factor the
+        // matmul never sees.
+        &[scale_in.binding()],
+        &[scale_out.clone().binding()],
         scheme,
         input_elem,
     )
