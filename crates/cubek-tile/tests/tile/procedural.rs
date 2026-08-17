@@ -218,6 +218,23 @@ fn procedural_direct_copy_kernel<E: Float>(
     output.copy_from(&source);
 }
 
+/// Descend once before reading: `Space::divide` makes child extents static, while a procedural
+/// bound must retain the parent axis positions that were dynamic at construction.
+#[cube(launch)]
+fn procedural_divided_copy_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] recipe: ProceduralRecipe,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
+    let source = source.at(&region);
+    let output = output.tile(comptime!(space.clone()));
+    let mut output = output.at(&region);
+    output.copy_from(&source);
+}
+
 fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
@@ -380,7 +397,7 @@ fn dynamic_axis_keeps_static_procedural_bound_aligned_after_divide() {
         .zeros()
         .generate_without_host_data();
 
-    procedural_direct_copy_kernel::launch::<TestRuntime>(
+    procedural_divided_copy_kernel::launch::<TestRuntime>(
         &client,
         concrete.cube_count(),
         concrete.cube_dim(&client),
@@ -396,7 +413,8 @@ fn dynamic_axis_keeps_static_procedural_bound_aligned_after_divide() {
     let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
     for row in 0..4 {
         for col in 0..6 {
-            assert_eq!(got.get_f32(&[row, col]), 1.0);
+            let expected = if row < 2 && col < 4 { 1.0 } else { 0.0 };
+            assert_eq!(got.get_f32(&[row, col]), expected);
         }
     }
 }
