@@ -1,7 +1,9 @@
 use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::ScaleDtype;
+mod harness;
 mod scale_rounding;
 mod tiled;
+mod two_level;
 
 #[macro_export]
 macro_rules! testgen_quant {
