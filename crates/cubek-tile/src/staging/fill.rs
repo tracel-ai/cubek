@@ -66,7 +66,7 @@ impl SlotPlan {
                 .any(|op| op.delivery == Delivery::Procedural)
             {
                 panic!(
-                    "Staging: a procedural recipe demotes to Smem and cannot share a slot with a Plane operand"
+                    "Staging: a procedural recipe stages in Smem and cannot share a slot with a Plane operand"
                 );
             } else {
                 panic!("Staging: Plane and Smem operands cannot share a slot");
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "a procedural recipe demotes to Smem and cannot share a slot with a Plane operand"
+        expected = "a procedural recipe stages in Smem and cannot share a slot with a Plane operand"
     )]
     fn a_procedural_recipe_cannot_share_a_slot_with_a_plane_stage() {
         let (space, lhs, rhs) = spaces();
