@@ -164,5 +164,14 @@ pub(crate) fn stage_walk_unrolled<Acc: Numeric>(
     #[comptime] has_plane_stage: bool,
 ) -> comptime_type!(bool) {
     let cuts = acc.tile_kind.cuts_partition(comptime!(acc.space.clone()));
-    comptime!(cuts || (has_plane_stage && op_space.static_walkable()))
+    comptime!({
+        let unroll = cuts || (has_plane_stage && op_space.static_walkable());
+        if unroll {
+            assert!(
+                op_space.is_static(),
+                "stage_walk_unrolled: an unrolled walk must be static (dynamic extents cannot fold to comptime coordinates)"
+            );
+        }
+        unroll
+    })
 }
