@@ -91,51 +91,49 @@ fn compute_input_scales(host: &HostData, scheme: &QuantScheme) -> (Shape, Vec<f3
 
     let shape: Vec<usize> = host.shape.iter().copied().collect();
     let block_dims = crate::stubs::quant::block_dims(scheme, &shape);
-    let scales_shape: Shape = crate::stubs::quant::scales_shape(&shape, &block_dims)
+    let scales_shape: Shape = crate::quant_layout::scales_grid(&shape, &block_dims)
         .into_iter()
         .collect();
 
     let scales = if scheme.block_size().is_none() {
         vec![1.0 / max_abs_q]
     } else {
-        {
-            let rank = shape.len();
-            let num_blocks: usize = scales_shape.iter().product();
-            let block_elem_count: usize = block_dims.iter().product();
+        let rank = shape.len();
+        let num_blocks: usize = scales_shape.iter().product();
+        let block_elem_count: usize = block_dims.iter().product();
 
-            let mut scales = Vec::with_capacity(num_blocks);
-            let mut data_idx = vec![0usize; rank];
-            for block_linear in 0..num_blocks {
-                // Decode the flat block index into per-dim block indices.
-                let mut block_idx = vec![0usize; rank];
-                let mut rem = block_linear;
-                for d in (0..rank).rev() {
-                    block_idx[d] = rem % scales_shape[d];
-                    rem /= scales_shape[d];
-                }
-
-                let mut block_max = 0.0_f32;
-                for elem_linear in 0..block_elem_count {
-                    let mut rem = elem_linear;
-                    for d in (0..rank).rev() {
-                        let within = rem % block_dims[d];
-                        data_idx[d] = block_idx[d] * block_dims[d] + within;
-                        rem /= block_dims[d];
-                    }
-                    block_max = block_max.max(host.get_f32(&data_idx).abs());
-                }
-
-                // Guard against an all-zero block producing a zero scale that
-                // would divide-by-zero inside the quantize kernel.
-                let scale = if block_max > 0.0 {
-                    block_max / max_abs_q
-                } else {
-                    1.0 / max_abs_q
-                };
-                scales.push(scale);
+        let mut scales = Vec::with_capacity(num_blocks);
+        let mut data_idx = vec![0usize; rank];
+        for block_linear in 0..num_blocks {
+            // Decode the flat block index into per-dim block indices.
+            let mut block_idx = vec![0usize; rank];
+            let mut rem = block_linear;
+            for d in (0..rank).rev() {
+                block_idx[d] = rem % scales_shape[d];
+                rem /= scales_shape[d];
             }
-            scales
+
+            let mut block_max = 0.0_f32;
+            for elem_linear in 0..block_elem_count {
+                let mut rem = elem_linear;
+                for d in (0..rank).rev() {
+                    let within = rem % block_dims[d];
+                    data_idx[d] = block_idx[d] * block_dims[d] + within;
+                    rem /= block_dims[d];
+                }
+                block_max = block_max.max(host.get_f32(&data_idx).abs());
+            }
+
+            // Guard against an all-zero block producing a zero scale that
+            // would divide-by-zero inside the quantize kernel.
+            let scale = if block_max > 0.0 {
+                block_max / max_abs_q
+            } else {
+                1.0 / max_abs_q
+            };
+            scales.push(scale);
         }
+        scales
     };
 
     (scales_shape, scales, block_dims)

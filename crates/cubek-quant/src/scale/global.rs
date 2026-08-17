@@ -5,6 +5,14 @@ use cubecl::std::tensor::layout::linear::{LinearView, LinearViewMut};
 
 use crate::scale::Scale;
 
+/// The innermost level's scale grid and, for a two-level scheme, the tensor's global scale.
+/// Bindings arrive innermost first, the order `check_scale_bindings` counts.
+pub(crate) fn split_levels<R: Runtime>(
+    scales: &[TensorBinding<R>],
+) -> (TensorBinding<R>, Option<TensorBinding<R>>) {
+    (scales[0].clone(), scales.get(1).cloned())
+}
+
 /// The scale a whole tensor is normalized by, absent for the schemes that have none.
 ///
 /// Bound as f32 whatever the inner level stores: cubecl's `check_scale_bindings` refuses anything

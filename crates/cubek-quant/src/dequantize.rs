@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
 use crate::{
     layout::{ScalesView, scales_view},
-    scale::Scales,
+    scale::{Scales, split_levels},
     scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
@@ -198,7 +198,7 @@ pub fn launch_ref<R: Runtime>(
     check_scale_bindings(scheme, scales.len());
 
     let scale_dtype: ElemType = ElemType::from_scale_dtype(scheme.scale_dtype());
-    let (scale, global) = (scales[0].clone(), scales.get(1).cloned());
+    let (scale, global) = split_levels(scales);
 
     match scheme {
         QuantScheme {

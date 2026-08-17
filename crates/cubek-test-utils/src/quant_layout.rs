@@ -25,10 +25,20 @@ pub fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
 /// two-level scheme grids exactly like a one-level block scheme; its outer scale is a separate
 /// one-element tensor and does not appear here.
 pub fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+    scales_grid(shape, &block_dims(scheme, shape))
+}
+
+/// The same grid, over block extents the caller already holds.
+pub fn scales_grid(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
+    assert_eq!(
+        shape.len(),
+        block_dims.len(),
+        "shape/block_dims rank mismatch"
+    );
     shape
         .iter()
-        .zip(block_dims(scheme, shape))
-        .map(|(&dim, block)| {
+        .zip(block_dims)
+        .map(|(&dim, &block)| {
             assert!(
                 block > 0 && dim.is_multiple_of(block),
                 "axis of {dim} elements does not divide into {block}-element blocks"

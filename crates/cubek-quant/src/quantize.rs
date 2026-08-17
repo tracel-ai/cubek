@@ -15,7 +15,7 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
-    scale::{GlobalScale, Scale},
+    scale::{GlobalScale, Scale, split_levels},
     utils::{check_block_size_compat, packed_storage_elem},
 };
 use crate::{
@@ -283,14 +283,6 @@ pub fn launch_ref<R: Runtime>(
             panic!("{value:?} is not supported for native quantization");
         }
     }
-}
-
-/// The innermost level's scale grid and, for a two-level scheme, the tensor's global scale.
-/// Bindings arrive innermost first, the order [`check_scale_bindings`] counts.
-fn split_levels<R: Runtime>(
-    scales: &[TensorBinding<R>],
-) -> (TensorBinding<R>, Option<TensorBinding<R>>) {
-    (scales[0].clone(), scales.get(1).cloned())
 }
 
 #[allow(clippy::too_many_arguments)]

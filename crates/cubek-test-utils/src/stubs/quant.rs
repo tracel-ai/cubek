@@ -11,7 +11,7 @@ pub fn quantize(
     block_dims: &[usize],
     scheme: &QuantScheme,
 ) -> Vec<u8> {
-    let scales_shape = scales_shape(shape, block_dims);
+    let scales_shape = crate::quant_layout::scales_grid(shape, block_dims);
     let quantized = quantized_values(values, shape, scales, block_dims, &scales_shape, scheme);
 
     match scheme.store {
@@ -29,7 +29,7 @@ pub fn dequantize(
     block_dims: &[usize],
     scheme: &QuantScheme,
 ) -> Vec<f32> {
-    let scales_shape = scales_shape(shape, block_dims);
+    let scales_shape = crate::quant_layout::scales_grid(shape, block_dims);
 
     let quants = match scheme.store {
         QuantStore::Native => decode_native(bytes, scheme.value),
@@ -196,27 +196,6 @@ pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
     assert_supported(scheme);
 
     crate::quant_layout::block_dims(scheme, shape)
-}
-
-/// Shape of the per-block scale grid: each dimension divided by its block
-/// extent.
-pub(crate) fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
-    assert_eq!(
-        shape.len(),
-        block_dims.len(),
-        "shape/block_dims rank mismatch"
-    );
-    shape
-        .iter()
-        .zip(block_dims)
-        .map(|(&d, &b)| {
-            assert!(
-                d.is_multiple_of(b),
-                "block dim {b} must divide dimension {d}"
-            );
-            d / b
-        })
-        .collect()
 }
 
 /// Map a logical (row-major) element index to the index of its block in the
