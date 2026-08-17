@@ -37,10 +37,16 @@ impl<T: CubeType> Ring<T> {
         self.slots.index_mut(index)
     }
 
+    /// Whether any operand across the ring is fixed across the walk. Uniform across slots since
+    /// all slots share one plan.
+    pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
+        self.slots.index(FIRST_SLOT).has_fixed()
+    }
+
     /// Whether any slot stages a plane partition, which selects its tiles by comptime coordinate
-    /// and so stands up only under an unrolled walk.
+    /// and so stands up only under an unrolled walk. Uniform across slots since all slots share one plan.
     pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
-        self.slots.index(0).has_plane_stage()
+        self.slots.index(FIRST_SLOT).has_plane_stage()
     }
 }
 
@@ -102,15 +108,18 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
     // as a comptime binding, and silently rolls the loop otherwise.
     let unrolled = op.unrolled(&ring);
     let unroll = comptime!(unrolled);
+    let has_fixed = ring.has_fixed();
     let walk = Walk::over(op_space);
     let total = walk.total();
 
     // A fixed operand's window never moves, so region 0's is every region's. Later slots reusing
     // the first slot's buffer for it read `FillMode::Reused` and skip the copy.
-    let first = walk.region(0);
-    #[unroll]
-    for slot in 0..depth {
-        op.fill_fixed(ring.slot_mut(slot), &first);
+    if comptime!(has_fixed) {
+        let first = walk.region(FIRST_SLOT);
+        #[unroll]
+        for slot in 0..depth {
+            op.fill_fixed(ring.slot_mut(slot), &first);
+        }
     }
 
     // Prime every slot but the last, which the first lap's prefetch fills.
@@ -131,8 +140,8 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
             if comptime!(depth == 1) {
                 // Nothing is in flight: this region's fill is the last event before its read.
                 let region = walk.region(region_idx);
-                op.fill_streamed(ring.slot_mut(0usize), &region);
-                op.compute(ring.slot_mut(0usize), &region, true);
+                op.fill_streamed(ring.slot_mut(FIRST_SLOT), &region);
+                op.compute(ring.slot_mut(FIRST_SLOT), &region, true);
             } else {
                 let ahead = region_idx.fadd(comptime!(depth - 1));
                 if ahead < total {

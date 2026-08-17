@@ -105,7 +105,7 @@ impl SlotPlan {
     /// a later slot reuses the first slot's buffer for whatever the walk never rewrites.
     pub(crate) fn fill_mode(&self, operand: usize, slot: usize) -> FillMode {
         match slot {
-            0 => self.fill_modes[operand],
+            FIRST_SLOT => self.fill_modes[operand],
             _ => self.fill_modes[operand].in_later_slot(self.residence[operand]),
         }
     }
@@ -231,23 +231,24 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>)>>::new();
         #[unroll]
         for slot in 0..depth {
-            let staged_lhs = if comptime!(plan.reuses_first_buffer(0, slot)) {
-                slots.index(0).data.0.clone()
+            let staged_lhs = if comptime!(plan.reuses_first_buffer(LHS, slot)) {
+                slots.index(FIRST_SLOT).data.0.clone()
             } else {
                 stage_operand(lhs, comptime!(out.clone()), lhs_residence)
             };
-            let staged_rhs = if comptime!(plan.reuses_first_buffer(1, slot)) {
-                slots.index(0).data.1.clone()
+            let staged_rhs = if comptime!(plan.reuses_first_buffer(RHS, slot)) {
+                slots.index(FIRST_SLOT).data.1.clone()
             } else {
                 stage_operand(rhs, comptime!(out.clone()), rhs_residence)
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.fill_mode(0, slot)),
-                comptime!(Option::Some(plan.fill_mode(1, slot))),
-                lhs_residence,
-                comptime!(Option::Some(rhs_residence)),
+                comptime!(OperandPlan::new(plan.fill_mode(LHS, slot), lhs_residence)),
+                comptime!(Option::Some(OperandPlan::new(
+                    plan.fill_mode(RHS, slot),
+                    rhs_residence
+                ))),
             );
             slots.push(staging);
         }
@@ -379,17 +380,15 @@ impl<T: Numeric> Ring<Tile<T>> {
         let mut slots = Sequence::<Staging<Tile<T>>>::new();
         #[unroll]
         for slot in 0..depth {
-            let staged_input = if comptime!(plan.reuses_first_buffer(0, slot)) {
-                slots.index(0).data.clone()
+            let staged_input = if comptime!(plan.reuses_first_buffer(LHS, slot)) {
+                slots.index(FIRST_SLOT).data.clone()
             } else {
                 stage_operand(input, comptime!(out.clone()), residence)
             };
             let staging = Staging::wrap(
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.fill_mode(0, slot)),
-                comptime!(Option::None),
-                residence,
+                comptime!(OperandPlan::new(plan.fill_mode(LHS, slot), residence)),
                 comptime!(Option::None),
             );
             slots.push(staging);
@@ -675,10 +674,10 @@ mod tests {
             &space,
         );
         for slot in 0..3 {
-            assert_eq!(plan.fill_mode(0, slot), FillMode::Streamed);
-            assert_eq!(plan.fill_mode(1, slot), FillMode::Streamed);
-            assert!(!plan.reuses_first_buffer(0, slot));
-            assert!(!plan.reuses_first_buffer(1, slot));
+            assert_eq!(plan.fill_mode(LHS, slot), FillMode::Streamed);
+            assert_eq!(plan.fill_mode(RHS, slot), FillMode::Streamed);
+            assert!(!plan.reuses_first_buffer(LHS, slot));
+            assert!(!plan.reuses_first_buffer(RHS, slot));
         }
     }
 
@@ -695,12 +694,12 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill_mode(0, 0), FillMode::Streamed);
-        assert_eq!(plan.fill_mode(1, 0), FillMode::Fixed);
-        assert_eq!(plan.fill_mode(1, 1), FillMode::Reused);
-        assert_eq!(plan.fill_mode(1, 2), FillMode::Reused);
-        assert!(plan.reuses_first_buffer(1, 1));
-        assert!(!plan.reuses_first_buffer(1, 0));
+        assert_eq!(plan.fill_mode(LHS, FIRST_SLOT), FillMode::Streamed);
+        assert_eq!(plan.fill_mode(RHS, FIRST_SLOT), FillMode::Fixed);
+        assert_eq!(plan.fill_mode(RHS, 1), FillMode::Reused);
+        assert_eq!(plan.fill_mode(RHS, 2), FillMode::Reused);
+        assert!(plan.reuses_first_buffer(RHS, 1));
+        assert!(!plan.reuses_first_buffer(RHS, FIRST_SLOT));
     }
 
     /// An in-place payload allocates nothing, so a later slot has no buffer to reuse: it builds
@@ -716,9 +715,9 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill_mode(1, 0), FillMode::Fixed);
-        assert_eq!(plan.fill_mode(1, 1), FillMode::Fixed);
-        assert!(!plan.reuses_first_buffer(1, 1));
+        assert_eq!(plan.fill_mode(RHS, FIRST_SLOT), FillMode::Fixed);
+        assert_eq!(plan.fill_mode(RHS, 1), FillMode::Fixed);
+        assert!(!plan.reuses_first_buffer(RHS, 1));
     }
 
     /// A TMA pair keeps the joint per-region fill, so no operand is fixed and no buffer is reused:
@@ -735,8 +734,8 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill_mode(1, 0), FillMode::Streamed);
-        assert_eq!(plan.fill_mode(1, 1), FillMode::Streamed);
+        assert_eq!(plan.fill_mode(RHS, FIRST_SLOT), FillMode::Streamed);
+        assert_eq!(plan.fill_mode(RHS, 1), FillMode::Streamed);
         assert_eq!(plan.sync(), Sync::Barrier);
     }
 }

@@ -7,6 +7,11 @@ use cubecl::prelude::*;
 
 use crate::*;
 
+pub(crate) const FIRST_SLOT: usize = 0;
+
+pub(crate) const LHS: usize = 0;
+pub(crate) const RHS: usize = 1;
+
 /// When one operand of a slot is filled across the walk. The walk moves each operand's window or
 /// it does not, and a window that never moves need be neither refilled nor duplicated per slot;
 /// those two savings are the same fact, so one state carries both.
@@ -51,6 +56,19 @@ impl FillMode {
     }
 }
 
+/// The fill and residence plan for one operand within a staging slot.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct OperandPlan {
+    pub fill: FillMode,
+    pub residence: Residence,
+}
+
+impl OperandPlan {
+    pub(crate) const fn new(fill: FillMode, residence: Residence) -> Self {
+        Self { fill, residence }
+    }
+}
+
 /// One slot of the staged `mma` pipeline: its payload `T` and the [`Pipeline`] sequencing fill vs
 /// read. Generic over `T`, so the slot is matmul-agnostic; it just hands out a synchronized `&mut T`
 /// to fill (`write`) and a synchronized `&T` to consume (`read`).
@@ -59,16 +77,12 @@ pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
     /// When each operand is filled, and where it lives at this level; both resolved when the slot
-    /// was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entries are
-    /// `None` and asking for them is a bug, not a default.
+    /// was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entry is
+    /// `None` and asking for it is a bug, not a default.
     #[cube(comptime)]
-    pub(crate) fill_lhs: FillMode,
+    pub(crate) lhs: OperandPlan,
     #[cube(comptime)]
-    pub(crate) fill_rhs: Option<FillMode>,
-    #[cube(comptime)]
-    pub(crate) residence_lhs: Residence,
-    #[cube(comptime)]
-    pub(crate) residence_rhs: Option<Residence>,
+    pub(crate) rhs: Option<OperandPlan>,
 }
 
 #[cube]
@@ -79,66 +93,67 @@ impl<T: CubeType> Staging<T> {
     pub(crate) fn wrap(
         data: T,
         pipeline: Pipeline,
-        #[comptime] fill_lhs: FillMode,
-        #[comptime] fill_rhs: Option<FillMode>,
-        #[comptime] residence_lhs: Residence,
-        #[comptime] residence_rhs: Option<Residence>,
+        #[comptime] lhs: OperandPlan,
+        #[comptime] rhs: Option<OperandPlan>,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
-            fill_lhs,
-            fill_rhs,
-            residence_lhs,
-            residence_rhs,
+            lhs,
+            rhs,
         }
     }
 
     /// Whether this slot's operand (or lhs) is fixed.
     pub(crate) fn is_fixed(&self) -> comptime_type!(bool) {
-        comptime!(self.fill_lhs.is_fixed())
+        comptime!(self.lhs.fill.is_fixed())
     }
 
     /// Whether this slot's operand (or lhs) is streamed.
     pub(crate) fn is_streamed(&self) -> comptime_type!(bool) {
-        comptime!(self.fill_lhs.is_streamed())
+        comptime!(self.lhs.fill.is_streamed())
     }
 
-    /// When this slot's right-hand operand is filled.
-    fn fill_rhs(&self) -> comptime_type!(FillMode) {
-        comptime!(self.fill_rhs.expect("Staging: unary slot has no rhs fill"))
+    /// When this slot's right-hand operand plan is queried.
+    fn rhs_plan(&self) -> comptime_type!(OperandPlan) {
+        comptime!(self.rhs.expect("Staging: unary slot has no rhs"))
     }
 
     /// Whether this slot's rhs operand is fixed.
     pub(crate) fn is_fixed_rhs(&self) -> comptime_type!(bool) {
-        let fill = self.fill_rhs();
-        comptime!(fill.is_fixed())
+        let plan = self.rhs_plan();
+        comptime!(plan.fill.is_fixed())
     }
 
     /// Whether this slot's rhs operand is streamed.
     pub(crate) fn is_streamed_rhs(&self) -> comptime_type!(bool) {
-        let fill = self.fill_rhs();
-        comptime!(fill.is_streamed())
+        let plan = self.rhs_plan();
+        comptime!(plan.fill.is_streamed())
     }
 
     /// Where this slot's operand (or left-hand operand) lives.
     pub(crate) fn residence(&self) -> comptime_type!(Residence) {
-        comptime!(self.residence_lhs)
+        comptime!(self.lhs.residence)
     }
 
     /// Where this slot's right-hand operand lives.
     pub(crate) fn residence_rhs(&self) -> comptime_type!(Residence) {
+        let plan = self.rhs_plan();
+        comptime!(plan.residence)
+    }
+
+    /// Whether this slot has any fixed operand.
+    pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
         comptime!(
-            self.residence_rhs
-                .expect("Staging: binary slot has no rhs residence")
+            self.lhs.fill.is_fixed() || matches!(self.rhs, Option::Some(p) if p.fill.is_fixed())
         )
     }
 
     /// Whether either operand uses a plane partition, requiring an unrolled walk.
     pub(crate) fn has_plane_stage(&self) -> comptime_type!(bool) {
         comptime!(
-            self.residence_lhs == Residence::Plane
-                || matches!(self.residence_rhs, Option::Some(Residence::Plane))
+            self.lhs.residence == Residence::Plane
+                || matches!(self.rhs, Option::Some(p) if p.residence == Residence::Plane)
         )
     }
 
