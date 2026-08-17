@@ -46,10 +46,7 @@ impl FillMode {
                 Residence::InPlace | Residence::Smem | Residence::Plane => FillMode::Streamed,
                 Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
             },
-            FillMode::Reused => match residence {
-                Residence::InPlace | Residence::Smem | Residence::Plane => FillMode::Reused,
-                Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
-            },
+            FillMode::Reused => unreachable!("Reused is produced only in later slots"),
         }
     }
 }
