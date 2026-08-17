@@ -1,6 +1,6 @@
 //! Building and filling the staging slots of a ring: the operand-deducing [`SlotPlan`], the
-//! ring constructors ([`Ring::binary`] / [`Ring::unary`]), the pin split
-//! ([`fill_pinned`](Staging::fill_pinned) / [`fill_streamed`](Staging::fill_streamed)), and the
+//! ring constructors ([`Ring::binary`] / [`Ring::unary`]), the fixed/streamed split
+//! ([`fill_fixed`](Staging::fill_fixed) / [`fill_streamed`](Staging::fill_streamed)), and the
 //! closure-driven [`fill`](Staging::fill) / [`consume`](Staging::consume) with their hand-written
 //! expands.
 //!
@@ -44,7 +44,7 @@ impl<'a> SlotOperand<'a> {
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct SlotPlan {
     residence: Vec<Residence>,
-    fill: Vec<Fill>,
+    fill_modes: Vec<FillMode>,
     sync: Sync,
     collective_full: bool,
 }
@@ -64,25 +64,26 @@ impl SlotPlan {
             compatible_slot_residences(&residence),
             "Staging: Plane and Smem operands cannot share a slot"
         );
-        // Pin an operand only when its window is genuinely fixed across the walk. A barrier
+        // Fix an operand only when its window is genuinely invariant across the walk. A barrier
         // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
         // splitting an invariant out would corrupt its phase. A dynamic level can't decide
         // invariance at comptime. Both fall back to streaming.
-        let split = op_space.is_static() && !operands.iter().any(|op| op.delivery.is_tma());
-        let fill = operands
+        let can_fix_invariants =
+            op_space.is_static() && !operands.iter().any(|op| op.delivery.is_tma());
+        let fill_modes = operands
             .iter()
             .map(|op| {
-                if split && op_space.walk_invariant(op.space) {
-                    Fill::Pinned
+                if can_fix_invariants && op_space.walk_invariant(op.space) {
+                    FillMode::Fixed
                 } else {
-                    Fill::Streamed
+                    FillMode::Streamed
                 }
             })
             .collect();
         let (sync, collective_full) = slot_sync(&rendezvous_deliveries(operands));
         SlotPlan {
             residence,
-            fill,
+            fill_modes,
             sync,
             collective_full,
         }
@@ -93,17 +94,17 @@ impl SlotPlan {
     }
 
     /// When operand `operand` is filled in ring slot `slot`. The first slot owns every payload;
-    /// a later slot shares whatever the walk never rewrites.
-    pub(crate) fn fill(&self, operand: usize, slot: usize) -> Fill {
+    /// a later slot reuses the first slot's buffer for whatever the walk never rewrites.
+    pub(crate) fn fill_mode(&self, operand: usize, slot: usize) -> FillMode {
         match slot {
-            0 => self.fill[operand],
-            _ => self.fill[operand].shared_by(self.residence[operand]),
+            0 => self.fill_modes[operand],
+            _ => self.fill_modes[operand].in_later_slot(self.residence[operand]),
         }
     }
 
     /// Whether slot `slot` takes the first slot's buffer for `operand` instead of allocating one.
-    pub(crate) fn shares(&self, operand: usize, slot: usize) -> bool {
-        self.fill(operand, slot) == Fill::Shared
+    pub(crate) fn reuses_first_buffer(&self, operand: usize, slot: usize) -> bool {
+        self.fill_mode(operand, slot) == FillMode::Reused
     }
 
     pub(crate) fn sync(&self) -> Sync {
@@ -197,7 +198,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     ///
     /// Slot 0 allocates every payload. A later slot allocates only what the walk refills: an
     /// operand whose window the walk leaves fixed is filled once and never rewritten, so one
-    /// buffer serves the whole ring ([`Fill::Shared`]).
+    /// buffer serves the whole ring ([`FillMode::Reused`]).
     pub fn binary(
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
@@ -222,12 +223,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>)>>::new();
         #[unroll]
         for slot in 0..depth {
-            let staged_lhs = if comptime!(plan.shares(0, slot)) {
+            let staged_lhs = if comptime!(plan.reuses_first_buffer(0, slot)) {
                 slots.index(0).data.0.clone()
             } else {
                 stage_operand(lhs, comptime!(out.clone()), lhs_residence)
             };
-            let staged_rhs = if comptime!(plan.shares(1, slot)) {
+            let staged_rhs = if comptime!(plan.reuses_first_buffer(1, slot)) {
                 slots.index(0).data.1.clone()
             } else {
                 stage_operand(rhs, comptime!(out.clone()), rhs_residence)
@@ -235,8 +236,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.fill(0, slot)),
-                comptime!(Option::Some(plan.fill(1, slot))),
+                comptime!(plan.fill_mode(0, slot)),
+                comptime!(Option::Some(plan.fill_mode(1, slot))),
                 lhs_residence,
                 comptime!(Option::Some(rhs_residence)),
             );
@@ -248,21 +249,21 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Fill the pinned operand(s), those the walk leaves invariant, from `region`'s window.
+    /// Fill the fixed operand(s), those the walk leaves invariant, from `region`'s window.
     /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
-    /// A no-op when nothing is pinned, and when a later ring slot shares the first's buffers.
-    pub fn fill_pinned(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let pin_lhs = self.is_pinned();
-        let pin_rhs = self.is_pinned_rhs();
+    /// A no-op when nothing is fixed, and when a later ring slot reuses the first's buffers.
+    pub fn fill_fixed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
+        let fixed_lhs = self.is_fixed();
+        let fixed_rhs = self.is_fixed_rhs();
         let lhs_residence = self.residence();
         let rhs_residence = self.residence_rhs();
-        if comptime!(pin_lhs || pin_rhs) {
+        if comptime!(fixed_lhs || fixed_rhs) {
             self.fill(|staged_operands, pipe| {
-                if comptime!(pin_lhs) {
+                if comptime!(fixed_lhs) {
                     let source = lhs.at(region);
                     fill_operand(&mut staged_operands.0, &source, lhs_residence, pipe);
                 }
-                if comptime!(pin_rhs) {
+                if comptime!(fixed_rhs) {
                     let source = rhs.at(region);
                     fill_operand(&mut staged_operands.1, &source, rhs_residence, pipe);
                 }
@@ -347,7 +348,7 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
 #[cube]
 impl<T: Numeric> Ring<Tile<T>> {
     /// Build the `depth` slots staging the sole operand `input`. See [`Ring::binary`] for how a
-    /// later slot shares the first's buffer.
+    /// later slot reuses the first slot's buffer.
     pub fn unary(
         input: &Tile<T>,
         #[comptime] op_space: Space,
@@ -370,7 +371,7 @@ impl<T: Numeric> Ring<Tile<T>> {
         let mut slots = Sequence::<Staging<Tile<T>>>::new();
         #[unroll]
         for slot in 0..depth {
-            let staged_input = if comptime!(plan.shares(0, slot)) {
+            let staged_input = if comptime!(plan.reuses_first_buffer(0, slot)) {
                 slots.index(0).data.clone()
             } else {
                 stage_operand(input, comptime!(out.clone()), residence)
@@ -378,7 +379,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staging = Staging::wrap(
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.fill(0, slot)),
+                comptime!(plan.fill_mode(0, slot)),
                 comptime!(Option::None),
                 residence,
                 comptime!(Option::None),
@@ -392,10 +393,10 @@ impl<T: Numeric> Ring<Tile<T>> {
 #[cube]
 impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk leaves it fixed.
-    pub fn fill_pinned(&mut self, input: &Tile<T>, region: &Region) {
-        let pin = self.is_pinned();
+    pub fn fill_fixed(&mut self, input: &Tile<T>, region: &Region) {
+        let fixed = self.is_fixed();
         let residence = self.residence();
-        if comptime!(pin) {
+        if comptime!(fixed) {
             self.fill(|s, pipe| {
                 let source = input.at(region);
                 fill_operand(s, &source, residence, pipe);
@@ -625,7 +626,7 @@ mod tests {
         assert_eq!(slot_sync(&deliveries).0, Sync::Solo);
     }
 
-    /// The walk moves both operands' windows here (every axis is cut), so nothing is pinned and
+    /// The walk moves both operands' windows here (every axis is cut), so nothing is fixed and
     /// every slot of the ring needs its own buffer.
     #[test]
     fn a_streamed_operand_is_rebuilt_in_every_slot() {
@@ -638,17 +639,17 @@ mod tests {
             &space,
         );
         for slot in 0..3 {
-            assert_eq!(plan.fill(0, slot), Fill::Streamed);
-            assert_eq!(plan.fill(1, slot), Fill::Streamed);
-            assert!(!plan.shares(0, slot));
-            assert!(!plan.shares(1, slot));
+            assert_eq!(plan.fill_mode(0, slot), FillMode::Streamed);
+            assert_eq!(plan.fill_mode(1, slot), FillMode::Streamed);
+            assert!(!plan.reuses_first_buffer(0, slot));
+            assert!(!plan.reuses_first_buffer(1, slot));
         }
     }
 
     /// A `K`-only walk leaves the `M`/`N` output operand's window fixed. It is filled once, so one
-    /// buffer serves the whole ring however deep: the first slot owns it, the rest borrow it.
+    /// buffer serves the whole ring however deep: the first slot owns it and the rest reuse it.
     #[test]
-    fn a_pinned_smem_operand_lends_its_buffer_to_the_rest_of_the_ring() {
+    fn a_fixed_smem_operand_reuses_its_buffer_for_the_rest_of_the_ring() {
         let (space, lhs, _) = spaces();
         let invariant = space.project(&[M, N]);
         let plan = SlotPlan::new(
@@ -658,18 +659,18 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill(0, 0), Fill::Streamed);
-        assert_eq!(plan.fill(1, 0), Fill::Pinned);
-        assert_eq!(plan.fill(1, 1), Fill::Shared);
-        assert_eq!(plan.fill(1, 2), Fill::Shared);
-        assert!(plan.shares(1, 1));
-        assert!(!plan.shares(1, 0));
+        assert_eq!(plan.fill_mode(0, 0), FillMode::Streamed);
+        assert_eq!(plan.fill_mode(1, 0), FillMode::Fixed);
+        assert_eq!(plan.fill_mode(1, 1), FillMode::Reused);
+        assert_eq!(plan.fill_mode(1, 2), FillMode::Reused);
+        assert!(plan.reuses_first_buffer(1, 1));
+        assert!(!plan.reuses_first_buffer(1, 0));
     }
 
-    /// An in-place payload allocates nothing, so a later slot has no buffer to borrow: it builds
+    /// An in-place payload allocates nothing, so a later slot has no buffer to reuse: it builds
     /// its own view and rebinds it, or the rebind would only ever reach the first slot.
     #[test]
-    fn a_pinned_in_place_operand_is_never_shared() {
+    fn a_fixed_in_place_operand_never_reuses_a_buffer() {
         let (space, lhs, _) = spaces();
         let invariant = space.project(&[M, N]);
         let plan = SlotPlan::new(
@@ -679,16 +680,16 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill(1, 0), Fill::Pinned);
-        assert_eq!(plan.fill(1, 1), Fill::Pinned);
-        assert!(!plan.shares(1, 1));
+        assert_eq!(plan.fill_mode(1, 0), FillMode::Fixed);
+        assert_eq!(plan.fill_mode(1, 1), FillMode::Fixed);
+        assert!(!plan.reuses_first_buffer(1, 1));
     }
 
-    /// A TMA pair keeps the joint per-region fill, so no operand is pinned and no buffer is shared:
+    /// A TMA pair keeps the joint per-region fill, so no operand is fixed and no buffer is reused:
     /// its barrier arrives `full` once per fill, and splitting an invariant out would corrupt the
     /// phase.
     #[test]
-    fn a_tma_slot_pins_nothing() {
+    fn a_tma_slot_keeps_all_operands_streamed() {
         let (space, lhs, _) = spaces();
         let invariant = space.project(&[M, N]);
         let plan = SlotPlan::new(
@@ -698,8 +699,8 @@ mod tests {
             ],
             &space.project(&[K]),
         );
-        assert_eq!(plan.fill(1, 0), Fill::Streamed);
-        assert_eq!(plan.fill(1, 1), Fill::Streamed);
+        assert_eq!(plan.fill_mode(1, 0), FillMode::Streamed);
+        assert_eq!(plan.fill_mode(1, 1), FillMode::Streamed);
         assert_eq!(plan.sync(), Sync::Barrier);
     }
 }

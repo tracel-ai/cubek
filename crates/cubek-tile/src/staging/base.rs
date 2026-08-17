@@ -11,44 +11,43 @@ use crate::*;
 /// it does not, and a window that never moves need be neither refilled nor duplicated per slot;
 /// those two savings are the same fact, so one state carries both.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Fill {
+pub enum FillMode {
     /// The walk moves this operand's window, so every region refills it.
     Streamed,
     /// The window is fixed across the walk: filled once, above the loop.
-    Pinned,
-    /// Fixed, and this slot's buffer is the ring's first slot's, which already filled it. Nobody
-    /// fills it here. Only a materialized ([`Smem`](Residence::Smem)) operand reaches this: an
-    /// in-place payload allocates nothing, so there is no buffer to share and every slot rebinds
-    /// its own.
-    Shared,
+    Fixed,
+    /// Fixed, with this slot reusing the first slot's buffer, which is already filled. Nobody fills
+    /// it here. Only a materialized ([`Smem`](Residence::Smem)) operand reaches this: an in-place
+    /// payload allocates nothing, so there is no buffer to reuse and every slot rebinds its own.
+    Reused,
 }
 
-impl Fill {
-    /// Whether [`fill_pinned`](Staging::fill_pinned) fills this operand: it owns a fixed window.
-    pub(crate) fn is_pinned(self) -> bool {
-        matches!(self, Fill::Pinned)
+impl FillMode {
+    /// Whether [`fill_fixed`](Staging::fill_fixed) fills this operand: it owns a fixed window.
+    pub(crate) fn is_fixed(self) -> bool {
+        matches!(self, FillMode::Fixed)
     }
 
     /// Whether [`fill_streamed`](Staging::fill_streamed) fills this operand.
     pub(crate) fn is_streamed(self) -> bool {
-        matches!(self, Fill::Streamed)
+        matches!(self, FillMode::Streamed)
     }
 
-    /// This operand's state in a later ring slot, given its state in the first. A pinned
-    /// materialized operand hands its buffer over; anything else is rebuilt per slot.
-    pub(crate) fn shared_by(self, residence: Residence) -> Fill {
+    /// This operand's state in a later ring slot, given its state in the first. A fixed
+    /// materialized operand reuses the first slot's buffer; anything else is rebuilt per slot.
+    pub(crate) fn in_later_slot(self, residence: Residence) -> FillMode {
         match self {
-            Fill::Pinned => match residence {
-                Residence::Smem => Fill::Shared,
-                Residence::InPlace | Residence::Plane => Fill::Pinned,
+            FillMode::Fixed => match residence {
+                Residence::Smem => FillMode::Reused,
+                Residence::InPlace | Residence::Plane => FillMode::Fixed,
                 Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
             },
-            Fill::Streamed => match residence {
-                Residence::InPlace | Residence::Smem | Residence::Plane => Fill::Streamed,
+            FillMode::Streamed => match residence {
+                Residence::InPlace | Residence::Smem | Residence::Plane => FillMode::Streamed,
                 Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
             },
-            Fill::Shared => match residence {
-                Residence::InPlace | Residence::Smem | Residence::Plane => Fill::Shared,
+            FillMode::Reused => match residence {
+                Residence::InPlace | Residence::Smem | Residence::Plane => FillMode::Reused,
                 Residence::Auto => panic!("Residence::Auto must be resolved before staging"),
             },
         }
@@ -66,9 +65,9 @@ pub struct Staging<T: CubeType> {
     /// was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entries are
     /// `None` and asking for them is a bug, not a default.
     #[cube(comptime)]
-    pub(crate) fill_lhs: Fill,
+    pub(crate) fill_lhs: FillMode,
     #[cube(comptime)]
-    pub(crate) fill_rhs: Option<Fill>,
+    pub(crate) fill_rhs: Option<FillMode>,
     #[cube(comptime)]
     pub(crate) residence_lhs: Residence,
     #[cube(comptime)]
@@ -83,8 +82,8 @@ impl<T: CubeType> Staging<T> {
     pub(crate) fn wrap(
         data: T,
         pipeline: Pipeline,
-        #[comptime] fill_lhs: Fill,
-        #[comptime] fill_rhs: Option<Fill>,
+        #[comptime] fill_lhs: FillMode,
+        #[comptime] fill_rhs: Option<FillMode>,
         #[comptime] residence_lhs: Residence,
         #[comptime] residence_rhs: Option<Residence>,
     ) -> Staging<T> {
@@ -98,9 +97,9 @@ impl<T: CubeType> Staging<T> {
         }
     }
 
-    /// Whether this slot's operand (or lhs) is pinned.
-    pub(crate) fn is_pinned(&self) -> comptime_type!(bool) {
-        comptime!(self.fill_lhs.is_pinned())
+    /// Whether this slot's operand (or lhs) is fixed.
+    pub(crate) fn is_fixed(&self) -> comptime_type!(bool) {
+        comptime!(self.fill_lhs.is_fixed())
     }
 
     /// Whether this slot's operand (or lhs) is streamed.
@@ -109,14 +108,14 @@ impl<T: CubeType> Staging<T> {
     }
 
     /// When this slot's right-hand operand is filled.
-    fn fill_rhs(&self) -> comptime_type!(Fill) {
+    fn fill_rhs(&self) -> comptime_type!(FillMode) {
         comptime!(self.fill_rhs.expect("Staging: unary slot has no rhs fill"))
     }
 
-    /// Whether this slot's rhs operand is pinned.
-    pub(crate) fn is_pinned_rhs(&self) -> comptime_type!(bool) {
+    /// Whether this slot's rhs operand is fixed.
+    pub(crate) fn is_fixed_rhs(&self) -> comptime_type!(bool) {
         let fill = self.fill_rhs();
-        comptime!(fill.is_pinned())
+        comptime!(fill.is_fixed())
     }
 
     /// Whether this slot's rhs operand is streamed.

@@ -41,8 +41,8 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, R
         )
     }
 
-    fn fill_pinned(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
-        slot.fill_pinned(&self.lhs, &self.rhs, region);
+    fn fill_fixed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
+        slot.fill_fixed(&self.lhs, &self.rhs, region);
     }
 
     fn fill_streamed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {

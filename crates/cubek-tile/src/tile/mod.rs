@@ -33,8 +33,8 @@ use crate::*;
 /// demand.
 ///
 /// `Clone` copies the handle, not the cells: two clones name the same storage, so writing through
-/// one is visible through the other. That is what a ring shares a pinned buffer with, and it is
-/// only sound where nothing rewrites the buffer afterwards.
+/// one is visible through the other. That is how later ring slots reuse a fixed operand's first
+/// buffer, and it is only sound where nothing rewrites the buffer afterwards.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum TileKind<T: Numeric> {

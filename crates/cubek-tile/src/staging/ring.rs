@@ -65,7 +65,7 @@ pub trait Pipelined: CubeType {
     fn unrolled(&self, ring: &Ring<Self::Slot>) -> comptime_type!(bool);
 
     /// Fill the operands whose window the walk leaves fixed. Runs once per slot, above the loop.
-    fn fill_pinned(&self, slot: &mut Staging<Self::Slot>, region: &Region);
+    fn fill_fixed(&self, slot: &mut Staging<Self::Slot>, region: &Region);
 
     /// Fill the operands the walk moves, for `region`.
     fn fill_streamed(&self, slot: &mut Staging<Self::Slot>, region: &Region);
@@ -105,12 +105,12 @@ pub(crate) fn pipelined_walk<P: Pipelined>(
     let walk = Walk::over(op_space);
     let total = walk.total();
 
-    // A pinned operand's window never moves, so region 0's is every region's. Slots sharing the
-    // first's buffer for it read `Fill::Shared` and skip the copy.
+    // A fixed operand's window never moves, so region 0's is every region's. Later slots reusing
+    // the first slot's buffer for it read `FillMode::Reused` and skip the copy.
     let first = walk.region(0);
     #[unroll]
     for slot in 0..depth {
-        op.fill_pinned(ring.slot_mut(slot), &first);
+        op.fill_fixed(ring.slot_mut(slot), &first);
     }
 
     // Prime every slot but the last, which the first lap's prefetch fills.

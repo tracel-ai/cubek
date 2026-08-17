@@ -40,8 +40,8 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         )
     }
 
-    fn fill_pinned(&self, slot: &mut Staging<Tile<In>>, region: &Region) {
-        slot.fill_pinned(&self.input, region);
+    fn fill_fixed(&self, slot: &mut Staging<Tile<In>>, region: &Region) {
+        slot.fill_fixed(&self.input, region);
     }
 
     fn fill_streamed(&self, slot: &mut Staging<Tile<In>>, region: &Region) {

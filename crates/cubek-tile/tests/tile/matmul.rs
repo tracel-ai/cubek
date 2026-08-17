@@ -3035,11 +3035,12 @@ fn matmul_buffered_deeper_than_the_walk() {
 }
 
 /// A depth-2 ring whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
-/// window. It is filled once above the loop and its buffer serves both slots (`Fill::Shared`) --
-/// the only sound way for two slots to share one buffer, and why a stage count is derived rather
+/// window. It is filled once above the loop and its buffer serves both slots
+/// (`FillMode::Reused`) --
+/// the only sound way for two slots to reuse one buffer, and why a stage count is derived rather
 /// than stated.
 #[test]
-fn matmul_double_buffered_with_a_pinned_operand() {
+fn matmul_double_buffered_with_a_fixed_operand() {
     check_matmul_dims_vectorized(
         (8, 4, 4),
         Buffering::DOUBLE,
@@ -3048,9 +3049,9 @@ fn matmul_double_buffered_with_a_pinned_operand() {
     );
 }
 
-/// The same pinned operand three slots deep, so two slots borrow the first's buffer.
+/// The same fixed operand three slots deep, so two slots reuse the first slot's buffer.
 #[test]
-fn matmul_triple_buffered_with_a_pinned_operand() {
+fn matmul_triple_buffered_with_a_fixed_operand() {
     check_matmul_dims_vectorized(
         (8, 4, 4),
         Buffering::TRIPLE,
