@@ -81,12 +81,17 @@ impl<T: Numeric> ProceduralData<T> {
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             origin.push(0u32.runtime());
-            bound.push(space.runtime_extent_at(comptime!(p)) as u32);
+            let axis = comptime!(space.axis_at(p));
+            // A procedural recipe has no operand-bound to supply the runtime extent of a
+            // dynamic axis. That extent is only present on the operation's witnessed space.
+            if comptime!(!space.is_dynamic(axis)) {
+                bound.push(space.runtime_extent_at(comptime!(p)) as u32);
+            }
         }
         let bounds_check = comptime!(
             space
                 .axes()
-                .any(|a| space.is_dynamic(a) || space.overhangs(a))
+                .any(|a| !space.is_dynamic(a) && space.overhangs(a))
         );
         ProceduralData::<T> {
             origin,
@@ -109,7 +114,7 @@ impl<T: Numeric> ProceduralData<T> {
         }
         ProceduralData::<T> {
             origin,
-            bound: self.bound.stored(),
+            bound: self.bound.clone(),
             bounds_check: comptime!(self.bounds_check),
             recipe: comptime!(self.recipe.clone()),
             space: comptime!(space.divide()),
@@ -120,6 +125,16 @@ impl<T: Numeric> ProceduralData<T> {
 
     pub(crate) fn evaluate(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
         self.value_recipe(pos, space, comptime!(self.recipe.clone()))
+    }
+
+    /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe
+    /// has no source-local runtime extent for them.
+    pub(crate) fn evaluate_masked(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
+        if comptime!(self.bounds_check) && !self.is_in_bounds(pos) {
+            T::from_int(0)
+        } else {
+            self.evaluate(pos, space)
+        }
     }
 
     /// Rebind an in-place staged payload to the source's current region. Recipes are comptime and
@@ -134,7 +149,7 @@ impl<T: Numeric> ProceduralData<T> {
     pub(crate) fn at_space(&self, #[comptime] space: Space) -> Self {
         ProceduralData::<T> {
             origin: self.origin.stored(),
-            bound: self.bound.stored(),
+            bound: self.bound.clone(),
             bounds_check: comptime!(self.bounds_check),
             recipe: comptime!(self.recipe.clone()),
             space,
@@ -183,6 +198,26 @@ impl<T: Numeric> ProceduralData<T> {
             }
         }
     }
+
+    fn is_in_bounds(&self, pos: &Coords<u32>) -> bool {
+        let mut in_bounds = true;
+        #[unroll]
+        for p in 0..comptime!(self.space.rank()) {
+            let axis = comptime!(self.space.axis_at(p));
+            if comptime!(!self.space.is_dynamic(axis)) {
+                let bound_p = comptime!(
+                    self.space
+                        .axes()
+                        .take(p)
+                        .filter(|a| !self.space.is_dynamic(*a))
+                        .count()
+                );
+                in_bounds = in_bounds
+                    && self.origin.at(p) + pos.at(p) < self.bound.at(comptime!(bound_p));
+            }
+        }
+        in_bounds
+    }
 }
 
 impl<T: Numeric> Vectorized for ProceduralData<T> {}
@@ -229,9 +264,16 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         &self,
         scope: &Scope,
         pos: <CoordsDyn as CubeType>::ExpandType,
-        _mask_value: NativeExpand<Vector<T, W>>,
+        mask_value: NativeExpand<Vector<T, W>>,
     ) -> NativeExpand<Vector<T, W>> {
-        self.__expand_read_method(scope, pos)
+        let valid =
+            <Self as ViewOperationsExpand<Vector<T, W>, CoordsDyn>>::__expand_is_in_bounds_method(
+                self,
+                scope,
+                pos.clone(),
+            );
+        let value = self.__expand_read_method(scope, pos);
+        select::expand::<Vector<T, W>>(scope, valid, value, mask_value)
     }
 
     fn __expand_read_unchecked_method(
@@ -262,14 +304,25 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
     ) -> NativeExpand<bool> {
         let mut in_bounds: NativeExpand<bool> = true.into();
         for p in 0..comptime!(self.space.rank()) {
-            let index = p.into_expand(scope);
-            let origin = self.origin.clone().__expand_at_method(scope, index.clone());
-            let bound = self.bound.clone().__expand_at_method(scope, index.clone());
-            let pos = pos.clone();
-            let coord = pos.__expand_index_method(scope, index);
-            let absolute = origin.__expand_add_method(scope, coord.clone());
-            let axis_in_bounds = absolute.__expand_lt_method(scope, &bound);
-            in_bounds = in_bounds.__expand_and_method(scope, axis_in_bounds);
+            let axis = comptime!(self.space.axis_at(p));
+            if comptime!(!self.space.is_dynamic(axis)) {
+                let bound_p = comptime!(
+                    self.space
+                        .axes()
+                        .take(p)
+                        .filter(|a| !self.space.is_dynamic(*a))
+                        .count()
+                );
+                let index = p.into_expand(scope);
+                let origin = self.origin.__expand_at_method(scope, index);
+                let bound_index = bound_p.into_expand(scope);
+                let bound = self.bound.__expand_at_method(scope, bound_index);
+                let pos = pos.clone();
+                let coord = pos.__expand_index_method(scope, index);
+                let absolute = origin.__expand_add_method(scope, *coord);
+                let axis_in_bounds = absolute.__expand_lt_method(scope, &bound);
+                in_bounds = in_bounds.__expand_and_method(scope, axis_in_bounds);
+            }
         }
         in_bounds
     }

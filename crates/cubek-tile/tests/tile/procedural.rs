@@ -329,6 +329,40 @@ fn copies_procedural_directly_to_global_memory() {
 }
 
 #[test]
+fn dynamic_procedural_axis_does_not_require_a_source_bound() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let concrete = Space::new(&[(ROW, 4), (COL, 6)]);
+    let space = concrete.clone().with_dynamic(&[ROW]);
+    let output = TestInput::builder(client.clone(), shape![4, 6])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // `Tile::procedural` receives the dynamic kernel space directly. Unlike the output tile,
+    // it cannot witness ROW's runtime extent, so construction must leave that axis unmasked.
+    procedural_direct_copy_kernel::launch::<TestRuntime>(
+        &client,
+        concrete.cube_count(),
+        concrete.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        ProceduralRecipe::one(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for row in 0..4 {
+        for col in 0..6 {
+            assert_eq!(got.get_f32(&[row, col]), 1.0);
+        }
+    }
+}
+
+#[test]
 fn staged_mma_materializes_only_the_tensor_operand() {
     let got = run_mma(Buffering::SINGLE);
     for row in 0..4 {

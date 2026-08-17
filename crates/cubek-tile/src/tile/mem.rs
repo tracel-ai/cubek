@@ -446,7 +446,7 @@ impl<T: Numeric> MemData<T> {
             let pos = unravel(&shape, i.fcast::<u32>());
             dst.write(
                 i,
-                Vector::cast_from(src.evaluate(&pos, comptime!(space.clone()))),
+                Vector::cast_from(src.evaluate_masked(&pos, comptime!(space.clone()))),
             );
             i += workers;
         }

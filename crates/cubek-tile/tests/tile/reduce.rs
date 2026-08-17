@@ -94,6 +94,24 @@ fn procedural_reduce_kernel<E: Float>(
     reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
 }
 
+/// The shared-memory variant must retain the procedural source's partial-tile mask while it
+/// materializes the recipe, rather than folding values from the padded overhang.
+#[cube(launch)]
+fn staged_procedural_reduce_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
+    let input = Tile::<E>::procedural_resident(
+        comptime!(space.clone()),
+        comptime!(ProceduralRecipe::axis_index(K)),
+        stage,
+    );
+    let mut output = output.tile(space);
+    reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
+}
+
 /// Small integers, so every product and partial sum is exact in `f32` and the two kernels can be
 /// compared for equality rather than closeness.
 fn ramp(n: usize, period: usize) -> Vec<f32> {
@@ -832,6 +850,35 @@ fn test_procedural_max_masks_nondivisible_k() {
         .generate_without_host_data();
 
     procedural_reduce_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for row in 0..m {
+        assert_eq!(got.get_f32(&[row]), 5.0);
+    }
+}
+
+#[test]
+fn test_staged_procedural_max_masks_nondivisible_k() {
+    let (m, k, tk) = (4, 6, 4);
+    let space = nondivisible_k_space(m, k, tk, Buffering::SINGLE);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![m])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    staged_procedural_reduce_kernel::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
