@@ -60,10 +60,18 @@ impl SlotPlan {
              here (materializing it at a level above instead)"
         );
         let residence: Vec<_> = operands.iter().map(|op| op.residence).collect();
-        assert!(
-            compatible_slot_residences(&residence),
-            "Staging: Plane and Smem operands cannot share a slot"
-        );
+        if !compatible_slot_residences(&residence) {
+            if operands
+                .iter()
+                .any(|op| op.delivery == Delivery::Procedural)
+            {
+                panic!(
+                    "Staging: a procedural recipe demotes to Smem and cannot share a slot with a Plane operand"
+                );
+            } else {
+                panic!("Staging: Plane and Smem operands cannot share a slot");
+            }
+        }
         // Fix an operand only when its window is genuinely invariant across the walk. A barrier
         // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
         // splitting an invariant out would corrupt its phase. A dynamic level can't decide
@@ -582,6 +590,34 @@ mod tests {
             Residence::Plane,
             Residence::InPlace,
         ]));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "a procedural recipe demotes to Smem and cannot share a slot with a Plane operand"
+    )]
+    fn a_procedural_recipe_cannot_share_a_slot_with_a_plane_stage() {
+        let (space, lhs, rhs) = spaces();
+        SlotPlan::new(
+            &[
+                operand(Residence::Smem, Delivery::Procedural, &lhs),
+                operand(Residence::Plane, Delivery::Copy, &rhs),
+            ],
+            &space,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Plane and Smem operands cannot share a slot")]
+    fn plane_and_smem_operands_cannot_share_a_slot() {
+        let (space, lhs, rhs) = spaces();
+        SlotPlan::new(
+            &[
+                operand(Residence::Smem, Delivery::Copy, &lhs),
+                operand(Residence::Plane, Delivery::Copy, &rhs),
+            ],
+            &space,
+        );
     }
 
     /// An asymmetric plan can leave one operand a fragment while the other still asks to
