@@ -136,12 +136,12 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
     HostData::from_tensor_handle(&client, output, HostDataType::F32)
 }
 
-fn run_mma() -> HostData {
+fn run_mma(buffering: Buffering) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let space = Tiling::new()
         .extents(&[(ROW, 4), (COL, 4), (REDUCE, 4)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+        .level(WalkOrder::RowMajor, buffering, |level| {
             level
                 .axis(ROW, Cut::sequential(2))
                 .axis(COL, Cut::sequential(2))
@@ -165,7 +165,7 @@ fn run_mma() -> HostData {
             rhs.binding().into_tensor_arg(),
             // Only the tensor operand takes a stage; the procedural lhs stays coordinate-backed
             // at its default all-in-place residence, which is the point of the test.
-            TileSpec::direct(&[REDUCE, COL]).residence(&[Residence::Auto]),
+            TileSpec::direct(&[REDUCE, COL]).residence(&[Residence::Smem]),
         ),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
@@ -330,7 +330,18 @@ fn copies_procedural_directly_to_global_memory() {
 
 #[test]
 fn staged_mma_materializes_only_the_tensor_operand() {
-    let got = run_mma();
+    let got = run_mma(Buffering::SINGLE);
+    for row in 0..4 {
+        for col in 0..4 {
+            let expected = (0..4).map(|k| (k * (k * 4 + col)) as f32).sum::<f32>();
+            assert_eq!(got.get_f32(&[row, col]), expected);
+        }
+    }
+}
+
+#[test]
+fn double_buffered_mma_with_in_place_procedural_operand() {
+    let got = run_mma(Buffering::DOUBLE);
     for row in 0..4 {
         for col in 0..4 {
             let expected = (0..4).map(|k| (k * (k * 4 + col)) as f32).sum::<f32>();

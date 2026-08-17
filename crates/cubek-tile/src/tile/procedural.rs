@@ -107,7 +107,7 @@ impl<T: Numeric> ProceduralData<T> {
     /// Rebind an in-place staged payload to the source's current region. Recipes are comptime and
     /// identical by construction; only the runtime origin moves.
     pub(crate) fn rebind(&mut self, source: &Self) {
-        self.origin = source.origin.clone();
+        self.origin.store_from(&source.origin);
     }
 
     /// Keep the recipe and current origin while changing the tile level that interprets its
@@ -115,7 +115,7 @@ impl<T: Numeric> ProceduralData<T> {
     /// must evaluate positions in that divided space rather than the source's parent space.
     pub(crate) fn at_space(&self, #[comptime] space: Space) -> Self {
         ProceduralData::<T> {
-            origin: self.origin.clone(),
+            origin: self.origin.stored(),
             recipe: comptime!(self.recipe.clone()),
             space,
             stage: comptime!(self.stage.descend()),
