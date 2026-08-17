@@ -303,11 +303,16 @@ impl<T: Numeric> Tile<T> {
                     RuntimeMap::integral(comptime!(self.space.rank())),
                     comptime!(1usize),
                 );
+                let check = comptime!(
+                    self.space
+                        .axes()
+                        .any(|a| !self.space.is_dynamic(a) && self.space.overhangs(a))
+                );
                 MaskedView::new(
                     View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(
                         data, layout,
                     ),
-                    comptime!(false),
+                    check,
                 )
             }
         }
