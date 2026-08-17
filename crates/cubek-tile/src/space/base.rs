@@ -574,6 +574,18 @@ impl Space {
     }
 }
 
+#[cube]
+impl Space {
+    /// Axis `i`'s extent, preserving a dynamic extent as its runtime size. This is the form a
+    /// coordinate-backed operand carries as its real-data bound across [`Space::divide`] calls.
+    pub(crate) fn runtime_extent_at(&self, #[comptime] i: usize) -> usize {
+        match comptime!(self.extents.kinds.get(self.extents.kinds.axis_at(i))) {
+            Extent::Static(n) => comptime!(n).runtime(),
+            Extent::Dynamic => *self.extents.sizes.index(i),
+        }
+    }
+}
+
 /// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal sizes agree, a
 /// static `1` yields to the other, anything else conflicts. A `Dynamic` axis subsumes any
 /// non-broadcast operand (its runtime size is the merged one), so the merge stays dynamic.

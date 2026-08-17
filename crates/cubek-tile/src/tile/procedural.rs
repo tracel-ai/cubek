@@ -49,6 +49,13 @@ impl ProceduralRecipe {
 #[expand(derive(Clone))]
 pub struct ProceduralData<T: Numeric> {
     origin: Coords<u32>,
+    /// The source's real logical extent. Unlike `space`, this remains the full operation extent
+    /// as [`Tile::at`](crate::Tile::at) descends into nominally sized trailing partial tiles.
+    bound: Coords<u32>,
+    /// Whether any level can select a partial tile. It stays with the source while its `space`
+    /// descends, because the leaf space alone no longer records an ancestor's overhang.
+    #[cube(comptime)]
+    pub(crate) bounds_check: bool,
     #[cube(comptime)]
     recipe: ProceduralRecipe,
     #[cube(comptime)]
@@ -70,12 +77,21 @@ impl<T: Numeric> ProceduralData<T> {
         #[comptime] stage: StagePlan,
     ) -> Self {
         let mut origin = Coords::<u32>::new();
+        let mut bound = Coords::<u32>::new();
         #[unroll]
-        for _ in 0..comptime!(space.rank()) {
+        for p in 0..comptime!(space.rank()) {
             origin.push(0u32.runtime());
+            bound.push(space.runtime_extent_at(comptime!(p)) as u32);
         }
+        let bounds_check = comptime!(
+            space
+                .axes()
+                .any(|a| space.is_dynamic(a) || space.overhangs(a))
+        );
         ProceduralData::<T> {
             origin,
+            bound,
+            bounds_check,
             recipe,
             space,
             stage,
@@ -93,6 +109,8 @@ impl<T: Numeric> ProceduralData<T> {
         }
         ProceduralData::<T> {
             origin,
+            bound: self.bound.stored(),
+            bounds_check: comptime!(self.bounds_check),
             recipe: comptime!(self.recipe.clone()),
             space: comptime!(space.divide()),
             stage: comptime!(self.stage.descend()),
@@ -116,6 +134,8 @@ impl<T: Numeric> ProceduralData<T> {
     pub(crate) fn at_space(&self, #[comptime] space: Space) -> Self {
         ProceduralData::<T> {
             origin: self.origin.stored(),
+            bound: self.bound.stored(),
+            bounds_check: comptime!(self.bounds_check),
             recipe: comptime!(self.recipe.clone()),
             space,
             stage: comptime!(self.stage.descend()),
@@ -194,7 +214,15 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         scope: &Scope,
         pos: <CoordsDyn as CubeType>::ExpandType,
     ) -> NativeExpand<Vector<T, W>> {
-        self.__expand_read_method(scope, pos)
+        let valid =
+            <Self as ViewOperationsExpand<Vector<T, W>, CoordsDyn>>::__expand_is_in_bounds_method(
+                self,
+                scope,
+                pos.clone(),
+            );
+        let value = self.__expand_read_method(scope, pos);
+        let zero = Vector::<T, W>::__expand_cast_from(scope, 0.into());
+        select::expand::<Vector<T, W>>(scope, valid, value, zero)
     }
 
     fn __expand_read_masked_method(
@@ -229,10 +257,21 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
 
     fn __expand_is_in_bounds_method(
         &self,
-        _scope: &Scope,
-        _pos: <CoordsDyn as CubeType>::ExpandType,
+        scope: &Scope,
+        pos: <CoordsDyn as CubeType>::ExpandType,
     ) -> NativeExpand<bool> {
-        true.into()
+        let mut in_bounds: NativeExpand<bool> = true.into();
+        for p in 0..comptime!(self.space.rank()) {
+            let index = p.into_expand(scope);
+            let origin = self.origin.clone().__expand_at_method(scope, index.clone());
+            let bound = self.bound.clone().__expand_at_method(scope, index.clone());
+            let pos = pos.clone();
+            let coord = pos.__expand_index_method(scope, index);
+            let absolute = origin.__expand_add_method(scope, coord.clone());
+            let axis_in_bounds = absolute.__expand_lt_method(scope, &bound);
+            in_bounds = in_bounds.__expand_and_method(scope, axis_in_bounds);
+        }
+        in_bounds
     }
 
     fn __expand_tensor_map_load_method(
