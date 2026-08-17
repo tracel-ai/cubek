@@ -93,7 +93,7 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
 
     /// The inner block of axes the operand iterates, its `[row, col]` for a matmul (required
     /// unless [`gathered`](Self::gathered) states the mapping instead, non-empty). Complementary
-    /// to [`batches`](Self::batches), the outer dims.
+    /// to [`batches`](Self::batches), the global dims.
     pub fn subspace(mut self, axes: &'a [Axis]) -> StridedTileSource<'a, Sp, Set, Q, R> {
         self.data.subspace = axes;
         StridedTileSource {
@@ -132,7 +132,7 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         }
     }
 
-    /// The outer (batch) axes in the output's order, right-aligned to this operand's leading
+    /// The global (batch) axes in the output's order, right-aligned to this operand's leading
     /// dims (numpy broadcast): pass the full list, extra leading axes are the ones this operand
     /// omits, and a size-1 dim drops out. Default none (unbatched).
     pub fn batches(mut self, axes: &'a [Axis]) -> Self {
@@ -236,23 +236,23 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 pub struct Quantization<R: Runtime> {
     /// The innermost level's scales, the only ones addressed per position.
     pub scales: TensorArg<R>,
-    /// The outer level's scale, one for the whole tensor, present exactly when the scheme has a
+    /// The global level's scale, one for the whole tensor, present exactly when the scheme has a
     /// second level ([`validate`](Self::validate) holds the two together).
-    pub outer: Option<TensorBinding<R>>,
+    pub global: Option<TensorBinding<R>>,
     pub scheme: QuantScheme,
     pub dequant_at: DequantAt,
 }
 
 impl<R: Runtime> Quantization<R> {
     /// `scales` holds one binding per scheme level, innermost first. Only the innermost level's
-    /// scales are addressed per position; an outer level covers the whole tensor, so its binding
+    /// scales are addressed per position; an global level covers the whole tensor, so its binding
     /// is read once from its first element. This only checks the slice holds 1 or 2 bindings;
     /// whether that count actually matches `scheme`'s own level count is [`validate`](Self::validate)'s
     /// job, via `check_scale_bindings`.
     pub fn new(scales: &[TensorBinding<R>], scheme: QuantScheme, dequant_at: DequantAt) -> Self {
-        let (inner, outer) = match scales {
+        let (inner, global) = match scales {
             [inner] => (inner, None),
-            [inner, outer] => (inner, Some(outer.clone())),
+            [inner, global] => (inner, Some(global.clone())),
             _ => panic!(
                 "StridedTileSource::quantized: {} scale bindings, expected 1 or 2 (innermost first)",
                 scales.len()
@@ -260,7 +260,7 @@ impl<R: Runtime> Quantization<R> {
         };
         Quantization {
             scales: inner.clone().into_tensor_arg(),
-            outer,
+            global,
             scheme,
             dequant_at,
         }
@@ -275,7 +275,7 @@ impl<R: Runtime> Quantization<R> {
     /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
     /// it. Both rules live here because both are facts about this quantization and nothing else.
     pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
-        cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.outer.is_some() as usize);
+        cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
         validate_scheme(space, vector_size, self.scheme);
         validate_dequant_at(self.dequant_at, leaf);
     }
@@ -321,7 +321,7 @@ impl<R: Runtime> QuantOperand<R> {
         QuantTileArgLaunch::new(
             self.tensor,
             self.quant.scales,
-            self.quant.outer.map(linear_view).into(),
+            self.quant.global.map(linear_view).into(),
             self.spec,
             self.quant.scheme,
             self.quant.dequant_at,

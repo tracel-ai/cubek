@@ -107,10 +107,10 @@ pub enum DequantAt {
 #[expand(derive(Clone))]
 pub struct QuantInfo {
     pub(crate) buffer: Box<[f32]>,
-    /// The outer level's whole-tensor scale, already read from its binding. `None` on a staged
+    /// The global level's whole-tensor scale, already read from its binding. `None` on a staged
     /// side-channel even for a two-level scheme: [`MemData::stage_scales`] folds it into the grid,
     /// so everything below a stage sees a one-level scheme.
-    pub(crate) outer: ComptimeOption<f32>,
+    pub(crate) global: ComptimeOption<f32>,
     pub(crate) strides: Coords<u32>,
     pub(crate) window_start: u32,
     #[cube(comptime)]
@@ -179,8 +179,8 @@ pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
 }
 
 /// The scheme a staged side-channel serves: its grid holds *effective* scales
-/// ([`MemData::stage_scales`] folds the outer level in), so a two-level scheme stages as its
-/// one-level block form and reads below the stage carry no outer scale.
+/// ([`MemData::stage_scales`] folds the global level in), so a two-level scheme stages as its
+/// one-level block form and reads below the stage carry no global scale.
 pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
     let Some(block) = scheme.block_scale() else {
         return scheme;
@@ -195,19 +195,19 @@ pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
 
 #[cube]
 impl QuantInfo {
-    /// The one scale this whole window reconstructs against, outer level folded in. Only
+    /// The one scale this whole window reconstructs against, global level folded in. Only
     /// meaningful where [`uniform`](QuantInfoExpand::uniform) holds; one load for the whole tile.
     pub(crate) fn uniform_scale(&self) -> f32 {
         let scale = self.buffer[self.window_start.fcast::<usize>()];
-        if comptime!(self.outer.is_some()) {
-            scale * self.outer.unwrap()
+        if comptime!(self.global.is_some()) {
+            scale * self.global.unwrap()
         } else {
             scale
         }
     }
 
     /// The [`DequantView`] this info's scale data resolves to for a values/scales view pair over
-    /// the same coordinates: one scale for the whole window, the outer level folded into a
+    /// the same coordinates: one scale for the whole window, the global level folded into a
     /// register, or a per-position lookup, in that preference order. Shared by
     /// [`flat_transparent`](MemData::flat_transparent) and [`transparent`](MemData::transparent).
     pub(crate) fn dequant_view<
@@ -231,11 +231,11 @@ impl QuantInfo {
                 self.uniform_scale(),
                 comptime!(self.scheme),
             )
-        } else if comptime!(self.outer.is_some()) {
-            DequantView::<I, WP, f32, T, W, C>::new_with_outer_scale(
+        } else if comptime!(self.global.is_some()) {
+            DequantView::<I, WP, f32, T, W, C>::new_with_global_scale(
                 values,
                 scales,
-                self.outer.unwrap(),
+                self.global.unwrap(),
                 comptime!(self.scheme),
             )
         } else {
@@ -266,7 +266,7 @@ impl QuantInfo {
         }
         QuantInfo {
             buffer: unsafe { self.buffer.as_boxed_unchecked() },
-            outer: self.outer,
+            global: self.global,
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),

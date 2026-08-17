@@ -178,7 +178,7 @@ impl<T: Numeric> Tile<T> {
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
-        outer: ComptimeOption<f32>,
+        global: ComptimeOption<f32>,
         #[comptime] scheme: QuantScheme,
         #[comptime] dequant_at: DequantAt,
         #[comptime] space: Space,
@@ -200,7 +200,7 @@ impl<T: Numeric> Tile<T> {
         }
         let info = QuantInfo {
             buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
-            outer,
+            global,
             strides,
             window_start: 0u32,
             block: comptime!(block),
@@ -906,11 +906,11 @@ impl<T: Numeric> MemData<T> {
                     .frem(comptime!(nb[p] as u32));
                 src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
             }
-            // The grid holds *effective* scales: a two-level source's outer level folds in here,
+            // The grid holds *effective* scales: a two-level source's global level folds in here,
             // once per block per stage, so everything below the stage serves a one-level scheme
-            // and no outer scale threads past this point.
-            if comptime!(sinfo.outer.is_some()) {
-                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()] * sinfo.outer.unwrap();
+            // and no global scale threads past this point.
+            if comptime!(sinfo.global.is_some()) {
+                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()] * sinfo.global.unwrap();
             } else {
                 dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
             }
@@ -1777,10 +1777,10 @@ fn smem_quant_info(
     }
     ComptimeOption::new_Some(QuantInfo {
         buffer,
-        // The fill folds a two-level source's outer level into the staged grid
+        // The fill folds a two-level source's global level into the staged grid
         // ([`MemData::stage_scales`]), so the stage serves effective scales under the one-level
         // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
-        outer: ComptimeOption::new_None(),
+        global: ComptimeOption::new_None(),
         strides,
         window_start: 0u32,
         block: comptime!(block),
@@ -1943,7 +1943,7 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
 
 /// The storage-tiling nesting a stage over `space` gets: the blocks its buffer lays down
 /// contiguously, coarse to fine, each dividing the one before it (`space` is the implicit
-/// outermost). Empty is a plain row-major buffer.
+/// globalmost). Empty is a plain row-major buffer.
 ///
 /// A `Tiled` stage groups the final tile, the block a cmma transaction reads unstrided. A final
 /// space has no grid left to tile, so it stays plain whatever the layout asks for.
@@ -1960,10 +1960,10 @@ fn stage_nesting(space: &Space, stage: StageStorage) -> Vec<Space> {
 fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<usize> {
     let rank = space.rank();
     let mut extents = Vec::new();
-    let mut outer = space;
+    let mut global = space;
     for block in nesting {
         for p in 0..rank {
-            let (e, b) = (outer.extent_at(p), block.extent_at(p));
+            let (e, b) = (global.extent_at(p), block.extent_at(p));
             assert!(
                 e.is_multiple_of(b),
                 "MemData::smem: a {b}-element storage block must divide the {e}-element block \
@@ -1971,10 +1971,10 @@ fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<
             );
             extents.push(e / b);
         }
-        outer = block;
+        global = block;
     }
     for p in 0..rank {
-        extents.push(outer.extent_at(p));
+        extents.push(global.extent_at(p));
     }
     let last = extents.len() - 1;
     extents[last] /= vector_size;
@@ -2041,7 +2041,7 @@ impl Layout for GmemLayout {
                 let term = comptime!(map.terms()[t]);
                 let p = comptime!(self.projection.position(term.axis));
                 let (finer, modulo) = comptime!(self.projection.digit(pa, term.axis));
-                // Strip the finer digits, then take this one. The outermost fragment of an axis
+                // Strip the finer digits, then take this one. The globalmost fragment of an axis
                 // (and any untiled axis) has no radix and keeps the full quotient.
                 let quot = pos[p].fdiv(self.physical_shape.fproduct(comptime!(finer.to_vec())));
                 let digit = match comptime!(modulo) {

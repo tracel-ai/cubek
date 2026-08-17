@@ -157,9 +157,9 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub values: &'a Tensor<Vector<E, V>>,
     pub scales: &'a Tensor<f32>,
-    /// The outer level's whole-tensor scale in its first element, bound exactly when the scheme
+    /// The global level's whole-tensor scale in its first element, bound exactly when the scheme
     /// has a second level.
-    pub outer: ComptimeOption<LinearView<'static, f32>>,
+    pub global: ComptimeOption<LinearView<'static, f32>>,
     #[cube(comptime)]
     pub spec: TileSpec,
     #[cube(comptime)]
@@ -178,11 +178,11 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
         // contract too, but a hand-built `QuantTileArgLaunch` reaches here without it.
         comptime!(cubecl::std::quant::check_scale_bindings(
             &self.scheme,
-            1 + self.outer.is_some() as usize
+            1 + self.global.is_some() as usize
         ));
         // One read for the whole kernel; every window below shares the register.
-        let outer = if comptime!(self.outer.is_some()) {
-            let buffer = self.outer.unwrap();
+        let global = if comptime!(self.global.is_some()) {
+            let buffer = self.global.unwrap();
             ComptimeOption::new_Some(buffer.read(0))
         } else {
             ComptimeOption::new_None()
@@ -190,7 +190,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
         Tile::<O>::of_dequant(
             self.values,
             self.scales,
-            outer,
+            global,
             comptime!(self.scheme),
             comptime!(self.dequant_at),
             space,

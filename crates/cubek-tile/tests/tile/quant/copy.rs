@@ -243,7 +243,7 @@ pub fn dequant_copy<I: Numeric, O: Numeric, V: Size>(
 }
 
 /// Two-level: block scales normalized by one per-tensor scale, both folded into every read,
-/// `out == q * scale[i/bm, j/bn] * outer`. The expectation carries the outer scale, so an
+/// `out == q * scale[i/bm, j/bn] * global`. The expectation carries the global scale, so an
 /// implementation that drops it fails by exactly that factor.
 #[test]
 fn copy_quantized_two_level_matches_reference() {
@@ -251,24 +251,24 @@ fn copy_quantized_two_level_matches_reference() {
     run_quantized_block(16, 8, 4, 4, Some(0.25));
     run_quantized_block(6, 8, 4, 4, Some(0.5)); // M's last block is half-filled: masked overhang
     // The whole window fits inside one block: `QuantInfo::uniform()` holds, so this exercises
-    // `uniform_scale()`'s outer-scale fold instead of `new_with_outer_scale`'s per-position one.
+    // `uniform_scale()`'s global-scale fold instead of `new_with_global_scale`'s per-position one.
     run_quantized_block(4, 4, 4, 4, Some(0.5));
 }
 
 /// The mutation check on the same path: a zero per-tensor scale zeroes every reconstruction, so
-/// the outer scale provably participates in each read rather than defaulting to one.
+/// the global scale provably participates in each read rather than defaulting to one.
 #[test]
-fn copy_quantized_two_level_zero_outer_scale_zeroes_output() {
+fn copy_quantized_two_level_zero_global_scale_zeroes_output() {
     run_quantized_block(8, 8, 4, 4, Some(0.0));
 }
 
-/// A two-level scheme with no outer binding is refused by the builder, host-side and on the
+/// A two-level scheme with no global binding is refused by the builder, host-side and on the
 /// caller's thread: a missing per-tensor scale would otherwise reconstruct every value short by
 /// that factor. (The kernel-side backstop in `QuantTileArg::tile` cannot be pinned here: it fires
 /// on the compile server, where a panic is swallowed rather than propagated.)
 #[test]
 #[should_panic(expected = "takes as many scale bindings")]
-fn two_level_without_outer_scale_refused_by_the_builder() {
+fn two_level_without_global_scale_refused_by_the_builder() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n) = (8, 8);
     let scheme = two_level_scheme(4, 4);
@@ -300,10 +300,10 @@ fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
 }
 
 /// Copy a `bm×bn` block-scaled Q8S input and check each element used its own block's scale:
-/// `out == q * scale[i/bm, j/bn]`, or with `outer` set (two-level), `out == q * scale[..] *
-/// outer`, the outer scale bound as a third 1-element tensor. The space tiles into block-sized
+/// `out == q * scale[i/bm, j/bn]`, or with `global` set (two-level), `out == q * scale[..] *
+/// global`, the global scale bound as a third 1-element tensor. The space tiles into block-sized
 /// leaves, so a tensor that doesn't fill its last block overhangs it.
-fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, outer: Option<f32>) {
+fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<f32>) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
@@ -317,7 +317,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, outer: Option<f
         .per_block([bm as u8, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
         .with_value(QuantValue::Q8S);
-    let scheme = match outer {
+    let scheme = match global {
         Some(_) => block_scheme.per_tensor(ScaleDtype::F32),
         None => block_scheme,
     };
@@ -347,7 +347,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, outer: Option<f
     let scales = TestInput::builder(client.clone(), Shape::from(vec![sm, sn]))
         .custom(scale_vals.clone())
         .generate_without_host_data();
-    let outer_scale = outer.map(|g| {
+    let global_scale = global.map(|g| {
         TestInput::builder(client.clone(), Shape::from(vec![1usize]))
             .custom(vec![g])
             .generate_without_host_data()
@@ -362,7 +362,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, outer: Option<f
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            outer_scale.map(|g| linear_view(g.binding())).into(),
+            global_scale.map(|g| linear_view(g.binding())).into(),
             TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,
@@ -374,7 +374,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, outer: Option<f
     );
 
     let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
-    let g = outer.unwrap_or(1.0);
+    let g = global.unwrap_or(1.0);
     let expected = HostData {
         data: HostDataVec::F32(
             input_host

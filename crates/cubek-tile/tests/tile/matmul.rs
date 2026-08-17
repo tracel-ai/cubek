@@ -3206,8 +3206,8 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
 }
 
 /// Two-level through the staged `DequantAt::Read` path: the stage keeps the packed weight, and
-/// `stage_scales` writes `outer * local` into the smem scale grid, so the reads below see
-/// effective one-level scales. The expectation carries the outer scale, so a fold that never
+/// `stage_scales` writes `global * local` into the smem scale grid, so the reads below see
+/// effective one-level scales. The expectation carries the global scale, so a fold that never
 /// happens (or happens twice) fails by that factor.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
@@ -3234,7 +3234,7 @@ fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
 }
 
 /// Two-level through the staged `DequantAt::Load` path: the fill dequantizes into the stage, so
-/// the outer scale folds in the gmem read itself and the stage carries plain served values.
+/// the global scale folds in the gmem read itself and the stage carries plain served values.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -3308,15 +3308,15 @@ fn run_register_matmul_quant_rhs(
     value: QuantValue,
     bn: usize,
     dequant_at: DequantAt,
-    outer: Option<f32>,
+    global: Option<f32>,
 ) {
     // The data is minted against the one-level scheme either way: a two-level tensor holds the
-    // same value and block-scale bytes, plus the outer scale in its own binding.
+    // same value and block-scale bytes, plus the global scale in its own binding.
     let mint_scheme = QuantScheme::default()
         .per_block([1, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(value);
-    let scheme = match outer {
+    let scheme = match global {
         Some(_) => mint_scheme.per_tensor(ScaleDtype::F32),
         None => mint_scheme,
     };
@@ -3341,7 +3341,7 @@ fn run_register_matmul_quant_rhs(
         .untiled()
         .packed(&mint_scheme, dequant_at)
         .arange();
-    let outer_scale = outer.map(|g| {
+    let global_scale = global.map(|g| {
         TestInput::builder(client.clone(), shape![1])
             .custom(vec![g])
             .generate_without_host_data()
@@ -3361,7 +3361,7 @@ fn run_register_matmul_quant_rhs(
         .subspace(&[K, N])
         .vectorize(pack);
     let mut scales = vec![b.scales_binding()];
-    scales.extend(outer_scale.map(|g| g.binding()));
+    scales.extend(global_scale.map(|g| g.binding()));
     let b_op = b_src.quantized(&scales, scheme, dequant_at).build();
     // The register microkernel lines the accumulator at the RHS's served width.
     let c_op = launcher
@@ -3386,7 +3386,7 @@ fn run_register_matmul_quant_rhs(
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     // A is arange over (m, k): a[i, p] = i·k + p.
     let sn = n / bn;
-    let g = outer.unwrap_or(1.0);
+    let g = global.unwrap_or(1.0);
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
             let (i, j) = (idx / n, idx % n);
