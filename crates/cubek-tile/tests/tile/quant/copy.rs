@@ -402,7 +402,7 @@ fn copy_quantized_two_level_matches_reference() {
     run_quantized_block(16, 8, 4, 4, Some(0.25));
     run_quantized_block(6, 8, 4, 4, Some(0.5)); // M's last block is half-filled: masked overhang
     // The whole window fits inside one block: `QuantInfo::uniform()` holds, so this exercises
-    // `uniform_scale()`'s global-scale fold instead of `new_with_global_scale`'s per-position one.
+    // `uniform_scale()`'s whole-scale fold instead of the per-position one under `KnownScale::Global`.
     run_quantized_block(4, 4, 4, 4, Some(0.5));
 }
 

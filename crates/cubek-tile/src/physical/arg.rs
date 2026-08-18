@@ -4,6 +4,7 @@
 
 use cubecl::prelude::*;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
+use cubecl::std::quant::view::KnownScale;
 use cubecl::std::tensor::{
     ViewMut,
     layout::{CoordsDyn, Layout, LayoutExpand, linear::LinearView},
@@ -181,16 +182,16 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             1 + self.global.is_some() as usize
         ));
         // One read for the whole kernel; every window below shares the register.
-        let global = if comptime!(self.global.is_some()) {
+        let known = if comptime!(self.global.is_some()) {
             let buffer = self.global.unwrap();
-            ComptimeOption::new_Some(buffer.read(0))
+            KnownScale::new_Global(buffer.read(0))
         } else {
-            ComptimeOption::new_None()
+            KnownScale::new_None()
         };
         Tile::<O>::of_dequant(
             self.values,
             self.scales,
-            global,
+            known,
             comptime!(self.scheme),
             comptime!(self.dequant_at),
             space,

@@ -4,6 +4,7 @@
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
+    std::quant::view::KnownScale,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
@@ -178,7 +179,7 @@ impl<T: Numeric> Tile<T> {
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
-        global: ComptimeOption<f32>,
+        known: KnownScale,
         #[comptime] scheme: QuantScheme,
         #[comptime] dequant_at: DequantAt,
         #[comptime] space: Space,
@@ -200,7 +201,7 @@ impl<T: Numeric> Tile<T> {
         }
         let info = QuantInfo {
             buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
-            global,
+            known,
             strides,
             window_start: 0u32,
             block: comptime!(block),
@@ -909,11 +910,7 @@ impl<T: Numeric> MemData<T> {
             // The grid holds *effective* scales: a two-level source's global level folds in here,
             // once per block per stage, so everything below the stage serves a one-level scheme
             // and no global scale threads past this point.
-            if comptime!(sinfo.global.is_some()) {
-                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()] * sinfo.global.unwrap();
-            } else {
-                dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
-            }
+            dst_scales[bl] = sinfo.known.effective(src_scales[src_idx.fcast::<usize>()]);
             bl += workers;
         }
     }
@@ -1780,7 +1777,7 @@ fn smem_quant_info(
         // The fill folds a two-level source's global level into the staged grid
         // ([`MemData::stage_scales`]), so the stage serves effective scales under the one-level
         // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
-        global: ComptimeOption::new_None(),
+        known: KnownScale::new_None(),
         strides,
         window_start: 0u32,
         block: comptime!(block),
