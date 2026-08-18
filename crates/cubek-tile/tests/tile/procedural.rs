@@ -80,11 +80,6 @@ fn materialize<E: Numeric>(
     }
 }
 
-// The `#[cube]` macro cannot parse a nested generic inside a struct-literal turbofish, so the
-// filter instantiations go through aliases.
-type LinearCol<E> = Linear<AffineCoordinate<E>>;
-type CubicCol<E> = Cubic<AffineCoordinate<E>>;
-type LanczosCol<E> = Lanczos<AffineCoordinate<E>>;
 type LinearScaled = Linear<AxisValue>;
 
 /// `x = offset + coordinate[COL]`, built so the recipe carries genuinely runtime scalars across
@@ -92,11 +87,11 @@ type LinearScaled = Linear<AxisValue>;
 #[cube]
 fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinate<E> {
     let zero = E::cast_from(0u32.runtime());
-    AffineCoordinate::<E> {
-        offset: E::new(comptime!(offset.get())) + zero,
-        coefficient: E::new(1.0_f32) + zero,
-        axis: COL,
-    }
+    affine_along(
+        COL,
+        E::new(comptime!(offset.get())) + zero,
+        E::new(1.0_f32) + zero,
+    )
 }
 
 /// `stage` picks whether the recipe is evaluated at the read site or first materialized into
@@ -175,11 +170,14 @@ fn linear_kernel<E: Float>(
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<LinearCol<E>>(
+    let zero = E::cast_from(0u32.runtime());
+    let source = Tile::<E>::procedural::<LinearAxis<E>>(
         comptime!(space.clone()),
-        LinearCol::<E> {
-            coordinate: along_col::<E>(offset),
-        },
+        linear_along(
+            COL,
+            E::new(comptime!(offset.get())) + zero,
+            E::new(1.0_f32) + zero,
+        ),
     );
     materialize(&source, output, space);
 }
@@ -192,12 +190,15 @@ fn cubic_kernel<E: Float>(
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<CubicCol<E>>(
+    let zero = E::cast_from(0u32.runtime());
+    let source = Tile::<E>::procedural::<CubicAxis<E>>(
         comptime!(space.clone()),
-        CubicCol::<E> {
-            coordinate: along_col::<E>(offset),
+        cubic_along(
+            COL,
+            E::new(comptime!(offset.get())) + zero,
+            E::new(1.0_f32) + zero,
             a,
-        },
+        ),
     );
     materialize(&source, output, space);
 }
@@ -210,12 +211,15 @@ fn lanczos_kernel<E: Float>(
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<LanczosCol<E>>(
+    let zero = E::cast_from(0u32.runtime());
+    let source = Tile::<E>::procedural::<LanczosAxis<E>>(
         comptime!(space.clone()),
-        LanczosCol::<E> {
-            coordinate: along_col::<E>(offset),
+        lanczos_along(
+            COL,
+            E::new(comptime!(offset.get())) + zero,
+            E::new(1.0_f32) + zero,
             lobes,
-        },
+        ),
     );
     materialize(&source, output, space);
 }

@@ -1,6 +1,29 @@
 use cubecl::prelude::*;
 
-use super::super::{Recipe, RecipeCoords, RecipeExpand};
+use crate::Axis;
+
+use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
+
+/// Windowed-sinc Lanczos filter over an [`AffineCoordinate`].
+pub type LanczosAxis<T> = Lanczos<AffineCoordinate<T>>;
+
+/// Construct a [`LanczosAxis`] recipe filtering along a single coordinate axis.
+#[cube]
+pub fn lanczos_along<T: Float>(
+    #[comptime] axis: Axis,
+    offset: T,
+    coefficient: T,
+    #[comptime] lobes: u8,
+) -> LanczosAxis<T> {
+    LanczosAxis::<T> {
+        coordinate: AffineCoordinate::<T> {
+            offset,
+            coefficient,
+            axis,
+        },
+        lobes,
+    }
+}
 
 /// Windowed-sinc Lanczos filter over the value of an inner recipe, `sinc(x) * sinc(x / lobes)`
 /// inside the support and zero outside it. `lobes` is the half-width of the support in taps: two

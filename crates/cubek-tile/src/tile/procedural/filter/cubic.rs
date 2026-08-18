@@ -1,7 +1,30 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 
-use super::super::{Recipe, RecipeCoords, RecipeExpand};
+use crate::Axis;
+
+use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
+
+/// Keys' cubic-convolution filter over an [`AffineCoordinate`].
+pub type CubicAxis<T> = Cubic<AffineCoordinate<T>>;
+
+/// Construct a [`CubicAxis`] recipe filtering along a single coordinate axis.
+#[cube]
+pub fn cubic_along<T: Float>(
+    #[comptime] axis: Axis,
+    offset: T,
+    coefficient: T,
+    #[comptime] a: Ratio,
+) -> CubicAxis<T> {
+    CubicAxis::<T> {
+        coordinate: AffineCoordinate::<T> {
+            offset,
+            coefficient,
+            axis,
+        },
+        a,
+    }
+}
 
 /// Keys' cubic-convolution filter over the value of an inner recipe. `a` shapes the kernel:
 /// `-1/2` is the interpolating member of the family, `-3/4` the sharper one image resamplers
