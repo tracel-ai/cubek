@@ -5,7 +5,7 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Schedule, Space, TileArg,
+    Axis, Buffering, CubeAxis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
     TileArgLaunch, TileSpec, Tiling, WalkOrder,
 };
 
@@ -51,11 +51,11 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = Tiling::new()
         .extents(&[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::cube(CubeAxis::Y, 1))
                 .axis(N, Cut::cube(CubeAxis::X, 128))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(1)).axis(N, Cut::plane(32))
         })
         .build()
