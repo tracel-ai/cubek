@@ -1,9 +1,12 @@
-mod addressing;
 mod attention;
+mod conv;
+mod instruction;
 mod launcher;
 mod matmul;
+mod procedural;
 mod quant;
 mod recursive;
+mod reduce;
 mod references;
 mod softmax;
 mod space;

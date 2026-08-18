@@ -89,7 +89,7 @@ fn make(
     batch: usize,
     rows: usize,
     cols: usize,
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(
@@ -200,7 +200,7 @@ pub fn bench(
         problem: *problem,
         strategy: *strategy,
         client,
-        dtypes: MatmulElems::from_single_dtype(f32::as_type_native_unchecked()),
+        dtypes: MatmulElems::from_single_dtype(f32::elem_type_native()),
         samples: num_samples,
     };
 

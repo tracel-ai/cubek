@@ -13,7 +13,7 @@ use crate::{
 };
 use cubecl::{
     calculate_cube_count_elemwise,
-    ir::{ElemType, StorageType, UIntKind},
+    ir::{ElemType, UIntKind},
     prelude::*,
     std::FastDivmod,
     std::tensor::layout::linear::{LinearLayoutLaunch, LinearViewLayoutLaunch},
@@ -26,7 +26,7 @@ pub fn interpolate_launch<R: Runtime>(
     output: TensorBinding<R>,
     options: InterpolateOptions,
     strategy: InterpolateStrategy,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
@@ -98,8 +98,8 @@ fn interpolate_kernel<EI: Float, EA: Float, N: Size>(
     num_vectors: FastDivmod<usize>,
     cubes_per_batch: FastDivmod<usize>,
     #[comptime] blueprint: InterpolateBlueprint,
-    #[define(EI)] _dtype: StorageType,
-    #[define(EA)] _acc_dtype: StorageType,
+    #[define(EI)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
 ) {
     execute_interpolate::<(EI, EA), N>(input, output, num_vectors, cubes_per_batch, blueprint);
 }
@@ -109,7 +109,7 @@ pub fn interpolate_nearest_backward_launch<R: Runtime>(
     out_grad: TensorBinding<R>,
     output: TensorBinding<R>,
     nearest_mode: NearestMode,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),
@@ -163,7 +163,7 @@ fn linear_layout<R: Runtime>(
         binding.shape.clone(),
         binding.strides.clone(),
         // Don't care about type size, only vector size.
-        Type::new(StorageType::Scalar(ElemType::UInt(UIntKind::U32))).with_vector_size(vector_size),
+        Type::new(ElemType::UInt(UIntKind::U32)).with_vector_size(vector_size),
         LinearViewLayoutLaunch::new(),
     )
 }

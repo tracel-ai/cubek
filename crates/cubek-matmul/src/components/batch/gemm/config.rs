@@ -38,29 +38,32 @@ impl MatmulOperandLayouts {
     /// reduction along K, one cell per plane. Supports `plane_dim > 1`
     /// (units cooperate across K).
     ///
-    /// `OuterNLhsContig` (Row-Row): rhs is N-contig (RowMajor) and lhs
-    /// is K-contig (RowMajor or vector) — outer-product vectorized along
-    /// N with a single LHS K-vector load. CPU-only (`plane_dim == 1`).
-    ///
-    /// `OuterNLhsStrided` (Col-Row): rhs is N-contig but lhs is M-contig
-    /// (ColMajor) — outer-product vectorized along N with scalar LHS
-    /// reads (strided in K). CPU-only.
+    /// `OuterN` (Row-Row): rhs is N-contig (RowMajor) and lhs is K-contig
+    /// (RowMajor or vector) — outer-product vectorized along N with a
+    /// single LHS K-vector load. CPU-only (`plane_dim == 1`).
     ///
     /// `OuterM` (Col-Col): lhs is M-contig (ColMajor) and rhs is K-contig
     /// (ColMajor or vector) — outer-product vectorized along M with a
     /// single RHS K-vector load. CPU-only.
-    pub fn variant(self) -> Variant {
+    ///
+    /// Col-Row has no variant: every operand a variant touches is read as
+    /// a vector along one axis, and there is no such axis here — the lhs
+    /// is M-contig while the planes own one M row each. The CPU serves
+    /// that layout through the `cpu_gemm` routine instead.
+    pub fn variant(self) -> Result<Variant, MatmulSetupError> {
         use OperandLayout::*;
         let lhs_k_contig = matches!(self.lhs, RowMajor | Vector);
         let rhs_k_contig = matches!(self.rhs, ColMajor | Vector);
         let rhs_n_contig = matches!(self.rhs, RowMajor);
         let lhs_m_contig = matches!(self.lhs, ColMajor);
         match (lhs_k_contig, rhs_k_contig, rhs_n_contig, lhs_m_contig) {
-            (true, true, _, _) => Variant::Dot,
-            (true, _, true, _) => Variant::OuterNLhsContig,
-            (_, _, true, true) => Variant::OuterNLhsStrided,
-            (_, true, _, true) => Variant::OuterM,
-            _ => unreachable!("layout combination not classifiable"),
+            (true, true, _, _) => Ok(Variant::Dot),
+            (true, _, true, _) => Ok(Variant::OuterN),
+            (_, true, _, true) => Ok(Variant::OuterM),
+            _ => Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "No gemm variant reads lhs:{:?} rhs:{:?}; use the cpu_gemm routine",
+                self.lhs, self.rhs,
+            )))),
         }
     }
 }
@@ -68,8 +71,7 @@ impl MatmulOperandLayouts {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Variant {
     Dot,
-    OuterNLhsContig,
-    OuterNLhsStrided,
+    OuterN,
     OuterM,
 }
 
@@ -85,8 +87,25 @@ impl Variant {
             // Vector accumulator is along N — independent per M row, so
             // planes split M for OuterN. Dot has no constraint; pick N
             // so columnar work parallelizes naturally on wide outputs.
-            Variant::OuterNLhsContig | Variant::OuterNLhsStrided => PlanesSplit::M,
+            Variant::OuterN => PlanesSplit::M,
             Variant::Dot => PlanesSplit::N,
+        }
+    }
+
+    /// The layout the kernel reads lhs in. A vector operand is contiguous
+    /// either way, so it rides its variant's matrix layout.
+    pub fn lhs_layout(self) -> MatrixLayout {
+        match self {
+            Variant::Dot | Variant::OuterN => MatrixLayout::RowMajor,
+            Variant::OuterM => MatrixLayout::ColMajor,
+        }
+    }
+
+    /// The layout the kernel reads rhs in.
+    pub fn rhs_layout(self) -> MatrixLayout {
+        match self {
+            Variant::Dot | Variant::OuterM => MatrixLayout::ColMajor,
+            Variant::OuterN => MatrixLayout::RowMajor,
         }
     }
 }
@@ -108,14 +127,14 @@ fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandLayout {
     }
 }
 
-/// Unified config for the gemm family. `kind` selects the kernel variant;
+/// Unified config for the gemm family. `variant` selects the kernel;
 /// `plane_dim` is the hardware plane width (only `Variant::Dot` supports
 /// `plane_dim > 1` — outer-product variants enforce `plane_dim == 1`).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GemmConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
-    pub(crate) kind: MatmulOperandLayouts,
+    pub(crate) variant: Variant,
     pub(crate) planes_split: PlanesSplit,
     pub(crate) check_bounds: CheckBounds,
 }
@@ -123,7 +142,7 @@ pub struct GemmConfig {
 impl BatchConfig for GemmConfig {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),
+            matrix_layout: self.variant.lhs_layout(),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -131,7 +150,7 @@ impl BatchConfig for GemmConfig {
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: layout_for(self.kind.rhs, MatrixLayout::ColMajor),
+            matrix_layout: self.variant.rhs_layout(),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -143,13 +162,5 @@ impl BatchConfig for GemmConfig {
             check_row_bounds: false,
             check_col_bounds: false,
         }
-    }
-}
-
-pub(crate) fn layout_for(operand: OperandLayout, vec_default: MatrixLayout) -> MatrixLayout {
-    match operand {
-        OperandLayout::RowMajor => MatrixLayout::RowMajor,
-        OperandLayout::ColMajor => MatrixLayout::ColMajor,
-        OperandLayout::Vector => vec_default,
     }
 }

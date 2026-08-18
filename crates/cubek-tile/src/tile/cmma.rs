@@ -56,6 +56,7 @@ impl<T: Numeric> CmmaData<T> {
                 layout,
             })),
             space: comptime!(space),
+            leaf: comptime!(Leaf::Cmma),
         }
     }
 

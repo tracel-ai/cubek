@@ -14,7 +14,7 @@ use crate::{
 
 fn random_tensor_handle(
     client: &ComputeClient<TestRuntime>,
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
     strides: &[usize],
     tensor_shape: &[usize],

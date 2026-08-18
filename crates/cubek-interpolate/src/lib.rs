@@ -23,7 +23,7 @@ pub fn interpolate<R: Runtime>(
     output: TensorBinding<R>,
     options: InterpolateOptions,
     strategy: InterpolateStrategy,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     validate_strategy(client, &strategy)?;
     validate_rank(input.shape.len(), output.shape.len())?;
@@ -43,7 +43,7 @@ pub fn interpolate_backward<R: Runtime>(
     out_grad: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_rank(out_grad.shape.len(), output.shape.len())?;

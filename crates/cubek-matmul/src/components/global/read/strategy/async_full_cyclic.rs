@@ -95,7 +95,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for AsyncFullCyclicLoading<TO> {
         tiles_per_stage: u32,
         _vector_size: VectorSize,
         plane_dim: u32,
-        dtype: StorageType,
+        dtype: ElemType,
     ) -> u32 {
         let vector_size = ASYNC_COPY_WIDTH / dtype.size_bits() as u32;
         let elements_per_stage = elements_per_tile * tiles_per_stage;
@@ -114,7 +114,7 @@ impl<TO: TilingOrder, RC: RuntimeConfig> FullLoadingStrategy<RC> for AsyncFullCy
         _runtime_config: RC,
         #[comptime] config: GlobalReaderConfig,
     ) -> Self::Job<EG, NG, ES, NS> {
-        let type_size = ES::type_size_bits().comptime();
+        let type_size = ES::size_bits().comptime();
         let vector_size = ASYNC_COPY_WIDTH / type_size as u32;
         let tile_num_elements = config.smem_config.elements_per_tile();
         let num_stage_elements = config.smem_config.elements_per_stage();

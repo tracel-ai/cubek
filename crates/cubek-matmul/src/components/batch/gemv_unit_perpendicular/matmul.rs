@@ -39,7 +39,7 @@ pub(crate) fn matmul_entry<
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: VecMatUnitPerpendicularBlueprint,
-    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [ElemType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
@@ -127,7 +127,9 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
         let rhs = rhs.view(SliceIndex::new(rhs_batch, rhs.shape()));
         let mut out = out.view_mut(SliceIndex::new(out_batch, out.shape()));
 
-        let size!(NA) = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
+        let lhs_vec = lhs.vector_size();
+        let rhs_vec = rhs.vector_size();
+        let size!(NA) = comptime![Ord::max(lhs_vec, rhs_vec)];
         let vector_size = NA::value() as u32;
 
         let plane_id = UNIT_POS_Y;
@@ -169,7 +171,8 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
                 let lhs_vec = shuffle(local_lhs_vec, plane_iter, plane_dim);
                 let rhs_k_vec_base = (k_base + plane_iter) * vector_size;
 
-                for vec_iter in 0..NA::value() as u32 {
+                #[unroll]
+                for vec_iter in 0..NA::value().comptime() as u32 {
                     let lhs_scalar = lhs_vec.extract(vec_iter as usize);
                     let rhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
                         rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n))

@@ -1,6 +1,6 @@
 use cubecl::{
     flex32,
-    ir::{ElemType, FloatKind, StorageType},
+    ir::{ElemType, FloatKind},
     prelude::Float,
 };
 
@@ -42,13 +42,11 @@ impl InterpolatePrecision for half::bf16 {
     type EA = f32;
 }
 
-pub fn accumulator_dtype(input: StorageType) -> StorageType {
+pub fn accumulator_dtype(input: ElemType) -> ElemType {
     match input {
-        StorageType::Scalar(ElemType::Float(FloatKind::F16))
-        | StorageType::Scalar(ElemType::Float(FloatKind::BF16))
-        | StorageType::Scalar(ElemType::Float(FloatKind::Flex32)) => {
-            StorageType::Scalar(ElemType::Float(FloatKind::F32))
-        }
+        ElemType::Float(FloatKind::F16)
+        | ElemType::Float(FloatKind::BF16)
+        | ElemType::Float(FloatKind::Flex32) => ElemType::Float(FloatKind::F32),
         _ => input,
     }
 }

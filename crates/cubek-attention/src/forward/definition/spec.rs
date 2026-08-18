@@ -371,19 +371,19 @@ pub type Args<MS> = <MS as AttentionSpec>::Args;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct AttentionElems {
-    pub query_global: StorageType,
-    pub query_tile: StorageType,
-    pub key_global: StorageType,
-    pub key_stage: StorageType,
-    pub value_global: StorageType,
-    pub value_stage: StorageType,
-    pub key_value_tile: StorageType,
-    pub softmax_acc: StorageType,
-    pub softmax_lhs: StorageType,
-    pub accumulator: StorageType,
-    pub mask: StorageType,
-    pub out_global: StorageType,
-    pub out_stage: StorageType,
+    pub query_global: ElemType,
+    pub query_tile: ElemType,
+    pub key_global: ElemType,
+    pub key_stage: ElemType,
+    pub value_global: ElemType,
+    pub value_stage: ElemType,
+    pub key_value_tile: ElemType,
+    pub softmax_acc: ElemType,
+    pub softmax_lhs: ElemType,
+    pub accumulator: ElemType,
+    pub mask: ElemType,
+    pub out_global: ElemType,
+    pub out_stage: ElemType,
 }
 
 impl AttentionElems {
@@ -393,9 +393,9 @@ impl AttentionElems {
     /// turns logit rounding into exponential weight distortion, so f16 tiles
     /// under an f32 problem diverge as input magnitude grows. f64 is capped
     /// at f32, mirroring [`StagedMatrixPrecision`] for f64.
-    pub fn register_tile_type(global: StorageType) -> StorageType {
-        if global == f64::as_type_native_unchecked().storage_type() {
-            f32::as_type_native_unchecked().storage_type()
+    pub fn register_tile_type(global: ElemType) -> ElemType {
+        if global == f64::elem_type_native() {
+            f32::elem_type_native()
         } else {
             global
         }
@@ -403,7 +403,7 @@ impl AttentionElems {
 
     pub fn from_global_types(
         global_dtypes: &AttentionGlobalTypes,
-        tile_type: StorageType,
+        tile_type: ElemType,
         accumulator_precision: &AccumulatorPrecision,
     ) -> AttentionElems {
         let accumulator = match accumulator_precision {
@@ -429,7 +429,7 @@ impl AttentionElems {
     }
 }
 
-impl From<&AttentionElems> for [StorageType; 5] {
+impl From<&AttentionElems> for [ElemType; 5] {
     fn from(elems: &AttentionElems) -> Self {
         [
             elems.query_global,

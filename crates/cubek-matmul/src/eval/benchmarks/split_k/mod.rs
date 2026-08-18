@@ -47,8 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Space, StridedTileArg, StridedTileArgLaunch, Tiling,
-    WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Space, TileArg, TileArgLaunch, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -59,14 +58,15 @@ const K: Axis = Axis(2);
 /// variable. Mirrors the tile suite's `launch_staged_matmul`.
 #[cube(launch)]
 fn launch_split_k_matmul<E: Numeric>(
-    a: &StridedTileArg<'_, E>,
-    b: &StridedTileArg<'_, E>,
-    c: &StridedTileArg<'_, E>,
-    #[define(E)] _dtype: StorageType,
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile();
-    let b = b.tile();
-    let mut c = c.tile();
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -118,34 +118,34 @@ impl Mapping {
             // One column per cube, one lane, whole K walked serially.
             Mapping::SeqK => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, 1))
                         .axis(K, seq(k))
                 })
-                .leaf(Leaf::Register),
+                .build(),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, lanes * cols))
                         .axis(K, seq(k))
                 })
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
                 })
-                .leaf(Leaf::Register),
+                .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *space* — only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, cols))
                         .axis(K, Cut::unit(k / lanes))
                 })
-                .leaf(Leaf::Register),
+                .build(),
         }
         .resolve_lanes(lanes)
     }
@@ -236,7 +236,7 @@ fn run(
     lanes: usize,
 ) -> TileInput {
     let space = mapping.space(problem, lanes);
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
     let a = TileInput::builder(client, space.project(&[M, K]))
         .untiled()
         .arange();
@@ -249,9 +249,10 @@ fn run(
         client,
         space.cube_count(),
         mapping.cube_dim(&space, client),
-        StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-        StridedTileArgLaunch::strided(rhs_arg(&b, mapping), 1, space.project(&[K, N]), b.storage()),
-        StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+        TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
+        TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+        space,
         dtype,
     );
     c
@@ -266,9 +267,9 @@ struct SplitKBench {
     cube_dim: CubeDim,
     a: TileInput,
     b: TileInput,
-    /// The kernel-side rhs space, always `[K, N]`; `b.space()` is `[N, K]` for the
-    /// transposed layout, so it cannot serve here.
-    rhs_space: Space,
+    /// The one kernel space; each operand's spec carries only its spanned axes (the rhs
+    /// is `[K, N]` even when its buffer is the transposed layout re-strided).
+    space: Space,
     c: TileInput,
 }
 
@@ -282,19 +283,15 @@ impl Benchmark for SplitKBench {
 
     fn execute(&self, _: Self::Input) -> Result<Self::Output, String> {
         let (a, b, c) = (&self.a, &self.b, &self.c);
-        let dtype = f32::as_type_native_unchecked().storage_type();
+        let dtype = f32::elem_type_native();
         launch_split_k_matmul::launch::<TestRuntime>(
             &self.client,
             self.cube_count.clone(),
             self.cube_dim,
-            StridedTileArgLaunch::strided(a.tensor_arg(1), 1, a.space(), a.storage()),
-            StridedTileArgLaunch::strided(
-                rhs_arg(b, self.mapping),
-                1,
-                self.rhs_space.clone(),
-                b.storage(),
-            ),
-            StridedTileArgLaunch::strided(c.tensor_arg(1), 1, c.space(), c.storage()),
+            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+            TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+            self.space.clone(),
             dtype,
         );
         Ok(())
@@ -423,7 +420,6 @@ pub fn bench(
         .untiled()
         .uniform(0, 0.0, 1.0);
     let b = rhs_input(&client, mapping, &space, |bld| bld.uniform(1, 0.0, 1.0));
-    let rhs_space = space.project(&[K, N]);
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
@@ -437,7 +433,7 @@ pub fn bench(
         cube_dim,
         a,
         b,
-        rhs_space,
+        space,
         c,
     };
 

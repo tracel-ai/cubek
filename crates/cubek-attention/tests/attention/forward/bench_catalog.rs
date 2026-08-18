@@ -7,7 +7,7 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubecl::{Runtime, TestRuntime, prelude::CubePrimitive};
+use cubecl::{Runtime, TestRuntime, prelude::Scalar};
 use cubek_attention::eval::forward::benchmarks::{AttentionCorrectness, strategies};
 use cubek_attention::eval::forward::cpu_reference::attention_epsilon;
 use cubek_attention::eval::problem::{AttentionSpec, problems};
@@ -55,7 +55,7 @@ fn elems_for(spec: &AttentionSpec) -> AttentionElems {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
-        half::f16::as_type_native_unchecked(),
+        half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),
     );
     let problem = AttentionProblem {
@@ -67,7 +67,7 @@ fn elems_for(spec: &AttentionSpec) -> AttentionElems {
     };
     AttentionElems::from_global_types(
         &problem.global_dtypes,
-        half::f16::as_type_native_unchecked().storage_type(),
+        half::f16::elem_type_native(),
         &problem.options.accumulator_precision,
     )
 }

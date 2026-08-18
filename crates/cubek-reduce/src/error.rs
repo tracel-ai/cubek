@@ -1,4 +1,4 @@
-use cubecl::{ir::StorageType, server::LaunchError};
+use cubecl::{ir::ElemType, server::LaunchError};
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
@@ -60,7 +60,7 @@ pub enum ReduceError {
 
     /// Indicate that we can't launch a shared sum because the atomic addition is not supported.
     #[error("Atomic add not supported by the client for {0}")]
-    MissingAtomicAdd(StorageType),
+    MissingAtomicAdd(ElemType),
 
     /// The selected blueprint stages more accumulators in shared memory than the
     /// device allows.

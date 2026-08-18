@@ -107,9 +107,9 @@ fn run_quantized_matmul(case: QuantizedMatmulCase) {
         lhs_dtype.scheme().as_ref(),
         rhs_dtype.scheme().as_ref(),
         MatmulGlobalElems {
-            lhs: out_dtype.storage_type(),
-            rhs: out_dtype.storage_type(),
-            out: out_dtype.storage_type(),
+            lhs: out_dtype.elem_type(),
+            rhs: out_dtype.elem_type(),
+            out: out_dtype.elem_type(),
         },
         cubecl::ir::AddressType::U32,
     );

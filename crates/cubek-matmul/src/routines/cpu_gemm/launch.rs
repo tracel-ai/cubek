@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, CubeAxis, Cut, Leaf, Schedule, Tiling, WalkOrder};
+use cubek_tile::{Axis, Buffering, CubeAxis, Cut, StorageTiling, Tiling, WalkOrder};
 
 use crate::{
     definition::{
@@ -18,7 +18,7 @@ use crate::{
 /// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the
 /// binding's own shape/strides don't reveal — a tiled buffer just looks like a higher-rank strided
 /// one — so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
-/// view layout is built at load time by [`cubek_tile::StridedTileArgLaunch`].
+/// layout is derived at launch by [`cubek_tile::StridedTileSource`].
 pub struct WithLayout<B> {
     pub binding: B,
     pub levels: usize,
@@ -160,19 +160,19 @@ pub fn launch_ref<R: Runtime>(
     // sequentially; K is contracted sequentially in both leaves.
     let space = Tiling::new()
         .extents(&extents)
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, cube_m))
                 .axis(N, Cut::cube(CubeAxis::Y, cube_n))
                 .axis(K, Cut::sequential(k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::plane(leaf.m))
                 .axis(N, Cut::plane(leaf.n))
                 .axis(K, Cut::sequential(leaf.k))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
     // shape family), overhang checks derived per operand — all inside the launcher.
@@ -189,34 +189,40 @@ pub fn launch_ref<R: Runtime>(
     // batches). All operands get the full output batch-axis list; the builder right-aligns it to
     // each operand's leading dims (numpy broadcast, size-1 dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
+    let a = launch
+        .arg(lhs.into_data())
+        .subspace(&[M, K])
+        .batches(&out_batch_axes)
+        .tiling(StorageTiling::uniform(2, lhs_levels))
+        .build();
+    let b = launch
+        .arg(rhs)
+        .subspace(&[K, N])
+        .batches(&out_batch_axes)
+        .tiling(StorageTiling::uniform(2, rhs_levels))
+        .vectorize(v)
+        .build();
+    let c = launch
+        .arg(out)
+        .subspace(&[M, N])
+        .batches(&out_batch_axes)
+        .tiling(StorageTiling::uniform(2, out_levels))
+        .vectorize(v)
+        .build();
     cpu_gemm_kernel::launch::<R>(
         client,
         launch.cube_count(),
         launch.cube_dim(),
-        launch
-            .arg(lhs.into_data())
-            .subspace(&[M, K])
-            .batches(&out_batch_axes)
-            .levels(lhs_levels)
-            .build(),
-        launch
-            .arg(rhs)
-            .subspace(&[K, N])
-            .batches(&out_batch_axes)
-            .levels(rhs_levels)
-            .vectorize(v)
-            .build(),
-        launch
-            .arg(out)
-            .subspace(&[M, N])
-            .batches(&out_batch_axes)
-            .levels(out_levels)
-            .vectorize(v)
-            .build(),
+        a.vector_size,
+        b.vector_size,
+        c.vector_size,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launch.space().clone(),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
     );
-
     Ok(())
 }

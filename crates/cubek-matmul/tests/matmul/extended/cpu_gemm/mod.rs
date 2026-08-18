@@ -2,7 +2,7 @@ mod inner_layout;
 mod layouts;
 
 use crate::matmul::test_matmul_strategy;
-use cubecl::{Runtime, frontend::CubePrimitive, ir::AddressType, zspace::shape};
+use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     routines::{
@@ -52,9 +52,9 @@ fn mixed_precision_f16_inputs_f32_acc() {
         return;
     }
     let elems = MatmulGlobalElems {
-        lhs: half::f16::as_type_native_unchecked().storage_type(),
-        rhs: half::f16::as_type_native_unchecked().storage_type(),
-        out: f32::as_type_native_unchecked().storage_type(),
+        lhs: half::f16::elem_type_native(),
+        rhs: half::f16::elem_type_native(),
+        out: f32::elem_type_native(),
     };
     let problem = MatmulProblem::from_parameters(
         m,
@@ -117,7 +117,7 @@ fn very_small_square() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -166,7 +166,7 @@ fn small_square() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -215,7 +215,7 @@ fn rectangular() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -264,7 +264,7 @@ fn single_tile() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -302,13 +302,80 @@ fn many_tiles_inferred_size() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+    );
+}
+
+/// A col-major (transposed) lhs — the layout the gemm routine's Col-Row variant used to
+/// claim on CPU, and got wrong whenever `m` was not a multiple of the vector size
+/// (burn#5304, `a.transpose().matmul(b)`). `m` here divides nothing.
+#[test]
+fn transposed_lhs_m_not_vector_multiple() {
+    let (batch, m, n, k) = (1, 7, 8, 8);
+    let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![batch],
+        shape![batch],
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+    );
+}
+
+/// The same transposed lhs at a size that actually tiles, batched.
+#[test]
+fn transposed_lhs_batched() {
+    let (batch, m, n, k, tile_size) = (2, 33, 64, 64, 8);
+    let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![batch],
+        shape![batch],
+        MatrixLayout::ColMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
+        AddressType::U32,
+    );
+    test_matmul_strategy(
+        client,
+        problem,
+        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+            instruction: Instruction {
+                m: tile_size,
+                n: tile_size,
+                k: tile_size,
+            },
+            planes: PlaneGrid { m: 2, n: 2 },
+        })),
     );
 }
 
@@ -344,7 +411,7 @@ fn batched_small() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -393,7 +460,7 @@ fn batched_rectangular() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -430,7 +497,7 @@ fn indivisible_all_axes() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -467,7 +534,7 @@ fn indivisible_rectangular_batched() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -504,7 +571,7 @@ fn indivisible_inferred() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -535,7 +602,7 @@ fn matvec_inferred() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -565,7 +632,7 @@ fn narrow_n_inferred() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -596,7 +663,7 @@ fn broadcast_rhs_unbatched() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -633,7 +700,7 @@ fn broadcast_lhs_unbatched() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -672,7 +739,7 @@ fn broadcast_two_axes() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -710,7 +777,7 @@ fn batched_two_axes() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(
@@ -747,7 +814,7 @@ fn broadcast_indivisible() {
         MatrixLayout::RowMajor,
         None,
         None,
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems(),
+        MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems(),
         AddressType::U32,
     );
     test_matmul_strategy(

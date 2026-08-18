@@ -28,7 +28,7 @@ fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
         .with_param(QuantParam::F32);
 
     let shape = Shape::from(tensor_shape.to_vec());
-    let input_dtype = StorageType::Scalar(ElemType::from_quant_value(scheme.value));
+    let input_dtype = ElemType::from_quant_value(scheme.value);
 
     let input_range = scheme.value.range();
     let (input, input_host) = TestInput::builder(client.clone(), shape.clone())
@@ -40,8 +40,8 @@ fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
         .custom(vec![SCALE])
         .generate_without_host_data();
 
-    let output = TensorHandle::zeros(&client, shape.clone(), f32::as_type_native_unchecked());
-    let output_dtype = f32::as_type_native_unchecked().storage_type();
+    let output = TensorHandle::zeros(&client, shape.clone(), f32::elem_type_native());
+    let output_dtype = f32::elem_type_native();
 
     cubek_quant::dequantize_tiled::launch_ref::<TestRuntime>(
         &client,

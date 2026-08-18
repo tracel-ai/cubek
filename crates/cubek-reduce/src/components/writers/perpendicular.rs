@@ -115,7 +115,9 @@ impl<Out: NumericVector> PerpendicularWriter<'_, Out> {
                 for j in 0..self.output_vector_size {
                     tmp.insert(
                         j,
-                        Out::T::cast_from(vector.extract(i * self.output_vector_size + j)),
+                        Out::T::cast_from(
+                            vector.extract(i * self.output_vector_size.comptime() + j),
+                        ),
                     );
                 }
 

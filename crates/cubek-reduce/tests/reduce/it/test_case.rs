@@ -1,6 +1,6 @@
 use cubecl::{
     TestRuntime,
-    ir::{ElemType, FloatKind, StorageType},
+    ir::{ElemType, FloatKind},
     prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -25,8 +25,9 @@ pub struct TestCase {
     pub stride: Strides,
     pub axis: Option<usize>,
     pub strategy: ReduceStrategy,
-    pub input_dtype: StorageType,
-    pub accumulation_dtype: StorageType,
+    pub input_dtype: ElemType,
+    pub accumulation_dtype: ElemType,
+    custom_input: Option<Vec<f32>>,
 }
 
 impl core::fmt::Debug for TestCase {
@@ -50,17 +51,25 @@ impl TestCase {
         strategy: ReduceStrategy,
     ) -> Self
     where
-        P::EI: CubePrimitive,
-        P::EA: CubePrimitive,
+        P::EI: Scalar,
+        P::EA: Scalar,
     {
         Self {
             shape,
             stride,
             axis,
             strategy,
-            input_dtype: <P::EI as CubePrimitive>::as_type_native_unchecked().storage_type(),
-            accumulation_dtype: <P::EA as CubePrimitive>::as_type_native_unchecked().storage_type(),
+            input_dtype: <P::EI as Scalar>::elem_type_native(),
+            accumulation_dtype: <P::EA as Scalar>::elem_type_native(),
+            custom_input: None,
         }
+    }
+
+    /// Use explicit regression data. Custom cases must execute even when the default matrix-test
+    /// policy permits unsupported generated configurations to fail compilation.
+    pub fn with_data(mut self, data: Vec<f32>) -> Self {
+        self.custom_input = Some(data);
+        self
     }
 
     pub fn test_sum(&self) {
@@ -126,7 +135,7 @@ impl TestCase {
         // request (u32 is the one flag storage every test runtime supports), so
         // the in-kernel flag conversion is covered for every input dtype of the
         // matrix.
-        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        let u32_dtype = u32::elem_type_native();
         self.run_reduce_test_with(
             |input, axis| reference_any(input, axis, None),
             u32_dtype,
@@ -139,7 +148,7 @@ impl TestCase {
     pub fn test_all(&self) {
         // Mirror of `test_any`: p ≈ 1 - 1.5/axis_len makes ~22% of slices
         // all-ones (all = 1) and the rest contain a zero (all = 0).
-        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        let u32_dtype = u32::elem_type_native();
         self.run_reduce_test_with(
             |input, axis| reference_all(input, axis, None),
             u32_dtype,
@@ -157,7 +166,7 @@ impl TestCase {
     }
 
     pub fn test_argmax(&self) {
-        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        let u32_dtype = u32::elem_type_native();
         self.run_reduce_test(
             |input, axis| reference_argmax(input, axis, None),
             u32_dtype,
@@ -167,7 +176,7 @@ impl TestCase {
     }
 
     pub fn test_argmin(&self) {
-        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        let u32_dtype = u32::elem_type_native();
         self.run_reduce_test(
             |input, axis| reference_argmin(input, axis, None),
             u32_dtype,
@@ -177,7 +186,7 @@ impl TestCase {
     }
 
     pub fn test_argtopk(&self, k: usize) {
-        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        let u32_dtype = u32::elem_type_native();
         self.run_reduce_test(
             move |input, axis| reference_argtopk(input, axis, k, None),
             u32_dtype,
@@ -233,15 +242,18 @@ impl TestCase {
     ) {
         let client = TestRuntime::client(&Default::default());
         let axis = self.axis.unwrap();
-        let u32_dtype = u32::as_type_native_unchecked().storage_type();
+        let u32_dtype = u32::elem_type_native();
 
-        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+        let input = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(self.input_dtype)
             .layout(StridedLayout::Explicit(
                 self.stride.iter().copied().collect(),
-            ))
-            .random(1234, Distribution::Uniform(-1., 1.))
-            .generate_with_f32_host_data();
+            ));
+        let input = match &self.custom_input {
+            Some(data) => input.custom(data.clone()),
+            None => input.random(1234, Distribution::Uniform(-1., 1.)),
+        };
+        let (input_handle, input_host) = input.generate_with_f32_host_data();
 
         let expected_values =
             cast_host_through_dtype(values_reference(&input_host, axis), self.input_dtype);
@@ -297,13 +309,13 @@ impl TestCase {
             }
             ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
         };
-        outcome.enforce();
+        self.enforce_outcome(outcome);
     }
 
     fn run_reduce_test(
         &self,
         reference: impl FnOnce(&HostData, usize) -> HostData,
-        output_dtype: StorageType,
+        output_dtype: ElemType,
         config: ReduceOperationConfig,
         epsilon: f32,
     ) {
@@ -319,7 +331,7 @@ impl TestCase {
     fn run_reduce_test_with(
         &self,
         reference: impl FnOnce(&HostData, usize) -> HostData,
-        output_dtype: StorageType,
+        output_dtype: ElemType,
         config: ReduceOperationConfig,
         epsilon: f32,
         distribution: Distribution,
@@ -327,13 +339,16 @@ impl TestCase {
         let client = TestRuntime::client(&Default::default());
         let axis = self.axis.unwrap();
 
-        let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())
+        let input = TestInput::builder(client.clone(), self.shape.clone())
             .dtype(self.input_dtype)
             .layout(StridedLayout::Explicit(
                 self.stride.iter().copied().collect(),
-            ))
-            .random(1234, distribution)
-            .generate_with_f32_host_data();
+            ));
+        let input = match &self.custom_input {
+            Some(data) => input.custom(data.clone()),
+            None => input.random(1234, distribution),
+        };
+        let (input_handle, input_host) = input.generate_with_f32_host_data();
 
         let expected = cast_host_through_dtype(reference(&input_host, axis), output_dtype);
 
@@ -369,13 +384,27 @@ impl TestCase {
             }
             ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
         };
+        self.enforce_outcome(outcome);
+    }
+
+    fn enforce_outcome(&self, outcome: TestOutcome) {
+        if self.custom_input.is_some() {
+            assert!(
+                !matches!(
+                    &outcome,
+                    TestOutcome::CompileError(_)
+                        | TestOutcome::Validated(ValidationResult::Skipped(_))
+                ),
+                "expected custom reduction case to execute and validate, got {outcome:?}"
+            );
+        }
         outcome.enforce();
     }
 
     fn build_output_tensor(
         &self,
         client: &cubecl::client::ComputeClient<TestRuntime>,
-        output_dtype: StorageType,
+        output_dtype: ElemType,
         output_shape: &Shape,
         config: &ReduceOperationConfig,
     ) -> TensorHandle<TestRuntime> {
@@ -426,14 +455,14 @@ fn parallel_multiple_output_strides(
 /// Cast expected values through the GPU output dtype so comparisons account for
 /// the precision loss that occurs when the kernel stores to a narrower type
 /// (e.g. an f32 accumulator overflows once written to an f16 output).
-fn cast_host_through_dtype(mut host: HostData, dtype: StorageType) -> HostData {
+fn cast_host_through_dtype(mut host: HostData, dtype: ElemType) -> HostData {
     if let HostDataVec::F32(values) = &host.data {
         let casted = match dtype {
-            StorageType::Scalar(ElemType::Float(FloatKind::F16)) => values
+            ElemType::Float(FloatKind::F16) => values
                 .iter()
                 .map(|&x| half::f16::from_f32(x).to_f32())
                 .collect(),
-            StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => values
+            ElemType::Float(FloatKind::BF16) => values
                 .iter()
                 .map(|&x| half::bf16::from_f32(x).to_f32())
                 .collect(),

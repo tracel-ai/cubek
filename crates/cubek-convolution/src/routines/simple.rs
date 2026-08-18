@@ -1,6 +1,5 @@
 use cubecl::{
-    server::LaunchError,
-    {Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding},
+    Runtime, client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::components::global::read::FullLoadingStrategy;
 use cubek_matmul::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
@@ -67,7 +66,7 @@ impl<
     fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
         handle: TensorBinding<R>,
-        dtype: StorageType,
+        dtype: ElemType,
         _operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError> {
         contiguous_pitched_layout(client, handle, dtype)
@@ -83,7 +82,7 @@ impl Routine for SimpleAsyncTmaConv {
     fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
         handle: TensorBinding<R>,
-        dtype: StorageType,
+        dtype: ElemType,
         operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError> {
         into_tensor_handle_tma(client, handle, dtype, operation)

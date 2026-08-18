@@ -6,7 +6,8 @@ use cubecl::{
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
 use cubek_tile::{
-    Axis, CubeAxis, Cut, Leaf, Schedule, Storage, StridedTileArgLaunch, Tiling, WalkOrder,
+    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap,
+    Projection, Residence, Scale, StridedOperand, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -38,6 +39,25 @@ fn launcher_kernel_space_is_dynamic_concrete_is_not() {
         assert!(!launch.concrete().is_dynamic(axis));
     }
     assert_eq!(launch.concrete().extent(M), 64);
+}
+
+#[test]
+fn launcher_over_frees_only_the_listed_axes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M, K]);
+
+    assert!(launch.space().is_dynamic(M));
+    assert!(launch.space().is_dynamic(K));
+    assert!(!launch.space().is_dynamic(N));
+}
+
+/// An axis the space does not have would be dropped silently, leaving the kernel specialized along
+/// the axis the caller meant to free.
+#[test]
+#[should_panic(expected = "is not an axis of this space")]
+fn launcher_over_unknown_axis_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let _ = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[Axis(9)]);
 }
 
 /// The footgun the launcher removes: geometry read after `all_dynamic` has no extents to
@@ -73,19 +93,19 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
     let batches = [B0, B1];
     Tiling::new()
         .extents(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batches, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
                 .axis(K, Cut::sequential(k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axes(&batches, Cut::sequential(1))
                 .axis(M, Cut::plane(8))
                 .axis(N, Cut::plane(8))
                 .axis(K, Cut::sequential(4))
         })
-        .leaf(Leaf::Register)
+        .build()
 }
 
 #[test]
@@ -95,24 +115,27 @@ fn arg_derives_check_from_subspace_overhang() {
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
 
     let touches_k = launch
-        .arg::<f32>(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .build();
-    assert!(touches_k.storage.check_bounds);
+    assert!(touches_k.spec.is_checked());
+    assert_eq!(touches_k.spec.boundary, Some(cubek_tile::Boundary::Zero));
 
     let avoids_k = launch
-        .arg::<f32>(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]))
         .subspace(&[M, N])
         .build();
-    assert!(!avoids_k.storage.check_bounds);
+    assert!(!avoids_k.spec.is_checked());
+    assert_eq!(avoids_k.spec.boundary, None);
 
     // An explicit override still wins over the derivation.
     let forced = launch
-        .arg::<f32>(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .checked(false)
         .build();
-    assert!(!forced.storage.check_bounds);
+    assert!(!forced.spec.is_checked());
+    assert_eq!(forced.spec.boundary, None);
 }
 
 #[test]
@@ -122,21 +145,296 @@ fn arg_right_aligns_batches_and_drops_size_one() {
 
     // One leading dim: right-aligns to B1 (the trailing axis of the full list).
     let one_batch = launch
-        .arg::<f32>(binding(&client, &[3, 64, 16]))
+        .arg(binding(&client, &[3, 64, 16]))
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(one_batch.space.contains(B1));
-    assert!(!one_batch.space.contains(B0));
+    assert!(one_batch.spec.axes().contains(&B1));
+    assert!(!one_batch.spec.axes().contains(&B0));
 
     // A size-1 dim drops out entirely (broadcast omission).
     let broadcast = launch
-        .arg::<f32>(binding(&client, &[1, 64, 16]))
+        .arg(binding(&client, &[1, 64, 16]))
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
-    assert!(!broadcast.space.contains(B0));
-    assert!(!broadcast.space.contains(B1));
+    assert!(!broadcast.spec.axes().contains(&B0));
+    assert!(!broadcast.spec.axes().contains(&B1));
+}
+
+// ---- StridedTileSource::gathered -------------------------------------------
+
+/// A convolution-shaped input over `batched_space`: output positions `M` at `stride` and taps `K`
+/// at `dilation` share one physical dim, channels `N` ride the other. Three logical axes over a
+/// rank-2 buffer, which no list of dim labels describes.
+fn window(stride: usize, dilation: usize, offset: impl Into<Offset>) -> Projection {
+    Projection::new(
+        &[M, K, N],
+        &[
+            PhysicalAxisMap::affine_with_offset(&[(M, stride), (K, dilation)], offset),
+            PhysicalAxisMap::of(N),
+        ],
+    )
+}
+
+/// The mapping reaches the spec as given: the buffer keeps its two dims and the tile spans the
+/// three logical axes, in the projection's own order.
+#[test]
+fn arg_gathered_states_its_own_mapping() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+
+    let input = launch
+        .arg(binding(&client, &[79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+
+    assert_eq!(input.spec.axes(), &[M, K, N]);
+    assert_eq!(input.spec.projection, window(1, 1, 0));
+    assert_eq!(input.spec.projection.physical_rank(), 2);
+    // Nothing overhangs and the origin cannot go negative, so the gather stays unchecked.
+    assert_eq!(input.spec.boundary, None);
+}
+
+/// An overhanging axis arms the check through the affine map just as it does through a label: the
+/// tap axis `K` is one of the two the gathered dim is addressed by.
+#[test]
+fn arg_gathered_derives_check_from_overhang() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4).
+    let launch = batched_space(1, 1, 64, 64, 18).launcher_over(&client, &[N]);
+
+    let input = launch
+        .arg(binding(&client, &[81, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+    assert_eq!(input.spec.boundary, Some(Boundary::Zero));
+
+    // An explicit override still wins over the derivation.
+    let forced = launch
+        .arg(binding(&client, &[81, 64]))
+        .gathered(window(1, 1, 0))
+        .checked(false)
+        .build();
+    assert_eq!(forced.spec.boundary, None);
+}
+
+/// A padded window reads before the buffer's start whatever the tiling divides, so the derivation
+/// arms on the offset's sign alone. A forward shift cannot underflow and stays unchecked.
+#[test]
+fn arg_gathered_derives_check_from_underflow() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+
+    let padded = launch
+        .arg(binding(&client, &[64, 64]))
+        .gathered(window(1, 1, -1))
+        .build();
+    assert_eq!(padded.spec.boundary, Some(Boundary::Zero));
+
+    // A runtime offset's sign is unknown at launch, so it arms the guard conservatively.
+    let dynamic = launch
+        .arg(binding(&client, &[64, 64]))
+        .gathered(window(1, 1, Offset::Dynamic))
+        .build();
+    assert_eq!(dynamic.spec.boundary, Some(Boundary::Zero));
+
+    let shifted = launch
+        .arg(binding(&client, &[96, 64]))
+        .gathered(window(1, 1, 1))
+        .build();
+    assert_eq!(shifted.spec.boundary, None);
+}
+
+/// The stated mapping replaces the labeling whole, so a leftover `subspace` describes nothing and
+/// is refused rather than silently dropped.
+#[test]
+#[should_panic(expected = "nothing left to describe")]
+fn arg_gathered_alongside_a_subspace_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+    let _ = launch
+        .arg(binding(&client, &[79, 64]))
+        .subspace(&[M, N])
+        .gathered(window(1, 1, 0))
+        .build();
+}
+
+/// One map per buffer dim: a mapping that addresses fewer dims than the binding has would read
+/// every coarser stride as if it were the operand's own.
+#[test]
+#[should_panic(expected = "addresses 2 dims but the binding has 3")]
+fn arg_gathered_rank_mismatch_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+    let _ = launch
+        .arg(binding(&client, &[4, 79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+}
+
+/// The gather contract runs on the caller's thread now that the builder knows the served width:
+/// the innermost dim is addressed in lines, so it must be one logical axis at coefficient 1.
+#[test]
+#[should_panic(expected = "innermost physical axis")]
+fn arg_gathered_validates_the_innermost_dim() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M]);
+    let _ = launch
+        .arg(binding(&client, &[64, 79]))
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::of(M),
+                PhysicalAxisMap::affine(&[(N, 1), (K, 2)]),
+            ],
+        ))
+        .vectorize(4)
+        .checked(false)
+        .build();
+}
+
+/// An axis sharing its dim with another has no extent of its own to read back here, but the
+/// operand is free to ride it [`Dynamic`] anyway: whoever maps it identically states its size when
+/// the op walks it. The builder sees one operand, so it is not the place to rule on that; an axis
+/// no operand answers for is reported by `witnessed_space`, at expansion.
+#[test]
+fn arg_gathered_dynamic_axis_is_accepted() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // `K` shares the gathered dim with `M`, so neither reads an extent off *this* operand.
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N, K]);
+    let _ = launch
+        .arg(binding(&client, &[79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+}
+
+/// The axis a gather does identity-map still reads its own extent, so it is free to stay runtime
+/// alongside the two that share a dim.
+#[test]
+fn arg_gathered_identity_axis_may_stay_dynamic() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+
+    let input = launch
+        .arg(binding(&client, &[79, 64]))
+        .gathered(window(1, 1, 0))
+        .build();
+    assert_eq!(input.spec.axes(), &[M, K, N]);
+    assert!(launch.space().is_dynamic(N));
+    assert!(!launch.space().is_dynamic(M));
+}
+
+/// A runtime coefficient sizes its compacted window by its declared `max`, so the smem it stages
+/// into holds every window the launch can then ask for.
+#[test]
+fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .residence(&[Residence::Smem])
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::scaled(&[
+                    (M, Scale::Dynamic { max: 2 }),
+                    (K, Scale::Dynamic { max: 3 }),
+                ]),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
+}
+
+/// A static rational projection stages uncompacted into shared memory.
+#[test]
+fn arg_gathered_rational_stages() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .residence(&[Residence::Smem])
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(4),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
+}
+
+/// A dynamic divisor stages against its `min`, the smallest divisor and so the widest window any
+/// launch can ask for.
+#[test]
+fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let _ = staged
+        .arg(binding(&client, &[79, 64]))
+        .residence(&[Residence::Smem])
+        .gathered(Projection::new(
+            &[M, K, N],
+            &[
+                PhysicalAxisMap::affine(&[(M, 3), (K, 4)]).over(Divisor::Dynamic { min: 4 }),
+                PhysicalAxisMap::of(N),
+            ],
+        ))
+        .build();
+}
+
+/// The same shape with a divisor its coefficients cancel: `⌊(8m + 4k)/4⌋` steps like `2m + k`, so
+/// `over` reduces it away and what reaches the stage is a plain strided gather, which compacts.
+#[test]
+fn arg_gathered_cancelling_divisor_stages() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let staged = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::cube(CubeAxis::X, 16))
+                .axis(N, Cut::cube(CubeAxis::Y, 32))
+                .axis(K, Cut::sequential(16))
+        })
+        .build()
+        .launcher_over(&client, &[N]);
+    let projection = Projection::new(
+        &[M, K, N],
+        &[
+            PhysicalAxisMap::affine(&[(M, 8), (K, 4)]).over(4),
+            PhysicalAxisMap::of(N),
+        ],
+    );
+    assert!(!projection.is_rational());
+    let _ = staged
+        .arg(binding(&client, &[512, 64]))
+        .residence(&[Residence::Smem])
+        .gathered(projection)
+        .build();
 }
 
 // ---- Launcher::vector_size -------------------------------------------------
@@ -203,7 +501,7 @@ fn arg_checked_and_vectorized_panics() {
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let _ = launch
-        .arg::<f32>(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
         .vectorize(4)
         .build();
@@ -225,13 +523,13 @@ fn arg_more_batch_dims_than_axes_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
     let _ = launch
-        .arg::<f32>(binding(&client, &[4, 3, 64, 16]))
+        .arg(binding(&client, &[4, 3, 64, 16]))
         .subspace(&[M, K])
         .batches(&[B1])
         .build();
 }
 
-// ---- StridedTileArgLaunch::quantized ---------------------------------------
+// ---- StridedTileSource::quantized ------------------------------------------
 
 /// Attach `scheme` to an `M×K` operand served in `v`-wide lines. Every rule below is also an
 /// in-kernel assumption, so the launch is the one place a violation can still be seen: an
@@ -239,13 +537,17 @@ fn arg_more_batch_dims_than_axes_panics() {
 fn quantize(v: usize, scheme: QuantScheme) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
-    let _ = StridedTileArgLaunch::<i8, _>::strided(
-        binding(&client, &[64, 16]).into_tensor_arg(),
-        v,
-        space.clone(),
-        Storage::of(2, space.rank()),
-    )
-    .quantized(binding(&client, &[1, 8]).into_tensor_arg(), scheme);
+    let _ = StridedOperand::source(binding(&client, &[64, 16]))
+        .space(&space)
+        .subspace(&[M, K])
+        .vectorize(v)
+        .checked(false)
+        .quantized(
+            binding(&client, &[1, 8]).into_tensor_arg(),
+            scheme,
+            DequantAt::Read,
+        )
+        .build();
 }
 
 fn quant_scheme(level: QuantLevel) -> QuantScheme {

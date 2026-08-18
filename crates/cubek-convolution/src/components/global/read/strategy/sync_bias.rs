@@ -53,7 +53,7 @@ impl LoadMaxRoundPlaneCount for SyncBiasLoading {
         tiles_per_stage: u32,
         vector_size: VectorSize,
         plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         let elements_per_stage = elements_per_tile * tiles_per_stage;
         let num_vectors = elements_per_stage / vector_size as u32;
@@ -153,7 +153,7 @@ pub(crate) fn load_and_store_vector<EG: Numeric, NG: Size, ES: Numeric, NS: Size
     let swizzle = stage.swizzle;
     let slice = stage.as_slice_mut();
 
-    let type_size = Vector::<ES, NS>::type_size();
+    let type_size = Vector::<ES, NS>::size();
     let vector_read = view.read_checked((0, unit_position));
     let stage_offs = swizzle.apply(unit_position, type_size);
 

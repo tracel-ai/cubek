@@ -1,5 +1,5 @@
 use cubecl::{
-    Runtime, TestRuntime, ir::AddressType, ir::MatrixLayout as IrMatrixLayout, prelude::*,
+    Runtime, TestRuntime, cmma::MatrixLayout as IrMatrixLayout, ir::AddressType, prelude::*,
     zspace::Shape,
 };
 use cubek_std::MatrixLayout;
@@ -56,8 +56,7 @@ fn build_matmul_problem(p: &GemvProblem) -> MatmulProblem {
         ProblemKind::VecMat => (1, p.out_dim, p.k_dim),
         ProblemKind::MatVec => (p.out_dim, 1, p.k_dim),
     };
-    let global_dtypes =
-        MatmulElems::from_single_dtype(f32::as_type_native_unchecked()).as_global_elems();
+    let global_dtypes = MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems();
     MatmulProblem::from_parameters(
         m,
         n,

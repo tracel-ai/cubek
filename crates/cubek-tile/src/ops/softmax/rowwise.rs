@@ -32,7 +32,7 @@ impl<EA: Float> Tile<EA> {
                     let val = select(
                         masked,
                         EA::min_value(),
-                        view.read(r * cols + c).extract(0) * scale,
+                        view.read(r * cols + c).extract(0usize) * scale,
                     );
                     view.write(r * cols + c, Vector::cast_from(val));
                 }
@@ -52,7 +52,7 @@ impl<EA: Float> Tile<EA> {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
                 for c in 0..cols {
-                    acc[ri] = max(acc[ri], view.read(r * cols + c).extract(0));
+                    acc[ri] = max(acc[ri], view.read(r * cols + c).extract(0usize));
                 }
             }
         }
@@ -73,7 +73,7 @@ impl<EA: Float> Tile<EA> {
                 let live = EA::cast_from(rowwise[ri] >= threshold);
                 let safe_m = clamp_min(rowwise[ri], threshold);
                 for c in 0..cols {
-                    let e = live * (view.read(r * cols + c).extract(0) - safe_m).exp();
+                    let e = live * (view.read(r * cols + c).extract(0usize) - safe_m).exp();
                     view.write(r * cols + c, Vector::cast_from(e));
                 }
             }
@@ -92,7 +92,7 @@ impl<EA: Float> Tile<EA> {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
                 for c in 0..cols {
-                    acc[ri] += view.read(r * cols + c).extract(0);
+                    acc[ri] += view.read(r * cols + c).extract(0usize);
                 }
             }
         }
@@ -134,12 +134,12 @@ impl<EA: Float> Tile<EA> {
         while r < rows {
             let mut mstar = EA::min_value();
             for t in 0..splits {
-                mstar = max(mstar, mf.read(t * rows + r).extract(0));
+                mstar = max(mstar, mf.read(t * rows + r).extract(0usize));
             }
             let mut lstar = EA::from_int(0);
             for t in 0..splits {
-                let w = (mf.read(t * rows + r).extract(0) - mstar).exp();
-                lstar += lf.read(t * rows + r).extract(0) * w;
+                let w = (mf.read(t * rows + r).extract(0usize) - mstar).exp();
+                lstar += lf.read(t * rows + r).extract(0usize) * w;
                 wf.write(t * rows + r, Vector::cast_from(w));
             }
             rf.write(r, Vector::cast_from(masked_recip::<EA>(lstar)));
@@ -192,7 +192,7 @@ impl<EA: Float> Tile<EA> {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            let v = view.read(i).extract(0) * f.read(i / cols).extract(0);
+            let v = view.read(i).extract(0usize) * f.read(i / cols).extract(0usize);
             view.write(i, Vector::cast_from(v));
             i += workers;
         }
@@ -213,7 +213,7 @@ impl<EA: Float> Tile<EA> {
                 for c in 0..cols {
                     dst.write(
                         r * cols + c,
-                        Vector::cast_from(src.read(r * cols + c).extract(0)),
+                        Vector::cast_from(src.read(r * cols + c).extract(0usize)),
                     );
                 }
             }

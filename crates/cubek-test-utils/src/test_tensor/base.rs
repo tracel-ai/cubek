@@ -2,7 +2,6 @@ use cubecl::{
     TestRuntime,
     ir::ElemType,
     prelude::*,
-    quant::scheme::QuantStore,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
@@ -50,43 +49,21 @@ pub struct TestTensor {
 
 #[derive(Clone, Debug)]
 pub enum InputDataType {
-    Standard(StorageType),
+    Standard(ElemType),
     Quantized(QuantScheme),
 }
 
-impl From<StorageType> for InputDataType {
-    fn from(dtype: StorageType) -> Self {
+impl From<ElemType> for InputDataType {
+    fn from(dtype: ElemType) -> Self {
         InputDataType::Standard(dtype)
     }
 }
 
-impl From<cubecl::ir::ElemType> for InputDataType {
-    fn from(elem: cubecl::ir::ElemType) -> Self {
-        InputDataType::Standard(StorageType::Scalar(elem))
-    }
-}
-
 impl InputDataType {
-    pub fn storage_type(&self) -> StorageType {
+    pub fn elem_type(&self) -> ElemType {
         match self {
-            InputDataType::Standard(dtype) => *dtype,
-            InputDataType::Quantized(scheme) => {
-                let elem = ElemType::from_quant_value(scheme.value);
-
-                match scheme.store {
-                    QuantStore::Native => StorageType::Scalar(elem),
-                    QuantStore::PackedNative(_) => {
-                        // Uses the format's inherent packing factor (e.g., E2M1x2)
-                        StorageType::Packed(elem, scheme.native_packing())
-                    }
-                    QuantStore::PackedU32(_) => {
-                        // Usually represents multiple small quants in a 32-bit register
-                        // factor would be 4 for 8-bit, 8 for 4-bit, etc.
-                        let factor = scheme.num_quants();
-                        StorageType::Packed(elem, factor)
-                    }
-                }
-            }
+            InputDataType::Standard(elem_type) => *elem_type,
+            InputDataType::Quantized(_) => todo!(),
         }
     }
 
@@ -151,7 +128,7 @@ impl TestInput {
             InputDataType::Quantized(_scheme) => {
                 // For quantized input, the initial data is generated as f32 (Standard)
                 // then it will be quantized in generate_test_tensor.
-                f32::as_type_native_unchecked().storage_type()
+                f32::elem_type_native()
             }
         };
 
@@ -246,7 +223,7 @@ impl TestInput {
 pub struct BaseInputSpec {
     pub client: ComputeClient<TestRuntime>,
     pub shape: Shape,
-    pub dtype: StorageType,
+    pub dtype: ElemType,
     pub layout: LayoutSpec,
 }
 
@@ -318,9 +295,9 @@ impl TestInputBuilder {
     }
 
     fn finalize(self, data_kind: DataKind) -> TestInput {
-        let dtype = self.dtype.unwrap_or_else(|| {
-            InputDataType::Standard(f32::as_type_native_unchecked().storage_type())
-        });
+        let dtype = self
+            .dtype
+            .unwrap_or_else(|| InputDataType::Standard(f32::elem_type_native()));
         TestInput::new(self.client, self.shape, dtype, self.layout, data_kind)
     }
 

@@ -1,4 +1,4 @@
-use cubecl::{ir::StorageType, prelude::*};
+use cubecl::prelude::*;
 use half::{bf16, f16};
 
 use crate::definition::MatmulIdent;
@@ -231,53 +231,44 @@ pub type AccRS<MT> = <Acc<MT> as MatrixTypes>::RegisterSize;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct MatmulElems {
-    pub lhs_global: StorageType,
-    pub rhs_global: StorageType,
-    pub acc_global: StorageType,
-    pub lhs_stage: StorageType,
-    pub rhs_stage: StorageType,
-    pub acc_stage: StorageType,
-    pub lhs_register: StorageType,
-    pub rhs_register: StorageType,
-    pub acc_register: StorageType,
+    pub lhs_global: ElemType,
+    pub rhs_global: ElemType,
+    pub acc_global: ElemType,
+    pub lhs_stage: ElemType,
+    pub rhs_stage: ElemType,
+    pub acc_stage: ElemType,
+    pub lhs_register: ElemType,
+    pub rhs_register: ElemType,
+    pub acc_register: ElemType,
 }
 
 #[derive(Clone, Debug)]
 pub struct MatmulGlobalElems {
-    pub lhs: StorageType,
-    pub rhs: StorageType,
-    pub out: StorageType,
+    pub lhs: ElemType,
+    pub rhs: ElemType,
+    pub out: ElemType,
 }
 
 impl MatmulElems {
     pub fn new_deprecated<MP: MatmulPrecision>() -> Self {
         Self {
-            lhs_global: <MP::Lhs as MatrixPrecision>::Global::as_type_native_unchecked()
-                .storage_type(),
-            rhs_global: <MP::Rhs as MatrixPrecision>::Global::as_type_native_unchecked()
-                .storage_type(),
-            acc_global: <MP::Acc as MatrixPrecision>::Global::as_type_native_unchecked()
-                .storage_type(),
-            lhs_stage: <MP::Lhs as MatrixPrecision>::Stage::as_type_native_unchecked()
-                .storage_type(),
-            rhs_stage: <MP::Rhs as MatrixPrecision>::Stage::as_type_native_unchecked()
-                .storage_type(),
-            acc_stage: <MP::Acc as MatrixPrecision>::Stage::as_type_native_unchecked()
-                .storage_type(),
-            lhs_register: <MP::Lhs as MatrixPrecision>::Register::as_type_native_unchecked()
-                .storage_type(),
-            rhs_register: <MP::Rhs as MatrixPrecision>::Register::as_type_native_unchecked()
-                .storage_type(),
-            acc_register: <MP::Acc as MatrixPrecision>::Register::as_type_native_unchecked()
-                .storage_type(),
+            lhs_global: <MP::Lhs as MatrixPrecision>::Global::elem_type_native(),
+            rhs_global: <MP::Rhs as MatrixPrecision>::Global::elem_type_native(),
+            acc_global: <MP::Acc as MatrixPrecision>::Global::elem_type_native(),
+            lhs_stage: <MP::Lhs as MatrixPrecision>::Stage::elem_type_native(),
+            rhs_stage: <MP::Rhs as MatrixPrecision>::Stage::elem_type_native(),
+            acc_stage: <MP::Acc as MatrixPrecision>::Stage::elem_type_native(),
+            lhs_register: <MP::Lhs as MatrixPrecision>::Register::elem_type_native(),
+            rhs_register: <MP::Rhs as MatrixPrecision>::Register::elem_type_native(),
+            acc_register: <MP::Acc as MatrixPrecision>::Register::elem_type_native(),
         }
     }
 
     pub fn from_globals(global_elems: &MatmulGlobalElems) -> Self {
-        let acc_type = if global_elems.out == half::f16::as_type_native_unchecked().storage_type()
-            || global_elems.out == half::bf16::as_type_native_unchecked().storage_type()
+        let acc_type = if global_elems.out == half::f16::elem_type_native()
+            || global_elems.out == half::bf16::elem_type_native()
         {
-            f32::as_type_native_unchecked().storage_type()
+            f32::elem_type_native()
         } else {
             global_elems.out
         };
@@ -295,8 +286,7 @@ impl MatmulElems {
         }
     }
 
-    pub fn from_single_dtype(dtype: Type) -> Self {
-        let dtype = dtype.storage_type();
+    pub fn from_single_dtype(dtype: ElemType) -> Self {
         Self {
             lhs_global: dtype,
             rhs_global: dtype,
@@ -310,7 +300,7 @@ impl MatmulElems {
         }
     }
 
-    pub fn global(&self, ident: MatmulIdent) -> StorageType {
+    pub fn global(&self, ident: MatmulIdent) -> ElemType {
         match ident {
             MatmulIdent::Lhs => self.lhs_global,
             MatmulIdent::Rhs => self.rhs_global,
@@ -318,7 +308,7 @@ impl MatmulElems {
         }
     }
 
-    pub fn stage(&self, ident: MatmulIdent) -> StorageType {
+    pub fn stage(&self, ident: MatmulIdent) -> ElemType {
         match ident {
             MatmulIdent::Lhs => self.lhs_stage,
             MatmulIdent::Rhs => self.rhs_stage,
@@ -326,7 +316,7 @@ impl MatmulElems {
         }
     }
 
-    pub fn register(&self, ident: MatmulIdent) -> StorageType {
+    pub fn register(&self, ident: MatmulIdent) -> ElemType {
         match ident {
             MatmulIdent::Lhs => self.lhs_register,
             MatmulIdent::Rhs => self.rhs_register,

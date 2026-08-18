@@ -18,20 +18,20 @@ use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReduceDtypes {
-    pub input: StorageType,
-    pub output: StorageType,
-    pub accumulation: StorageType,
+    pub input: ElemType,
+    pub output: ElemType,
+    pub accumulation: ElemType,
 }
 
 /// Dtypes for a reduce that writes its values and their indices at once.
 #[derive(Clone, Copy, Debug)]
 pub struct ReduceWithIndicesDtypes {
-    pub input: StorageType,
+    pub input: ElemType,
     /// Dtype of the values output.
-    pub values: StorageType,
+    pub values: ElemType,
     /// Dtype of the indices output.
-    pub indices: StorageType,
-    pub accumulation: StorageType,
+    pub indices: ElemType,
+    pub accumulation: ElemType,
 }
 
 impl ReduceWithIndicesDtypes {
@@ -64,7 +64,7 @@ fn prepare_reduce_launch<Run: Runtime>(
     dtypes: ReduceDtypes,
     inst: ReduceOperationConfig,
     address_type: AddressType,
-    second_output: Option<StorageType>,
+    second_output: Option<ElemType>,
 ) -> Result<(ReduceBlueprint, ReduceLaunchSettings, usize), ReduceError> {
     // Number of distinct reductions = product of non-reduce input dims.
     let reduce_len = input.shape[reduce_axis];
@@ -204,9 +204,9 @@ pub fn reduce_kernel<
     out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: ReduceOperationConfig,
-    #[define(In)] _input_dtype: StorageType,
-    #[define(Out)] _output_dtype: StorageType,
-    #[define(Acc)] _acc_dtype: StorageType,
+    #[define(In)] _input_dtype: ElemType,
+    #[define(Out)] _output_dtype: ElemType,
+    #[define(Acc)] _acc_dtype: ElemType,
 ) {
     let (input, mut output) = init_tensors::<RA, In, InSize, Out, OutSize>(input, output);
     reduce_kernel_virtual::<In, InSize, Out, OutSize, Acc>(
@@ -366,10 +366,10 @@ pub fn reduce_with_indices_kernel<
     out_vec_axis: usize,
     #[comptime] blueprint: ReduceBlueprint,
     #[comptime] config: R::Config,
-    #[define(In)] _input_dtype: StorageType,
-    #[define(Out)] _output_dtype: StorageType,
-    #[define(Idx)] _indices_dtype: StorageType,
-    #[define(Acc)] _acc_dtype: StorageType,
+    #[define(In)] _input_dtype: ElemType,
+    #[define(Out)] _output_dtype: ElemType,
+    #[define(Idx)] _indices_dtype: ElemType,
+    #[define(Acc)] _acc_dtype: ElemType,
 ) {
     let (input_values, mut output) = init_tensors::<RA, In, InSize, Out, OutSize>(input, output);
     // Pairs the same input with the index output to build its virtual tensor;

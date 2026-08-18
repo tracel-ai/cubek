@@ -144,7 +144,7 @@ fn dequantize_symmetric_packed_kernel<F: Float, NF: Size, FS: Numeric, QS: Int, 
     scales: ScalesView<'_, FS>,
     mut output: LinearViewMut<'_, Vector<F, NF>>,
     #[comptime] scheme: QuantScheme,
-    #[define(F, FS, QS)] _dtypes: [StorageType; 3],
+    #[define(F, FS, QS)] _dtypes: [ElemType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -174,7 +174,7 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
     input: LinearView<'_, Vector<Q, N>>,
     scale: ScalesView<'_, FS>,
     mut output: LinearViewMut<'_, Vector<F, N>>,
-    #[define(F, FS, Q)] _dtypes: [StorageType; 3],
+    #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
     if !input.is_in_bounds(ABSOLUTE_POS) {
         terminate!();
@@ -198,9 +198,9 @@ pub fn launch_ref<R: Runtime>(
     output: TensorBinding<R>,
     scale: TensorBinding<R>,
     scheme: &QuantScheme,
-    output_dtype: StorageType,
+    output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
-    let scale_dtype: StorageType = ElemType::from_quant_param(scheme.param).into();
+    let scale_dtype: ElemType = ElemType::from_quant_param(scheme.param);
 
     match scheme {
         QuantScheme {
@@ -258,8 +258,8 @@ fn dequantize_packed<R: Runtime>(
     scheme: QuantScheme,
     scale: TensorBinding<R>,
     output: TensorBinding<R>,
-    output_dtype: StorageType,
-    scale_dtype: StorageType,
+    output_dtype: ElemType,
+    scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems_input: usize = input.shape.iter().product();
     let input_dtype = packed_storage_elem(&scheme);
@@ -304,7 +304,7 @@ fn dequantize_packed<R: Runtime>(
                 scales_view(input, scale, 1, &scheme),
                 linear_view(output),
                 scheme,
-                [output_dtype, scale_dtype, input_dtype.into()],
+                [output_dtype, scale_dtype, input_dtype],
             )
         },
         QuantScheme { .. } => panic!("Unsupported quantization scheme {scheme:?}"),
@@ -319,8 +319,8 @@ fn dequantize_native<R: Runtime>(
     scheme: QuantScheme,
     scale: TensorBinding<R>,
     output: TensorBinding<R>,
-    output_dtype: StorageType,
-    scale_dtype: StorageType,
+    output_dtype: ElemType,
+    scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let num_elems: usize = input.shape.iter().product();
     let input_dtype = ElemType::from_quant_value(scheme.value);
@@ -359,7 +359,7 @@ fn dequantize_native<R: Runtime>(
                     linear_view(input.clone()),
                     scales_view(input, scale, 1, &scheme),
                     linear_view(output),
-                    [output_dtype, scale_dtype, input_dtype.into()],
+                    [output_dtype, scale_dtype, input_dtype],
                 )
             }
         }

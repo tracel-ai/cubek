@@ -76,7 +76,7 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
     args: Pool2dDirectArgs,
     #[comptime] kernel_size: (u32, u32),
     #[comptime] config: S::Config,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     if ABSOLUTE_POS >= working_units {
         terminate!();

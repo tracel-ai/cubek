@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use crate::*;
+use crate::{instruction::sum, *};
 
 // The block's line width, as a scope-registered size rather than a generic. `RA` names the
 // vector element `data` is allocated at; `alloc` binds it to the promoting tile's width with
@@ -14,7 +14,7 @@ use crate::*;
 // CPU backend refuses a vectorized operand — allocate at the vector element instead.)
 define_size!(pub(crate) RA);
 
-/// An `mr × nr` block of `RA`-wide accumulators living in registers, the [`Leaf::Register`]
+/// An `mr × nr` block of `RA`-wide accumulators living in registers, the [`Leaf::Memory`]
 /// encoding of a [`PlaneTile`].
 ///
 /// The block exists so the software leaf can accumulate the way the hardware ones do. It used
@@ -78,21 +78,23 @@ impl<T: Numeric> RegisterData<T> {
     }
 
     pub(crate) fn zero(&mut self) {
+        self.init(T::from_int(0));
+    }
+
+    pub(crate) fn init(&mut self, val: T) {
         let count = comptime!(self.mr * self.nr);
-        // Indexed rather than iterated: `#[cube]` traces this loop, and the expansion has no
-        // `iter_mut` to trace through.
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for i in 0..count {
-            self.data[i] = Vector::<T, RA>::cast_from(0u32);
+            self.data[i] = Vector::<T, RA>::cast_from(val);
         }
     }
 
     /// Write the block into `mem`'s window, casting down to its element — the same manual,
     /// row-major store the mma fragment does, over lines instead of lane positions.
     ///
-    /// Under [`LaneShare::Partial`] each lane holds only part of every cell, so the block is not
-    /// the answer until the plane is summed: combine first, then let one lane write. This is
+    /// Under a folded [`LaneShare`] each lane holds only part of every cell, so the block is not
+    /// the answer until those lanes are combined: fold first, then let one of them write. This is
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
     /// every lane writing its own fraction over the last.
     pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
@@ -123,7 +125,7 @@ impl<T: Numeric> RegisterData<T> {
                     }
                 }
             }
-            LaneShare::Partial =>
+            LaneShare::Plane =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
@@ -131,6 +133,24 @@ impl<T: Numeric> RegisterData<T> {
                     for n in 0..comptime!(self.nr) {
                         let combined = plane_sum(self.data[comptime!(i * self.nr + n)]);
                         if UNIT_POS_X == 0 {
+                            let offset = (i as u32) * line_stride + comptime!(n as u32);
+                            out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
+                        }
+                    }
+                }
+            }
+            LaneShare::Group { fold_mask } =>
+            {
+                #[unroll]
+                for i in 0..comptime!(self.mr) {
+                    #[unroll]
+                    for n in 0..comptime!(self.nr) {
+                        let combined = sum::group::<T, RA>(
+                            self.data[comptime!(i * self.nr + n)],
+                            comptime!(fold_mask),
+                        );
+                        let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
+                        if lane_in_group == 0 {
                             let offset = (i as u32) * line_stride + comptime!(n as u32);
                             out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
                         }
@@ -181,7 +201,7 @@ impl<T: Numeric> RegisterData<T> {
             #[unroll(unroll)]
             for i in 0..mr {
                 let lhs_line = lhs_mat.read((i as u32, (p / lw) as u32));
-                let a = Vector::<T, RA>::cast_from(lhs_line.extract(p % lw));
+                let a = Vector::<T, RA>::cast_from(lhs_line.extract_dynamic(p % lw));
                 #[unroll(unroll)]
                 for n in 0..nr {
                     self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);

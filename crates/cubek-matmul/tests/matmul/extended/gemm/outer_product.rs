@@ -232,7 +232,10 @@ pub fn matmat_batched_col_col() {
 }
 
 // =====================================================================
-// Mat × Mat (Col, Row) — Variant::OuterNLhsStrided.
+// Mat × Mat (Col, Row) — no variant reads this layout pair: `launch_ref`
+// normalizes it to Dot where planes exist, and the routine rejects it on
+// CPU (the `cpu_gemm` routine serves it there). Kept as coverage that
+// both paths give the right answer, whichever one runs.
 // =====================================================================
 
 fn matmat_col_row() -> (MatrixLayout, MatrixLayout) {
@@ -263,6 +266,44 @@ pub fn matmat_large_square_col_row() {
         m: 256,
         n: 256,
         k: 256,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        lhs_layout,
+        rhs_layout,
+        elems: elems(),
+        strategy: outer_product(),
+    }
+    .test();
+}
+
+/// A transposed lhs whose M is not a multiple of the vector size — the
+/// `a.transpose().matmul(b)` shape from burn#5304. The Col-Row variant read
+/// the lhs as M-vectors and silently returned another row's data; no variant
+/// claims the layout now.
+#[test]
+pub fn matmat_col_row_m_not_vector_multiple() {
+    let (lhs_layout, rhs_layout) = matmat_col_row();
+    GemmTestCase {
+        m: 7,
+        n: 8,
+        k: 8,
+        lhs_batch: 1,
+        rhs_batch: 1,
+        lhs_layout,
+        rhs_layout,
+        elems: elems(),
+        strategy: outer_product(),
+    }
+    .test();
+}
+
+#[test]
+pub fn matmat_large_col_row_m_not_vector_multiple() {
+    let (lhs_layout, rhs_layout) = matmat_col_row();
+    GemmTestCase {
+        m: 33,
+        n: 64,
+        k: 64,
         lhs_batch: 1,
         rhs_batch: 1,
         lhs_layout,

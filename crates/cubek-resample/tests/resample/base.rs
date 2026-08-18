@@ -1,5 +1,5 @@
 use cubecl::prelude::*;
-use cubecl::{TestRuntime, client::ComputeClient, ir::StorageType, std::tensor::TensorHandle};
+use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle};
 use cubek_resample::definition::ResampleArgsLaunch;
 use cubek_resample::{definition::Resample, resample};
 use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
@@ -7,7 +7,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, assert_equals_approx};
 pub fn build_output_tensor(
     client: &ComputeClient<TestRuntime>,
     output_shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), output_shape)
         .dtype(dtype)
@@ -42,30 +42,19 @@ pub fn run_test(
     config: Resample,
 ) {
     let input_handle = TestInput::builder(client.clone(), input_shape)
-        .dtype(f32::as_type_native_unchecked().storage_type())
+        .dtype(f32::elem_type_native())
         .custom(input_data)
         .generate_without_host_data();
     let input = input_handle.clone().binding();
 
-    let output_handle = build_output_tensor(
-        client,
-        output_shape.clone(),
-        f32::as_type_native_unchecked().storage_type(),
-    );
+    let output_handle = build_output_tensor(client, output_shape.clone(), f32::elem_type_native());
     let output = output_handle.clone().binding();
 
-    resample(
-        client,
-        input,
-        output,
-        args,
-        config,
-        f32::as_type_native_unchecked().storage_type(),
-    );
+    resample(client, input, output, args, config, f32::elem_type_native());
 
     let actual = output_host_f32(client, output_handle);
     let expected_handle = TestInput::builder(client.clone(), output_shape)
-        .dtype(f32::as_type_native_unchecked().storage_type())
+        .dtype(f32::elem_type_native())
         .custom(expected_data)
         .generate_without_host_data();
     let expected = output_host_f32(client, expected_handle);

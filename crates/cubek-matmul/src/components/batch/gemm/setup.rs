@@ -13,8 +13,7 @@ use crate::{
         batch::{
             BatchMatmulFamily, CheckBounds,
             gemm::{
-                Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant, config::layout_for,
-                matmul::matmul_entry,
+                Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant, matmul::matmul_entry,
             },
         },
         global::memory::GlobalLayoutConfig,
@@ -29,6 +28,8 @@ use crate::{
 /// Unified GEMM family. Selects a kernel variant from operand layouts:
 /// `Dot` (Row-Col) supports any `plane_dim` (plane-cooperative reduction
 /// over K); `OuterM` / `OuterN` are CPU-only (require `plane_dim == 1`).
+/// Col-Row has no variant — `launch_ref` normalizes it to Dot where planes
+/// exist, and the CPU serves it through the `cpu_gemm` routine.
 /// Also handles GEMV when one of `m`, `n` is 1 — the vector side is
 /// classified by `OperandLayout::Vector` and uses a layout-appropriate
 /// variant.
@@ -39,7 +40,7 @@ pub struct GemmBlueprint {
     pub dtypes: MatmulElems,
     pub num_planes: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
-    pub kind: MatmulOperandLayouts,
+    pub variant: Variant,
     pub planes_split: PlanesSplit,
     pub check_bounds: CheckBounds,
 }
@@ -47,7 +48,7 @@ pub struct GemmBlueprint {
 impl Blueprint for GemmBlueprint {
     fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: layout_for(self.kind.lhs, MatrixLayout::RowMajor),
+            matrix_layout: self.variant.lhs_layout(),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -55,7 +56,7 @@ impl Blueprint for GemmBlueprint {
 
     fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
         GlobalLayoutConfig {
-            matrix_layout: layout_for(self.kind.rhs, MatrixLayout::ColMajor),
+            matrix_layout: self.variant.rhs_layout(),
             check_row_bounds: false,
             check_col_bounds: false,
         }
@@ -92,7 +93,7 @@ impl BatchMatmulFamily<()> for GemmFamily {
         Ok(GemmConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
-            kind: blueprint.kind,
+            variant: blueprint.variant,
             planes_split: blueprint.planes_split,
             check_bounds: blueprint.check_bounds,
         })
@@ -166,11 +167,10 @@ impl BatchMatmulFamily<()> for GemmFamily {
         }
 
         let vs = vector_sizes.lhs;
-        let variant = blueprint.kind.variant();
 
         // Per-variant constraints. Dot supports plane-cooperative K reduction;
         // OuterM/OuterN are CPU-only because they don't reduce across units.
-        match variant {
+        match blueprint.variant {
             Variant::Dot => {
                 let tile_dim = plane_dim * vs;
                 if !problem.k.is_multiple_of(tile_dim) {
@@ -180,10 +180,10 @@ impl BatchMatmulFamily<()> for GemmFamily {
                     ))));
                 }
             }
-            Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
+            Variant::OuterN => {
                 if plane_dim > 1 {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "OuterN variants require plane_dim == 1 (CPU-only), got {}",
+                        "OuterN variant requires plane_dim == 1 (CPU-only), got {}",
                         plane_dim,
                     ))));
                 }
@@ -195,7 +195,7 @@ impl BatchMatmulFamily<()> for GemmFamily {
                 }
                 if !problem.n.is_multiple_of(vs) {
                     return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                        "OuterN variants need n ({}) divisible by vector_size ({})",
+                        "OuterN variant needs n ({}) divisible by vector_size ({})",
                         problem.n, vs,
                     ))));
                 }
@@ -222,11 +222,11 @@ impl BatchMatmulFamily<()> for GemmFamily {
             }
         }
 
-        let derived = MatmulOperandLayouts::from_problem(problem)?;
-        if derived != blueprint.kind {
+        let derived = MatmulOperandLayouts::from_problem(problem)?.variant()?;
+        if derived != blueprint.variant {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Blueprint kind {:?} disagrees with problem kind {:?}",
-                blueprint.kind, derived
+                "Blueprint variant {:?} disagrees with problem variant {:?}",
+                blueprint.variant, derived
             ))));
         }
 

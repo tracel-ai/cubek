@@ -5,7 +5,11 @@
 //! at expand time, identities pass through, so comptime-ness rides plain `u32`/`usize`
 //! values through walks and layouts, and one code path serves both.
 
-use cubecl::ir::{ConstantValue, Scope, Value};
+use cubecl::ir::{
+    ConstantValue, ExpandValue, Scope,
+    interfaces::{ScalarType, TypedExt},
+    try_cast_ty,
+};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::unexpanded;
@@ -46,6 +50,7 @@ pub trait Fold: Sized {
 
 impl Fold for u32 {}
 impl Fold for usize {}
+impl Fold for i32 {}
 
 /// Folding reductions over the elements at comptime `picks`: a sequence accumulates
 /// by chaining fresh values, where a `let mut` accumulator would land in a mutable
@@ -73,13 +78,21 @@ fn constant<C: Int>(e: &NativeExpand<C>) -> Option<u64> {
 }
 
 /// A constant expand element of `e`'s type holding `v`.
-fn constant_like<C: Int>(v: u64, e: &NativeExpand<C>) -> NativeExpand<C> {
-    Value::constant(v.into(), e.expand.value_type()).into()
+fn constant_like<C: Int>(scope: &Scope, v: u64, e: &NativeExpand<C>) -> NativeExpand<C> {
+    let ty = match e.expand {
+        ExpandValue::Value(val) => {
+            let ctx = scope.ctx();
+            let scalar = val.try_get_scalar_elem_ty(ctx).unwrap().deref(ctx);
+            try_cast_ty!(scalar, ctx, dyn ScalarType).elem_type(ctx)
+        }
+        ExpandValue::Constant { ty, .. } => ty,
+    };
+    ExpandValue::constant(v.into(), ty).into()
 }
 
 fn fold_add<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
     match (constant(&lhs), constant(&rhs)) {
-        (Some(a), Some(b)) => constant_like(a + b, &lhs),
+        (Some(a), Some(b)) => constant_like(scope, a + b, &lhs),
         (Some(0), None) => rhs,
         (None, Some(0)) => lhs,
         _ => AddExpand::__expand_add_method(lhs, scope, rhs),
@@ -88,7 +101,7 @@ fn fold_add<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
 
 fn fold_sub<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
     match (constant(&lhs), constant(&rhs)) {
-        (Some(a), Some(b)) if a >= b => constant_like(a - b, &lhs),
+        (Some(a), Some(b)) if a >= b => constant_like(scope, a - b, &lhs),
         (None, Some(0)) => lhs,
         _ => SubExpand::__expand_sub_method(lhs, scope, rhs),
     }
@@ -96,8 +109,8 @@ fn fold_sub<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
 
 fn fold_mul<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
     match (constant(&lhs), constant(&rhs)) {
-        (Some(a), Some(b)) => constant_like(a * b, &lhs),
-        (Some(0), None) | (None, Some(0)) => constant_like(0, &lhs),
+        (Some(a), Some(b)) => constant_like(scope, a * b, &lhs),
+        (Some(0), None) | (None, Some(0)) => constant_like(scope, 0, &lhs),
         (Some(1), None) => rhs,
         (None, Some(1)) => lhs,
         _ => MulExpand::__expand_mul_method(lhs, scope, rhs),
@@ -106,18 +119,18 @@ fn fold_mul<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
 
 fn fold_div<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
     match (constant(&lhs), constant(&rhs)) {
-        (Some(a), Some(b)) if b != 0 => constant_like(a / b, &lhs),
+        (Some(a), Some(b)) if b != 0 => constant_like(scope, a / b, &lhs),
         (None, Some(1)) => lhs,
         // 0 / x is 0 for any in-range divisor (a divisor here is an extent, never 0).
-        (Some(0), None) => constant_like(0, &lhs),
+        (Some(0), None) => constant_like(scope, 0, &lhs),
         _ => DivExpand::__expand_div_method(lhs, scope, rhs),
     }
 }
 
 fn fold_rem<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
     match (constant(&lhs), constant(&rhs)) {
-        (Some(a), Some(b)) if b != 0 => constant_like(a % b, &lhs),
-        (None, Some(1)) | (Some(0), None) => constant_like(0, &lhs),
+        (Some(a), Some(b)) if b != 0 => constant_like(scope, a % b, &lhs),
+        (None, Some(1)) | (Some(0), None) => constant_like(scope, 0, &lhs),
         _ => RemExpand::__expand_rem_method(lhs, scope, rhs),
     }
 }
@@ -151,7 +164,7 @@ impl<C: Int> FoldExpand<C> for NativeExpand<C> {
     }
     fn __expand_fcast_method<To: Int>(self, scope: &Scope) -> NativeExpand<To> {
         match constant(&self) {
-            Some(v) => Value::constant(v.into(), To::__expand_as_type(scope)).into(),
+            Some(v) => ExpandValue::constant(v.into(), To::elem_type(scope)).into(),
             None => To::__expand_cast_from(scope, self),
         }
     }
@@ -169,7 +182,7 @@ pub trait FoldSeqExpand<C: Int>: Sized {
 impl<C: Int> FoldSeqExpand<C> for SequenceExpand<C> {
     fn __expand_fproduct_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
         let mut acc: NativeExpand<C> =
-            Value::constant(1u64.into(), C::__expand_as_type(scope)).into();
+            ExpandValue::constant(1u64.into(), C::elem_type(scope)).into();
         for i in picks {
             let e = *self.__expand_index_method(scope, NativeExpand::from_lit(scope, i));
             acc = fold_mul(scope, acc, e);
@@ -179,7 +192,7 @@ impl<C: Int> FoldSeqExpand<C> for SequenceExpand<C> {
 
     fn __expand_fsum_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
         let mut acc: NativeExpand<C> =
-            Value::constant(0u64.into(), C::__expand_as_type(scope)).into();
+            ExpandValue::constant(0u64.into(), C::elem_type(scope)).into();
         for i in picks {
             let e = *self.__expand_index_method(scope, NativeExpand::from_lit(scope, i));
             acc = fold_add(scope, acc, e);
@@ -234,9 +247,48 @@ impl<C: Int> Coords<C> {
         unexpanded!()
     }
 
+    /// Copy these coordinates into mutable kernel registers. Unlike [`clone`](Clone::clone),
+    /// which deliberately keeps the same expression handles, this gives a staging slot durable
+    /// storage whose values can be replaced on every fill.
+    pub(crate) fn stored(&self) -> Coords<C> {
+        unexpanded!()
+    }
+
+    /// Assign every coordinate into this stored carrier. Both lists must have the same comptime
+    /// length; the receiver must have been produced by [`stored`](Coords::stored).
+    pub(crate) fn store_from(&mut self, _src: &Coords<C>) {
+        unexpanded!()
+    }
+
     pub fn __expand_new(_scope: &Scope) -> CoordsExpand<C> {
         CoordsExpand { values: Vec::new() }
     }
+}
+
+/// `n / d` rounded toward minus infinity, for a numerator that may sit below the buffer's origin
+/// (a padded or fractionally placed window). The stock `/` truncates toward zero, which lands one
+/// cell too high there. Only reached for a genuinely runtime numerator or divisor: a comptime pair
+/// divides on the host, where [`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin) is the
+/// same floor.
+#[cube]
+pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
+    let q = n / d;
+    select(n % d < 0, q - 1, q)
+}
+
+/// Converts a comptime list of extents into constant [`Coords<u32>`].
+#[cube]
+// `#[unroll]` needs a range loop; an iterator has no expansion.
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn const_coords(#[comptime] values: Vec<usize>) -> Coords<u32> {
+    let mut out = Coords::<u32>::new();
+
+    #[unroll]
+    for p in 0..comptime!(values.len()) {
+        out.push(comptime!(values[p] as u32).runtime());
+    }
+
+    out
 }
 
 pub struct CoordsExpand<C: Int> {
@@ -290,6 +342,9 @@ impl<C: Int> AsMutExpand for CoordsExpand<C> {
 }
 
 impl<C: Int> CoordsExpand<C> {
+    pub fn __expand_assign_method(&mut self, _scope: &Scope, other: Self) {
+        self.values = other.values;
+    }
     pub fn __expand_push_method(&mut self, _scope: &Scope, v: NativeExpand<C>) {
         self.values.push(v);
     }
@@ -314,7 +369,7 @@ impl<C: Int> CoordsExpand<C> {
     }
     pub fn __expand_fproduct_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
         let mut acc: NativeExpand<C> =
-            Value::constant(1u64.into(), C::__expand_as_type(scope)).into();
+            ExpandValue::constant(1u64.into(), C::elem_type(scope)).into();
         for i in picks {
             acc = fold_mul(scope, acc, self.values[i]);
         }
@@ -322,10 +377,27 @@ impl<C: Int> CoordsExpand<C> {
     }
     pub fn __expand_fsum_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
         let mut acc: NativeExpand<C> =
-            Value::constant(0u64.into(), C::__expand_as_type(scope)).into();
+            ExpandValue::constant(0u64.into(), C::elem_type(scope)).into();
         for i in picks {
             acc = fold_add(scope, acc, self.values[i]);
         }
         acc
+    }
+
+    pub fn __expand_stored_method(&self, scope: &Scope) -> CoordsExpand<C> {
+        CoordsExpand {
+            values: self.values.iter().map(|v| (*v).into_mut(scope)).collect(),
+        }
+    }
+
+    pub fn __expand_store_from_method(&mut self, scope: &Scope, src: &CoordsExpand<C>) {
+        assert_eq!(
+            self.values.len(),
+            src.values.len(),
+            "Coords::store_from: source and destination lengths differ"
+        );
+        for (dst, src) in self.values.iter_mut().zip(&src.values) {
+            dst.__expand_assign_method(scope, *src);
+        }
     }
 }

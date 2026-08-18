@@ -59,7 +59,7 @@ impl LoadMaxRoundPlaneCount for AsyncFullCooperativeLoading {
         _tiles_per_stage: u32,
         _vector_size: VectorSize,
         _plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         // Not sure what's ideal here, the current specialization isn't great anyways so can deal
         // with it later

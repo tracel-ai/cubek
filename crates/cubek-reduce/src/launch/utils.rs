@@ -33,7 +33,7 @@ pub fn generate_vector_size<R: Runtime>(
     input: &TensorBinding<R>,
     output: &TensorBinding<R>,
     axis: usize,
-    dtype: StorageType,
+    dtype: ElemType,
     vectorization_mode: VectorizationMode,
     strategy: &VectorizationStrategy,
 ) -> (usize, usize) {

@@ -36,7 +36,7 @@ pub(crate) fn attention<
     cube_mapping: CubeMapping,
     #[comptime] blueprint: AttentionBlueprint,
     #[comptime] dtypes: AttentionElems,
-    #[define(QG, KG, VG, MSK, OG)] _elem_types: [StorageType; 5],
+    #[define(QG, KG, VG, MSK, OG)] _elem_types: [ElemType; 5],
     #[define(QGS, KGS, VGS, MSKS, OGS)] _sizes: [usize; 5],
 ) {
     let device_props = comptime::device_properties();

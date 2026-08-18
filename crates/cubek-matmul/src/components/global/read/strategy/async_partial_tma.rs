@@ -59,7 +59,7 @@ impl LoadMaxRoundPlaneCount for AsyncPartialTmaLoading {
         _tiles_per_stage: u32,
         _vector_size: VectorSize,
         _plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         4
     }
@@ -186,8 +186,8 @@ impl<RC: RuntimeConfig> AsyncPartialLoadingStrategy<RC> for AsyncPartialTmaLoadi
         barrier: &Shared<Barrier>,
         #[comptime] config: SharedGlobalMatmulConfig,
     ) {
-        let lhs_elem_size = LhsS::<MP>::type_size().comptime();
-        let rhs_elem_size = RhsS::<MP>::type_size().comptime();
+        let lhs_elem_size = LhsS::<MP>::size().comptime();
+        let rhs_elem_size = RhsS::<MP>::size().comptime();
         let lhs_bytes =
             config.lhs_reader_config().smem_config.elements_per_stage() * lhs_elem_size as u32;
         let rhs_bytes =

@@ -8,7 +8,7 @@ pub(crate) use bilinear::reference_bilinear;
 pub(crate) use lanczos3::reference_lanczos3;
 pub(crate) use nearest::reference_nearest;
 
-use super::{f32_storage_type, make_random_f32_host, make_zero_handle};
+use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
@@ -25,7 +25,7 @@ pub fn strategy_result(
     strategy: InterpolateStrategy,
     seed: u64,
 ) -> Result<HostData, String> {
-    let dtype = f32_storage_type();
+    let dtype = f32_elem_type();
     let input_shape = problem.input_shape().to_vec();
     let (input_handle, _input_host) = make_random_f32_host(&client, input_shape.clone(), seed);
 

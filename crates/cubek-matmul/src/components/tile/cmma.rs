@@ -1,8 +1,4 @@
-use cubecl::{
-    features::MmaConfig,
-    ir::{DeviceProperties, StorageType},
-    prelude::*,
-};
+use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
 use cubek_std::{
     CubeDimResource, InvalidConfigError, SwizzleModes, TileSize,
     tile::{Plane, TileScope},
@@ -54,9 +50,9 @@ impl TileVariant for CmmaMatmul {
 
     fn supported_sizes<R: Runtime>(
         client: &ComputeClient<R>,
-        lhs_ty: StorageType,
-        rhs_ty: StorageType,
-        acc_ty: StorageType,
+        lhs_ty: ElemType,
+        rhs_ty: ElemType,
+        acc_ty: ElemType,
     ) -> Vec<TileSize> {
         client
             .properties()

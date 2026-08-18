@@ -4,8 +4,8 @@
 //! natural log, and exactly `-inf` on fully-masked rows (matching the
 //! backward reference).
 
-use cubecl::frontend::CubePrimitive;
 use cubecl::ir::AddressType;
+use cubecl::prelude::Scalar;
 use cubecl::zspace::Shape;
 use cubek_attention::eval::forward::cpu_reference::flash_attention_v2_reference_with_lse;
 use cubek_attention::forward::definition::{
@@ -61,8 +61,8 @@ fn problem(
         },
         masked,
         global_dtypes: AttentionGlobalTypes::from_single_float_dtype(
-            f32::as_type_native_unchecked(),
-            u8::as_type_native_unchecked().storage_type(),
+            f32::elem_type_native(),
+            u8::elem_type_native(),
         ),
         options: AttentionOptions {
             causal,

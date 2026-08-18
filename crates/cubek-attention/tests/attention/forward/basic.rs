@@ -5,9 +5,7 @@
 //! forced-blueprint tiling-scheme sweep lives in the `extended` tier.
 
 use crate::attention::forward::launcher::test_launch;
-use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive, ir::AddressType,
-};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, prelude::Scalar};
 use cubek_attention::{
     forward::definition::{
         AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionOptions,
@@ -19,14 +17,14 @@ use cubek_attention::{
 
 fn f16_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
-        half::f16::as_type_native_unchecked(),
+        half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
     )
 }
 
 fn f32_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
-        f32::as_type_native_unchecked(),
+        f32::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
     )
 }

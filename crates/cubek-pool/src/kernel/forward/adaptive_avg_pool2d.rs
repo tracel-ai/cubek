@@ -18,7 +18,7 @@ fn adaptive_avg_pool2d_direct<E: Numeric, N: Size>(
     mut output: ViewMut<'_, Vector<E, N>, Position>,
     out_shape: Sequence<FastDivmod<usize>>,
     working_units: usize,
-    #[define(E)] _dtype: StorageType,
+    #[define(E)] _dtype: ElemType,
 ) {
     if ABSOLUTE_POS >= working_units {
         terminate!();
@@ -79,7 +79,7 @@ pub(crate) fn adaptive_avg_pool2d_launch<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     _options: AdaptiveAvgPoolOptions<2>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),

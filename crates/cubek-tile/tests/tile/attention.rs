@@ -8,8 +8,8 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, Storage, StreamFold,
-    StridedTileArg, StridedTileArgLaunch, Tiling, Walk, WalkOrder,
+    Axis, Buffering, Cut, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
+    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -23,23 +23,24 @@ const C: Axis = Axis(6); // score cols = one S block
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn attention_fold_kernel(
-    q: &StridedTileArg<'_, f32>,    // {G, QP, D}
-    k: &StridedTileArg<'_, f32>,    // {S, D} — omits the group axis
-    v: &StridedTileArg<'_, f32>,    // {S, V}
-    mask: &StridedTileArg<'_, u32>, // 1-cell dummy (materialized = false)
-    out: &mut Tensor<f32>,          // [G·QP·V] flat
+fn attention_fold_kernel<W: Size>(
+    q: &TileArg<'_, f32, W>,           // {G, QP, D}
+    k: &TileArg<'_, f32, W>,           // {S, D} — omits the group axis
+    v: &TileArg<'_, f32, W>,           // {S, V}
+    mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
+    out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
+    #[comptime] space: Space,
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] row_chunk: usize,
 ) {
-    let q = q.tile();
-    let k = k.tile();
-    let v = v.tile();
-    let mask_tile = mask.tile();
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -49,19 +50,38 @@ fn attention_fold_kernel(
     // score leaf), score/p/factors/acc the fold's working set.
     let mut q_s = MemData::<f32>::smem(
         comptime!(q.space.clone()),
+        comptime!(q.leaf),
         q.vector_size(),
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
-    let mut score =
-        MemData::<f32>::smem(score_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut p = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::strided()));
+    let mut score = MemData::<f32>::smem(
+        score_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let mut p = MemData::<f32>::smem(
+        score_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
     let row_space = comptime!(Space::new(&[(R, rows)]));
-    let mut factors =
-        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let mut factors = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let mut acc = MemData::<f32>::smem(
+        acc_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
     let rpu = comptime!(state.rows_per_unit);
@@ -114,7 +134,7 @@ fn attention_fold_kernel(
     let workers = CUBE_DIM as usize;
     let mut i = UNIT_POS as usize;
     while i < total {
-        out[i] = acc_flat.read(i).extract(0);
+        out[i] = acc_flat.read(i).extract(0usize);
         i += workers;
     }
 }
@@ -133,8 +153,8 @@ fn run(
     // The register-blocking knob a routine would size from the register budget.
     let row_chunk = 4;
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 
@@ -159,55 +179,54 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    // q is final (no walk of its own); k/v walk S in blocks.
-    let q_space = Space::new(&[(G, g), (QP, qp), (D, d)]);
-    let k_space = Tiling::new()
-        .extents(&[(S, s_total), (D, d)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
+    // The one attention space: every operand projects its axes out of it. The
+    // walk cuts S into blocks; every other axis rides whole.
+    let space = Tiling::new()
+        .extents(&[
+            (G, g),
+            (QP, qp),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(G, Cut::sequential(g))
+                .axis(QP, Cut::sequential(qp))
+                .axis(S, Cut::sequential(block))
                 .axis(D, Cut::sequential(d))
-        })
-        .leaf(Leaf::Register);
-    let v_space = Tiling::new()
-        .extents(&[(S, s_total), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
                 .axis(V, Cut::sequential(val_dim))
+                .axis(R, Cut::sequential(1))
+                .axis(C, Cut::sequential(1))
         })
-        .leaf(Leaf::Register);
-    let mask_space = Space::new(&[(R, 1), (C, 1)]);
+        .build();
 
     attention_fold_kernel::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),
-        StridedTileArgLaunch::strided(
+        vec,
+        TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            vec,
-            q_space,
-            Storage::of(3, 3),
+            TileSpec::direct(&[G, QP, D]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            vec,
-            k_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[S, D]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            vec,
-            v_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[S, V]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            1,
-            mask_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[R, C]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
+        space,
         units,
         causal,
         block,
@@ -282,24 +301,25 @@ fn fold_scalar_odd_bound() {
 /// fold — one code path for both.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn attention_fold_split_kernel(
-    q: &StridedTileArg<'_, f32>,    // {G, QP, D}
-    k: &StridedTileArg<'_, f32>,    // {S, D} — omits the group axis
-    v: &StridedTileArg<'_, f32>,    // {S, V}
-    mask: &StridedTileArg<'_, u32>, // 1-cell dummy (materialized = false)
-    out: &mut Tensor<f32>,          // [G·QP·V] flat
+fn attention_fold_split_kernel<W: Size>(
+    q: &TileArg<'_, f32, W>,           // {G, QP, D}
+    k: &TileArg<'_, f32, W>,           // {S, D} — omits the group axis
+    v: &TileArg<'_, f32, W>,           // {S, V}
+    mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
+    out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
+    #[comptime] space: Space,
     #[comptime] team: usize,
     #[comptime] splits: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] row_chunk: usize,
 ) {
-    let q = q.tile();
-    let k = k.tile();
-    let v = v.tile();
-    let mask_tile = mask.tile();
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -307,8 +327,9 @@ fn attention_fold_split_kernel(
 
     let mut q_s = MemData::<f32>::smem(
         comptime!(q.space.clone()),
+        comptime!(q.leaf),
         q.vector_size(),
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
 
@@ -318,41 +339,70 @@ fn attention_fold_split_kernel(
     let score_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (C, block)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(R, Cut::sequential(rows))
                     .axis(C, Cut::sequential(block))
             })
-            .leaf(Leaf::Register)
+            .build()
     );
     let row_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(R, Cut::sequential(rows))
             })
-            .leaf(Leaf::Register)
+            .build()
     );
     let acc_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (V, val_dim)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(R, Cut::sequential(rows))
                     .axis(V, Cut::sequential(val_dim))
             })
-            .leaf(Leaf::Register)
+            .build()
     );
-    let score_all =
-        MemData::<f32>::smem(score_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let p_all = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::strided()));
-    let mut factors_all =
-        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let score_all = MemData::<f32>::smem(
+        score_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let p_all = MemData::<f32>::smem(
+        score_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let mut factors_all = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let m_all = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let l_all = MemData::<f32>::smem(
+        row_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let mut acc_all = MemData::<f32>::smem(
+        acc_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
     let mut recip = MemData::<f32>::smem(
         comptime!(Space::new(&[(R, rows)])),
+        Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     acc_all.zero();
 
@@ -436,9 +486,10 @@ fn attention_fold_split_kernel(
         let mut sum = 0.0f32;
         for ti in 0..splits {
             let sr = ti * rows + r;
-            sum += acc_flat.read(sr * val_dim + vi).extract(0) * w_flat.read(sr).extract(0);
+            sum +=
+                acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(sr).extract(0usize);
         }
-        out[i] = sum * r_flat.read(r).extract(0);
+        out[i] = sum * r_flat.read(r).extract(0usize);
         i += workers;
     }
 }
@@ -468,8 +519,8 @@ fn run_split(
     // The register-blocking knob a routine would size from the register budget.
     let row_chunk = 4;
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 
@@ -494,54 +545,53 @@ fn run_split(
         .zeros()
         .generate_without_host_data();
 
-    let q_space = Space::new(&[(G, g), (QP, qp), (D, d)]);
-    let k_space = Tiling::new()
-        .extents(&[(S, s_total), (D, d)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
+    // The one attention space, as in [`run`].
+    let space = Tiling::new()
+        .extents(&[
+            (G, g),
+            (QP, qp),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(G, Cut::sequential(g))
+                .axis(QP, Cut::sequential(qp))
+                .axis(S, Cut::sequential(block))
                 .axis(D, Cut::sequential(d))
-        })
-        .leaf(Leaf::Register);
-    let v_space = Tiling::new()
-        .extents(&[(S, s_total), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
                 .axis(V, Cut::sequential(val_dim))
+                .axis(R, Cut::sequential(1))
+                .axis(C, Cut::sequential(1))
         })
-        .leaf(Leaf::Register);
-    let mask_space = Space::new(&[(R, 1), (C, 1)]);
+        .build();
 
     attention_fold_split_kernel::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(team as u32, splits as u32),
-        StridedTileArgLaunch::strided(
+        vec,
+        TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            vec,
-            q_space,
-            Storage::of(3, 3),
+            TileSpec::direct(&[G, QP, D]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            vec,
-            k_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[S, D]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            vec,
-            v_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[S, V]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            1,
-            mask_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[R, C]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
+        space,
         team,
         splits,
         causal,
@@ -623,21 +673,22 @@ fn split_fold_idle_teams() {
 /// No barriers until the ending.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn attention_stream_test_kernel(
-    q: &StridedTileArg<'_, f32>,   // {G, QP(=1), D}
-    k: &StridedTileArg<'_, f32>,   // {S, D}
-    v: &StridedTileArg<'_, f32>,   // {S, V}
-    out: &StridedTileArg<'_, f32>, // {G, QP(=1), V}
+fn attention_stream_test_kernel<W: Size>(
+    q: &TileArg<'_, f32, W>,   // {G, QP(=1), D}
+    k: &TileArg<'_, f32, W>,   // {S, D}
+    v: &TileArg<'_, f32, W>,   // {S, V}
+    out: &TileArg<'_, f32, W>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
+    #[comptime] space: Space,
     #[comptime] lanes: usize,
     #[comptime] splits: usize,
     #[comptime] block: usize,
 ) {
-    let q = q.tile();
-    let k = k.tile();
-    let v = v.tile();
-    let mut out = out.tile();
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mut out = out.tile(space);
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
@@ -682,7 +733,7 @@ fn run_stream(
     let val_dim = d;
     let scale = 1. / (d as f32).sqrt();
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 
@@ -703,52 +754,42 @@ fn run_stream(
         .zeros()
         .generate_without_host_data();
 
-    let q_space = Space::new(&[(G, g), (QP, 1), (D, d)]);
-    let k_space = Tiling::new()
-        .extents(&[(S, s_total), (D, d)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
+    // The one attention space: q/k/v/out project their axes out of it.
+    let space = Tiling::new()
+        .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(G, Cut::sequential(g))
+                .axis(QP, Cut::sequential(1))
+                .axis(S, Cut::sequential(block))
                 .axis(D, Cut::sequential(d))
-        })
-        .leaf(Leaf::Register);
-    let v_space = Tiling::new()
-        .extents(&[(S, s_total), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
-            l.axis(S, Cut::sequential(block))
                 .axis(V, Cut::sequential(val_dim))
         })
-        .leaf(Leaf::Register);
+        .build();
 
     attention_stream_test_kernel::launch::<TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(lanes as u32, splits as u32),
-        StridedTileArgLaunch::strided(
+        vec,
+        TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            vec,
-            q_space,
-            Storage::of(3, 3),
+            TileSpec::direct(&[G, QP, D]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            vec,
-            k_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[S, D]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            vec,
-            v_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[S, V]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            vec,
-            Space::new(&[(G, g), (QP, 1), (V, val_dim)]),
-            Storage::of(3, 3),
+            TileSpec::direct(&[G, QP, V]),
         ),
         scale,
         bound_s as u32,
+        space,
         lanes,
         splits,
         block,

@@ -19,19 +19,18 @@ use crate::{
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    ir::StorageType,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{HostData, HostDataVec, Progress, TestInput};
 
-pub(crate) fn f32_storage_type() -> StorageType {
-    f32::as_type_native_unchecked().storage_type()
+pub(crate) fn f32_elem_type() -> ElemType {
+    f32::elem_type_native()
 }
 
-pub(crate) fn i32_storage_type() -> StorageType {
-    i32::as_type_native_unchecked().storage_type()
+pub(crate) fn i32_elem_type() -> ElemType {
+    i32::elem_type_native()
 }
 
 pub(crate) fn make_random_f32_host(
@@ -47,7 +46,7 @@ pub(crate) fn make_random_f32_host(
 pub(crate) fn make_zero_handle(
     client: &ComputeClient<TestRuntime>,
     shape: Vec<usize>,
-    dtype: StorageType,
+    dtype: ElemType,
 ) -> TensorHandle<TestRuntime> {
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)

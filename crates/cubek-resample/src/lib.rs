@@ -12,7 +12,7 @@ pub fn resample<R: Runtime>(
     output: TensorBinding<R>,
     args: ResampleArgsLaunch<R>,
     config: Resample,
-    dtype: StorageType,
+    dtype: ElemType,
 ) {
     launch::resample_launch(client, input, output, args, config, dtype);
 }

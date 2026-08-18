@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, Coords, Fold, FoldExpand, Region, RegionExpand, Space, instance_count, tiles_per_instance,
+    Coords, Fold, FoldExpand, Region, RegionExpand, Space, instance_count, tiles_per_instance,
 };
 
 use super::walk_order::walk_index;
@@ -45,17 +45,6 @@ impl Walk {
             counts.push(space.extents.count(p, edge));
         }
         Walk::from_counts(comptime!(space.clone()), counts)
-    }
-
-    /// [`over`](Walk::over) with `fastest` walked innermost, so each operand fragment
-    /// feeds a consecutive burst of executes (the legacy emission order, ~1.3% on
-    /// Metal). Static spaces only: there are no runtime sizes to permute.
-    pub fn over_fastest(#[comptime] space: Space, #[comptime] fastest: Axis) -> Walk {
-        let reordered = comptime!({
-            assert!(space.is_static(), "Walk::over_fastest: static spaces only");
-            space.with_fastest(fastest)
-        });
-        Walk::over(Space::with_sizes(reordered, Sequence::new()))
     }
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each

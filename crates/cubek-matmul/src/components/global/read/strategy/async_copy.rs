@@ -61,7 +61,7 @@ pub(crate) fn async_copy_from<EG: Scalar, NG: Size, ES: Numeric, NS: Size, T: Ti
     let global_slice = view.slice_unchecked(pos, slice_size);
     let global_slice = global_slice.as_linear_slice();
 
-    let type_size = Vector::<ES, NS>::type_size();
+    let type_size = Vector::<ES, NS>::size();
     let offset = swizzle.apply(stage_offset, type_size);
 
     let stage_slice = &mut stage_slice[offset as usize..(offset + slice_len_stage) as usize];

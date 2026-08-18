@@ -41,7 +41,7 @@ impl<TO: TilingOrder> LoadMaxRoundPlaneCount for SyncFullTilewiseLoading<TO> {
         tiles_per_stage: u32,
         _vector_size: VectorSize,
         _plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         tiles_per_stage
     }
@@ -197,7 +197,7 @@ impl SyncFullTilewiseJob {
 
         let offset =
             this.num_vectors_to_skip + vector_index_within_tile + num_vectors_to_skip_local;
-        let type_size = Vector::<ES, NS>::type_size();
+        let type_size = Vector::<ES, NS>::size();
         let offset = stage.swizzle.apply(offset, type_size);
 
         stage.as_slice_mut::<NS>()[offset as usize] = Vector::cast_from(vector_read);

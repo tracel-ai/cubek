@@ -3,7 +3,7 @@
 use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::CubePrimitive,
+    CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::Scalar,
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
@@ -13,7 +13,7 @@ use cubek_matmul::routines::cpu_gemm::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, Space, StridedTileArg, StridedTileArgLaunch};
+use cubek_tile::{Axis, Projection, Space, TileArg, TileArgLaunch, TileSpec};
 
 use super::Dims;
 use crate::matmul::assert_result;
@@ -30,12 +30,13 @@ const K: Axis = Axis(3);
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
-    src: &StridedTileArg<'_, E>,
-    dst: &StridedTileArg<'_, E>,
-    #[define(E)] _dtype: StorageType,
+    src: &TileArg<'_, E, Const<1>>,
+    dst: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile();
-    let mut dst = dst.tile();
+    let src = src.tile(comptime!(space.clone()));
+    let mut dst = dst.tile(space);
     let r = src.view::<Const<1>>();
     let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();
@@ -124,13 +125,15 @@ impl Operand {
 /// Copy every logical element from `src` into `dst` through their views — moving
 /// data between two physical layouts in logical order.
 fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
+    // src and dst are built over the same logical space; it is the kernel's one space.
     copy_logical::launch::<TestRuntime>(
         client,
         CubeCount::new_single(),
         CubeDim::new_single(),
-        tile_arg(src, src.space.clone()),
-        tile_arg(dst, dst.space.clone()),
-        f32::as_type_native_unchecked().storage_type(),
+        tile_arg(src),
+        tile_arg(dst),
+        src.space.clone(),
+        f32::elem_type_native(),
     );
 }
 
@@ -141,15 +144,12 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
     binding
 }
 
-/// The operand's launchable `StridedTileArg`, viewed in `space`: its tensor arg (with the
-/// layout's physical strides) and the matching [`Storage`]. Generic over the element
-/// type so it fits a `#[define(E)]` kernel's launch arg by inference.
-fn tile_arg<E: Numeric>(
-    op: &Operand,
-    space: Space,
-) -> StridedTileArgLaunch<'static, E, TestRuntime> {
-    let (tensor, storage) = op.layout.tensor_arg(physical_binding(op), 1);
-    StridedTileArgLaunch::strided(tensor, 1, space, storage)
+/// The operand as one launch argument: its tensor arg (with the layout's physical
+/// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
+fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V, TestRuntime> {
+    let (tensor, tiling) = op.layout.tensor_arg(physical_binding(op), 1);
+    let axes: Vec<_> = (0..op.space.rank()).map(|i| op.space.axis_at(i)).collect();
+    TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, tiling)))
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.
@@ -184,7 +184,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     if skip_unless_cpu(&client) {
         return;
     }
-    let dtypes = MatmulElems::from_single_dtype(f32::as_type_native_unchecked());
+    let dtypes = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     // Logical inputs (row-major) via cubek-test-utils, with host data for the
     // reference. The `problem` describes the *logical* matmul (the physical inner

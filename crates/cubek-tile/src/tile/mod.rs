@@ -1,12 +1,13 @@
 //! The [`Tile`]: one operand's data as a [`TileKind`] backing store, plus the comptime
 //! [`Space`] it projects. Structure only; each store's own data and leaves live in its file
-//! ([`mem`], [`cmma`], [`tma`]). The launch surface (args, deliveries, builder) rides on
-//! [`StridedTileArg`](crate::StridedTileArg) and its twin [`TmaTileArg`](crate::TmaTileArg).
+//! ([`mem`], [`cmma`], [`tma`]). The launch surface (specs, deliveries, builder) lives in
+//! `physical/`; a kernel's first line is [`Tile::of`] on a plain tensor.
 
 mod cmma;
 mod mem;
 mod mma;
 mod plane;
+mod procedural;
 mod register;
 mod tma;
 mod view;
@@ -15,6 +16,7 @@ pub use cmma::*;
 pub use mem::*;
 pub use mma::*;
 pub use plane::*;
+pub use procedural::*;
 pub use register::*;
 pub use tma::*;
 pub use view::*;
@@ -29,7 +31,12 @@ use crate::*;
 /// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a
 /// [`cmma::Matrix`](cubecl::cmma::Matrix)); [`view`](Tile::view) rebuilds a borrowed view on
 /// demand.
-#[derive(CubeType)]
+///
+/// `Clone` copies the handle, not the cells: two clones name the same storage, so writing through
+/// one is visible through the other. That is how later ring slots reuse a fixed operand's first
+/// buffer, and it is only sound where nothing rewrites the buffer afterwards.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub enum TileKind<T: Numeric> {
     Gmem(MemData<T>),
     Smem(MemData<T>),
@@ -40,8 +47,10 @@ pub enum TileKind<T: Numeric> {
     /// static walk's regions (constant coordinates) can select through it.
     PlanePartition(PlanePartition<T>),
     /// A TMA tensor-map source: not element-addressable, its only sink is a hardware bulk
-    /// copy into shared memory. Launched via [`TmaTileArg`], the twin of [`StridedTileArg`].
+    /// copy into shared memory. Launched via [`TmaTileArg`](crate::TmaTileArg).
     TmaGmem(TmaData<T>),
+    /// A read-only source evaluated from logical coordinates with no backing buffer.
+    Procedural(ProceduralData<T>),
 }
 
 #[cube]
@@ -58,7 +67,8 @@ impl<T: Numeric> TileKind<T> {
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_) => {
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
                 comptime!(false)
             }
         }
@@ -74,11 +84,28 @@ impl<T: Numeric> TileKind<T> {
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_) => {
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
                 comptime!(false)
             }
         }
     }
+}
+
+/// Where an operand's quantized form is decoded: the one site that turns stored values into served
+/// ones. Stated at launch, once, since the quantized form ends at exactly one boundary. Which sites
+/// are available is fixed by what the operand's transports can decode, never by preference, so a
+/// stated value is either the one that was left (which
+/// [`build`](crate::StridedTileSource::build) enforces) or a genuine fork between stage size and
+/// per-read cost.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum DequantAt {
+    /// The load into the stage decodes; the stage holds served values, so it inflates by the
+    /// served-to-stored ratio and the achievable stage depth drops with it.
+    Load,
+    /// The stage keeps the quantized values and their scales; the instruction's read decodes,
+    /// amortized over whatever reuse the leaf has.
+    Read,
 }
 
 /// Quantization a tile's store carries, so reads dequantize on their own. Holds the scale `buffer`
@@ -93,6 +120,10 @@ pub struct QuantInfo {
     pub(crate) window_start: u32,
     #[cube(comptime)]
     pub(crate) block: Vec<usize>,
+    /// Where this operand's quantized form ends. Read by [`MemData::smem_like`], which is why no
+    /// call site asks an operand whether it is quantized before staging it.
+    #[cube(comptime)]
+    pub(crate) dequant_at: DequantAt,
     /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
     /// ([`MemData::smem_quant`]): the values stage as packed words and their scales stage compactly
     /// beside them, so the fill knows how many blocks to copy. Empty for a gmem operand, which reads
@@ -104,43 +135,23 @@ pub struct QuantInfo {
 }
 
 /// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
-/// tensor, so its edges are an unused placeholder ([`QuantInfo::native`] pairs them with `0`
+/// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
 /// strides); a block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     match scheme.level {
         QuantLevel::Tensor => vec![1; rank],
         QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
+        QuantLevel::BlockTensor { .. } => {
+            unimplemented!(
+                "two-level quantization is not supported here, got {:?}",
+                scheme.level
+            )
+        }
     }
 }
 
 #[cube]
 impl QuantInfo {
-    /// Build the native (unpacked) quant side-channel from a launched [`QuantArg`]: the whole scales
-    /// buffer, plus per axis the block size and the stride that steps one scale per block. A block
-    /// scheme reads those strides off the scales tensor; per-tensor has a single scale (every stride
-    /// `0`, window stays put).
-    pub(crate) fn native(q: &QuantArg, #[comptime] rank: usize) -> QuantInfo {
-        let block = comptime!(block_edges(q.scheme, rank));
-        let mut strides = Coords::<u32>::new();
-        #[unroll]
-        for p in 0..rank {
-            if comptime!(q.scheme.level == QuantLevel::Tensor) {
-                strides.push(0u32);
-            } else {
-                strides.push(q.scales.stride(p) as u32);
-            }
-        }
-        QuantInfo {
-            buffer: unsafe { q.scales.as_slice().as_boxed_unchecked() },
-            strides,
-            window_start: 0u32,
-            block: comptime!(block),
-            // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
-            scale_shape: comptime!(Vec::new()),
-            scheme: comptime!(q.scheme),
-        }
-    }
-
     /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
     /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
     /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
@@ -166,44 +177,210 @@ impl QuantInfo {
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
+            dequant_at: comptime!(self.dequant_at),
             scale_shape: comptime!(self.scale_shape.clone()),
             scheme: comptime!(self.scheme),
         }
     }
 }
 
-/// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it projects.
-/// `T` is the element the tile serves and computes in; its physical vector width is a storage detail
-/// inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
-#[derive(CubeType)]
+/// One operand's data: a runtime [`TileKind`] backing store, the comptime [`Space`] it projects,
+/// and what it is at the instruction ([`Leaf`]). `T` is the element the tile serves and computes in;
+/// its physical vector width is a storage detail inside the [`TileKind`], read back with
+/// [`vector_size`](Tile::vector_size).
+///
+/// The leaf rides here, not on the [`Space`]: it is a format decision, and formats belong to the
+/// operand whose format they are. The partitioning says how the problem is cut and nothing about
+/// what the pieces become. Operands that disagree meet the kind-pairing panics at the instruction,
+/// which is the same way every other mismatched pair is caught.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
+    #[cube(comptime)]
+    pub leaf: Leaf,
+}
+
+/// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
+/// coefficient `1`. `None` otherwise, which is either of the two ways a bound stops being that
+/// extent: a gather, where the dim holds the receptive field several axes reach over, and storage
+/// tiling, where the extent is the product over the dims the axis is split across.
+fn bound_states(projection: &Projection, axis: Axis) -> Option<usize> {
+    match projection.carriers(axis)[..] {
+        [pa] if projection.physical_axis(pa).is_identity(axis) => Some(pa),
+        _ => None,
+    }
+}
+
+/// The physical dim in this tile's window bounds that `axis`'s runtime extent is read off. A
+/// direct operand maps each axis 1:1; anything else has to be answered by an operand of the same
+/// operation that does ([`Tile::witnesses`]).
+fn bound_position(projection: &Projection, axis: Axis) -> usize {
+    bound_states(projection, axis).unwrap_or_else(|| {
+        panic!(
+            "Tile::runtime_extent: no bound of this operand is {axis:?}'s own extent (it gathers \
+             over it, or splits it across storage fragments); ask an operand that witnesses it"
+        )
+    })
 }
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
-    /// copy. Comptime (the kind is fixed at trace); drives the staging sync. A resident
-    /// fragment is never a fill source, so it reports strided.
-    pub fn delivery(&self) -> comptime_type!(Delivery) {
+    /// Whether the leaf can consume this operand in its current physical form. Opaque fragment
+    /// transports require shared memory or an already materialized fragment; scalar and manual
+    /// readers can address their source directly.
+    fn reads_in_place(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Strided),
-            TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(Delivery::Strided),
+            TileKind::Smem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(true)
+            }
+            TileKind::Gmem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+                comptime!(match self.leaf {
+                    Leaf::Memory => true,
+                    Leaf::Mma { io } => {
+                        matches!(io.lhs_load_method, LoadMethod::Manual)
+                            && matches!(io.rhs_load_method, LoadMethod::Manual)
+                    }
+                    Leaf::Cmma => false,
+                })
+            }
         }
     }
 
-    /// The [`StagePlan`] a stage derived from this tile takes: its [`StageStorage`] layout
-    /// and the launch's cube size. A TMA bulk copy writes its box rows raw and a fragment
-    /// is never a fill source, so both report the plain default (strided, units unknown).
-    pub fn stage(&self) -> comptime_type!(StagePlan) {
+    /// Create a scalar, memory-free tile over a logical space, evaluated where it is read at every
+    /// level. Dynamic extents are supplied by another operand when an operation is walked; a
+    /// procedural tile never witnesses them.
+    pub fn procedural(#[comptime] space: Space, #[comptime] recipe: ProceduralRecipe) -> Self
+    where
+        T: Float,
+    {
+        Tile::<T>::procedural_resident(space, recipe, comptime!(StagePlan::in_place()))
+    }
+
+    /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
+    /// cooperatively materializes the recipe into it, which is how a source with no bytes reaches a
+    /// leaf that cannot evaluate one.
+    pub fn procedural_resident(
+        #[comptime] space: Space,
+        #[comptime] recipe: ProceduralRecipe,
+        #[comptime] stage: StagePlan,
+    ) -> Self
+    where
+        T: Float,
+    {
+        Tile::<T> {
+            tile_kind: TileKind::new_Procedural(ProceduralData::<T>::new(
+                comptime!(space.clone()),
+                recipe,
+                stage,
+            )),
+            space,
+            leaf: comptime!(Leaf::Memory),
+        }
+    }
+
+    /// Evaluate a procedural tile at scalar logical coordinates relative to its current region.
+    pub fn procedural_value(&self, pos: Coords<u32>) -> T {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.stage(),
-            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                comptime!(StagePlan::strided())
+            TileKind::Procedural(data) => data.evaluate(&pos, comptime!(self.space.clone())),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => panic!("Tile::procedural_value: tile is not procedural"),
+        }
+    }
+
+    /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
+    /// copy. Comptime (the kind is fixed at trace); drives the staging sync. A resident
+    /// fragment has no bytes to move, so go through
+    /// [`stage_source`](Tile::stage_source) rather than calling this on one.
+    pub fn delivery(&self) -> comptime_type!(Delivery) {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Copy),
+            TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::delivery: a resident fragment is not a stage source")
             }
+            // A procedural source is cooperatively materialized into its stage.
+            TileKind::Procedural(_) => comptime!(Delivery::Procedural),
+        }
+    }
+
+    /// How a staging slot obtains this operand: transport from a backing store, or fragments a
+    /// level above already placed in registers. A fragment has no bytes any transport can move, so
+    /// its slot holds the fragments themselves and each read selects the region's block out of them
+    /// by comptime coordinate ([`AtRegion`](crate::SlotPayload::AtRegion)).
+    pub fn stage_source(&self) -> comptime_type!(StageSource) {
+        match &self.tile_kind {
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(StageSource::ResidentFragment)
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                let delivery = self.delivery();
+                comptime!(StageSource::Transport(delivery))
+            }
+        }
+    }
+
+    /// The runtime map (dynamic coefficients and origin phase residues) of this tile.
+    pub(crate) fn runtime_map(&self) -> RuntimeMap {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.map.clone(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => RuntimeMap::integral(comptime!(self.space.rank())),
+        }
+    }
+
+    /// Where this operand lives at each level from here down, and how a materialized level lays
+    /// its buffer out. A resident fragment is never a fill source and has no levels left to state,
+    /// so it answers the all-[`InPlace`](Residence::InPlace) default.
+    pub fn stage_plan(&self) -> comptime_type!(StagePlan) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.stage_plan(),
+            TileKind::TmaGmem(t) => comptime!(t.stage.clone()),
+            TileKind::Procedural(p) => comptime!(p.stage.clone()),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(StagePlan::in_place())
+            }
+        }
+    }
+
+    /// Where this operand lives at the level whose output space is `out`.
+    /// `InPlace` is honoured as stated, so a level materializes an operand only when the operand
+    /// asked it to; the one thing that cannot be honoured is a leaf reading a source it cannot
+    /// address, which is checked at the level that feeds it.
+    pub fn residence(&self, #[comptime] out: &Space) -> comptime_type!(Residence) {
+        let plan = self.stage_plan();
+        let requested = comptime!(plan.head());
+        if comptime!(requested == Residence::InPlace) {
+            let reads_in_place = self.reads_in_place();
+            comptime!(if out.partitioner().next().is_final() && !reads_in_place {
+                panic!(
+                    "Tile::residence: a {:?} leaf cannot read this operand's current physical \
+                     form in place; materialize it with Residence::Smem at \
+                     some level above the leaf",
+                    self.leaf
+                );
+            });
+            comptime!(Residence::InPlace)
+        } else {
+            let procedural = self.is_procedural();
+            comptime!(if procedural && requested == Residence::Plane {
+                panic!(
+                    "Tile::residence: a procedural source has no plane-fragment transport; state \
+                     Residence::Smem to materialize it into shared memory, or Residence::InPlace \
+                     to evaluate it at the leaf"
+                );
+            });
+            comptime!(requested)
         }
     }
 
@@ -213,7 +390,10 @@ impl<T: Numeric> Tile<T> {
     pub fn vector_size(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.store.vector_size,
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
                 comptime!(1usize)
             }
         }
@@ -225,8 +405,27 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
                 comptime!(LaneShare::Whole)
+            }
+        }
+    }
+
+    /// This operand's decode site ([`DequantAt`]). A tile with nothing to decode answers
+    /// [`DequantAt::Load`]: served and stored are the same element, so its load already delivers
+    /// what the read wants and the stage takes that element. A tma source is never quantized, so it
+    /// answers the same for the same reason, not because a bulk copy could decode: it cannot.
+    pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.dequant_at(),
+            TileKind::TmaGmem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::Procedural(_) => {
+                comptime!(DequantAt::Load)
             }
         }
     }
@@ -236,8 +435,69 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
-            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+            TileKind::TmaGmem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::Procedural(_) => {
                 comptime!(0usize)
+            }
+        }
+    }
+
+    /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
+    /// coordinate is not a physical one, so the only read surface that describes the tile is the
+    /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a
+    /// [`direct`](Projection::direct) operand, and for a fragment or a tensor map, which have no
+    /// buffer to gather from.
+    pub fn gathered(&self) -> comptime_type!(bool) {
+        let projection = self.projection();
+        comptime!(!projection.is_direct())
+    }
+
+    /// Whether this tile evaluates values from coordinates instead of a backing buffer.
+    pub(crate) fn is_procedural(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Procedural(_) => comptime!(true),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
+
+    /// Whether this tile can state `axis`'s runtime size for the operation it takes part in: it
+    /// spans the axis [`Dynamic`](crate::Extent), has a buffer to read a bound off, and that bound
+    /// is the axis's own extent ([`bound_states`]). Each clause rules out an operand that spans the
+    /// axis without being able to answer for it: a `Static` one knows its size at comptime already
+    /// (and a broadcast `1` is not the operation's extent), a fragment has no bound, and a gathered
+    /// axis's bound is the receptive field its axes reach over.
+    ///
+    /// Spanning an axis and having to supply it are therefore separate questions: an operation
+    /// sizes each `Dynamic` axis from whichever of its operands witnesses it and lets the others
+    /// pass ([`witnessed_space`]).
+    pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
+        let bounded = self.bounded();
+        let projection = self.projection();
+        comptime!(
+            bounded
+                && self.space.contains(axis)
+                && self.space.is_dynamic(axis)
+                && bound_states(&projection, axis).is_some()
+        )
+    }
+
+    /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source
+    /// have no buffer to project onto, so they answer [`direct`](Projection::direct) over their own
+    /// space, which is what every non-gather operand carries anyway.
+    pub(crate) fn projection(&self) -> comptime_type!(Projection) {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(g.projection.clone()),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(Projection::direct_over(&self.space))
             }
         }
     }
@@ -250,6 +510,9 @@ impl<T: Numeric> Tile<T> {
             TileKind::Smem(g) => TileKind::new_Smem(g.at(region, comptime!(self.space.clone()))),
             TileKind::TmaGmem(t) => {
                 TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
+            }
+            TileKind::Procedural(p) => {
+                TileKind::new_Procedural(p.at(region, comptime!(self.space.clone())))
             }
             // A plane tile has nothing to window: pass it through. Legal only where the level
             // cuts nothing on m/n (a k-step walk); a cutting level would alias every region
@@ -319,49 +582,53 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
+            leaf: comptime!(self.leaf),
+        }
+    }
+
+    /// Whether this tile has a buffer bound to read an extent off: memory and a tensor map carry
+    /// the tensor's shape, a resident fragment carries nothing but its cells. The kinds
+    /// [`runtime_extent`](Tile::runtime_extent) can answer for, so the two match the same way.
+    fn bounded(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) => comptime!(true),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::Procedural(_) => {
+                comptime!(false)
+            }
         }
     }
 
     /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData)
     /// folded from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's
-    /// tile count. A cmma fragment has no buffer extent.
+    /// tile count. Only an axis this tile [`witnesses`](Tile::witnesses) has one: a fragment has no
+    /// buffer extent ([`bounded`](Tile::bounded)), and a gathered or storage-tiled axis no bound of
+    /// its own ([`bound_position`]).
     pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
-        let p = comptime!(self.space.position(axis));
+        let projection = self.projection();
+        let p = comptime!(bound_position(&projection, axis));
         let raw = match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).fcast::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::runtime_extent: a plane tile has no extent")
             }
+            TileKind::Procedural(_) => {
+                panic!("Tile::runtime_extent: a procedural tile has no extent")
+            }
         };
         // `bound` is a line count on the vectorized innermost axis; the walk divides by
         // conceptual edges, so return line count × width.
-        let last = comptime!(self.space.rank() - 1);
+        let last = comptime!(projection.physical_rank() - 1);
         let w = self.vector_size();
         comptime!(if p == last { w } else { 1usize }) * raw
     }
 
-    /// The runtime space to walk this tile: its comptime tiling spec plus the runtime sizes of any
-    /// `Dynamic` axes, read off the tile. A fully-`Static` tile short-circuits to no runtime sizes.
+    /// The runtime space to walk this tile *alone*: [`witnessed_space`] with no other operand to
+    /// ask, so every `Dynamic` axis must be one this tile itself
+    /// [`witnesses`](Tile::witnesses). An operation over several operands sizes its space from all
+    /// of them instead, which is what lets a gathered operand ride an axis it cannot answer for.
     pub fn runtime_space(&self) -> Space {
-        let space = comptime!(self.space.clone());
-        let mut sizes = Sequence::<usize>::new();
-        if comptime!(!space.is_static()) {
-            #[unroll]
-            for p in 0..comptime!(space.rank()) {
-                let axis = comptime!(space.axis_at(p));
-                // `sizes` is positional, so every axis pushes — but only a `Dynamic` one is
-                // ever read back ([`Extents::count`] folds a `Static` axis to its comptime
-                // extent). Fold it here too rather than asking the tile: a plane tile has no
-                // buffer bound to answer with, and one `Dynamic` axis elsewhere in the space
-                // must not make its `Static` axes unreadable.
-                sizes.push(match comptime!(space.extent_raw(axis)) {
-                    Extent::Static(n) => comptime!(n).runtime(),
-                    Extent::Dynamic => self.runtime_extent(axis),
-                });
-            }
-        }
-        Space::with_sizes(space, sizes)
+        witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
     /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
@@ -370,17 +637,38 @@ impl<T: Numeric> Tile<T> {
     /// output takes the unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
         match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final(_) => match &mut self.tile_kind {
+            Partitioner::Final => match &mut self.tile_kind {
                 TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
                 TileKind::PlaneTile(t) => t.zero(),
                 TileKind::PlanePartition(p) => p.zero(),
                 TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
+                TileKind::Procedural(_) => panic!("Tile::zero: a procedural tile is not writable"),
             },
             Partitioner::Level(_) => {
                 let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
                 for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
                     let mut sub = self.at(&region);
                     sub.zero();
+                }
+            }
+        }
+    }
+
+    /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
+    pub fn init(&mut self, val: T) {
+        match comptime!(self.space.partitioner().clone()) {
+            Partitioner::Final => match &mut self.tile_kind {
+                TileKind::Gmem(d) | TileKind::Smem(d) => d.init(val),
+                TileKind::PlaneTile(t) => t.init(val),
+                TileKind::PlanePartition(p) => p.init(val),
+                TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
+                TileKind::Procedural(_) => panic!("Tile::init: a procedural tile is not writable"),
+            },
+            Partitioner::Level(_) => {
+                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
+                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
+                    let mut sub = self.at(&region);
+                    sub.init(val);
                 }
             }
         }
@@ -397,6 +685,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::dense: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::dense: a tma source has no element view"),
+            TileKind::Procedural(_) => panic!("Tile::dense: a procedural tile has no memory view"),
         }
     }
 
@@ -408,29 +697,40 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::dense_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::dense_mut: a tma source is not writable"),
+            TileKind::Procedural(_) => panic!("Tile::dense_mut: a procedural tile is not writable"),
         }
     }
 
-    /// Blocking copy of `src` into `self`, each kind pairing dispatched to its kind's
-    /// transport leaf. A partition source is matched first: it needs the whole
+    /// Move `src` into `self`, the physical pairing picking the instruction that does it. This is
+    /// the move itself, not [`StageSource::Transport`](crate::StageSource), which is a staging
+    /// slot's plan to make one. A partition source is matched first because it needs the whole
     /// destination tile, which the pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
+        // Bound before the match, which borrows the kind: a memory fill needs the logical space
+        // both sides carry (a gathered source is addressed per axis).
+        let space = comptime!(self.space.clone());
         match &src.tile_kind {
             TileKind::PlanePartition(s) => s.drain_into(self),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_) => match (&mut self.tile_kind, &src.tile_kind) {
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => match (&mut self.tile_kind, &src.tile_kind) {
                 (TileKind::PlanePartition(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
                     d.fill_from(src)
                 }
-                (TileKind::PlaneTile(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.load_window(s),
+                (TileKind::PlaneTile(d), TileKind::Gmem(_) | TileKind::Smem(_)) => {
+                    d.load_window(src)
+                }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
                     s.store_window(d)
                 }
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
-                    d.fill_from(s)
+                    d.fill_from(s, space)
+                }
+                (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Procedural(s)) => {
+                    d.fill_procedural(s, space)
                 }
                 (TileKind::PlaneTile(_), TileKind::PlaneTile(_)) => {
                     panic!("Tile::copy_from: plane tile to plane tile cast not wired")
@@ -450,9 +750,85 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_) => {
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
         }
+    }
+}
+
+/// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
+/// [`witnesses`](Tile::witnesses) it, which is how an operation turns its comptime space into the
+/// runtime one [`Walk::over`](crate::Walk) takes. A fully-`Static` space short-circuits to no
+/// runtime sizes. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
+#[cube]
+pub fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
+    #[comptime] space: Space,
+    a: &Tile<A>,
+    b: &Tile<B>,
+    c: &Tile<C>,
+) -> Space {
+    let mut sizes = Sequence::<usize>::new();
+    if comptime!(!space.is_static()) {
+        #[unroll]
+        for p in 0..comptime!(space.rank()) {
+            let axis = comptime!(space.axis_at(p));
+            // `sizes` is positional, so every axis pushes, but only a `Dynamic` one is ever read
+            // back ([`Extents::count`] folds a `Static` axis to its comptime extent). Fold it here
+            // too rather than asking an operand: one `Dynamic` axis must not make the `Static`
+            // ones unreadable on a tile that has no bound to answer with.
+            let size = match comptime!(space.extent_raw(axis)) {
+                Extent::Static(n) => comptime!(n).runtime(),
+                Extent::Dynamic => {
+                    let by_a = a.witnesses(axis);
+                    let by_b = b.witnesses(axis);
+                    let by_c = c.witnesses(axis);
+                    if comptime!(by_a) {
+                        a.runtime_extent(axis)
+                    } else if comptime!(by_b) {
+                        b.runtime_extent(axis)
+                    } else if comptime!(by_c) {
+                        c.runtime_extent(axis)
+                    } else {
+                        panic!(
+                            "witnessed_space: {axis:?} is Dynamic and no operand states its size; \
+                             every operand spanning it gathers over it, holds it Static, or is a \
+                             fragment. Keep it Static in the kernel space, or give the operation \
+                             an operand that maps it identically"
+                        )
+                    }
+                }
+            };
+            sizes.push(size);
+        }
+    }
+    Space::with_sizes(space, sizes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: Axis = Axis(0);
+    const B: Axis = Axis(1);
+
+    /// The discrimination the operation space rests on: a bound is an axis's own extent only when
+    /// one dim carries that axis alone. The two ways it stops being one are a gather, whose dim
+    /// holds the receptive field its axes reach over, and storage tiling, which splits the extent
+    /// across dims so no single bound is it.
+    #[test]
+    fn bound_states_wants_one_dim_carrying_the_axis_alone() {
+        let direct = Projection::direct(&[A, B]);
+        assert_eq!(bound_states(&direct, A), Some(0));
+        assert_eq!(bound_states(&direct, B), Some(1));
+
+        let gathered = Projection::new(&[A, B], &[PhysicalAxisMap::affine(&[(A, 1), (B, 1)])]);
+        assert_eq!(bound_states(&gathered, A), None);
+        assert_eq!(bound_states(&gathered, B), None);
+
+        let tiled = Projection::tiled(&[A, B], StorageTiling::per_axis(&[1, 2]));
+        assert_eq!(bound_states(&tiled, A), Some(0));
+        assert_eq!(bound_states(&tiled, B), None);
     }
 }

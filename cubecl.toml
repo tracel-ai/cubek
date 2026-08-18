@@ -1,0 +1,11 @@
+# CubeCL runtime configuration for working in this repo (tests & benches).
+#
+# Backends with per-stream memory pools (CUDA, ROCm) key the stream on the
+# calling thread, and `cargo test` spawns a fresh thread per test. With the
+# default `max_streams = 128`, a long test run touches every slot and each
+# slot's pools grow to the largest tensors it ever served — on a
+# unified-memory APU that adds up to tens of GB of host RAM and ends in a
+# SIGKILL from the OOM killer. A handful of streams is plenty for tests and
+# keeps the pool footprint bounded.
+[streaming]
+max_streams = 4

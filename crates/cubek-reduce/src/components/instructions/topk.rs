@@ -354,7 +354,7 @@ fn topk_finalize_values<P: ReducePrecision, Out: Numeric>(
     #[comptime] k: usize,
 ) -> Array<Out> {
     let vals = accumulator.elements.multiple();
-    let vector_size = vals[0].size().comptime();
+    let vector_size = vals[0].vector_size().comptime();
 
     let mut topk = Array::new(k);
     #[unroll]
@@ -394,7 +394,7 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
 ) -> (Array<P::EA>, Array<u32>) {
     let vals = accumulator.elements.multiple();
     let coords = accumulator.args.multiple();
-    let vector_size = coords[0].size().comptime();
+    let vector_size = coords[0].vector_size().comptime();
 
     let mut topk_vals = Array::new(k);
     let mut topk_coords = Array::new(k);

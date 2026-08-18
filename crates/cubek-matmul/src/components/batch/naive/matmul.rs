@@ -40,7 +40,7 @@ pub(crate) fn matmul_entry<
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: NaiveBlueprint,
-    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [ElemType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
@@ -130,7 +130,9 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
             terminate!();
         }
 
-        let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
+        let lhs_vec = lhs.vector_size();
+        let rhs_vec = rhs.vector_size();
+        let vector_size = comptime![Ord::max(lhs_vec, rhs_vec)];
         let size!(NA) = vector_size;
         let mut sum = Vector::<AccRE<MT>, NA>::zero();
 
@@ -155,7 +157,7 @@ impl<MT: MatmulTypes> BatchMatmul<(), MT> for NaiveMatmul<MT> {
 
             out.write((m, n), Vector::cast_from(accum));
         } else {
-            out.write((m, n), Vector::cast_from(sum.extract(0)));
+            out.write((m, n), Vector::cast_from(sum.extract(0usize)));
         }
     }
 }
@@ -167,15 +169,21 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
     #[comptime] layout: MatrixLayout,
 ) -> Vector<I, N2> {
     let vector_size = N2::value();
-    comptime![assert!(vector_size >= view.vector_size())];
     let view_vector_size = view.vector_size();
-    if comptime![view.vector_size() == vector_size] {
+    comptime![assert!(vector_size >= view_vector_size)];
+    if comptime![view_vector_size == vector_size] {
         Vector::cast_from(view.read(pos))
     } else {
         let (row, col) = pos;
         let mut out = Vector::empty();
+        // Cast host-side: `as` inside `#[cube]` emits an IR cast, whose result is not a constant,
+        // and an unrolled range rejects a non-constant bound.
         #[unroll]
-        for i in range_stepped(0, vector_size as u32, view_vector_size as u32) {
+        for i in range_stepped(
+            0u32,
+            comptime!(vector_size as u32),
+            comptime!(view_vector_size as u32),
+        ) {
             let pos = match layout {
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),

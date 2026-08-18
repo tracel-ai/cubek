@@ -293,9 +293,8 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::In, P::Siz
 
 impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Input> {}
 impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Input> {
-    fn vector_size(&self) -> usize {
-        let scope = Scope::root(false);
-        RA::__expand_vector_size_input(&scope, &self.state)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        RA::__expand_vector_size_input(scope, &self.state)
     }
 }
 
@@ -366,8 +365,7 @@ impl<P: ReduceDType, RA: ReduceArgs> VirtualTensorOperationsExpand<P::Out, P::Si
 
 impl<P: ReduceDType, RA: ReduceArgs> Vectorized for TensorArg<P, RA, Output> {}
 impl<P: ReduceDType, RA: ReduceArgs> VectorizedExpand for TensorArgExpand<P, RA, Output> {
-    fn vector_size(&self) -> usize {
-        let scope = Scope::root(false);
-        RA::__expand_vector_size_output(&scope, &self.state)
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        RA::__expand_vector_size_output(scope, &self.state)
     }
 }

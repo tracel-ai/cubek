@@ -1,5 +1,5 @@
 use cubecl::{
-    Runtime, client::ComputeClient, ir::StorageType, prelude::TensorBinding, server::LaunchError,
+    Runtime, client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError,
 };
 use cubek_matmul::{
     args::{TensorArgs, TensorMapArgs},
@@ -43,7 +43,7 @@ impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L>
     fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
         handle: TensorBinding<R>,
-        dtype: StorageType,
+        dtype: ElemType,
         _operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError> {
         contiguous_pitched_layout(client, handle, dtype)
@@ -60,7 +60,7 @@ impl Routine for SpecializedTmaConv {
     fn correct_layout<R: Runtime>(
         client: &ComputeClient<R>,
         handle: TensorBinding<R>,
-        dtype: StorageType,
+        dtype: ElemType,
         operation: ConvolutionOperation,
     ) -> Result<TensorBinding<R>, LaunchError> {
         into_tensor_handle_tma(client, handle, dtype, operation)

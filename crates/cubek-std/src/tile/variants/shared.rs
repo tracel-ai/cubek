@@ -117,14 +117,14 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     pub fn get_vector(&self, coor_strided: u32, coor_contiguous: u32) -> Vector<ES, N> {
         let offset = coor_strided * self.stride + coor_contiguous;
         let offset_abs = self.start + offset;
-        let type_size = Vector::<ES, N>::type_size();
+        let type_size = Vector::<ES, N>::size();
         let offset_swizzled = self.swizzle.apply(offset_abs, type_size);
         self.container[offset_swizzled as usize]
     }
 
     pub fn stage_offset(&self, relative_offset: u32) -> u32 {
         let offset = self.start + relative_offset;
-        let type_size = Vector::<ES, N>::type_size();
+        let type_size = Vector::<ES, N>::size();
         self.swizzle.apply(offset, type_size)
     }
 
@@ -132,9 +132,9 @@ impl<ES: Numeric, N: Size> StridedTile<ES, N> {
     pub fn with_vector_size<N2: Size>(&self) -> StridedTile<ES, N2> {
         let vector_size = N2::value();
         intrinsic!(|scope| {
-            let stage_vector_size = self.container.vector_size();
+            let stage_vector_size = self.container.__expand_vector_size_method(scope);
 
-            if vector_size == self.container.vector_size() {
+            if vector_size == self.container.__expand_vector_size_method(scope) {
                 return self.__expand_with_stage_vector_size_method(scope);
             }
 

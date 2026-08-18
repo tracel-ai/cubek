@@ -20,14 +20,14 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
-    let dtype = f32::as_type_native_unchecked().storage_type();
+    let dtype = f32::elem_type_native();
 
     let bench = PoolBench {
         problem: problem.clone(),
         device,
         client,
         dtype,
-        indices_dtype: i32::as_type_native_unchecked().storage_type(),
+        indices_dtype: i32::elem_type_native(),
         samples: num_samples,
     };
 
@@ -43,8 +43,8 @@ struct PoolBench {
     problem: PoolProblem,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
-    dtype: StorageType,
-    indices_dtype: StorageType,
+    dtype: ElemType,
+    indices_dtype: ElemType,
     samples: usize,
 }
 

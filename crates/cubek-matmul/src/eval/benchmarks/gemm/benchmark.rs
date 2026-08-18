@@ -73,7 +73,7 @@ struct GemmBench {
 fn make_uniform(
     client: &ComputeClient<TestRuntime>,
     shape: [usize; 3],
-    dtype: StorageType,
+    dtype: ElemType,
     seed: u64,
     lo: f32,
     hi: f32,

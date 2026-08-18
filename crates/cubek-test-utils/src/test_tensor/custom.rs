@@ -1,7 +1,7 @@
 use cubecl::{
     TestRuntime,
     client::ComputeClient,
-    ir::{ElemType, FloatKind, StorageType},
+    ir::{ElemType, FloatKind},
     prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -14,7 +14,7 @@ fn new_custom_data(
     client: &ComputeClient<TestRuntime>,
     shape: Shape,
     strides: Strides,
-    dtype: StorageType,
+    dtype: ElemType,
     contiguous_data: Vec<f32>,
 ) -> TensorHandle<TestRuntime> {
     let num_logical = shape.iter().product::<usize>();
@@ -55,33 +55,31 @@ fn scatter_logical_to_physical(shape: &Shape, strides: &Strides, src: &[f32], ds
     }
 }
 
-pub(crate) fn cast_f32_to_dtype(data: &[f32], dtype: StorageType) -> Vec<u8> {
+pub(crate) fn cast_f32_to_dtype(data: &[f32], dtype: ElemType) -> Vec<u8> {
     match dtype {
-        StorageType::Scalar(ElemType::Float(FloatKind::F32)) => f32::as_bytes(data).to_vec(),
-        StorageType::Scalar(ElemType::Float(FloatKind::F64)) => {
+        ElemType::Float(FloatKind::F32) => f32::as_bytes(data).to_vec(),
+        ElemType::Float(FloatKind::F64) => {
             let casted: Vec<f64> = data.iter().map(|&x| x as f64).collect();
             f64::as_bytes(&casted).to_vec()
         }
-        StorageType::Scalar(ElemType::Float(FloatKind::F16)) => {
+        ElemType::Float(FloatKind::F16) => {
             let casted: Vec<half::f16> = data.iter().map(|&x| half::f16::from_f32(x)).collect();
             half::f16::as_bytes(&casted).to_vec()
         }
-        StorageType::Scalar(ElemType::Float(FloatKind::BF16)) => {
+        ElemType::Float(FloatKind::BF16) => {
             let casted: Vec<half::bf16> = data.iter().map(|&x| half::bf16::from_f32(x)).collect();
             half::bf16::as_bytes(&casted).to_vec()
         }
-        StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U32)) => {
+        ElemType::UInt(cubecl::ir::UIntKind::U32) => {
             let casted: Vec<u32> = data.iter().map(|&x| x as u32).collect();
             u32::as_bytes(&casted).to_vec()
         }
-        StorageType::Scalar(ElemType::UInt(cubecl::ir::UIntKind::U8)) => {
-            data.iter().map(|&x| x as u8).collect()
-        }
-        StorageType::Scalar(ElemType::Int(cubecl::ir::IntKind::I32)) => {
+        ElemType::UInt(cubecl::ir::UIntKind::U8) => data.iter().map(|&x| x as u8).collect(),
+        ElemType::Int(cubecl::ir::IntKind::I32) => {
             let casted: Vec<i32> = data.iter().map(|&x| x as i32).collect();
             i32::as_bytes(&casted).to_vec()
         }
-        StorageType::Scalar(ElemType::Int(cubecl::ir::IntKind::I8)) => {
+        ElemType::Int(cubecl::ir::IntKind::I8) => {
             let casted: Vec<i8> = data.iter().map(|&x| x as i8).collect();
             i8::as_bytes(&casted).to_vec()
         }

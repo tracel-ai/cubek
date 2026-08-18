@@ -2,7 +2,6 @@
 
 use std::marker::PhantomData;
 
-use cubecl::ir::StorageType;
 use cubecl::prelude::*;
 use cubecl::server::TensorMapMeta;
 pub use cubecl::zspace::metadata::Metadata;
@@ -11,9 +10,9 @@ use cubecl::zspace::{Shape, Strides, shape, strides};
 use crate::MatrixLayout;
 
 /// CUDA's TMA loads f32 as tf32 internally; remap explicitly so the descriptor matches.
-pub fn remap_storage_for_tma(ty: StorageType) -> StorageType {
-    if ty == f32::as_type_native_unchecked().storage_type() {
-        tf32::as_type_native_unchecked().storage_type()
+pub fn remap_storage_for_tma(ty: ElemType) -> ElemType {
+    if ty == f32::elem_type_native() {
+        tf32::elem_type_native()
     } else {
         ty
     }
@@ -53,7 +52,7 @@ pub fn tma_operand<R: Runtime>(
     batches: usize,
     layout: MatrixLayout,
     box_shape: (usize, usize),
-    storage_ty: StorageType,
+    storage_ty: ElemType,
     swizzle: TensorMapSwizzle,
 ) -> (TensorMapArg<R, Tiled>, bool) {
     let rank = binding.shape.len();
@@ -94,7 +93,7 @@ pub fn tma_operand<R: Runtime>(
 pub fn tma_meta_tiled(
     metadata: Metadata,
     tile_size: Shape,
-    storage_ty: StorageType,
+    elem_ty: ElemType,
     swizzle: TensorMapSwizzle,
 ) -> TensorMapMeta {
     let rank = metadata.rank();
@@ -106,6 +105,6 @@ pub fn tma_meta_tiled(
         swizzle,
         prefetch: TensorMapPrefetch::None,
         oob_fill: OobFill::Zero,
-        storage_ty,
+        elem_ty,
     }
 }

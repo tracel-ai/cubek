@@ -6,7 +6,7 @@ pub use adaptive_avg_pool::run_adaptive_avg_pool_backward;
 pub use avg_pool::run_avg_pool_backward;
 pub use max_pool::run_max_pool_backward;
 
-use super::{f32_storage_type, i32_storage_type, make_random_f32_host, make_zero_handle};
+use super::{f32_elem_type, i32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{PoolBackwardProblem, PoolMode};
 use crate::eval::cpu_reference::{cpu_reference_max_pool_indices, cpu_reference_pool_backward};
 use crate::{pool2d_backward, pool2d_with_indices, pool2d_with_indices_backward};
@@ -28,8 +28,8 @@ pub fn strategy_result(
         return Err("max pool backward requires indices".to_string());
     }
 
-    let dtype = f32_storage_type();
-    let indices_dtype = i32_storage_type();
+    let dtype = f32_elem_type();
+    let indices_dtype = i32_elem_type();
     let out_grad_shape = problem.out_grad_shape.to_vec();
     let input_shape = vec![
         out_grad_shape[0],

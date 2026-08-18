@@ -58,7 +58,7 @@ impl LoadMaxRoundPlaneCount for SyncFullStridedLoading {
         tiles_per_stage: u32,
         vector_size: VectorSize,
         plane_dim: u32,
-        _dtype: StorageType,
+        _dtype: ElemType,
     ) -> u32 {
         let elements_per_stage = elements_per_tile * tiles_per_stage;
         let num_vectors = elements_per_stage / vector_size as u32;
@@ -125,7 +125,7 @@ impl<EG: Numeric, NG: Size, ES: Numeric, NS: Size>
         let view = global_iter.view().view(layout);
 
         let vector_read = view.read_checked(unit_position * NG::value() as u32);
-        let type_size = Vector::<ES, NS>::type_size();
+        let type_size = Vector::<ES, NS>::size();
         let stage_offs = stage.swizzle.apply(unit_position, type_size);
 
         stage.as_slice_mut::<NS>()[stage_offs as usize] = Vector::cast_from(vector_read);

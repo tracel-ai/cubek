@@ -113,7 +113,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for All {
         let mut all = P::EA::from_int(1);
         let accumulator = accumulator.elements.item();
         #[unroll]
-        for k in 0..accumulator.size() {
+        for k in 0..accumulator.vector_size() {
             let candidate = accumulator.extract(k);
             all = select(candidate < all, candidate, all);
         }

@@ -6,7 +6,10 @@
 //! ([`MmaData::mma`](crate::MmaData)) read it, so it lives at the crate root rather than beside
 //! either.
 
-use cubecl::ir::{DeviceProperties, MatrixIdent, StorageType};
+use cubecl::{
+    cmma::MatrixIdent,
+    ir::{DeviceProperties, ElemType},
+};
 
 /// Hardware-capability-driven choice of load/store methods for a manual-mma tile, fixed once per
 /// `(device, operand storage types)` and carried by [`Leaf::Mma`](crate::Leaf) because the
@@ -36,9 +39,9 @@ impl MmaIOConfig {
     /// operand's storage element. A packed storage type never uses the intrinsic paths.
     pub fn new(
         device_props: &DeviceProperties,
-        lhs_stage: StorageType,
-        rhs_stage: StorageType,
-        acc_stage: StorageType,
+        lhs_stage: ElemType,
+        rhs_stage: ElemType,
+        acc_stage: ElemType,
     ) -> Self {
         Self {
             lhs_load_method: load_method(device_props, lhs_stage),
@@ -72,20 +75,16 @@ impl MmaIOConfig {
     }
 }
 
-fn load_method(device_props: &DeviceProperties, dtype: StorageType) -> LoadMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.matmul.ldmatrix.contains(&dtype)
-    {
+fn load_method(device_props: &DeviceProperties, dtype: ElemType) -> LoadMethod {
+    if device_props.features.matmul.ldmatrix.contains(&dtype) {
         LoadMethod::LoadMatrix
     } else {
         LoadMethod::Manual
     }
 }
 
-fn store_method(device_props: &DeviceProperties, dtype: StorageType) -> StoreMethod {
-    if !matches!(dtype, StorageType::Packed(_, _))
-        && device_props.features.matmul.stmatrix.contains(&dtype)
-    {
+fn store_method(device_props: &DeviceProperties, dtype: ElemType) -> StoreMethod {
+    if device_props.features.matmul.stmatrix.contains(&dtype) {
         StoreMethod::StoreMatrix
     } else {
         StoreMethod::Manual

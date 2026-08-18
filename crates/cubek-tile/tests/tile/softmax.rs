@@ -11,33 +11,43 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RowState, Space, StagePlan, Storage, StridedTileArg,
-    StridedTileArgLaunch,
+    Axis, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
 };
 
 const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
 
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 fn softmax_walk_kernel(
-    score_in: &StridedTileArg<'_, f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &StridedTileArg<'_, u32>,     // {Q, S} boolean, nonzero = masked
-    values: &Tensor<f32>,               // [total_cols]
-    out: &mut Tensor<f32>,              // [rows]
-    lse: &mut Tensor<f32>,              // [rows]
+    score_in: &TileArg<'_, f32, Const<1>>, // {Q: rows, S: total_cols} raw scores
+    mask: &TileArg<'_, u32, Const<1>>,     // {Q, S} boolean, nonzero = masked
+    values: &Tensor<f32>,                  // [total_cols]
+    out: &mut Tensor<f32>,                 // [rows]
+    lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
+    #[comptime] space: Space,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] materialized: bool,
     #[comptime] num_blocks: usize,
 ) {
-    let score_gmem = score_in.tile();
-    let mask_tile = mask.tile();
-    let mut score =
-        MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let score_gmem = score_in.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
+    let mut score = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let mut p = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -89,7 +99,7 @@ fn softmax_walk_kernel(
                     let mut pos = CoordsDyn::new();
                     pos.push(r as u32);
                     pos.push(c as u32);
-                    acc[ri] += p_view.read(pos).extract(0) * values[blk * cols + c];
+                    acc[ri] += p_view.read(pos).extract(0usize) * values[blk * cols + c];
                 }
             }
         }
@@ -119,8 +129,8 @@ fn run(
     // a consistent unit count, so clamp (rows_per_unit grows to compensate).
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
 
     // Deterministic host-built data so device and host math see identical bits.
     let wobble =
@@ -165,23 +175,20 @@ fn run(
         // Explicit x = units so UNIT_POS_X is the owner index on every
         // backend (CubeDim::new packs by plane size: y-major on CPU).
         CubeDim::new_2d(units as u32, 1),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            1,
-            gmem_space.clone(),
-            Storage::of(2, 2),
+            TileSpec::direct(&[Q, S]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            1,
-            gmem_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[Q, S]),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
+        gmem_space,
         block_space,
         units,
         causal,
@@ -267,25 +274,36 @@ const V: Axis = Axis(2);
 /// runs under a *different* ownership (cyclic) than the softmax rows — the
 /// cross-unit handoff the smem path exists for.
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 fn softmax_smem_acc_kernel(
-    score_in: &StridedTileArg<'_, f32>, // {Q: rows, S: total_cols} raw scores
-    mask: &StridedTileArg<'_, u32>,     // unused (materialized = false)
-    values: &Tensor<f32>,               // [total_cols, val_dim] row-major
-    out: &mut Tensor<f32>,              // [rows, val_dim] row-major
-    lse: &mut Tensor<f32>,              // [rows]
+    score_in: &TileArg<'_, f32, Const<1>>, // {Q: rows, S: total_cols} raw scores
+    mask: &TileArg<'_, u32, Const<1>>,     // unused (materialized = false)
+    values: &Tensor<f32>,                  // [total_cols, val_dim] row-major
+    out: &mut Tensor<f32>,                 // [rows, val_dim] row-major
+    lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
+    #[comptime] space: Space,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] num_blocks: usize,
     #[comptime] val_dim: usize,
 ) {
-    let score_gmem = score_in.tile();
-    let mask_tile = mask.tile();
-    let mut score =
-        MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, comptime!(StagePlan::strided()));
+    let score_gmem = score_in.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
+    let mut score = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let mut p = MemData::<f32>::smem(
+        block_space.clone(),
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -293,9 +311,19 @@ fn softmax_smem_acc_kernel(
     let mut state = RowState::<f32>::new(kept_space.clone(), units);
     let rpu = comptime!(state.rows_per_unit);
 
-    let mut factors = MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::strided()));
+    let mut factors = MemData::<f32>::smem(
+        kept_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::strided()));
+    let mut acc = MemData::<f32>::smem(
+        acc_space,
+        Leaf::Memory,
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
     acc.zero();
 
     for blk in 0..num_blocks {
@@ -351,7 +379,7 @@ fn softmax_smem_acc_kernel(
                 let mut ppos = CoordsDyn::new();
                 ppos.push(r as u32);
                 ppos.push(c as u32);
-                let prob = p_view.read(ppos).extract(0);
+                let prob = p_view.read(ppos).extract(0usize);
                 cell += Vector::cast_from(prob * values[(blk * cols + c) * val_dim + v]);
             }
             acc_view.write(pos, cell);
@@ -378,7 +406,7 @@ fn softmax_smem_acc_kernel(
         let mut pos = CoordsDyn::new();
         pos.push((i / val_dim) as u32);
         pos.push((i % val_dim) as u32);
-        out[i] = acc_view.read(pos).extract(0);
+        out[i] = acc_view.read(pos).extract(0usize);
         i += workers;
     }
     for ri in 0..rpu {
@@ -400,8 +428,8 @@ fn run_smem_acc(
     let scale = 0.125f32;
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
 
-    let f32_ty = f32::as_type_native_unchecked().storage_type();
-    let u32_ty = u32::as_type_native_unchecked().storage_type();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
 
     let wobble =
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
@@ -439,23 +467,20 @@ fn run_smem_acc(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            1,
-            gmem_space.clone(),
-            Storage::of(2, 2),
+            TileSpec::direct(&[Q, S]),
         ),
-        StridedTileArgLaunch::strided(
+        TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            1,
-            gmem_space,
-            Storage::of(2, 2),
+            TileSpec::direct(&[Q, S]),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
+        gmem_space,
         block_space,
         units,
         causal,

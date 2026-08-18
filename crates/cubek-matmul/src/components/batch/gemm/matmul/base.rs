@@ -37,7 +37,7 @@ pub fn matmul_entry<
     runtime_config: (),
     cube_mapping: CubeMapping,
     #[comptime] blueprint: GemmBlueprint,
-    #[define(Lhs, Rhs, Acc)] _global: [StorageType; 3],
+    #[define(Lhs, Rhs, Acc)] _global: [ElemType; 3],
     #[define(LhsSize, RhsSize, AccSize)] _sizes: [usize; 3],
 ) {
     let state = Args::init_state::<Vector<Lhs, LhsSize>, Vector<Rhs, RhsSize>, Vector<Acc, AccSize>>(
@@ -118,11 +118,13 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         let rhs_batch = Args::batch_rhs(state, batch_cube as usize);
         let out_batch = Args::batch_out(state, batch_cube as usize);
 
-        let vector_size = comptime![Ord::max(lhs.vector_size(), rhs.vector_size())];
+        let lhs_vec = lhs.vector_size();
+        let rhs_vec = rhs.vector_size();
+        let vector_size = comptime![Ord::max(lhs_vec, rhs_vec)];
         let size!(N) = vector_size;
 
         let check_bounds = config.check_bounds;
-        let variant = comptime!(config.kind.variant());
+        let variant = comptime!(config.variant);
 
         let lhs_view = lhs.view(MatLayout::new(lhs_batch, (m, k)));
         let rhs_view = rhs.view(MatLayout::new(rhs_batch, (k, n)));
@@ -144,9 +146,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 // NR-blocks along N → `n_pos_base = cube_n * vs`.
                 let block_id = cube_m * config.num_planes + UNIT_POS_Y;
                 match comptime!(variant) {
-                    Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
-                        (block_id, cube_n * vs_u32)
-                    }
+                    Variant::OuterN => (block_id, cube_n * vs_u32),
                     Variant::OuterM => (block_id * vs_u32, cube_n),
                     Variant::Dot => (block_id, cube_n),
                 }
@@ -157,9 +157,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 // Dot: 1×1 per plane.
                 let block_id = cube_n * config.num_planes + UNIT_POS_Y;
                 match comptime!(variant) {
-                    Variant::OuterNLhsContig | Variant::OuterNLhsStrided => {
-                        (cube_m, block_id * vs_u32)
-                    }
+                    Variant::OuterN => (cube_m, block_id * vs_u32),
                     Variant::OuterM => (cube_m * vs_u32, block_id),
                     Variant::Dot => (cube_m, block_id),
                 }
@@ -180,7 +178,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                     check_bounds,
                 );
             }
-            Variant::OuterNLhsContig => {
+            Variant::OuterN => {
                 execute_outer_product::<
                     Global<Lhs<MP>>,
                     Global<Rhs<MP>>,
@@ -197,29 +195,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                     n_id,
                     k,
                     vector_size as u32,
-                    true,
-                    false,
-                    check_bounds,
-                );
-            }
-            Variant::OuterNLhsStrided => {
-                execute_outer_product::<
-                    Global<Lhs<MP>>,
-                    Global<Rhs<MP>>,
-                    AccG<MP>,
-                    AccRE<MP>,
-                    GlobalSize<Lhs<MP>>,
-                    GlobalSize<Rhs<MP>>,
-                    N,
-                >(
-                    lhs_view,
-                    rhs_view,
-                    out_view,
-                    m_id,
-                    n_id,
-                    k,
-                    vector_size as u32,
-                    true,
                     true,
                     check_bounds,
                 );
@@ -241,7 +216,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                     n_id,
                     k,
                     vector_size as u32,
-                    false,
                     false,
                     check_bounds,
                 );

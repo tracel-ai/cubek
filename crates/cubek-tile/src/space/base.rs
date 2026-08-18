@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, LevelRole, MAX_AXES, Partitioner};
+use crate::{Axis, ComputeScope, Distribution, LaneShare, LevelRole, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -85,16 +85,6 @@ impl Extents {
     }
 }
 
-/// What backs a staged matmul operand, the [`Space::operand_stage`] classification. `Plane` stages
-/// straight into plane-private tile partitions; `Smem` into a shared buffer the leaf reads windows
-/// from. Read by the staging store ([`Staging::new`]) and the schedule's unroll (a plane stage
-/// selects tiles by comptime coordinate, so its walk must be unrolled).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum OperandStage {
-    Plane,
-    Smem,
-}
-
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
@@ -120,8 +110,9 @@ impl std::hash::Hash for Space {
 }
 
 /// Comptime tiling spec read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
-/// `Space`, so only [`Walk::over`](crate::Walk), which takes the runtime operation space built by
-/// [`merge_with`](Space::merge_with), needs these; everything else calls the host methods directly.
+/// `Space`, so only [`Walk::over`](crate::Walk), which takes the runtime operation space
+/// [`witnessed_space`](crate::witnessed_space) builds from an op's operands, needs these;
+/// everything else calls the host methods directly.
 impl SpaceExpand {
     fn comptime(&self) -> Space {
         Space {
@@ -162,39 +153,6 @@ impl Space {
             partitioner: comptime!(space.partitioner.clone()),
         }
     }
-
-    /// Merge two already-sized runtime spaces into the operation space: the comptime structure is
-    /// the host [`merge`](Space::merge) of their specs, and each merged axis takes its runtime size
-    /// from whichever input spans it. A fully-`Static` merge carries no runtime sizes.
-    pub fn merge_with(&self, other: &Space) -> Space {
-        let merged = comptime!(Space::merge(&[&self.clone(), &other.clone()]));
-        let mut sizes = Sequence::<usize>::new();
-        if comptime!(!merged.is_static()) {
-            #[unroll]
-            for p in 0..comptime!(merged.rank()) {
-                let axis = comptime!(merged.axis_at(p));
-                if comptime!(self.clone().contains(axis)) {
-                    sizes.push(self.size(axis));
-                } else {
-                    sizes.push(other.size(axis));
-                }
-            }
-        }
-        Space::with_sizes(merged, sizes)
-    }
-
-    /// This space's runtime size along `axis`: a `Static` axis folds to its comptime extent
-    /// (so a fully-static operand needs no `sizes` at all), a `Dynamic` one reads the
-    /// per-axis `sizes`, valid only once filled.
-    fn size(&self, #[comptime] axis: Axis) -> usize {
-        match comptime!(self.clone().extent_raw(axis)) {
-            Extent::Static(n) => comptime!(n).runtime(),
-            Extent::Dynamic => *self
-                .extents
-                .sizes
-                .index(comptime!(self.clone().position(axis))),
-        }
-    }
 }
 
 impl Space {
@@ -210,7 +168,7 @@ impl Space {
     pub fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
-            partitioner: Partitioner::Final(Leaf::Register),
+            partitioner: Partitioner::Final,
         }
     }
 
@@ -256,35 +214,12 @@ impl Space {
         self
     }
 
-    /// Set the chain-end [`Leaf`] after all levels are stacked (appending a level resets
-    /// it); the public surface is the order-safe [`Tiling::leaf`](crate::LeveledTiling::leaf).
-    pub(crate) fn with_leaf(mut self, leaf: Leaf) -> Self {
-        self.partitioner = self.partitioner.with_leaf(leaf);
-        self
-    }
-
     pub fn partitioner(&self) -> &Partitioner {
         &self.partitioner
     }
 
     pub fn is_final(&self) -> bool {
         self.partitioner.is_final()
-    }
-
-    /// How this output plan's operands stage: [`Plane`](OperandStage::Plane) when a plane leaf is
-    /// fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
-    pub(crate) fn operand_stage(&self) -> OperandStage {
-        match self.partitioner() {
-            Partitioner::Level(_) => match (self.partitioner().leaf(), self.partitioner().next()) {
-                (Leaf::Cmma { .. } | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role()
-                {
-                    LevelRole::Partition => OperandStage::Plane,
-                    LevelRole::Instance => OperandStage::Smem,
-                },
-                _ => OperandStage::Smem,
-            },
-            Partitioner::Final(_) => OperandStage::Smem,
-        }
     }
 
     /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
@@ -350,7 +285,7 @@ impl Space {
     /// partition (a k-step walk) all cut nothing.
     pub(crate) fn cuts_tiles(&self) -> bool {
         match self.partitioner() {
-            Partitioner::Final(_) => false,
+            Partitioner::Final => false,
             Partitioner::Level(level) => match level.role() {
                 LevelRole::Instance => false,
                 LevelRole::Partition => crate::partition_grid(self) != (1, 1),
@@ -393,21 +328,12 @@ impl Space {
             .map(|p| &p.partitioner)
             .find(|p| !p.is_final())
             .cloned()
-            .unwrap_or(Partitioner::Final(Leaf::Register));
+            .unwrap_or(Partitioner::Final);
 
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner,
         }
-    }
-
-    /// Reorder so `fastest` walks innermost (last axis fastest): each coarser-axis
-    /// window then feeds a consecutive burst of steps: the unrolled fragment walk's
-    /// emission order.
-    pub fn with_fastest(&self, fastest: Axis) -> Space {
-        let mut axes: Vec<Axis> = self.axes().filter(|&a| a != fastest).collect();
-        axes.push(fastest);
-        self.project(&axes)
     }
 
     pub fn project(&self, axes: &[Axis]) -> Space {
@@ -451,39 +377,100 @@ impl Space {
 
     /// Whether a walk over this level leaves `operand`'s window unchanged: every axis the
     /// walk actually steps (more than one tile) is absent from the operand: the same
-    /// structural fact as broadcast omission. A [`Staged`](crate::Schedule::Staged) walk
-    /// fills such an operand once, above the loop. Host-side, static extents.
+    /// structural fact as broadcast omission. A staged walk fills such an operand once, above
+    /// the loop. Host-side, static extents.
     pub fn walk_invariant(&self, operand: &Space) -> bool {
         self.axes()
             .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
     }
 
-    /// What the plane's lanes hold of this space's cells: `Partial` once a level spreads an axis
-    /// the space doesn't span, since each lane then covers a disjoint slice of it.
+    /// What the plane's lanes hold of this space's cells: a `Unit` axis the space doesn't span is
+    /// *folded* across the lanes, so each holds only a partial; one it does span is *carried*,
+    /// giving each lane a cell of its own.
+    ///
+    /// Which lanes hold partials of one cell is a question about the lane index's digits, so the
+    /// answer is a bit mask. `Walk::from_counts` decodes a `Unit` axis as
+    /// `UNIT_POS_X / inner_weight % instances`, which for power-of-two counts is a contiguous run
+    /// of bits; the folded axes' runs are exactly the bits a cell's partials differ in. Fold
+    /// everything and that mask is the whole plane ([`LaneShare::Plane`]); fold under a carry and
+    /// it is a [`LaneShare::Group`], whatever order the axes sit in.
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
         }
-        for axis in self.partitioner.axes() {
-            if self.contains(axis) {
-                continue;
-            }
-            if let Distribution::Spatial {
+        // Innermost first, so `weight` is the axis's stride in the lane index as it is reached —
+        // the same least-significant-last ordering `Walk::from_counts` decodes with.
+        let (mut weight, mut fold_mask) = (1usize, 0usize);
+        for axis in self.partitioner.axes().into_iter().rev() {
+            let Distribution::Spatial {
                 scope: ComputeScope::Unit,
                 coverage,
                 ..
             } = self.partitioner.distribution(axis)
-                && coverage.instances_const().is_some_and(|lanes| lanes > 1)
-            {
-                return LaneShare::Partial;
+            else {
+                continue;
+            };
+            // Asserted, not skipped: a `Unit` axis always resolves to `Instances`
+            // (`Distribution::unit` defers through `PlaneLanes`), and passing over one whose
+            // count we could not read would shift every inner axis's bits by its width.
+            let lanes = coverage
+                .instances_const()
+                .expect("Space::lane_share: a Unit axis must carry a const instance count");
+            if lanes == 1 {
+                continue;
             }
+            assert!(
+                lanes.is_power_of_two(),
+                "Space::lane_share: {axis:?} rides {lanes} lanes, which is not a power of two, so its partials are not a bit range"
+            );
+            if !self.contains(axis) {
+                fold_mask |= (lanes - 1) * weight;
+            }
+            weight *= lanes;
         }
-        LaneShare::Whole
+        match fold_mask {
+            0 => LaneShare::Whole,
+            // Every lane's bit folded: nothing is carried, so the plane shares the one cell.
+            mask if mask == weight - 1 => LaneShare::Plane,
+            fold_mask => LaneShare::Group { fold_mask },
+        }
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
+    }
+
+    /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
+    /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
+    /// there are is what picks a leaf's microkernel, so every site that deduces a 2-D single-`K`
+    /// shape asks here rather than reading an operand's rank.
+    pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
+        Space::merge(operands).contracting(output)
+    }
+
+    /// The `k` edge this operand contracts over against `output`: the product of every
+    /// [`contracting`](Space::contracting) axis's extent. An instruction sees one contraction
+    /// depth, not a list of axes.
+    ///
+    /// Reads the extents off this space as it stands, like every other consumer of a tile's edges
+    /// ([`matrix_split`](crate::matrix_split)); call it on the [`final_space`](Space::final_space)
+    /// when the caller holds a level above the leaf.
+    pub fn contracted_extent(&self, output: &Space) -> usize {
+        self.contracting(output)
+            .iter()
+            .map(|&axis| self.extent(axis))
+            .product()
+    }
+
+    /// Whether `lhs` and `rhs` enumerate their contracted axes in the same order.
+    ///
+    /// A fragment groups its `k` edge by extent alone ([`matrix_split`](crate::matrix_split)), so
+    /// two operands listing the same axes in different orders contract mismatched positions with
+    /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
+    /// axis list, which is stated per operand, so nothing upstream forces them to agree.
+    pub fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
+        lhs.contracting(output) == rhs.contracting(output)
     }
 
     /// The single axis this operand contracts against `output`:
@@ -559,6 +546,18 @@ impl Space {
     }
 }
 
+#[cube]
+impl Space {
+    /// Axis `i`'s extent, preserving a dynamic extent as its runtime size. This is the form a
+    /// coordinate-backed operand carries as its real-data bound across [`Space::divide`] calls.
+    pub(crate) fn runtime_extent_at(&self, #[comptime] i: usize) -> usize {
+        match comptime!(self.extents.kinds.get(self.extents.kinds.axis_at(i))) {
+            Extent::Static(n) => comptime!(n).runtime(),
+            Extent::Dynamic => *self.extents.sizes.index(i),
+        }
+    }
+}
+
 /// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal sizes agree, a
 /// static `1` yields to the other, anything else conflicts. A `Dynamic` axis subsumes any
 /// non-broadcast operand (its runtime size is the merged one), so the merge stays dynamic.
@@ -604,5 +603,76 @@ impl<'a> IntoIterator for &'a Space {
 
     fn into_iter(self) -> Axes<'a> {
         self.axes()
+    }
+}
+
+/// A single-level space whose every axis is one sequential cut of its extent: what the shape
+/// helpers are exercised against, since they read extents and axis order rather than the walk.
+#[cfg(test)]
+pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
+    use crate::{Buffering, Cut, Tiling, WalkOrder};
+    Tiling::new()
+        .extents(extents)
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
+            for &(axis, e) in extents {
+                l = l.axis(axis, Cut::sequential(e));
+            }
+            l
+        })
+        .build()
+}
+
+#[cfg(test)]
+mod contraction_tests {
+    use crate::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+    const R: Axis = Axis(3);
+
+    /// A matmul contracts one axis, so the `k` edge is that axis's extent, as it always was.
+    #[test]
+    fn a_matmul_contracts_its_one_axis() {
+        let lhs = flat_space(&[(M, 8), (K, 4)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert_eq!(lhs.contracted_extent(&out), 4);
+    }
+
+    /// A convolution contracts its taps and its channels at once; the instruction sees one `k`,
+    /// which is their product.
+    #[test]
+    fn a_convolution_contracts_taps_times_channels() {
+        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert_eq!(lhs.contracted_extent(&out), 12);
+    }
+
+    /// An operand spanning only output axes contracts nothing, and an empty product is `1`.
+    #[test]
+    fn contracting_nothing_is_a_unit_depth() {
+        let lhs = flat_space(&[(M, 8), (N, 8)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert_eq!(lhs.contracted_extent(&out), 1);
+    }
+
+    /// The `A` and `B` roles of a convolution, listing taps then channels in the order each
+    /// operand's own spec states them.
+    #[test]
+    fn operands_listing_one_contraction_order_agree() {
+        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
+        let rhs = flat_space(&[(R, 3), (K, 4), (N, 8)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(Space::contraction_agrees(&lhs, &rhs, &out));
+    }
+
+    /// The same axes and the same `k`, listed the other way round on `rhs`: nothing about the
+    /// shapes distinguishes this from the case above, so the order has to be compared.
+    #[test]
+    fn a_permuted_contraction_order_disagrees() {
+        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
+        let rhs = flat_space(&[(K, 4), (R, 3), (N, 8)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(!Space::contraction_agrees(&lhs, &rhs, &out));
     }
 }

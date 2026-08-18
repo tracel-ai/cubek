@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Set, Space, StridedTileArgLaunch, StridedTileSource, Unset};
+use crate::{Axis, Set, Space, StridedOperand, StridedTileSource, Unset};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -16,23 +16,53 @@ pub struct Launcher<'c, R: Runtime> {
 }
 
 impl Space {
-    /// Bind this concrete (real-extent) space to `client` for launching. The kernel-form space
-    /// goes fully dynamic so one compiled kernel serves every shape; a static-shape constructor
-    /// can later skip that derivation without changing this one. Any `Unit` axis's deferred lane
-    /// count is stamped here from the hardware `plane_size` ([`Space::resolve_lanes`]).
+    /// Creates a [`Launcher`] with all kernel space axes marked dynamic, allowing one compiled
+    /// kernel to serve arbitrary shapes.
+    ///
+    /// Resolves any `Unit` axis lane counts using the device `plane_size`. Use
+    /// [`launcher_over`](Self::launcher_over) if specific axes should remain static.
     pub fn launcher<R: Runtime>(self, client: &ComputeClient<R>) -> Launcher<'_, R> {
         let plane_size = client.properties().hardware.plane_size_max as usize;
         let concrete = self.resolve_lanes(plane_size);
         let kernel = concrete.clone().all_dynamic();
+        Launcher::new(concrete, kernel, client)
+    }
+
+    /// Creates a [`Launcher`] where only the specified `dynamic` axes have dynamic extents in
+    /// the kernel space; all other axes remain compile-time static.
+    ///
+    /// Useful to specialize kernel loops along specific axes, or for an axis no operand can state
+    /// the size of at runtime ([`Tile::witnesses`](crate::Tile::witnesses)). Passing `&[]` creates
+    /// a fully static launch.
+    pub fn launcher_over<'c, R: Runtime>(
+        self,
+        client: &'c ComputeClient<R>,
+        dynamic: &[Axis],
+    ) -> Launcher<'c, R> {
+        // An axis the space does not have would be dropped by `with_dynamic`, leaving a kernel
+        // specialized along the axis the caller meant to free.
+        for &axis in dynamic {
+            assert!(
+                self.contains(axis),
+                "Space::launcher_over: {axis:?} is not an axis of this space"
+            );
+        }
+        let plane_size = client.properties().hardware.plane_size_max as usize;
+        let concrete = self.resolve_lanes(plane_size);
+        let kernel = concrete.clone().with_dynamic(dynamic);
+        Launcher::new(concrete, kernel, client)
+    }
+}
+
+impl<'c, R: Runtime> Launcher<'c, R> {
+    fn new(concrete: Space, kernel: Space, client: &'c ComputeClient<R>) -> Self {
         Launcher {
             concrete,
             kernel,
             client,
         }
     }
-}
 
-impl<'c, R: Runtime> Launcher<'c, R> {
     pub fn cube_count(&self) -> CubeCount {
         self.concrete.cube_count()
     }
@@ -51,14 +81,10 @@ impl<'c, R: Runtime> Launcher<'c, R> {
         &self.concrete
     }
 
-    /// Start a tile argument over the kernel space: [`StridedTileArgLaunch::source`] with
-    /// [`space`](StridedTileSource::space) pre-set and the bounds-check derived from the concrete
-    /// space's overhang (an explicit [`checked`](StridedTileSource::checked) still wins).
-    pub fn arg<E: Numeric>(
-        &self,
-        binding: TensorBinding<R>,
-    ) -> StridedTileSource<'_, Set, Unset, E, R> {
-        StridedTileArgLaunch::source(binding)
+    /// Starts configuring a tile operand builder ([`StridedTileSource`]) bound to this launcher's
+    /// kernel space, with automatic bounds checking derived from the concrete space overhang.
+    pub fn arg(&self, binding: TensorBinding<R>) -> StridedTileSource<'_, Set, Unset, Unset, R> {
+        StridedOperand::source(binding)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
