@@ -13,9 +13,6 @@ version.workspace = true
 default = ["cubecl/default"]
 std = ["cubecl/std"]
 
-# Opt-in timing probes, kept out of normal test runs.
-benchmarks = []
-
 heavy = []
 extended = ["heavy"]
 full = ["extended"]
