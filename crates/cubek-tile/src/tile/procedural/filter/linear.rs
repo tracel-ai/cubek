@@ -2,18 +2,14 @@ use cubecl::prelude::*;
 
 use crate::Axis;
 
-use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand, RecipeMeta};
+use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
 
 /// A [`Linear`] filter applied directly to an [`AffineCoordinate`].
 pub type LinearAxis<T> = Linear<AffineCoordinate<T>>;
 
 /// Construct a [`LinearAxis`] recipe filtering along a single coordinate axis.
 #[cube]
-pub fn linear_along<T: Float>(
-    #[comptime] axis: Axis,
-    offset: T,
-    coefficient: T,
-) -> LinearAxis<T> {
+pub fn linear_along<T: Float>(#[comptime] axis: Axis, offset: T, coefficient: T) -> LinearAxis<T> {
     LinearAxis::<T> {
         coordinate: AffineCoordinate::<T> {
             offset,
@@ -27,10 +23,6 @@ pub fn linear_along<T: Float>(
 #[derive(CubeType, Clone)]
 pub struct Linear<C: CubeType> {
     pub coordinate: C,
-}
-
-impl<C: RecipeMeta + CubeType> RecipeMeta for Linear<C> {
-    const HALO: usize = C::HALO + 1;
 }
 
 #[cube]

@@ -12,24 +12,8 @@ const COL: Axis = Axis(1);
 const ROWS: usize = 4;
 const COLS: usize = 6;
 
-#[derive(CubeType, Clone)]
-struct ProductAxes {
-    #[cube(comptime)]
-    row: Axis,
-    #[cube(comptime)]
-    col: Axis,
-}
-
-impl RecipeMeta for ProductAxes {}
-
-#[cube]
-impl<T: Float> Recipe<T> for ProductAxes {
-    fn evaluate(&self, coordinates: &RecipeCoords) -> T {
-        let row = coordinates.along(self.row);
-        let col = coordinates.along(self.col);
-        T::cast_from(row) * T::cast_from(col)
-    }
-}
+/// `Product` takes two type parameters, which `#[cube]` cannot spell in a struct literal.
+type AxisProduct<T> = Product<AffineCoordinate<T>, AffineCoordinate<T>>;
 
 #[derive(CubeType, Clone)]
 struct AxisValue {
@@ -37,8 +21,6 @@ struct AxisValue {
     axis: Axis,
     scale: f32,
 }
-
-impl RecipeMeta for AxisValue {}
 
 #[cube]
 impl<T: Float> Recipe<T> for AxisValue {
@@ -107,9 +89,12 @@ fn product_kernel<E: Float>(
     #[comptime] stage: StagePlan,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural_resident::<ProductAxes>(
+    let source = Tile::<E>::procedural_resident::<AxisProduct<E>>(
         comptime!(space.clone()),
-        ProductAxes { row: ROW, col: COL },
+        AxisProduct::<E> {
+            lhs: affine_along(ROW, E::from_int(0), E::from_int(1)),
+            rhs: affine_along(COL, E::from_int(0), E::from_int(1)),
+        },
         stage,
     );
     materialize(&source, output, space);
@@ -636,24 +621,5 @@ fn divided_direct_copy_preserves_the_parent_bound() {
     assert_grid(
         &HostData::from_tensor_handle(&client, output, HostDataType::F32),
         |row, col| if row < 2 && col < 4 { 1.0 } else { 0.0 },
-    );
-}
-
-#[test]
-fn recipe_facts_compose_through_nesting() {
-    assert_eq!(RecipeFacts::of::<Zeros>().halo, 0);
-    assert_eq!(RecipeFacts::of::<Ones>().halo, 0);
-    assert_eq!(RecipeFacts::of::<Constant<f32>>().halo, 0);
-    assert_eq!(RecipeFacts::of::<AffineCoordinate<f32>>().halo, 0);
-    assert_eq!(RecipeFacts::of::<LinearAxis<f32>>().halo, 1);
-    assert_eq!(RecipeFacts::of::<CubicAxis<f32>>().halo, 2);
-    assert_eq!(RecipeFacts::of::<LanczosAxis<f32>>().halo, 3);
-    assert_eq!(
-        RecipeFacts::of::<Lanczos<Cubic<AffineCoordinate<f32>>>>().halo,
-        5
-    );
-    assert_eq!(
-        RecipeFacts::of::<Product<CubicAxis<f32>, LanczosAxis<f32>>>().halo,
-        3
     );
 }

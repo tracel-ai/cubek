@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::Axis;
 
-use super::{Recipe, RecipeCoords, RecipeExpand, RecipeMeta};
+use super::{Recipe, RecipeCoords, RecipeExpand};
 
 /// A one-dimensional affine coordinate expression, `offset + coefficient * coordinate[axis]`.
 /// The axis is compile-time metadata; offset and coefficient can be runtime values.
@@ -13,8 +13,6 @@ pub struct AffineCoordinate<T: Numeric> {
     #[cube(comptime)]
     pub axis: Axis,
 }
-
-impl<T: Numeric> RecipeMeta for AffineCoordinate<T> {}
 
 /// Construct an [`AffineCoordinate`] along the specified axis.
 #[cube]

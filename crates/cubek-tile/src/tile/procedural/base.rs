@@ -9,7 +9,7 @@ use cubecl::{
 
 use crate::{Coords, Fold, FoldExpand, Region, Space, StagePlan};
 
-use super::{RecipeCoords, RecipeFacts, VirtualRecipe};
+use super::{RecipeCoords, VirtualRecipe};
 
 /// Runtime state of a procedural source. `origin` tracks regions selected by `Tile::at`.
 #[derive(CubeType, Clone)]
@@ -25,9 +25,6 @@ pub struct ProceduralData<T: Numeric> {
     #[cube(comptime)]
     pub(crate) bounds_check: bool,
     recipe: VirtualRecipe<T>,
-    /// Compile-time metadata about the recipe (such as its halo/support).
-    #[cube(comptime)]
-    pub facts: RecipeFacts,
     #[cube(comptime)]
     space: Space,
     /// Where this source lives at each level below. A recipe has no bytes to leave in place, so
@@ -46,7 +43,6 @@ impl<T: Numeric> ProceduralData<T> {
     pub(crate) fn new_virtual(
         #[comptime] space: Space,
         recipe: VirtualRecipe<T>,
-        #[comptime] facts: RecipeFacts,
         #[comptime] stage: StagePlan,
     ) -> Self {
         let mut origin = Coords::<u32>::new();
@@ -72,7 +68,6 @@ impl<T: Numeric> ProceduralData<T> {
             bound,
             bounds_check,
             recipe,
-            facts,
             space,
             stage,
             _marker: PhantomData,
@@ -92,7 +87,6 @@ impl<T: Numeric> ProceduralData<T> {
             bound: self.bound.clone(),
             bounds_check: comptime!(self.bounds_check),
             recipe: self.recipe.clone(),
-            facts: comptime!(self.facts),
             space: comptime!(space.divide()),
             stage: comptime!(self.stage.descend()),
             _marker: PhantomData,

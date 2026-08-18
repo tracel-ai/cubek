@@ -45,49 +45,22 @@ impl RecipeCoords {
     }
 }
 
-/// What the engine knows about a recipe before it evaluates one. A plain trait: entries carry
-/// defaults, so adding one is not a breaking change for existing recipes.
-pub trait RecipeMeta {
-    /// How far outside a tile this recipe's support reaches.
-    const HALO: usize = 0;
-}
-
 /// An N-dimensional scalar field evaluated at absolute logical coordinates.
 ///
 /// Recipes implement [`Recipe<T>`] for any numeric element type `T: Numeric` (integers and floats),
 /// though continuous interpolation and filtering recipes (such as [`Linear`](super::Linear),
 /// [`Cubic`](super::Cubic), [`Lanczos`](super::Lanczos)) are defined over [`Float`] elements.
 #[cube(expand_base_traits = "ExpandTypeClone")]
-pub trait Recipe<T: Numeric>: RecipeMeta {
+pub trait Recipe<T: Numeric> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T;
 }
 
-/// Plain comptime struct carrying the answers extracted from [`RecipeMeta`].
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub struct RecipeFacts {
-    pub halo: usize,
-}
-
-impl RecipeFacts {
-    pub fn of<R: RecipeMeta>() -> Self {
-        Self { halo: R::HALO }
-    }
-}
-
 pub(crate) trait RecipeOps<T: Numeric> {
-    fn evaluate_virtual(
-        &self,
-        scope: &Scope,
-        coordinates: &RecipeCoordsExpand,
-    ) -> NativeExpand<T>;
+    fn evaluate_virtual(&self, scope: &Scope, coordinates: &RecipeCoordsExpand) -> NativeExpand<T>;
 }
 
 impl<T: Numeric, R: RecipeExpand<T>> RecipeOps<T> for R {
-    fn evaluate_virtual(
-        &self,
-        scope: &Scope,
-        coordinates: &RecipeCoordsExpand,
-    ) -> NativeExpand<T> {
+    fn evaluate_virtual(&self, scope: &Scope, coordinates: &RecipeCoordsExpand) -> NativeExpand<T> {
         self.__expand_evaluate_method(scope, coordinates)
     }
 }
