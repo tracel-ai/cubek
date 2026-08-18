@@ -3,7 +3,10 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::sum, *};
+use crate::{
+    instruction::{mma::register::contract_block, mma::register::RegisterTuning, sum},
+    *,
+};
 
 // The block's line width, as a scope-registered size rather than a generic. `RA` names the
 // vector element `data` is allocated at; `alloc` binds it to the promoting tile's width with
@@ -188,25 +191,22 @@ impl<T: Numeric> RegisterData<T> {
         let lhs_mat = lhs.matrix_transparent::<EL, L, L>(0usize);
         // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
         let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
-        // Matches the memory-backed leaf's cap: past it, hundreds of inlined cells
-        // overflow the optimizer's recursive block pass.
-        let unroll = comptime!(mr * nr <= 64);
 
-        for p in 0..kc {
-            let mut b = Array::<Vector<T, RA>>::new(nr);
-            #[unroll(unroll)]
-            for n in 0..nr {
-                b[n] = Vector::<T, RA>::cast_from(rhs_mat.read((p as u32, n as u32)));
-            }
-            #[unroll(unroll)]
-            for i in 0..mr {
-                let lhs_line = lhs_mat.read((i as u32, (p / lw) as u32));
-                let a = Vector::<T, RA>::cast_from(lhs_line.extract_dynamic(p % lw));
-                #[unroll(unroll)]
-                for n in 0..nr {
-                    self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);
-                }
-            }
-        }
+        // The same knobs the memory-backed leaf lowers with, from the same query: this block is
+        // the same straight-line code, so the budget on it cannot differ.
+        let device_props = comptime::device_properties();
+        let tuning = comptime!(RegisterTuning::new(&device_props));
+        let unroll = comptime!(mr * nr <= tuning.unroll_block);
+
+        contract_block::<T, EL, L, ER, RA>(
+            &lhs_mat,
+            &rhs_mat,
+            &mut self.data,
+            lw,
+            mr,
+            nr,
+            kc,
+            unroll,
+        );
     }
 }

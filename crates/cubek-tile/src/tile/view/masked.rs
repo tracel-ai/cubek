@@ -41,6 +41,18 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
         }
     }
 
+    /// Whether the non-empty box starting at `pos` with `extent` is wholly in bounds.
+    /// A layout's bounds are axis-aligned, so checking the box's far corner is sufficient.
+    pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
+        if comptime!(self.check) {
+            let one = C::from_int(pos.clone(), 1i64);
+            let far = C::sub(C::add(pos, extent), one);
+            self.view.is_in_bounds(far)
+        } else {
+            true.runtime()
+        }
+    }
+
     pub fn shape(&self) -> C {
         self.view.shape()
     }
@@ -74,6 +86,17 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
             self.view.write_checked(pos, value);
         } else {
             self.view.write(pos, value);
+        }
+    }
+
+    /// Mutable counterpart to [`MaskedView::block_in_bounds`].
+    pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
+        if comptime!(self.check) {
+            let one = C::from_int(pos.clone(), 1i64);
+            let far = C::sub(C::add(pos, extent), one);
+            self.view.is_in_bounds(far)
+        } else {
+            true.runtime()
         }
     }
 

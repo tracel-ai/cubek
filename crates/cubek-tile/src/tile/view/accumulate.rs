@@ -31,6 +31,11 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         comptime!(self.values.check)
     }
 
+    /// Whether a non-empty output block is wholly valid for unchecked seed/commit accesses.
+    pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
+        self.values.block_in_bounds(pos, extent)
+    }
+
     /// A block's starting value for an `inst` fold. A partial starts at `inst`'s identity: the
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
     /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.

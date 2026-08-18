@@ -1509,6 +1509,156 @@ fn register_matmul_promoted_cube_plane() {
         .enforce()
 }
 
+// ---- lined lhs: the (line, lane) K walk --------------------------------------
+
+/// The register block walks `K` as (line, lane) so the lhs's within-line component is a comptime
+/// index and `extract` names a fixed component. At a scalar lhs there is exactly one lane per line
+/// and the split is invisible, so only a *lined* lhs exercises the fan-out. The two kernels below
+/// are the scalar-lhs tests' twins with the lhs lined, one per caller of the shared walk.
+#[cube(launch)]
+fn launch_cpu_matmul_lined<E: Numeric, LV: Size, V: Size>(
+    a: &TileArg<'_, E, LV>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.zero();
+    c.mma(&a, &b);
+}
+
+/// [`launch_cpu_matmul_lined`] through the promoted block instead of through the output.
+#[cube(launch)]
+fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
+    a: &TileArg<'_, E, LV>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    let mut acc = c.promote::<EA, _>(&a);
+    acc.zero();
+    acc.mma(&a, &b);
+    acc.drain_cast_into(&mut c);
+}
+
+/// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
+fn arange_matmul_reference(m: usize, n: usize, k: usize) -> Vec<f32> {
+    (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect()
+}
+
+/// A single-level space whose leaf takes the whole problem, the shape both lined-lhs tests drive.
+fn lined_lhs_space(m: usize, n: usize, k: usize) -> Space {
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, m), (N, n), (K, k)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner)
+}
+
+/// The memory-backed leaf with the lhs lined 2-wide along `K`: two lanes per K-line, each
+/// reaching its element by a comptime `extract` rather than a dynamic one.
+#[test]
+fn register_matmul_lined_lhs() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let space = lined_lhs_space(m, n, k);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_cpu_matmul_lined::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        2,
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(arange_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// [`register_matmul_lined_lhs`] through the promoted block: same walk, same lanes, but the
+/// accumulator never round-trips to the output between `K` steps.
+#[test]
+fn register_matmul_promoted_lined_lhs() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let space = lined_lhs_space(m, n, k);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_promoted_matmul_lined::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        // Lhs 2-wide along K, rhs and output 2-wide along N: both the lane fan-out and the
+        // block's own line width are off their scalar case at once.
+        2,
+        2,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(arange_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 // ---- cmma fragment transit (tensor-core) -------------------------------------
 
 /// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no
