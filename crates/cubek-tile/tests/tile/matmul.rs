@@ -1686,6 +1686,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K]),
             scheme,
             DequantAt::Load,
@@ -2312,6 +2313,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K]),
             scheme,
             DequantAt::Load,
@@ -2395,6 +2397,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K]),
             scheme,
             DequantAt::Load,
@@ -2511,6 +2514,7 @@ fn mma_matmul_quant_until_read() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
                 .residence(&[Residence::Smem]),
@@ -2604,6 +2608,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
                 .residence(&[Residence::Smem]),
@@ -2701,6 +2706,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
                 .residence(&[Residence::Smem]),
@@ -2798,6 +2804,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
                 .residence(&[Residence::Smem]),
@@ -2895,6 +2902,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
                 .residence(&[Residence::Smem]),
@@ -3406,6 +3414,7 @@ fn run_register_matmul_quant(
         QuantTileArgLaunch::new(
             a_arg,
             scales_arg,
+            None.into(),
             TileSpec::direct(&[M, K]).residence(residence),
             scheme,
             DequantAt::Load,

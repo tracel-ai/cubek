@@ -240,6 +240,25 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
             _state: PhantomData,
         }
     }
+
+    /// [`quantized`](Self::quantized) for a lookup scheme
+    /// ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)): each stored field indexes
+    /// `table` and a read reconstructs `table[field] * scale`. The table must hold `2^bits`
+    /// f32 entries — the unpack's mask bounds every index to that range, so a shorter buffer
+    /// is read out of bounds, and no check here can see its length.
+    pub fn quantized_lookup(
+        mut self,
+        scales: TensorArg<R>,
+        table: BufferArg<R>,
+        scheme: QuantScheme,
+        dequant_at: DequantAt,
+    ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
+        self.data.quant = Some(Quantization::lookup(scales, table, scheme, dequant_at));
+        StridedTileSource {
+            data: self.data,
+            _state: PhantomData,
+        }
+    }
 }
 
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
@@ -248,6 +267,10 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 /// [`DequantAt`] without a scheme has nothing to bound.
 pub struct Quantization<R: Runtime> {
     pub scales: TensorArg<R>,
+    /// A lookup scheme's `2^bits`-entry table, present exactly under
+    /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode);
+    /// [`validate`](Self::validate) holds the two together.
+    pub table: Option<BufferArg<R>>,
     pub scheme: QuantScheme,
     pub dequant_at: DequantAt,
 }
@@ -256,6 +279,22 @@ impl<R: Runtime> Quantization<R> {
     pub fn new(scales: TensorArg<R>, scheme: QuantScheme, dequant_at: DequantAt) -> Self {
         Quantization {
             scales,
+            table: None,
+            scheme,
+            dequant_at,
+        }
+    }
+
+    /// [`new`](Self::new) with a lookup scheme's table beside the scales.
+    pub fn lookup(
+        scales: TensorArg<R>,
+        table: BufferArg<R>,
+        scheme: QuantScheme,
+        dequant_at: DequantAt,
+    ) -> Self {
+        Quantization {
+            scales,
+            table: Some(table),
             scheme,
             dequant_at,
         }
@@ -272,6 +311,7 @@ impl<R: Runtime> Quantization<R> {
     pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
         validate_scheme(space, vector_size, self.scheme);
         validate_dequant_at(self.dequant_at, leaf);
+        cubecl::std::quant::check_table_bindings(&self.scheme, self.table.is_some());
     }
 }
 
@@ -315,6 +355,7 @@ impl<R: Runtime> QuantOperand<R> {
         QuantTileArgLaunch::new(
             self.tensor,
             self.quant.scales,
+            self.quant.table.into(),
             self.spec,
             self.quant.scheme,
             self.quant.dequant_at,

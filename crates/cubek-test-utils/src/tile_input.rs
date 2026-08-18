@@ -378,8 +378,68 @@ impl QuantizedTileInputBuilder {
             scales,
             scheme: self.scheme,
             dequant_at: self.dequant_at,
+            table: None,
             q,
             scale_values,
+            table_values: Vec::new(),
+        }
+    }
+
+    /// [`arange`](Self::arange) for a lookup scheme: the packed fields walk the table indices
+    /// `0, 1, …, 2^bits - 1, 0, …` so every entry is read, the scales are the same
+    /// distinct-per-block ramp, and `table` uploads beside them. Panics unless the scheme's mode
+    /// is lookup and the table holds exactly `2^bits` entries.
+    pub fn lookup_arange(self, table: &[f32]) -> QuantizedTileInput {
+        assert!(
+            matches!(self.scheme.mode, cubecl::quant::scheme::QuantMode::Lookup),
+            "lookup_arange: the scheme's mode is {:?}, not Lookup",
+            self.scheme.mode
+        );
+        let span = 1usize << self.scheme.size_bits_value();
+        assert_eq!(
+            table.len(),
+            span,
+            "lookup_arange: a {}-bit scheme indexes {span} entries",
+            self.scheme.size_bits_value()
+        );
+        let rank = self.space.rank();
+        let shape: Vec<usize> = (0..rank)
+            .map(|i| self.space.extent(self.space.axis_at(i)))
+            .collect();
+
+        let q: Vec<i32> = (0..shape.iter().product())
+            .map(|i| (i % span) as i32)
+            .collect();
+        let words = crate::stubs::quant::pack_q_values(&q, &self.scheme);
+        let handle = self.client.create(Bytes::from_elems(words));
+
+        let block = crate::stubs::quant::block_dims(&self.scheme, &shape);
+        let grid = crate::stubs::quant::scales_shape(&shape, &block);
+        let scale_values: Vec<f32> = (0..grid.iter().product())
+            .map(|g| 0.05 * (g + 1) as f32)
+            .collect();
+        let scales = TestInput::builder(self.client.clone(), Shape::from(grid))
+            .custom(scale_values.clone())
+            .generate_without_host_data();
+        let table_handle = TestInput::builder(self.client, Shape::from(vec![span]))
+            .custom(table.to_vec())
+            .generate_without_host_data();
+
+        QuantizedTileInput {
+            tile: TileInput {
+                handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
+                space: self.space,
+                levels: 0,
+                leaf: self.leaf,
+                residence: self.residence,
+            },
+            scales,
+            scheme: self.scheme,
+            dequant_at: self.dequant_at,
+            table: Some(table_handle),
+            q,
+            scale_values,
+            table_values: table.to_vec(),
         }
     }
 }
@@ -393,10 +453,15 @@ pub struct QuantizedTileInput {
     pub tile: TileInput,
     scales: TensorHandle<TestRuntime>,
     scheme: QuantScheme,
-    /// The quant values, row-major in the logical shape.
+    /// A lookup scheme's table, present exactly under `QuantMode::Lookup`
+    /// ([`lookup_arange`](QuantizedTileInputBuilder::lookup_arange) mints it).
+    table: Option<TensorHandle<TestRuntime>>,
+    /// The quant values, row-major in the logical shape. Table indices under a lookup scheme.
     pub q: Vec<i32>,
     /// One scale per block, row-major over the scheme's block grid.
     pub scale_values: Vec<f32>,
+    /// The lookup table's entries, empty for a non-lookup scheme.
+    pub table_values: Vec<f32>,
 }
 
 impl QuantizedTileInput {
@@ -411,6 +476,10 @@ impl QuantizedTileInput {
         QuantTileArgLaunch::new(
             self.tile.tensor_arg(1),
             self.scales_arg(),
+            self.table
+                .as_ref()
+                .map(|t| t.clone().binding().into_tensor_arg().into_buffer_arg())
+                .into(),
             self.tile.spec(),
             self.scheme,
             self.dequant_at,
