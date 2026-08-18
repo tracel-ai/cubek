@@ -69,7 +69,7 @@ fn matmul_sequential_single_cube() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .staged(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -101,7 +101,7 @@ fn matmul_one_tile_per_cube() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .staged(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -119,7 +119,7 @@ fn matmul_reversed_walk_single_cube() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .staged(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -144,7 +144,7 @@ fn matmul_contiguous_m_across_cubes() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .staged(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -169,7 +169,7 @@ fn matmul_interleaved_m_across_cubes() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .staged(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -202,7 +202,7 @@ fn matmul_cpu_sequential() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .direct(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -220,7 +220,7 @@ fn matmul_cpu_big_k() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .direct(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -240,7 +240,7 @@ fn matmul_cpu_dynamic_k() {
             (K, Distribution::Sequential),
         ]),
     )
-    .direct();
+    .buffered(Buffering::SINGLE);
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -298,7 +298,7 @@ fn matmul_cpu_cores_split_m() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .direct(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -323,7 +323,7 @@ fn matmul_cpu_cores_split_m_planes() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .direct(),
+        .buffered(Buffering::SINGLE),
     );
 }
 
@@ -347,7 +347,7 @@ fn matmul_broadcast_two_batch_axes() {
                     (K, Distribution::Sequential),
                 ]),
             )
-            .staged()
+            .buffered(Buffering::SINGLE)
         }],
     );
 }
@@ -371,7 +371,7 @@ fn matmul_broadcast_lhs_only() {
                     (K, Distribution::Sequential),
                 ]),
             )
-            .staged()
+            .buffered(Buffering::SINGLE)
         }],
     );
 }
@@ -402,7 +402,7 @@ fn matmul_broadcast_two_batch_axes_on_z() {
                     (K, Distribution::Sequential),
                 ]),
             )
-            .staged()
+            .buffered(Buffering::SINGLE)
         }],
     );
 }
@@ -429,7 +429,7 @@ fn matmul_broadcast_multilevel() {
                         (K, Distribution::Sequential),
                     ]),
                 )
-                .staged()
+                .buffered(Buffering::SINGLE)
             },
             {
                 Partitioner::row_major(
@@ -442,7 +442,7 @@ fn matmul_broadcast_multilevel() {
                         (K, Distribution::Sequential),
                     ]),
                 )
-                .staged()
+                .buffered(Buffering::SINGLE)
             },
         ],
     );
@@ -475,13 +475,15 @@ fn check_matmul_batched(
             (K, Distribution::Sequential),
         ]),
     )
-    .staged();
+    .buffered(Buffering::SINGLE);
 
     let space = Space::new(&[(B, b), (M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
     let a = TileInput::builder(&client, space.project(&[B, M, K]))
+        .residence(&[Residence::Smem])
         .tile(&[batch_edge, tile_edge, tile_edge])
         .arange();
     let rhs = TileInput::builder(&client, space.project(&[B, K, N]))
+        .residence(&[Residence::Smem])
         .tile(&[batch_edge, tile_edge, tile_edge])
         .arange();
     let c = TileInput::builder(&client, space.project(&[B, M, N]))
@@ -547,10 +549,14 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
     // Every operand projects onto the shared space; an operand that omits a batch
     // axis broadcasts along all of it (the kernel's `Space::merge` fills it back).
     let out = space.project(&[B0, B1, M, N]);
+    // Every level of this helper stages, whatever the caller stacked.
+    let residence = vec![Residence::Smem; partitioners.len()];
     let lhs = TileInput::builder(&client, space.project(&[B0, M, K]))
+        .residence(&residence)
         .tile(&[1, t, t])
         .arange();
     let rhs = TileInput::builder(&client, space.project(&[B1, K, N]))
+        .residence(&residence)
         .tile(&[1, t, t])
         .arange();
     let acc = TileInput::builder(&client, out.clone())
@@ -586,8 +592,8 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
 }
 
 fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
-    // The CPU register lowering wants the no-staging `Direct` schedule — each caller
-    // finalizes its partitioner with `.direct()`.
+    // The CPU register lowering reads both operands where they lie: the inputs state no
+    // residence, so the level materializes nothing and the walk is the plain recursion.
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
@@ -643,7 +649,7 @@ fn matmul_multilevel_staged_then_direct() {
             (K, Distribution::Sequential),
         ]),
     )
-    .staged();
+    .buffered(Buffering::SINGLE);
     // Level 1: 2×2×2 final tiles within each block, reversed walk, no staging
     let l1 = Partitioner::reversed(
         ByAxis::new(&[(M, 2), (N, 2), (K, 2)]),
@@ -653,8 +659,16 @@ fn matmul_multilevel_staged_then_direct() {
             (K, Distribution::Sequential),
         ]),
     )
-    .direct();
-    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
+    .buffered(Buffering::SINGLE);
+    check_matmul_multilevel(
+        8,
+        8,
+        8,
+        l0,
+        l1,
+        StageStorage::Strided,
+        &[Residence::Smem, Residence::InPlace],
+    );
 }
 
 #[test]
@@ -667,7 +681,7 @@ fn matmul_multilevel_staged_then_staged() {
             (K, Distribution::Sequential),
         ]),
     )
-    .staged();
+    .buffered(Buffering::SINGLE);
     let l1 = Partitioner::row_major(
         ByAxis::new(&[(M, 2), (N, 2), (K, 2)]),
         ByAxis::new(&[
@@ -676,8 +690,16 @@ fn matmul_multilevel_staged_then_staged() {
             (K, Distribution::Sequential),
         ]),
     )
-    .staged();
-    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
+    .buffered(Buffering::SINGLE);
+    check_matmul_multilevel(
+        8,
+        8,
+        8,
+        l0,
+        l1,
+        StageStorage::Strided,
+        &[Residence::Smem, Residence::Smem],
+    );
 }
 
 /// Double buffering at the higher level
@@ -691,7 +713,7 @@ fn matmul_multilevel_double_then_direct() {
             (K, Distribution::Sequential),
         ]),
     )
-    .double_buffered();
+    .buffered(Buffering::DOUBLE);
 
     let l1 = Partitioner::row_major(
         ByAxis::new(&[(M, 2), (N, 2), (K, 2)]),
@@ -701,9 +723,17 @@ fn matmul_multilevel_double_then_direct() {
             (K, Distribution::Sequential),
         ]),
     )
-    .direct();
+    .buffered(Buffering::SINGLE);
 
-    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
+    check_matmul_multilevel(
+        8,
+        8,
+        8,
+        l0,
+        l1,
+        StageStorage::Strided,
+        &[Residence::Smem, Residence::InPlace],
+    );
 }
 
 /// Double buffering at the lower level
@@ -716,10 +746,19 @@ fn matmul_multilevel_staged_then_double() {
             (K, Distribution::Sequential),
         ])
     };
-    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).staged();
-    let l1 =
-        Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).double_buffered();
-    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Strided);
+    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq())
+        .buffered(Buffering::SINGLE);
+    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq())
+        .buffered(Buffering::DOUBLE);
+    check_matmul_multilevel(
+        8,
+        8,
+        8,
+        l0,
+        l1,
+        StageStorage::Strided,
+        &[Residence::Smem, Residence::Smem],
+    );
 }
 
 /// A storage-tiled stage on a register leaf: the stage layout knob off its default,
@@ -733,9 +772,19 @@ fn matmul_multilevel_tiled_stage() {
             (K, Distribution::Sequential),
         ])
     };
-    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq()).staged();
-    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq()).direct();
-    check_matmul_multilevel(8, 8, 8, l0, l1, StageStorage::Tiled);
+    let l0 = Partitioner::row_major(ByAxis::new(&[(M, 4), (N, 4), (K, 4)]), seq())
+        .buffered(Buffering::SINGLE);
+    let l1 = Partitioner::row_major(ByAxis::new(&[(M, 2), (N, 2), (K, 2)]), seq())
+        .buffered(Buffering::SINGLE);
+    check_matmul_multilevel(
+        8,
+        8,
+        8,
+        l0,
+        l1,
+        StageStorage::Tiled,
+        &[Residence::Smem, Residence::InPlace],
+    );
 }
 
 /// A staged level whose walk leaves the lhs unchanged (an N-only walk at L1): the
@@ -747,19 +796,21 @@ fn matmul_staged_invariant_lhs() {
     let seq = |edge| Cut::sequential(edge);
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4))
         })
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4))
         })
         .build();
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem, Residence::Smem])
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem, Residence::Smem])
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
@@ -811,7 +862,7 @@ fn register_matmul_unit_spread_n() {
     let seq = |edge| Cut::sequential(edge);
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(m)).axis(N, Cut::unit(nr)).axis(K, seq(k))
         })
         .build()
@@ -857,8 +908,8 @@ fn register_matmul_unit_spread_n() {
         .enforce()
 }
 
-/// The legacy register budget as a level structure: a Direct contraction-step walk
-/// (windowing only), a `Staged` N-walk refilling one B fragment per step while the A
+/// The legacy register budget as a level structure: an in-place contraction-step walk
+/// (windowing only), an N-walk refilling one B fragment per step while the A
 /// column fills once above it, and an M-only fragment walk below. Exercises sub-block
 /// partition selection (the N-walk's regions each own a column of the accumulator) and
 /// the correctness-driven staged unroll. Tensor-core only.
@@ -876,35 +927,49 @@ fn cmma_matmul_staged_n_walk_partition() {
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::plane(part))
                 .axis(N, Cut::plane(part))
                 .axis(K, seq(stage_k))
         })
         // L2: the contraction-step walk, windowing only.
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i))
         })
         // L3: the N-walk: one B fragment per step, the A column filled once above it.
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i))
         })
         // L4: the M-only fragment walk.
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
         .build();
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[
+            Residence::Smem,
+            Residence::InPlace,
+            Residence::InPlace,
+            Residence::Plane,
+            Residence::InPlace,
+        ])
         .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[
+            Residence::Smem,
+            Residence::InPlace,
+            Residence::InPlace,
+            Residence::Plane,
+            Residence::InPlace,
+        ])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -942,6 +1007,100 @@ fn cmma_matmul_staged_n_walk_partition() {
         .enforce()
 }
 
+/// Double-buffered walk over a plane-partition stage (Residence::Plane) under a CMMA leaf.
+/// Exercises the unrolled pipelined walk (unroll == true) with register partition selection.
+#[test]
+fn cmma_matmul_double_buffered_plane_stage() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let (m, n, k) = (32usize, 32usize, 32usize);
+    let (part, i, stage_k) = (16usize, 8usize, 16usize);
+    let seq = |edge| Cut::sequential(edge);
+    let leaf = Leaf::Cmma;
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
+        })
+        // L1: the stage split one `part×part` partition per plane (2×2 planes).
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::plane(part))
+                .axis(N, Cut::plane(part))
+                .axis(K, seq(stage_k))
+        })
+        // L2: the contraction-step walk, windowing only.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i))
+        })
+        // L3: the N-walk with DOUBLE buffering over a plane stage.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
+            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        // L4: the M-only fragment walk.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
+        })
+        .build();
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[
+            Residence::Smem,
+            Residence::InPlace,
+            Residence::InPlace,
+            Residence::Plane,
+            Residence::InPlace,
+        ])
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[
+            Residence::Smem,
+            Residence::InPlace,
+            Residence::InPlace,
+            Residence::Plane,
+            Residence::InPlace,
+        ])
+        .leaf(leaf)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .leaf(leaf)
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 #[test]
 fn matmul_double_buffered() {
     check_matmul(
@@ -956,13 +1115,74 @@ fn matmul_double_buffered() {
                 (K, Distribution::Sequential),
             ]),
         )
-        .double_buffered(),
+        .buffered(Buffering::DOUBLE),
     );
+}
+
+/// Double buffering with only the lhs staged: `a` takes a shared stage while `b` is read straight
+/// from global memory, in one slot, on a level that prefetches. How deep a level buffers and where
+/// each of its operands lives are independent, and this is the pair that could not be expressed
+/// while one knob said both.
+#[test]
+fn matmul_double_buffered_with_only_the_lhs_staged() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, tile_edge), (N, tile_edge), (K, tile_edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::DOUBLE);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem])
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::InPlace])
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .tile(&[tile_edge, tile_edge])
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // The same answer the fully-staged double-buffered walk gives: residence moves bytes around,
+    // it does not change what is computed.
+    let expected = references::tiled_matmul(m, n, k, tile_edge);
+    let (_, expected) = TestInput::builder(
+        client,
+        shape![m / tile_edge, n / tile_edge, tile_edge, tile_edge],
+    )
+    .custom(expected)
+    .generate_with_f32_host_data();
+
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
 }
 
 /// Drives the staged lowering with a two-level partitioner stack `[l0, l1]`. `l1`'s
 /// edge sizes the final tile (and the data tiling); the coarse `l0` drives launch geometry.
 /// `stage` is the operands' stage-layout knob (the output is never staged).
+#[allow(clippy::too_many_arguments)]
 fn check_matmul_multilevel(
     m: usize,
     n: usize,
@@ -970,6 +1190,7 @@ fn check_matmul_multilevel(
     l0: Partitioner,
     l1: Partitioner,
     stage: StageStorage,
+    residence: &[Residence],
 ) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let final_edge = l1.edge(M);
@@ -979,9 +1200,11 @@ fn check_matmul_multilevel(
         .with_partitioner(l1.clone());
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(residence)
         .tile(&[final_edge, final_edge])
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(residence)
         .tile(&[final_edge, final_edge])
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
@@ -993,8 +1216,8 @@ fn check_matmul_multilevel(
         space.cube_count(),
         CubeDim::new_single(),
         1,
-        TileArgLaunch::new(a.tensor_arg(1), a.spec().staged(stage)),
-        TileArgLaunch::new(b.tensor_arg(1), b.spec().staged(stage)),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec().storage(stage)),
+        TileArgLaunch::new(b.tensor_arg(1), b.spec().storage(stage)),
         c.arg(),
         space,
         dtype,
@@ -1015,7 +1238,8 @@ fn check_matmul_multilevel(
         .enforce()
 }
 
-/// Drives the staged lowering `launch_staged_matmul` for `C = A @ B`.
+/// Drives the staged lowering `launch_staged_matmul` for `C = A @ B`. Every caller stages its one
+/// level, so the inputs take [`Residence::Smem`] there.
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tile_edge = partitioner.edge(M);
@@ -1023,9 +1247,11 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem])
         .tile(&[tile_edge, tile_edge])
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .tile(&[tile_edge, tile_edge])
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
@@ -1060,7 +1286,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 }
 
 /// The kernel: `c.mma(a, b)` — `c` is a whole tensor, so it lowers; the move comes
-/// from its partitioner's `Schedule` (here `.staged()` or `.double_buffered()`).
+/// from its partitioner's `Buffering` (here `.buffered(Buffering::SINGLE)` or `.buffered(Buffering::DOUBLE)`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -1118,8 +1344,8 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
 }
 
 /// The CPU kernel: `c.zero()` then `c.mma(a, b)` (the production cpu_gemm body — the
-/// register leaf accumulates in place, so the routine zeroes first); the partitioner's
-/// `Direct` schedule selects the no-staging move. Operands are size-free —
+/// register leaf accumulates in place, so the routine zeroes first); the default
+/// `InPlace` residence selects the no-staging move. Operands are size-free —
 /// vectorization is a launch concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
@@ -1173,7 +1399,7 @@ fn register_matmul_promoted_accumulator() {
             (K, Distribution::Sequential),
         ]),
     )
-    .direct();
+    .buffered(Buffering::SINGLE);
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1230,12 +1456,12 @@ fn register_matmul_promoted_cube_plane() {
     let seq = |edge| Cut::sequential(edge);
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::cube(CubeAxis::X, m))
                 .axis(N, Cut::cube(CubeAxis::Y, n))
                 .axis(K, seq(k))
         })
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::plane(leaf_m))
                 .axis(N, Cut::plane(leaf_n))
                 .axis(K, seq(leaf_k))
@@ -1494,28 +1720,28 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
 /// back to gmem is the epilogue. Tensor-core only — run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
-    check_cmma_matmul_k_walk(16, Schedule::Staged);
+    check_cmma_matmul_k_walk(16, Buffering::SINGLE);
 }
 
 /// The double-buffered variant: four K regions rotating through two smem slots, the
 /// accumulator fragment resident across all of them.
 #[test]
 fn cmma_matmul_double_buffered_k_walk() {
-    check_cmma_matmul_k_walk(32, Schedule::DoubleBuffered);
+    check_cmma_matmul_k_walk(32, Buffering::DOUBLE);
 }
 
 /// An odd region total (three K stages): the loop leaves the last region primed in slot 0;
 /// the epilogue must publish and consume it.
 #[test]
 fn cmma_matmul_double_buffered_odd_k_walk() {
-    check_cmma_matmul_k_walk(24, Schedule::DoubleBuffered);
+    check_cmma_matmul_k_walk(24, Buffering::DOUBLE);
 }
 
 /// The K walk staged into a plain strided stage (the legacy `sync_full_strided` storage):
 /// the cmma window transport reads through the layout stack either way.
 #[test]
 fn cmma_matmul_staged_k_walk_strided_stage() {
-    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 1, StageStorage::Strided);
+    check_cmma_matmul_k_walk_v(16, Buffering::SINGLE, 1, StageStorage::Strided);
 }
 
 /// The leaf stated by the *operands* rather than by the partitioning, and the partitioning made to
@@ -1536,17 +1762,19 @@ fn matmul_leaf_stated_by_operands() {
     let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4))
         })
         .build();
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -1582,11 +1810,13 @@ fn matmul_leaf_stated_by_operands() {
         .enforce()
 }
 
-fn check_cmma_matmul_k_walk(k: usize, schedule: Schedule) {
-    check_cmma_matmul_k_walk_v(k, schedule, 1, StageStorage::Tiled)
+fn check_cmma_matmul_k_walk(k: usize, buffering: Buffering) {
+    check_cmma_matmul_k_walk_v(k, buffering, 1, StageStorage::Tiled)
 }
 
-fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: StageStorage) {
+/// The one level always stages, whatever it buffers: a cmma leaf cannot consume the global inputs
+/// directly, so it first materializes them in shared memory.
+fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: StageStorage) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !require_cmma_8x8x8_f32(&client) {
         return;
@@ -1596,7 +1826,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
     let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, schedule, |l| {
+        .level(WalkOrder::RowMajor, buffering, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -1606,10 +1836,12 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .leaf(leaf)
+        .residence(&[Residence::Smem])
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .leaf(leaf)
+        .residence(&[Residence::Smem])
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
@@ -1623,8 +1855,8 @@ fn check_cmma_matmul_k_walk_v(k: usize, schedule: Schedule, v: usize, stage: Sta
         space.cube_count(),
         space.cube_dim(&client),
         v,
-        TileArgLaunch::new(a.tensor_arg(1), a.spec().staged(stage)),
-        TileArgLaunch::new(b.tensor_arg(1), b.spec().staged(stage)),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec().storage(stage)),
+        TileArgLaunch::new(b.tensor_arg(1), b.spec().storage(stage)),
         c.arg(),
         space,
         dtype,
@@ -1669,7 +1901,7 @@ fn mma_matmul_8x8x8() {
     };
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -1678,10 +1910,12 @@ fn mma_matmul_8x8x8() {
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -1735,13 +1969,13 @@ fn cmma_matmul_plane_partitioned_stage() {
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::sequential(n))
                 .axis(K, Cut::sequential(edge))
         })
         // L1: the stage split one `8×8` fragment per plane.
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::plane(edge))
                 .axis(N, Cut::plane(edge))
                 .axis(K, Cut::sequential(edge))
@@ -1750,10 +1984,12 @@ fn cmma_matmul_plane_partitioned_stage() {
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem, Residence::InPlace])
         .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem, Residence::InPlace])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -1792,8 +2028,8 @@ fn cmma_matmul_plane_partitioned_stage() {
 }
 
 /// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³
-/// fragments, resident across a double-buffered K walk; the fragment level declares
-/// `Direct`, so the static walk reloads operand fragments per execute (no staging).
+/// fragments, resident across a double-buffered K walk; the fragment level stays
+/// `InPlace`, so the static walk reloads operand fragments per execute (no staging).
 /// Tensor-core only; run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
@@ -1809,27 +2045,29 @@ fn cmma_matmul_multi_fragment_partition() {
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
-        .level(WalkOrder::RowMajor, Schedule::DoubleBuffered, |l| {
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::plane(part))
                 .axis(N, Cut::plane(part))
                 .axis(K, seq(stage_k))
         })
         // L2: the partition level — 2×2 fragments per plane, 2 K sub-tiles.
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
         .build();
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&[Residence::Smem, Residence::InPlace, Residence::InPlace])
         .leaf(leaf)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem, Residence::InPlace, Residence::InPlace])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -2192,13 +2430,13 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 /// Tensor-core only.
 #[test]
 fn cmma_matmul_quant_k_walk() {
-    check_cmma_matmul_quant_k_walk(16, Schedule::Staged);
+    check_cmma_matmul_quant_k_walk(16, Buffering::SINGLE);
 }
 
 /// The same self-describing quant K walk driven double-buffered: both slots' fills dequantize.
 #[test]
 fn cmma_matmul_quant_double_buffered_k_walk() {
-    check_cmma_matmul_quant_k_walk(32, Schedule::DoubleBuffered);
+    check_cmma_matmul_quant_k_walk(32, Buffering::DOUBLE);
 }
 
 /// The manual-mma leaf decoding at the *read*: `DequantAt::Read` keeps `A`'s stage in its stored `i8`,
@@ -2230,7 +2468,7 @@ fn mma_matmul_quant_until_read() {
     };
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -2254,6 +2492,7 @@ fn mma_matmul_quant_until_read() {
         .generate_without_host_data();
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -2272,7 +2511,9 @@ fn mma_matmul_quant_until_read() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
-            TileSpec::direct(&[M, K]).leaf(leaf),
+            TileSpec::direct(&[M, K])
+                .leaf(leaf)
+                .residence(&[Residence::Smem]),
             scheme,
             DequantAt::Read,
         ),
@@ -2300,7 +2541,9 @@ fn mma_matmul_quant_until_read() {
         .enforce()
 }
 
-fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
+/// The one level always stages, whatever it buffers: a cmma leaf cannot consume the global inputs
+/// directly, so it first materializes them in shared memory.
+fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !require_cmma_8x8x8_f32(&client) {
         return;
@@ -2317,7 +2560,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
     let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, schedule, |l| {
+        .level(WalkOrder::RowMajor, buffering, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -2342,6 +2585,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
         .generate_without_host_data();
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -2360,7 +2604,9 @@ fn check_cmma_matmul_quant_k_walk(k: usize, schedule: Schedule) {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
-            TileSpec::direct(&[M, K]).leaf(leaf),
+            TileSpec::direct(&[M, K])
+                .leaf(leaf)
+                .residence(&[Residence::Smem]),
             scheme,
             DequantAt::Load,
         ),
@@ -2411,7 +2657,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
     let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -2436,6 +2682,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .generate_without_host_data();
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -2454,7 +2701,9 @@ fn cmma_matmul_quant_block_m_k_walk() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
-            TileSpec::direct(&[M, K]).leaf(leaf),
+            TileSpec::direct(&[M, K])
+                .leaf(leaf)
+                .residence(&[Residence::Smem]),
             scheme,
             DequantAt::Load,
         ),
@@ -2505,7 +2754,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
     let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -2530,6 +2779,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .generate_without_host_data();
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -2548,7 +2798,9 @@ fn cmma_matmul_quant_block_k_k_walk() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
-            TileSpec::direct(&[M, K]).leaf(leaf),
+            TileSpec::direct(&[M, K])
+                .leaf(leaf)
+                .residence(&[Residence::Smem]),
             scheme,
             DequantAt::Load,
         ),
@@ -2599,7 +2851,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     let leaf = Leaf::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(edge))
                 .axis(N, Cut::sequential(edge))
                 .axis(K, Cut::sequential(edge))
@@ -2624,6 +2876,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .generate_without_host_data();
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .arange();
@@ -2642,7 +2895,9 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
-            TileSpec::direct(&[M, K]).leaf(leaf),
+            TileSpec::direct(&[M, K])
+                .leaf(leaf)
+                .residence(&[Residence::Smem]),
             scheme,
             DequantAt::Load,
         ),
@@ -2671,23 +2926,185 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .enforce()
 }
 
-/// Vectorized operands (2-wide lines) through the Direct schedule: gmem-only line-unit
+/// Vectorized operands (2-wide lines) through the in-place path: gmem-only line-unit
 /// addressing. Regression for the line-vs-scalar unit bug (worked on cubecl-cpu only).
 #[test]
 fn matmul_direct_vectorized() {
-    check_matmul_vectorized(Schedule::Direct);
+    check_matmul_vectorized(Buffering::SINGLE, &[], &[]);
 }
 
-/// Vectorized operands through the staged schedule: the cooperative fill moves lines
-/// through smem. Regression for the line-vs-scalar unit bug.
+/// The same walk with the operands staged instead: the cooperative fill moves lines through smem.
+/// Regression for the line-vs-scalar unit bug. Its only difference from the direct case above is
+/// the operands' residence, which is the whole point of stating it there.
 #[test]
 fn matmul_staged_vectorized() {
-    check_matmul_vectorized(Schedule::Staged);
+    check_matmul_vectorized(Buffering::SINGLE, &[Residence::Smem], &[Residence::Smem]);
 }
 
-fn check_matmul_vectorized(schedule: Schedule) {
+/// The same operands through a depth-2 ring: each region's fill overlaps the previous region's
+/// compute. Depth is the only difference from the staged case above.
+#[test]
+fn matmul_double_buffered_vectorized() {
+    check_matmul_vectorized(Buffering::DOUBLE, &[Residence::Smem], &[Residence::Smem]);
+}
+
+/// Depth 3, which the single/double split could not express at all: two fills in flight over one
+/// compute. Regression for a ring whose drain leaves more than one slot outstanding.
+#[test]
+fn matmul_triple_buffered_vectorized() {
+    check_matmul_vectorized(Buffering::TRIPLE, &[Residence::Smem], &[Residence::Smem]);
+}
+
+/// A buffered level that *cuts* a promoted (fragment) accumulator: each region selects its own
+/// block, so the ring's walk has to unroll and hand every region comptime coordinates.
+///
+/// The regression this guards is silent in both directions. `#[unroll(flag)]` only unrolls when
+/// the macro sees `flag` as a comptime binding, and rolls the loop without complaint otherwise;
+/// the lap arithmetic then has to fold, or the coordinates come out runtime even unrolled. Either
+/// slip lands on `Tile::at`'s "must be walked with compile-time coordinates" panic. The other
+/// unrolled shape, a `Residence::Plane` stage, needs a fragment leaf and so only runs on tensor-core
+/// hardware ([`cmma_matmul_staged_n_walk_partition`]); this one runs everywhere.
+#[test]
+fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let (m, n, k, edge, v) = (8usize, 8usize, 8usize, 4usize, 2usize);
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        // L0: the whole output, K in two steps. `promote` mirrors this level's *sub-tile*, so the
+        // accumulator's grid is only cut a level down.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        // L1: the 2x2 cut of that partition, buffered, with both operands staged.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(2))
+                .axis(N, Cut::sequential(2))
+                .axis(K, Cut::sequential(2))
+        })
+        .build();
+
+    let dtype = f32::elem_type_native();
+    let staged = [Residence::InPlace, Residence::Smem];
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(&staged)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&staged)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
+        .uniform(4242, 10., 100.);
+
+    launch_resident_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// A depth deeper than the walk has regions: the prologue runs out of regions to prime and every
+/// consume drains. Regression for the ring's `region < total` guards.
+#[test]
+fn matmul_buffered_deeper_than_the_walk() {
+    check_matmul_vectorized(Buffering::new(16), &[Residence::Smem], &[Residence::Smem]);
+}
+
+/// A depth-2 ring whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
+/// window. It is filled once above the loop and its buffer serves both slots
+/// (`WindowMode::Reused`) --
+/// the only sound way for two slots to reuse one buffer, and why a stage count is derived rather
+/// than stated.
+#[test]
+fn matmul_double_buffered_with_a_fixed_operand() {
+    check_matmul_dims_vectorized(
+        (8, 4, 4),
+        Buffering::DOUBLE,
+        &[Residence::Smem],
+        &[Residence::Smem],
+    );
+}
+
+/// The same fixed operand three slots deep, so two slots reuse the first slot's buffer.
+#[test]
+fn matmul_triple_buffered_with_a_fixed_operand() {
+    check_matmul_dims_vectorized(
+        (8, 4, 4),
+        Buffering::TRIPLE,
+        &[Residence::Smem],
+        &[Residence::Smem],
+    );
+}
+
+/// One operand staged beside one read where it lies, at depth 2: the slot rendezvouses for the
+/// staged one alone while the other is read where it lies, in every slot of the ring.
+#[test]
+fn matmul_double_buffered_mixed_residence_vectorized() {
+    check_matmul_vectorized(Buffering::DOUBLE, &[Residence::Smem], &[Residence::InPlace]);
+}
+
+/// Every operand read where it lies, so the ring materializes nothing: the slots hold windows
+/// alone, read at their own region. The depth is still the level's to state, which is the whole
+/// point of running this level through the same walk as a staged one.
+#[test]
+fn matmul_all_in_place_double_buffered() {
+    check_matmul_vectorized(
+        Buffering::DOUBLE,
+        &[Residence::InPlace],
+        &[Residence::InPlace],
+    );
+}
+
+/// The same level unbuffered: one slot, filled and consumed per region.
+#[test]
+fn matmul_all_in_place_single_buffered() {
+    check_matmul_vectorized(
+        Buffering::SINGLE,
+        &[Residence::InPlace],
+        &[Residence::InPlace],
+    );
+}
+
+fn check_matmul_vectorized(
+    buffering: Buffering,
+    residence_a: &[Residence],
+    residence_b: &[Residence],
+) {
+    check_matmul_dims_vectorized((8, 8, 8), buffering, residence_a, residence_b)
+}
+
+fn check_matmul_dims_vectorized(
+    (m, n, k): (usize, usize, usize),
+    buffering: Buffering,
+    residence_a: &[Residence],
+    residence_b: &[Residence],
+) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (edge, v) = (4usize, 2usize);
     let builder = Partitioner::row_major(
         ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
         ByAxis::new(&[
@@ -2696,18 +3113,16 @@ fn check_matmul_vectorized(schedule: Schedule) {
             (K, Distribution::Sequential),
         ]),
     );
-    let partitioner = match schedule {
-        Schedule::Direct => builder.direct(),
-        Schedule::Staged => builder.staged(),
-        Schedule::DoubleBuffered => builder.double_buffered(),
-    };
+    let partitioner = builder.buffered(buffering);
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
+        .residence(residence_a)
         .untiled()
         .arange();
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(residence_b)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
@@ -2746,7 +3161,7 @@ fn check_matmul_vectorized(schedule: Schedule) {
 /// moves lines, the cmma transport addresses the scalar buffer underneath.
 #[test]
 fn cmma_matmul_staged_k_walk_vectorized() {
-    check_cmma_matmul_k_walk_v(16, Schedule::Staged, 2, StageStorage::Tiled);
+    check_cmma_matmul_k_walk_v(16, Buffering::SINGLE, 2, StageStorage::Tiled);
 }
 
 // ---- Quantized A through the register (plain-ALU) leaf --------------------------------
@@ -2777,7 +3192,10 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
 
 /// One staged level cutting `tm×tn×tk` register-leaf tiles — the shape `check_matmul`
 /// drives, minus the storage tiling (operands stay plain strided).
-fn register_staged_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
+/// The one-level partitioner both the staged and the direct-serve register-leaf tests walk. They
+/// differ only in what the operands ask for there ([`Residence::Smem`] vs
+/// [`Residence::InPlace`]), which is the whole distinction now that the level states no staging.
+fn register_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
     Partitioner::row_major(
         ByAxis::new(&[(M, tm), (N, tn), (K, tk)]),
         ByAxis::new(&[
@@ -2786,21 +3204,7 @@ fn register_staged_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
             (K, Distribution::Sequential),
         ]),
     )
-    .staged()
-}
-
-/// The single-level direct-serve twin of [`register_staged_partitioner`]: no `.staged()`, so a
-/// quantized operand is read straight from gmem by the leaf rather than staged into smem first.
-fn register_direct_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
-    Partitioner::row_major(
-        ByAxis::new(&[(M, tm), (N, tn), (K, tk)]),
-        ByAxis::new(&[
-            (M, Distribution::Sequential),
-            (N, Distribution::Sequential),
-            (K, Distribution::Sequential),
-        ]),
-    )
-    .direct()
+    .buffered(Buffering::SINGLE)
 }
 
 /// Native i8 `A`, one scale per `bm`-row block, through the register leaf.
@@ -2839,7 +3243,8 @@ fn register_matmul_quant_native_block_m() {
     run_register_matmul_quant(
         client,
         (m, n, k),
-        register_staged_partitioner(4, 4, 4),
+        register_partitioner(4, 4, 4),
+        &[Residence::Smem],
         a_input.binding().into_tensor_arg(),
         a_dtype,
         scheme,
@@ -2850,10 +3255,10 @@ fn register_matmul_quant_native_block_m() {
     );
 }
 
-/// Native i8 `A` served DIRECTLY through the register leaf (Keystone K): a `.direct()` plan stages
-/// nothing, so the leaf reads i8 straight from gmem and scales per read. The native + lhs-arm twin
-/// of the packed-rhs [`register_matmul_quant_rhs_direct_serve_gemv`]; together they exercise every
-/// branch of the leaf's quant dispatch (lhs/rhs × native/packed).
+/// Native i8 `A` served DIRECTLY through the register leaf (Keystone K): an all-`InPlace` plan
+/// stages nothing, so the leaf reads i8 straight from gmem and scales per read. The native +
+/// lhs-arm twin of the packed-rhs [`register_matmul_quant_rhs_direct_serve_gemv`]; together they
+/// exercise every branch of the leaf's quant dispatch (lhs/rhs × native/packed).
 #[test]
 fn register_matmul_quant_native_direct_serve() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -2889,7 +3294,8 @@ fn register_matmul_quant_native_direct_serve() {
     run_register_matmul_quant(
         client,
         (m, n, k),
-        register_direct_partitioner(4, 4, 4),
+        register_partitioner(4, 4, 4),
+        &[Residence::InPlace],
         a_input.binding().into_tensor_arg(),
         a_dtype,
         scheme,
@@ -2948,7 +3354,8 @@ fn run_register_matmul_quant_packed(
     run_register_matmul_quant(
         client,
         (m, n, k),
-        register_staged_partitioner(4, 4, tk),
+        register_partitioner(4, 4, tk),
+        &[Residence::Smem],
         a.tile.tensor_arg(1),
         a_dtype,
         scheme,
@@ -2960,14 +3367,16 @@ fn run_register_matmul_quant_packed(
 }
 
 /// Drive [`launch_staged_matmul_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[p,j]`.
-/// `plan` is the operand partitioner: `.staged()` stages `A`'s packed storage words into smem and
-/// dequantizes per read out of it, `.direct()` serves it straight from gmem — either way through
-/// the leaf's [`matrix_transparent`], no dequantized f32 stage.
+/// `residence` is what the operands ask of the one level: [`Residence::Smem`] stages `A`'s packed
+/// storage words into smem and dequantizes per read out of it, [`Residence::InPlace`] serves it
+/// straight from gmem. Either way through the leaf's `matrix_transparent`, with no dequantized f32
+/// stage.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant(
     client: ComputeClient<TestRuntime>,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
+    residence: &[Residence],
     a_arg: TensorArg<TestRuntime>,
     a_dtype: ElemType,
     scheme: QuantScheme,
@@ -2979,6 +3388,7 @@ fn run_register_matmul_quant(
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(plan);
 
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(residence)
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
@@ -2994,7 +3404,7 @@ fn run_register_matmul_quant(
             a_arg,
             scales_arg,
             None.into(),
-            TileSpec::direct(&[M, K]),
+            TileSpec::direct(&[M, K]).residence(residence),
             scheme,
             DequantAt::Load,
         ),
@@ -3053,10 +3463,11 @@ fn register_matmul_quant_rhs_packed_q8() {
     run_register_matmul_quant_rhs(
         client,
         (8, 8, 8),
-        register_staged_partitioner(4, 4, 4),
+        register_partitioner(4, 4, 4),
         QuantValue::Q8S,
         4,
         DequantAt::Read,
+        &[Residence::Smem],
         None,
     );
 }
@@ -3068,10 +3479,11 @@ fn register_matmul_quant_rhs_packed_q4() {
     run_register_matmul_quant_rhs(
         client,
         (8, 16, 8),
-        register_staged_partitioner(4, 8, 4),
+        register_partitioner(4, 8, 4),
         QuantValue::Q4S,
         8,
         DequantAt::Read,
+        &[Residence::Smem],
         None,
     );
 }
@@ -3084,10 +3496,11 @@ fn register_matmul_quant_rhs_gemv_row() {
     run_register_matmul_quant_rhs(
         client,
         (1, 8, 8),
-        register_staged_partitioner(1, 4, 4),
+        register_partitioner(1, 4, 4),
         QuantValue::Q8S,
         4,
         DequantAt::Read,
+        &[Residence::Smem],
         None,
     );
 }
@@ -3099,7 +3512,7 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let plan = Tiling::new()
         .extents(&[(M, 1), (N, 16), (K, 8)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(1))
                 .axis(N, Cut::cube(CubeAxis::X, 4))
                 .axis(K, Cut::sequential(4))
@@ -3114,21 +3527,23 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
         QuantValue::Q8S,
         4,
         DequantAt::Read,
+        &[Residence::Smem],
         None,
     );
 }
 
-/// Direct-serve the quantized RHS weight (Keystone K): a `Direct` schedule stages nothing, so the
-/// register leaf reads the packed weight straight from gmem and dequantizes *per read* through
-/// [`matrix_transparent`] — the sync-free `m = 1` decode path. The `_rhs_*` tests above are all
-/// `.staged()`: they stage the weight's *packed words* into smem (plus its scales) and dequantize
-/// per read out of smem. Same answer; direct avoids even the smem round-trip.
+/// Direct-serve the quantized RHS weight (Keystone K): an `InPlace` residence stages nothing,
+/// so the register leaf reads the packed weight straight from gmem and dequantizes *per read*
+/// through [`matrix_transparent`] — the sync-free `m = 1` decode path. The `_rhs_*` tests above are
+/// all staged ([`Residence::Smem`]): they stage the weight's *packed words* into smem (plus its
+/// scales) and dequantize per read out of smem. Same answer; direct avoids even the smem
+/// round-trip.
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let plan = Tiling::new()
         .extents(&[(M, 1), (N, 8), (K, 8)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(1))
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
@@ -3143,22 +3558,23 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
         QuantValue::Q8S,
         4,
         DequantAt::Read,
+        &[Residence::InPlace],
         None,
     );
 }
 
-/// The Goal path: a `.staged()` packed weight whose smem stage holds the *packed u32 words*, not a
-/// dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with block `[1, bn]` scales —
-/// distinct along K — so each region refills both the staged packed words and the staged scales,
-/// and the leaf dequantizes per read out of smem via [`matrix_transparent`]. This is the batched
-/// weight-streaming case the change targets: the contrast to the f32-inflated stage the cmma leaf
-/// still uses, and to the sync-free direct serve above.
+/// The Goal path: a staged ([`Residence::Smem`]) packed weight whose smem stage holds the *packed
+/// u32 words*, not a dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with block
+/// `[1, bn]` scales — distinct along K — so each region refills both the staged packed words and
+/// the staged scales, and the leaf dequantizes per read out of smem via [`matrix_transparent`].
+/// This is the batched weight-streaming case the change targets: the contrast to the f32-inflated
+/// stage the cmma leaf still uses, and to the sync-free direct serve above.
 #[test]
 fn register_matmul_quant_rhs_staged_packed_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let plan = Tiling::new()
         .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(4))
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
@@ -3173,6 +3589,7 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
         QuantValue::Q8S,
         4,
         DequantAt::Read,
+        &[Residence::Smem],
         None,
     );
 }
@@ -3186,7 +3603,7 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let plan = Tiling::new()
         .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(4))
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
@@ -3201,6 +3618,7 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
         QuantValue::Q8S,
         4,
         DequantAt::Load,
+        &[Residence::Smem],
         None,
     );
 }
@@ -3214,7 +3632,7 @@ fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let plan = Tiling::new()
         .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(4))
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
@@ -3229,6 +3647,7 @@ fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
         QuantValue::Q8S,
         4,
         DequantAt::Read,
+        &[Residence::Smem],
         Some(0.5),
     );
 }
@@ -3240,7 +3659,7 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let plan = Tiling::new()
         .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(4))
                 .axis(N, Cut::sequential(4))
                 .axis(K, Cut::sequential(4))
@@ -3255,6 +3674,7 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
         QuantValue::Q8S,
         4,
         DequantAt::Load,
+        &[Residence::Smem],
         Some(0.5),
     );
 }
@@ -3274,7 +3694,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
     let leaf = Leaf::Cmma;
     let plan = Tiling::new()
         .extents(&[(M, 8), (N, 8), (K, 8)])
-        .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(8))
@@ -3284,6 +3704,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
         .clone();
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]).with_partitioner(plan);
     let b = TileInput::builder(&client, space.project(&[K, N]))
+        .residence(&[Residence::Smem])
         .leaf(leaf)
         .untiled()
         .packed(&scheme, DequantAt::Load)
@@ -3301,6 +3722,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
 
 /// Drive [`launch_staged_matmul_quant_rhs`] and check
 /// `C[i,j] = Σ_p A[i,p] · q_b[p,j] · scale[p, j/bn]`.
+#[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant_rhs(
     client: ComputeClient<TestRuntime>,
     (m, n, k): (usize, usize, usize),
@@ -3308,6 +3730,7 @@ fn run_register_matmul_quant_rhs(
     value: QuantValue,
     bn: usize,
     dequant_at: DequantAt,
+    residence: &[Residence],
     global: Option<f32>,
 ) {
     // The data is minted against the one-level scheme either way: a two-level tensor holds the
@@ -3355,11 +3778,16 @@ fn run_register_matmul_quant_rhs(
     // Routine-like: the launcher derives geometry and argument wiring from the plan; the
     // quantized RHS goes through the source builder, which binds it at the storage width.
     let launcher = space.launcher(&client);
-    let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
+    let a_op = launcher
+        .arg(a.handle().binding())
+        .subspace(&[M, K])
+        .residence(residence)
+        .build();
     let b_src = launcher
         .arg(b.tile.handle().binding())
         .subspace(&[K, N])
-        .vectorize(pack);
+        .vectorize(pack)
+        .residence(residence);
     let mut scales = vec![b.scales_binding()];
     scales.extend(global_scale.map(|g| g.binding()));
     let b_op = b_src.quantized(&scales, scheme, dequant_at).build();

@@ -1,5 +1,10 @@
-//! Register residency: the kernel brackets the whole operation, where [`Staging`]
-//! refills per region.
+//! The output half of [`Residence`]: an accumulator moved to
+//! [`Plane`](Residence::Plane) for the whole operation, rather than an input refilled per region
+//! by [`Staging`]. The two directions share the vocabulary and differ in which way values travel:
+//! an input is *filled* from its source into its residence, an output *drains* from its residence
+//! into its sink. Where an input states its residences per level and the walk acts on them, an
+//! accumulator's is the kernel's own explicit bracket, since only the kernel knows what initializes
+//! it and when the result is wanted back.
 //!
 //! ```ignore
 //! let mut acc = c.promote::<EA, _>(&a);  // register form, uninitialized (EA = f32)
@@ -14,8 +19,8 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// Promote this accumulator to its register form: pure change of residence, the
-    /// fragments uninitialized. The caller states the init ([`zero`](Tile::zero) for
+    /// Promote this accumulator to its register form ([`Residence::Plane`]): pure change of
+    /// residence, the fragments uninitialized. The caller states the init ([`zero`](Tile::zero) for
     /// `c = a·b`, or [`copy_from`](Tile::copy_from) to accumulate) and writes it back with
     /// [`drain_cast_into`](Tile::drain_cast_into) after. `EA` is the register accumulate
     /// type, distinct from the served/stored `Acc` (e.g. `f32` accumulate under an `f16`

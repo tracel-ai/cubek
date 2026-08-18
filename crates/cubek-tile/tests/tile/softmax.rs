@@ -40,13 +40,13 @@ fn softmax_walk_kernel(
         block_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         block_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
 
     let rows = comptime!(block_space.extent(Q));
@@ -296,13 +296,13 @@ fn softmax_smem_acc_kernel(
         block_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         block_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
 
     let rows = comptime!(block_space.extent(Q));
@@ -315,14 +315,14 @@ fn softmax_smem_acc_kernel(
         kept_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(
         acc_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     acc.zero();
 

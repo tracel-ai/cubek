@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, Leaf, LevelRole, MAX_AXES, Partitioner};
+use crate::{Axis, ComputeScope, Distribution, LaneShare, LevelRole, MAX_AXES, Partitioner};
 
 use super::ByAxis;
 
@@ -83,16 +83,6 @@ impl Extents {
             Extent::Dynamic => (*self.sizes.index(p)).div_ceil(edge),
         }
     }
-}
-
-/// What backs a staged matmul operand, the [`Space::operand_stage`] classification. `Plane` stages
-/// straight into plane-private tile partitions; `Smem` into a shared buffer the leaf reads windows
-/// from. Read by the staging store ([`Staging::new`]) and the schedule's unroll (a plane stage
-/// selects tiles by comptime coordinate, so its walk must be unrolled).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum OperandStage {
-    Plane,
-    Smem,
 }
 
 /// Every axis with its extent, in canonical order. A tile lives in its own space
@@ -232,21 +222,6 @@ impl Space {
         self.partitioner.is_final()
     }
 
-    /// How an operand that becomes `leaf` stages under this plan: [`Plane`](OperandStage::Plane)
-    /// when a plane fragment is fed by a partition grid just below, else [`Smem`](OperandStage::Smem).
-    pub(crate) fn operand_stage(&self, leaf: Leaf) -> OperandStage {
-        match self.partitioner() {
-            Partitioner::Level(_) => match (leaf, self.partitioner().next()) {
-                (Leaf::Cmma | Leaf::Mma { .. }, Partitioner::Level(sub)) => match sub.role() {
-                    LevelRole::Partition => OperandStage::Plane,
-                    LevelRole::Instance => OperandStage::Smem,
-                },
-                _ => OperandStage::Smem,
-            },
-            Partitioner::Final => OperandStage::Smem,
-        }
-    }
-
     /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
     /// smem consumers all run on fully-divided (`Static`) spaces, so this is what they call.
     pub fn extent(&self, axis: Axis) -> usize {
@@ -361,15 +336,6 @@ impl Space {
         }
     }
 
-    /// Reorder so `fastest` walks innermost (last axis fastest): each coarser-axis
-    /// window then feeds a consecutive burst of steps: the unrolled fragment walk's
-    /// emission order.
-    pub fn with_fastest(&self, fastest: Axis) -> Space {
-        let mut axes: Vec<Axis> = self.axes().filter(|&a| a != fastest).collect();
-        axes.push(fastest);
-        self.project(&axes)
-    }
-
     pub fn project(&self, axes: &[Axis]) -> Space {
         let entries = axes
             .iter()
@@ -411,8 +377,8 @@ impl Space {
 
     /// Whether a walk over this level leaves `operand`'s window unchanged: every axis the
     /// walk actually steps (more than one tile) is absent from the operand: the same
-    /// structural fact as broadcast omission. A [`Staged`](crate::Schedule::Staged) walk
-    /// fills such an operand once, above the loop. Host-side, static extents.
+    /// structural fact as broadcast omission. A staged walk fills such an operand once, above
+    /// the loop. Host-side, static extents.
     pub fn walk_invariant(&self, operand: &Space) -> bool {
         self.axes()
             .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
@@ -580,6 +546,18 @@ impl Space {
     }
 }
 
+#[cube]
+impl Space {
+    /// Axis `i`'s extent, preserving a dynamic extent as its runtime size. This is the form a
+    /// coordinate-backed operand carries as its real-data bound across [`Space::divide`] calls.
+    pub(crate) fn runtime_extent_at(&self, #[comptime] i: usize) -> usize {
+        match comptime!(self.extents.kinds.get(self.extents.kinds.axis_at(i))) {
+            Extent::Static(n) => comptime!(n).runtime(),
+            Extent::Dynamic => *self.extents.sizes.index(i),
+        }
+    }
+}
+
 /// Broadcast rule for one axis when [`merge`](Space::merge)ing spaces: equal sizes agree, a
 /// static `1` yields to the other, anything else conflicts. A `Dynamic` axis subsumes any
 /// non-broadcast operand (its runtime size is the merged one), so the merge stays dynamic.
@@ -632,10 +610,10 @@ impl<'a> IntoIterator for &'a Space {
 /// helpers are exercised against, since they read extents and axis order rather than the walk.
 #[cfg(test)]
 pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
-    use crate::{Cut, Schedule, Tiling, WalkOrder};
+    use crate::{Buffering, Cut, Tiling, WalkOrder};
     Tiling::new()
         .extents(extents)
-        .level(WalkOrder::RowMajor, Schedule::Direct, |mut l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
             for &(axis, e) in extents {
                 l = l.axis(axis, Cut::sequential(e));
             }

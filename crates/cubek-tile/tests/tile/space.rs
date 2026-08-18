@@ -1,6 +1,6 @@
 //! Unit tests for [`Space`]
 
-use cubek_tile::{Axis, ByAxis, Distribution, Partitioner, Space};
+use cubek_tile::{Axis, Buffering, ByAxis, Distribution, Partitioner, Space};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -96,7 +96,7 @@ fn sequential(edges: &[(Axis, usize)]) -> Partitioner {
         .iter()
         .map(|&(a, _)| (a, Distribution::Sequential))
         .collect::<Vec<_>>();
-    Partitioner::row_major(ByAxis::new(edges), ByAxis::new(&dists)).staged()
+    Partitioner::row_major(ByAxis::new(edges), ByAxis::new(&dists)).buffered(Buffering::SINGLE)
 }
 
 #[test]

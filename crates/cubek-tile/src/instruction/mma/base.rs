@@ -37,6 +37,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
+        TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
     }
 }
 

@@ -8,8 +8,8 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Cut, Leaf, MaskProbe, MemData, RowState, Schedule, Space, StagePlan, StreamFold, TileArg,
-    TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
+    Axis, Buffering, Cut, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
+    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -52,7 +52,7 @@ fn attention_fold_kernel<W: Size>(
         comptime!(q.space.clone()),
         comptime!(q.leaf),
         q.vector_size(),
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
@@ -60,27 +60,27 @@ fn attention_fold_kernel<W: Size>(
         score_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         score_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let row_space = comptime!(Space::new(&[(R, rows)]));
     let mut factors = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(
         acc_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
@@ -191,7 +191,7 @@ fn run(
             (R, 1),
             (C, 1),
         ])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(G, Cut::sequential(g))
                 .axis(QP, Cut::sequential(qp))
                 .axis(S, Cut::sequential(block))
@@ -329,7 +329,7 @@ fn attention_fold_split_kernel<W: Size>(
         comptime!(q.space.clone()),
         comptime!(q.leaf),
         q.vector_size(),
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
 
@@ -339,7 +339,7 @@ fn attention_fold_split_kernel<W: Size>(
     let score_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (C, block)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(R, Cut::sequential(rows))
                     .axis(C, Cut::sequential(block))
             })
@@ -348,7 +348,7 @@ fn attention_fold_split_kernel<W: Size>(
     let row_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(R, Cut::sequential(rows))
             })
             .build()
@@ -356,7 +356,7 @@ fn attention_fold_split_kernel<W: Size>(
     let acc_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (V, val_dim)])
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(R, Cut::sequential(rows))
                     .axis(V, Cut::sequential(val_dim))
             })
@@ -366,43 +366,43 @@ fn attention_fold_split_kernel<W: Size>(
         score_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let p_all = MemData::<f32>::smem(
         score_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut factors_all = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let m_all = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let l_all = MemData::<f32>::smem(
         row_space.clone(),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut acc_all = MemData::<f32>::smem(
         acc_space,
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     let mut recip = MemData::<f32>::smem(
         comptime!(Space::new(&[(R, rows)])),
         Leaf::Memory,
         1usize,
-        comptime!(StagePlan::strided()),
+        comptime!(StagePlan::in_place()),
     );
     acc_all.zero();
 
@@ -556,7 +556,7 @@ fn run_split(
             (R, 1),
             (C, 1),
         ])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(G, Cut::sequential(g))
                 .axis(QP, Cut::sequential(qp))
                 .axis(S, Cut::sequential(block))
@@ -757,7 +757,7 @@ fn run_stream(
     // The one attention space: q/k/v/out project their axes out of it.
     let space = Tiling::new()
         .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(G, Cut::sequential(g))
                 .axis(QP, Cut::sequential(1))
                 .axis(S, Cut::sequential(block))

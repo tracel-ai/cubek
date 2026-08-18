@@ -102,12 +102,12 @@ impl TileQuantStageBench {
         let tn = lanes * un;
         Tiling::new()
             .extents(&[(M, self.m), (N, self.n), (K, self.k)])
-            .level(WalkOrder::RowMajor, Schedule::Staged, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::cube(CubeAxis::X, tn))
                     .axis(K, Cut::sequential(self.tk))
             })
-            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::unit(un))
                     .axis(K, Cut::sequential(self.tk))
@@ -140,11 +140,18 @@ impl Benchmark for TileQuantStageBench {
         let (a, b, c) = &*args;
         let space = self.space();
         let launcher = space.launcher(&self.client);
-        let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
+        // L0 takes a shared stage, L1 reads windows of it: the staging this bench measures.
+        let staged = [Residence::Smem, Residence::InPlace];
+        let a = launcher
+            .arg(a.handle().binding())
+            .subspace(&[M, K])
+            .residence(&staged)
+            .build();
         let b = launcher
             .arg(b.tile.handle().binding())
             .subspace(&[K, N])
             .vectorize(self.pack)
+            .residence(&staged)
             .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
             .build();
         // The register microkernel lines the accumulator at the RHS's served width.

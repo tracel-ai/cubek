@@ -1,6 +1,8 @@
 //! Lowering `c.mma(a, b)`: at a final tile, the leaf instruction; while levels remain,
-//! walk this level under its [`Schedule`]. Register residency is the kernel's explicit
-//! bracket ([`promote`](Tile) … [`copy_from`](Tile::copy_from)), not a lowering decision.
+//! walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
+//! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
+//! allocate nothing. Register residency is the kernel's explicit bracket
+//! ([`promote`](Tile) then [`copy_from`](Tile::copy_from)), not a lowering decision.
 
 use cubecl::prelude::*;
 
@@ -16,11 +18,7 @@ impl<Acc: Numeric> Tile<Acc> {
             Partitioner::Final => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                match comptime!(level.schedule()) {
-                    Schedule::Direct => self.mma_direct(lhs, rhs, op_space),
-                    Schedule::Staged => self.mma_staged(lhs, rhs, op_space),
-                    Schedule::DoubleBuffered => self.mma_double(lhs, rhs, op_space),
-                }
+                self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
             }
         }
     }

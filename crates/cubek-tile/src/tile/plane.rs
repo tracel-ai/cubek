@@ -85,6 +85,15 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    pub(crate) fn init(&mut self, val: T) {
+        match self {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
+                panic!("PlaneTile::init: a hardware mma fragment has no fill other than zero")
+            }
+            PlaneTile::Register(d) => d.init(val),
+        }
+    }
+
     /// Fill this fragment from a memory `src`. Takes the whole tile, not its store: the manual-mma
     /// transport reads element by element through the quant-transparent matrix view, so it needs
     /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
@@ -92,7 +101,10 @@ impl<T: Numeric> PlaneTile<T> {
         match self {
             PlaneTile::Cmma(d) => match &src.tile_kind {
                 TileKind::Gmem(m) | TileKind::Smem(m) => d.load_window(m),
-                TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                TileKind::PlaneTile(_)
+                | TileKind::PlanePartition(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_) => {
                     panic!("PlaneTile::load_window: a cmma fragment loads from memory")
                 }
             },
@@ -279,6 +291,18 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
+    /// Initialize every tile with `val`.
+    pub(crate) fn init(&self, val: T) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut frag = self.at(mi, ni);
+                frag.init(val);
+            }
+        }
+    }
+
     /// Drain each tile into its final window of `dst`; [`fill_from`](Self::fill_from)'s inverse.
     pub(crate) fn drain_into(&self, dst: &mut Tile<T>) {
         #[unroll]
@@ -289,7 +313,10 @@ impl<T: Numeric> PlanePartition<T> {
                 let mut window = dst.fragment_window(mi, ni);
                 match &mut window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
-                    TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                    TileKind::PlaneTile(_)
+                    | TileKind::PlanePartition(_)
+                    | TileKind::TmaGmem(_)
+                    | TileKind::Procedural(_) => {
                         panic!("PlanePartition::drain_into: the sink must be memory")
                     }
                 }
@@ -308,7 +335,10 @@ impl<T: Numeric> PlanePartition<T> {
                 let mut window = dst.fragment_window(mi, ni);
                 match &mut window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g),
-                    TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                    TileKind::PlaneTile(_)
+                    | TileKind::PlanePartition(_)
+                    | TileKind::TmaGmem(_)
+                    | TileKind::Procedural(_) => {
                         panic!("PlanePartition::drain_cast_into: the sink must be memory")
                     }
                 }

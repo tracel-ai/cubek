@@ -46,7 +46,9 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{Axis, CubeAxis, Cut, Schedule, Space, TileArg, TileArgLaunch, Tiling, WalkOrder};
+use cubek_tile::{
+    Axis, Buffering, CubeAxis, Cut, Space, TileArg, TileArgLaunch, Tiling, WalkOrder,
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -116,7 +118,7 @@ impl Mapping {
             // One column per cube, one lane, whole K walked serially.
             Mapping::SeqK => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, 1))
                         .axis(K, seq(k))
@@ -125,12 +127,12 @@ impl Mapping {
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, lanes * cols))
                         .axis(K, seq(k))
                 })
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
                 })
                 .build(),
@@ -138,7 +140,7 @@ impl Mapping {
             // The transposed variant is the same *space* — only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, cols))
                         .axis(K, Cut::unit(k / lanes))

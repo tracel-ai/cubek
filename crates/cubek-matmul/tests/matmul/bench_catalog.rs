@@ -139,7 +139,7 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
-        delivery: cubek_tile::Delivery::Strided,
+        delivery: cubek_matmul::routines::cmma::CmmaDelivery::Copy,
     }));
     let actual = GemmCorrectness
         .kernel_result(&forced, &problem, &SEEDS)
@@ -177,7 +177,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
-        delivery: cubek_tile::Delivery::Strided,
+        delivery: cubek_matmul::routines::cmma::CmmaDelivery::Copy,
     }));
 
     // The legacy engine forced to the DSL selector's point: partition 2x8x4 per plane,
@@ -245,7 +245,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,
-            delivery: cubek_tile::Delivery::Strided,
+            delivery: cubek_matmul::routines::cmma::CmmaDelivery::Copy,
         }))
     };
 

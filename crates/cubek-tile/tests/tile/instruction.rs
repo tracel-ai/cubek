@@ -100,14 +100,19 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     // 2-lane sub-group butterfly fold (mask 0b01 = folds (0,1) and (2,3) separately)
     let folded_pair = sum::group::<f32, W2>(v2, 0b01usize);
 
+    // The same butterfly under max and min
+    let max_full = max::group::<f32, W2>(v2, 0b11usize);
+    let min_full = min::group::<f32, W2>(v2, 0b11usize);
+    let min_pair = min::group::<f32, W2>(v2, 0b01usize);
+
     // 1-lane fallback paths (lanes = 1, mask = 0)
     let s_fallback = sum::plane::<f32>(val, 1usize);
     let m_fallback = max::plane::<f32>(val, 1usize);
     let n_fallback = min::plane::<f32>(val, 1usize);
     let g_fallback = sum::group::<f32, W2>(v2, 0usize);
 
-    // Store per-lane results at lane_id * 11
-    let base = (lane_id * 11u32) as usize;
+    // Store per-lane results at lane_id * 15
+    let base = (lane_id * 15u32) as usize;
     output[base] = p_sum;
     output[base + 1] = p_max;
     output[base + 2] = p_min;
@@ -119,6 +124,10 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     output[base + 8] = m_fallback;
     output[base + 9] = n_fallback;
     output[base + 10] = g_fallback.extract(0usize);
+    output[base + 11] = max_full.extract(0usize);
+    output[base + 12] = max_full.extract(1usize);
+    output[base + 13] = min_full.extract(0usize);
+    output[base + 14] = min_pair.extract(0usize);
 }
 
 /// CPU planes contain one unit, so only exercise the explicit one-lane fallbacks there.
@@ -131,7 +140,7 @@ fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
     v2.insert(0usize, val);
     v2.insert(1usize, val * 2.0f32);
 
-    let base = (lane_id * 11u32) as usize;
+    let base = (lane_id * 15u32) as usize;
     output[base + 7] = sum::plane::<f32>(val, 1usize);
     output[base + 8] = max::plane::<f32>(val, 1usize);
     output[base + 9] = min::plane::<f32>(val, 1usize);
@@ -237,7 +246,7 @@ fn test_logsumexp_step() {
 #[test]
 fn test_plane_and_group_primitives() {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
-    let output_handle = TestInput::builder(client.clone(), Shape::new([44]))
+    let output_handle = TestInput::builder(client.clone(), Shape::new([60]))
         .dtype(f32::elem_type_native())
         .zeros()
         .generate_without_host_data();
@@ -262,7 +271,7 @@ fn test_plane_and_group_primitives() {
     let output = HostData::from_tensor_handle(&client, output_handle, HostDataType::F32);
 
     for lane in 0..4 {
-        let base = lane * 11;
+        let base = lane * 15;
         let val = (lane + 1) as f32;
 
         if !is_cpu {
@@ -330,5 +339,29 @@ fn test_plane_and_group_primitives() {
             val,
             "group mask 0 fallback on lane {lane}"
         );
+
+        if !is_cpu {
+            // Max/min butterfly over the same 4 lanes: vectors are [1,2] [2,4] [3,6] [4,8]
+            assert_eq!(
+                output.get_f32(&[base + 11]),
+                4.0,
+                "max_group 0b11 [0] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 12]),
+                8.0,
+                "max_group 0b11 [1] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 13]),
+                1.0,
+                "min_group 0b11 [0] on lane {lane}"
+            );
+            assert_eq!(
+                output.get_f32(&[base + 14]),
+                if lane < 2 { 1.0 } else { 3.0 },
+                "min_group 0b01 [0] on lane {lane}"
+            );
+        }
     }
 }

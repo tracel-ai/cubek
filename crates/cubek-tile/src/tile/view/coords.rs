@@ -70,3 +70,51 @@ pub(crate) fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
     let (rows, cols) = shape;
     row < rows && col < cols
 }
+
+/// The coordinate `operand` is read at, one entry per axis of its own space: an axis present in
+/// `acc` takes its coordinate from `acc_coords`, everything else (contracted by definition, since
+/// every operand axis falls in one or the other) comes from `reduce_coords`.
+///
+/// `width` is the operand's line width; only its innermost axis is addressed in lines (matching an
+/// `nd`/[`matrix_transparent`](crate::Tile::matrix_transparent) view), so it alone divides by
+/// `width`. `scale_acc_branch` decides whether that division also applies when the fastest axis
+/// falls in the acc branch: a caller whose `acc_coords` already hold raw element coordinates
+/// (reduce's accumulator cell) needs it there too; a caller whose acc-branch coordinate arrives
+/// pre-divided into a line index by construction (mma's `col`, the gather leaf's own `nr`-loop
+/// step) does not, and must pass `false` to avoid dividing twice.
+#[cube]
+pub(crate) fn resolve_nd_coords(
+    #[comptime] operand: Space,
+    #[comptime] acc: Space,
+    #[comptime] reduce: Vec<Axis>,
+    acc_coords: &Coords<u32>,
+    reduce_coords: &Coords<u32>,
+    #[comptime] width: usize,
+    #[comptime] scale_acc_branch: bool,
+) -> CoordsDyn {
+    let operand_rank = comptime!(operand.rank());
+    let mut out = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..operand_rank {
+        let axis = comptime!(operand.axis_at(p));
+        let in_acc = comptime!(acc.contains(axis));
+        let raw_coord = if comptime!(in_acc) {
+            let pos = comptime!(acc.position(axis));
+            acc_coords.at(comptime!(pos))
+        } else {
+            let pos = comptime!(reduce.iter().position(|&r| r == axis).unwrap());
+            reduce_coords.at(comptime!(pos))
+        };
+        let divides =
+            comptime!(p == operand_rank - 1 && width > 1 && (scale_acc_branch || !in_acc));
+        let coord = if comptime!(divides) {
+            raw_coord.fdiv(comptime!(width as u32))
+        } else {
+            raw_coord
+        };
+        out.push(coord);
+    }
+
+    out
+}

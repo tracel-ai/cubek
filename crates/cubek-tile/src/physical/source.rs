@@ -11,7 +11,7 @@ use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
     Axis, Boundary, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
+    QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
     validate_scheme,
 };
 
@@ -36,7 +36,9 @@ struct TileSourceData<'a, R: Runtime> {
     projection: Option<Projection>,
     v: usize,
     boundary: Option<Option<Boundary>>,
-    stage: Option<StageStorage>,
+    storage: Option<StageStorage>,
+    /// Where the operand lives at each level of `space`, coarse to fine; empty stages nothing.
+    residence: Vec<Residence>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -71,7 +73,8 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 projection: None,
                 v: 1,
                 boundary: None,
-                stage: None,
+                storage: None,
+                residence: Vec::new(),
                 units: 0,
                 quant: None,
                 leaf: Leaf::Memory,
@@ -186,8 +189,20 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
 
     /// The [`StageStorage`] layout of the smem stages derived from this operand. Default
     /// [`StageStorage::for_leaf`]: storage-tiled for a cmma leaf, plain strided otherwise.
-    pub fn stage(mut self, stage: StageStorage) -> Self {
-        self.data.stage = Some(stage);
+    pub fn storage(mut self, storage: StageStorage) -> Self {
+        self.data.storage = Some(storage);
+        self
+    }
+
+    /// Where this operand lives at each level of the launched [`Space`], coarse to fine: one
+    /// [`Residence`] per level, checked against the space's depth by
+    /// [`build`](Self::build). Default: every level [`InPlace`](Residence::InPlace), so an operand
+    /// that says nothing is read where it already is and the walk materializes nothing.
+    ///
+    /// Independent of the level's [`Buffering`](crate::Buffering): one operand may take a shared
+    /// stage at a double-buffered level while another streams from global memory through it.
+    pub fn residence(mut self, residence: &[Residence]) -> Self {
+        self.data.residence = residence.to_vec();
         self
     }
 
@@ -336,8 +351,9 @@ impl<R: Runtime> StridedOperand<R> {
     /// [`gathered`](StridedTileSource::gathered) (`build` won't compile until both are
     /// set), then optionally [`batches`](StridedTileSource::batches),
     /// [`tiling`](StridedTileSource::tiling), [`vectorize`](StridedTileSource::vectorize),
-    /// or [`checked`](StridedTileSource::checked). Optional defaults are the safe ones, so
-    /// a forgotten optional setter degrades performance, never correctness.
+    /// [`residence`](StridedTileSource::residence) or [`checked`](StridedTileSource::checked).
+    /// Most optional defaults are conservative; residency defaults to reading in place, so a
+    /// fragment leaf that cannot address its source must state where it is materialized.
     pub fn source<'a>(binding: TensorBinding<R>) -> StridedTileSource<'a, Unset, Unset, Unset, R> {
         StridedTileSource::new(binding)
     }
@@ -366,7 +382,8 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             projection,
             v,
             boundary,
-            stage,
+            storage,
+            residence,
             units,
             quant,
             leaf,
@@ -405,12 +422,22 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // Validate projection vector width alignment on the host side.
         projection.validate(v);
 
+        // Validate that explicit residences match the space's depth: extra or missing levels lead
+        // to silent misconfiguration.
+        let depth = space.partitioner().depth();
+        assert!(
+            residence.is_empty() || residence.len() == depth,
+            "StridedTileSource::residence: {} residences stated but the space has {depth} levels",
+            residence.len()
+        );
+
         let mut spec = TileSpec::new(projection)
             .with_boundary(boundary)
             .units(units)
-            .leaf(leaf);
-        if let Some(stage) = stage {
-            spec = spec.staged(stage);
+            .leaf(leaf)
+            .residence(&residence);
+        if let Some(storage) = storage {
+            spec = spec.storage(storage);
         }
         if let Some(quant) = &quant {
             // Quantization is not supported for gathered operands.
@@ -571,7 +598,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
 /// [`QuantTileArgLaunch`](crate::QuantTileArgLaunch) one.
 ///
 /// Both transports constrain, but only the leaf can differ here: this operand is
-/// [`Delivery::Strided`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
+/// [`Delivery::Copy`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
 /// and a strided load runs code per element, so it decodes whatever it moves. Only the leaf is left:
 /// a fragment load takes a raw window at one element type, so a leaf that loads fragments needs its
 /// values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this — a bulk

@@ -78,9 +78,9 @@ jobs:
         run: cargo xtask check lint
       # --------------------------------------------------------------------------------
       # The test job only runs the light tier, so nothing else ever compiles the
-      # `extended` reduce tests.
+      # `extended` tests.
       - name: Lint extended tests
-        run: cargo clippy -p cubek-reduce --tests --features extended -- -D warnings
+        run: cargo clippy --tests --features extended -- -D warnings
       # --------------------------------------------------------------------------------
       - name: Typos
         uses: tracel-ai/github-actions/check-typos@v5

@@ -1,5 +1,5 @@
 //! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
-//! then one [`level`](LeveledTiling::level) per decomposition: its walk order, schedule,
+//! then one [`level`](LeveledTiling::level) per decomposition: its walk order, buffering,
 //! and the per-axis [`Cut`]. Each [`level`](LeveledTiling::level) maps 1:1 to the
 //! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose. The
 //! [`leaf`](LeveledTiling::leaf) is the terminal level: it names the contraction
@@ -7,7 +7,7 @@
 
 use crate::{Axis, ByAxis, Space};
 
-use super::{CubeAxis, Distribution, Partitioner, Schedule, WalkOrder};
+use super::{Buffering, CubeAxis, Distribution, Partitioner, WalkOrder};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
 /// tiles out. Constructors name the common distributions; [`Cut::new`] takes any.
@@ -45,10 +45,10 @@ impl Cut {
     }
 }
 
-/// One decomposition level: its walk order, schedule, and the [`Cut`] for every axis.
+/// One decomposition level: its walk order, buffering, and the [`Cut`] for every axis.
 struct LevelSpec {
     order: WalkOrder,
-    schedule: Schedule,
+    buffering: Buffering,
     cuts: Vec<(Axis, Cut)>,
 }
 
@@ -85,22 +85,23 @@ pub struct LeveledTiling {
 }
 
 impl LeveledTiling {
-    /// Add a decomposition level (coarse to fine) with its walk order and schedule; `cuts`
-    /// hangs the per-axis [`Cut`]s off the [`LevelBuilder`].
+    /// Add a decomposition level (coarse to fine) with its walk order and buffering; `cuts`
+    /// hangs the per-axis [`Cut`]s off the [`LevelBuilder`]. Where each operand *lives* at this
+    /// level is stated by the operand, not here ([`Residence`](crate::Residence)).
     pub fn level(
         mut self,
         order: WalkOrder,
-        schedule: Schedule,
+        buffering: Buffering,
         cuts: impl FnOnce(LevelBuilder) -> LevelBuilder,
     ) -> Self {
         let level = cuts(LevelBuilder { cuts: Vec::new() });
-        self.push(order, schedule, level.cuts);
+        self.push(order, buffering, level.cuts);
         self
     }
 
     /// Close `cuts` into a level. They must cover exactly the declared axes (any order);
     /// [`build`](Self::build) realigns them to the extents' canonical order.
-    fn push(&mut self, order: WalkOrder, schedule: Schedule, cuts: Vec<(Axis, Cut)>) {
+    fn push(&mut self, order: WalkOrder, buffering: Buffering, cuts: Vec<(Axis, Cut)>) {
         assert_eq!(
             cuts.len(),
             self.extents.len(),
@@ -116,7 +117,7 @@ impl LeveledTiling {
         }
         self.levels.push(LevelSpec {
             order,
-            schedule,
+            buffering,
             cuts,
         });
     }
@@ -153,11 +154,7 @@ impl LeveledTiling {
                     Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
                 }
             };
-            let partitioner = match level.schedule {
-                Schedule::Direct => builder.direct(),
-                Schedule::Staged => builder.staged(),
-                Schedule::DoubleBuffered => builder.double_buffered(),
-            };
+            let partitioner = builder.buffered(level.buffering);
             space = space.with_partitioner(partitioner);
         }
         space

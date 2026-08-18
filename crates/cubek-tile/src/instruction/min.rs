@@ -1,4 +1,4 @@
-//! Min microkernels: vector horizontal min, array min, and plane-cooperative min.
+//! Min microkernels: vector horizontal min, array min, plane-cooperative min, and lane group folding.
 
 use cubecl::prelude::*;
 
@@ -39,4 +39,23 @@ pub fn plane<E: Numeric>(val: E, #[comptime] lanes: usize) -> E {
     } else {
         val
     }
+}
+
+/// Combine a lane group's partials, leaving every lane of the group holding the group's minimum.
+///
+/// The butterfly of [`sum::group`](super::sum::group) with `min` in place of `+`; see it for the
+/// `fold_mask` contract.
+#[cube]
+pub fn group<E: Numeric, V: Size>(
+    value: Vector<E, V>,
+    #[comptime] fold_mask: usize,
+) -> Vector<E, V> {
+    let mut total = value;
+    #[unroll]
+    for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
+        if comptime!(fold_mask & (1 << bit) != 0) {
+            total = min(total, plane_shuffle_xor(total, comptime!(1u32 << bit)));
+        }
+    }
+    total
 }

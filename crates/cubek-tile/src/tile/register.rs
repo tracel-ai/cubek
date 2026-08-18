@@ -78,13 +78,15 @@ impl<T: Numeric> RegisterData<T> {
     }
 
     pub(crate) fn zero(&mut self) {
+        self.init(T::from_int(0));
+    }
+
+    pub(crate) fn init(&mut self, val: T) {
         let count = comptime!(self.mr * self.nr);
-        // Indexed rather than iterated: `#[cube]` traces this loop, and the expansion has no
-        // `iter_mut` to trace through.
         #[allow(clippy::needless_range_loop)]
         #[unroll]
         for i in 0..count {
-            self.data[i] = Vector::<T, RA>::cast_from(0u32);
+            self.data[i] = Vector::<T, RA>::cast_from(val);
         }
     }
 

@@ -13,7 +13,10 @@
 
 use cubecl::{
     prelude::*,
-    std::tensor::layout::{Coordinates, CoordsDyn, Layout, LayoutExpand},
+    std::tensor::{
+        View,
+        layout::{Coordinates, CoordsDyn, Layout, LayoutExpand},
+    },
 };
 
 use crate::*;
@@ -293,6 +296,20 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
+            TileKind::Procedural(data) => {
+                let layout = axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(Projection::direct_over(&self.space)),
+                    RuntimeMap::integral(comptime!(self.space.rank())),
+                    comptime!(1usize),
+                );
+                MaskedView::new(
+                    View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(
+                        data, layout,
+                    ),
+                    comptime!(data.bounds_check),
+                )
+            }
         }
     }
 }
