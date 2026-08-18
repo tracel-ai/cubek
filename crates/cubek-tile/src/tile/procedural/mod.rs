@@ -3,7 +3,7 @@
 mod affine;
 mod base;
 mod constant;
-pub mod filter;
+mod filter;
 mod recipe;
 
 pub use affine::*;

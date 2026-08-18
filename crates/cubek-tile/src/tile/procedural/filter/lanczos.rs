@@ -1,11 +1,12 @@
 use cubecl::prelude::*;
 
-use crate::{Coords, Space};
+use crate::Space;
 
-use super::super::{Recipe, RecipeExpand};
+use super::super::{AbsoluteCoords, Recipe, RecipeExpand};
 
 /// Windowed-sinc Lanczos filter over the value of an inner recipe, `sinc(x) * sinc(x / lobes)`
-/// inside the support and zero outside it.
+/// inside the support and zero outside it. `lobes` is the half-width of the support in taps: two
+/// gives a four-tap kernel, three a six-tap one.
 #[derive(CubeType, Clone)]
 pub struct Lanczos<C: CubeType> {
     pub coordinate: C,
@@ -13,27 +14,9 @@ pub struct Lanczos<C: CubeType> {
     pub lobes: u8,
 }
 
-impl<C: CubeType> Lanczos<C> {
-    /// Two lobes, a four-tap kernel.
-    pub fn lanczos_2(coordinate: C) -> Self {
-        Self {
-            coordinate,
-            lobes: 2,
-        }
-    }
-
-    /// Three lobes, a six-tap kernel.
-    pub fn lanczos_3(coordinate: C) -> Self {
-        Self {
-            coordinate,
-            lobes: 3,
-        }
-    }
-}
-
 #[cube]
 impl<T: Float, C: Recipe<T>> Recipe<T> for Lanczos<C> {
-    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T {
+    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
         // Zero lobes would leave an empty support and divide by zero below. Checked here rather
         // than in a constructor, which a struct literal can bypass. It fires while the kernel
         // expands, so it surfaces on the client's compilation thread, not at the call site.
@@ -43,8 +26,8 @@ impl<T: Float, C: Recipe<T>> Recipe<T> for Lanczos<C> {
         let pi_x = T::new(core::f32::consts::PI) * x;
         let lobes = T::cast_from(self.lobes);
         let denominator = (pi_x * pi_x) / lobes;
-        // `select` evaluates both arms, so the singularity at x = 0 is divided away rather than
-        // branched around.
+        // `select` evaluates both arms, so the x = 0 arm still divides. Substituting a harmless
+        // denominator there keeps that division finite; the outer `select` discards its result.
         let safe_denominator = select(abs_x < T::new(1e-7_f32), T::new(1.0_f32), denominator);
         select(
             abs_x < T::new(1e-7_f32),

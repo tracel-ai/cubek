@@ -4,12 +4,12 @@ use cubecl::frontend::IntoExpand;
 use cubecl::ir::Scope;
 use cubecl::{
     prelude::{barrier::Barrier, *},
-    std::tensor::{layout::CoordsDyn, ViewOperations, ViewOperationsExpand},
+    std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
 use crate::{Coords, Fold, FoldExpand, Region, Space, StagePlan};
 
-use super::VirtualRecipe;
+use super::{AbsoluteCoords, VirtualRecipe};
 
 /// Runtime state of a procedural source. `origin` tracks regions selected by `Tile::at`.
 #[derive(CubeType, Clone)]
@@ -27,12 +27,11 @@ pub struct ProceduralData<T: Numeric> {
     recipe: VirtualRecipe<T>,
     #[cube(comptime)]
     space: Space,
-    /// Where this source lives at each level below. Every level is in place today, since
-    /// [`Tile::procedural`](crate::Tile::procedural) is the only constructor and a recipe has no
-    /// bytes to stage. The plan is still carried because a level that asks for a stage
-    /// cooperatively materializes the recipe into it
-    /// ([`MemData::fill_procedural`](crate::MemData)), which is how a source with no bytes would
-    /// reach a leaf that cannot evaluate one.
+    /// Where this source lives at each level below. A recipe has no bytes to leave in place, so
+    /// [`Tile::procedural`](crate::Tile::procedural) stages nothing; a level asking for a stage
+    /// through [`Tile::procedural_resident`](crate::Tile::procedural_resident) cooperatively
+    /// materializes the recipe into it ([`MemData::fill_procedural`](crate::MemData)), which is
+    /// how a source with no bytes reaches a leaf that cannot evaluate one.
     #[cube(comptime)]
     pub(crate) stage: StagePlan,
     #[cube(comptime)]
@@ -95,11 +94,7 @@ impl<T: Numeric> ProceduralData<T> {
     }
 
     pub(crate) fn evaluate(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
-        let mut absolute = Coords::<u32>::new();
-        #[unroll]
-        for p in 0..comptime!(space.rank()) {
-            absolute.push(self.origin.at(p) + pos.at(p));
-        }
+        let absolute = AbsoluteCoords::new(&self.origin, pos);
         self.recipe.evaluate(&absolute, space)
     }
 

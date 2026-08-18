@@ -1,12 +1,13 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 
-use crate::{Coords, Space};
+use crate::Space;
 
-use super::super::{Recipe, RecipeExpand};
+use super::super::{AbsoluteCoords, Recipe, RecipeExpand};
 
-/// Keys' cubic-convolution filter over the value of an inner recipe. `a` shapes the kernel;
-/// [`catmull_rom`](Self::catmull_rom) and [`sharp`](Self::sharp) pick the two usual values.
+/// Keys' cubic-convolution filter over the value of an inner recipe. `a` shapes the kernel:
+/// `-1/2` is the interpolating member of the family, `-3/4` the sharper one image resamplers
+/// usually pick.
 #[derive(CubeType, Clone)]
 pub struct Cubic<C: CubeType> {
     pub coordinate: C,
@@ -14,27 +15,9 @@ pub struct Cubic<C: CubeType> {
     pub a: Ratio,
 }
 
-impl<C: CubeType> Cubic<C> {
-    /// The interpolating member of the family, `a = -1/2`.
-    pub fn catmull_rom(coordinate: C) -> Self {
-        Self {
-            coordinate,
-            a: Ratio::new(-1, 2),
-        }
-    }
-
-    /// The sharper `a = -3/4` that image resamplers usually pick.
-    pub fn sharp(coordinate: C) -> Self {
-        Self {
-            coordinate,
-            a: Ratio::new(-3, 4),
-        }
-    }
-}
-
 #[cube]
 impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
-    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T {
+    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
         let a = T::new(comptime!(self.a.as_f32()));
         let x = self.coordinate.evaluate(coordinates, space).abs();
         let x2 = x * x;

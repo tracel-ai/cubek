@@ -41,11 +41,31 @@ impl<T: Numeric> Tile<T> {
         space: Space,
         recipe: R::ExpandType,
     ) -> TileExpand<T> {
+        Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place())
+    }
+
+    /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
+    /// cooperatively materializes the recipe into it, which is how a source with no bytes reaches
+    /// a leaf that cannot evaluate one.
+    pub fn procedural_resident<R: Recipe<T> + 'static>(
+        _space: Space,
+        _recipe: R,
+        _stage: StagePlan,
+    ) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_procedural_resident<R: Recipe<T> + 'static>(
+        scope: &Scope,
+        space: Space,
+        recipe: R::ExpandType,
+        stage: StagePlan,
+    ) -> TileExpand<T> {
         Self::__expand_procedural_virtual(
             scope,
             space,
             VirtualRecipe::<T>::__expand_new::<R>(scope, recipe),
-            StagePlan::in_place(),
+            stage,
         )
     }
 

@@ -13,7 +13,6 @@ const ROWS: usize = 4;
 const COLS: usize = 6;
 
 #[derive(CubeType, Clone)]
-#[expand(derive(Clone))]
 struct ProductAxes {
     #[cube(comptime)]
     row: Axis,
@@ -23,7 +22,7 @@ struct ProductAxes {
 
 #[cube]
 impl<T: Float> Recipe<T> for ProductAxes {
-    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T {
+    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
         let row = coordinates.at(comptime!(space.position(self.row)));
         let col = coordinates.at(comptime!(space.position(self.col)));
         T::cast_from(row) * T::cast_from(col)
@@ -31,7 +30,6 @@ impl<T: Float> Recipe<T> for ProductAxes {
 }
 
 #[derive(CubeType, Clone)]
-#[expand(derive(Clone))]
 struct AxisValue {
     #[cube(comptime)]
     axis: Axis,
@@ -40,13 +38,15 @@ struct AxisValue {
 
 #[cube]
 impl<T: Float> Recipe<T> for AxisValue {
-    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T {
+    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
         T::cast_from(coordinates.at(comptime!(space.position(self.axis))))
             * T::cast_from(self.scale)
     }
 }
 
-/// Walk the whole space, staging each region of `source` and copying it into `output`.
+/// Walk the whole space, ringing each region of `source` through whatever residence it states,
+/// and copy it into `output`. A source left [`in place`](StagePlan::in_place) is evaluated where
+/// it is read; one asking for a stage is materialized into shared memory first.
 #[cube]
 fn materialize<E: Numeric>(
     source: &Tile<E>,
@@ -60,12 +60,24 @@ fn materialize<E: Numeric>(
         comptime!(space.clone()),
         1usize,
     );
+    // A staged slot already holds this region's window; an in-place payload is the source itself,
+    // undivided, and still has to select the region out. The engine's own schedules get this from
+    // `read_operand`, which a test cannot reach.
+    let plan = source.stage_plan();
+    let windowed = comptime!(plan.head() != Residence::InPlace);
     let walk = Walk::over(source.runtime_space());
     for region in walk {
         let staging = ring.slot_mut(0usize);
         staging.fill_streamed(source, &region);
         staging.publish();
-        staging.consume(|staged| output.at(&region).copy_from(&staged.at(&region)));
+        staging.consume(|staged| {
+            let window = if comptime!(windowed) {
+                staged.clone()
+            } else {
+                staged.at(&region)
+            };
+            output.at(&region).copy_from(&window);
+        });
     }
 }
 
@@ -88,15 +100,19 @@ fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordina
     }
 }
 
+/// `stage` picks whether the recipe is evaluated at the read site or first materialized into
+/// shared memory: the walk must produce the same grid either way.
 #[cube(launch)]
 fn product_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] stage: StagePlan,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<ProductAxes>(
+    let source = Tile::<E>::procedural_resident::<ProductAxes>(
         comptime!(space.clone()),
         ProductAxes { row: ROW, col: COL },
+        stage,
     );
     materialize(&source, output, space);
 }
@@ -352,8 +368,9 @@ fn sinc(t: f32) -> f32 {
     }
 }
 
-#[test]
-fn user_recipe_materializes_through_a_staged_walk() {
+/// Walk the product recipe with the source staged as `stage` says; the grid is the same either
+/// way.
+fn check_product(stage: StagePlan) {
     let h = Harness::new();
     let output = h.output();
     product_kernel::launch::<TestRuntime>(
@@ -362,9 +379,20 @@ fn user_recipe_materializes_through_a_staged_walk() {
         h.space.cube_dim(&h.client),
         output_arg!(output),
         h.space.clone(),
+        stage,
         h.dtype,
     );
     assert_grid(&h.read(output), |row, col| (row * col) as f32);
+}
+
+#[test]
+fn user_recipe_evaluates_in_place() {
+    check_product(StagePlan::in_place());
+}
+
+#[test]
+fn user_recipe_materializes_through_a_staged_walk() {
+    check_product(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
 }
 
 #[test]
@@ -537,22 +565,6 @@ fn lanczos_matches_the_windowed_sinc() {
             }
         });
     }
-}
-
-fn host_coordinate() -> AffineCoordinates<f32> {
-    AffineCoordinates {
-        offset: 0.0,
-        coefficient: 1.0,
-        axis: COL,
-    }
-}
-
-#[test]
-fn presets_pick_their_documented_parameters() {
-    assert_eq!(Cubic::catmull_rom(host_coordinate()).a, Ratio::new(-1, 2));
-    assert_eq!(Cubic::sharp(host_coordinate()).a, Ratio::new(-3, 4));
-    assert_eq!(Lanczos::lanczos_2(host_coordinate()).lobes, 2);
-    assert_eq!(Lanczos::lanczos_3(host_coordinate()).lobes, 3);
 }
 
 #[test]

@@ -1,43 +1,41 @@
 use cubecl::prelude::*;
 
-use crate::{Coords, Space};
+use crate::Space;
 
-use super::{Recipe, RecipeExpand};
+use super::{AbsoluteCoords, Recipe, RecipeExpand};
 
-/// A constant procedural field.
+/// A procedural field holding one value, which may be a runtime scalar.
 #[derive(CubeType, Clone)]
-#[expand(derive(Clone))]
 pub struct Constant<T: Numeric> {
     pub value: T,
 }
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Constant<T> {
-    fn evaluate(&self, _coordinates: &Coords<u32>, #[comptime] _space: Space) -> T {
+    fn evaluate(&self, _coordinates: &AbsoluteCoords, #[comptime] _space: Space) -> T {
         self.value
     }
 }
 
-/// A zero-cost constant zero procedural field.
+/// Constant zero. Unlike [`Constant`] it carries no value at all, so a source built
+/// from it holds nothing.
 #[derive(CubeType, Clone, Copy, Default)]
-#[expand(derive(Clone, Copy))]
 pub struct Zeros;
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Zeros {
-    fn evaluate(&self, _coordinates: &Coords<u32>, #[comptime] _space: Space) -> T {
+    fn evaluate(&self, _coordinates: &AbsoluteCoords, #[comptime] _space: Space) -> T {
         T::from_int(0)
     }
 }
 
-/// A zero-cost constant one procedural field.
+/// Constant one, carrying no value for the same reason as [`Zeros`].
 #[derive(CubeType, Clone, Copy, Default)]
-#[expand(derive(Clone, Copy))]
 pub struct Ones;
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Ones {
-    fn evaluate(&self, _coordinates: &Coords<u32>, #[comptime] _space: Space) -> T {
+    fn evaluate(&self, _coordinates: &AbsoluteCoords, #[comptime] _space: Space) -> T {
         T::from_int(1)
     }
 }

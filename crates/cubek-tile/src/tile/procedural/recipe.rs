@@ -3,22 +3,47 @@ use std::sync::Arc;
 
 use cubecl::frontend::{AsMutExpand, AsRefExpand, CubeDebug, ExpandTypeClone, IntoExpand, IntoMut};
 use cubecl::ir::Scope;
-use cubecl::unexpanded;
 use cubecl::prelude::*;
+use cubecl::unexpanded;
 
-use crate::{Coords, CoordsExpand, Space};
+use crate::{Coords, Space};
+
+/// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
+/// position it is read at. Rebased one axis at a time on demand, so a recipe emits an add only for
+/// the axes it actually reads, and one that ignores its coordinates emits none.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct AbsoluteCoords {
+    origin: Coords<u32>,
+    offset: Coords<u32>,
+}
+
+#[cube]
+impl AbsoluteCoords {
+    pub(crate) fn new(origin: &Coords<u32>, offset: &Coords<u32>) -> Self {
+        AbsoluteCoords {
+            origin: origin.clone(),
+            offset: offset.clone(),
+        }
+    }
+
+    /// The absolute coordinate along the axis at comptime position `p`.
+    pub fn at(&self, #[comptime] p: usize) -> u32 {
+        self.origin.at(p) + self.offset.at(p)
+    }
+}
 
 /// An N-dimensional scalar field evaluated at absolute logical coordinates.
 #[cube(expand_base_traits = "ExpandTypeClone")]
 pub trait Recipe<T: Numeric> {
-    fn evaluate(&self, coordinates: &Coords<u32>, #[comptime] space: Space) -> T;
+    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T;
 }
 
 pub(crate) trait RecipeOps<T: Numeric> {
     fn evaluate_virtual(
         &self,
         scope: &Scope,
-        coordinates: &CoordsExpand<u32>,
+        coordinates: &AbsoluteCoordsExpand,
         space: Space,
     ) -> NativeExpand<T>;
 }
@@ -27,7 +52,7 @@ impl<T: Numeric, R: RecipeExpand<T>> RecipeOps<T> for R {
     fn evaluate_virtual(
         &self,
         scope: &Scope,
-        coordinates: &CoordsExpand<u32>,
+        coordinates: &AbsoluteCoordsExpand,
         space: Space,
     ) -> NativeExpand<T> {
         self.__expand_evaluate_method(scope, coordinates, space)
@@ -53,7 +78,7 @@ impl<T: Numeric> VirtualRecipe<T> {
         }
     }
 
-    pub fn evaluate(&self, _coordinates: &Coords<u32>, _space: Space) -> T {
+    pub fn evaluate(&self, _coordinates: &AbsoluteCoords, _space: Space) -> T {
         unexpanded!()
     }
 }
@@ -62,7 +87,7 @@ impl<T: Numeric> VirtualRecipeExpand<T> {
     pub fn __expand_evaluate_method(
         &self,
         scope: &Scope,
-        coordinates: &CoordsExpand<u32>,
+        coordinates: &AbsoluteCoordsExpand,
         space: Space,
     ) -> NativeExpand<T> {
         self.state.evaluate_virtual(scope, coordinates, space)
