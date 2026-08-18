@@ -40,10 +40,6 @@ impl StageSource {
             StageSource::ResidentFragment => None,
         }
     }
-
-    pub(crate) fn is_resident_fragment(self) -> bool {
-        matches!(self, StageSource::ResidentFragment)
-    }
 }
 
 /// When a windowed payload is brought to its region across the walk. The walk moves each operand's
@@ -139,7 +135,10 @@ impl OperandPlan {
     /// into plane tiles, or a level above left it resident in registers. The two arrive at the
     /// selection from opposite ends, so neither alone answers for the walk.
     pub(crate) fn reads_fragments(self) -> bool {
-        self.residence == Residence::Plane || self.source.is_resident_fragment()
+        match self.source {
+            StageSource::ResidentFragment => true,
+            StageSource::Transport(_) => self.residence == Residence::Plane,
+        }
     }
 }
 

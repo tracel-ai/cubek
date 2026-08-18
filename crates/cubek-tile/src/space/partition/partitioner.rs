@@ -114,18 +114,18 @@ impl LevelScope {
     /// The scope one axis's distribution puts a level in.
     fn of(dist: Distribution) -> Self {
         match dist.scope() {
-            None => Self::Sequential,
-            Some(ComputeScope::Cube(_)) => Self::Cubes,
-            Some(ComputeScope::Plane) => Self::Planes,
-            Some(ComputeScope::Unit) => Self::Lanes,
+            None => LevelScope::Sequential,
+            Some(ComputeScope::Cube(_)) => LevelScope::Cubes,
+            Some(ComputeScope::Plane) => LevelScope::Planes,
+            Some(ComputeScope::Unit) => LevelScope::Lanes,
         }
     }
 
     /// The coarse reading, for consumers that only ask whether the level spreads at all.
     pub(crate) fn role(self) -> LevelRole {
         match self {
-            Self::Sequential => LevelRole::Partition,
-            Self::Cubes | Self::Planes | Self::Lanes => LevelRole::Instance,
+            LevelScope::Sequential => LevelRole::Partition,
+            LevelScope::Cubes | LevelScope::Planes | LevelScope::Lanes => LevelRole::Instance,
         }
     }
 }

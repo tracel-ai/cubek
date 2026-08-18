@@ -293,20 +293,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether a level above already materialized this operand into plane-private registers.
-    /// Such a payload has no bytes any transport can move, so a slot holds the fragments themselves
-    /// and each read selects the region's block out of them by comptime coordinate
-    /// ([`AtRegion`](crate::SlotPayload::AtRegion)).
-    pub fn resident_fragment(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(true),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
-        }
-    }
-
     /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
     /// copy. Comptime (the kind is fixed at trace); drives the staging sync. A resident
     /// fragment has no bytes to move, so go through
@@ -328,12 +314,17 @@ impl<T: Numeric> Tile<T> {
     /// its slot holds the fragments themselves and each read selects the region's block out of them
     /// by comptime coordinate ([`AtRegion`](crate::SlotPayload::AtRegion)).
     pub fn stage_source(&self) -> comptime_type!(StageSource) {
-        let fragment = self.resident_fragment();
-        if comptime!(fragment) {
-            comptime!(StageSource::ResidentFragment)
-        } else {
-            let delivery = self.delivery();
-            comptime!(StageSource::Transport(delivery))
+        match &self.tile_kind {
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(StageSource::ResidentFragment)
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                let delivery = self.delivery();
+                comptime!(StageSource::Transport(delivery))
+            }
         }
     }
 
