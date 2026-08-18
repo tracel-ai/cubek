@@ -186,7 +186,11 @@ pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
     }
     match scheme.block_size() {
         None => shape.to_vec(),
-        Some(block) => block.resolved_dims(shape),
+        Some(block) => block
+            .to_dim_vec(shape.len())
+            .into_iter()
+            .map(usize::from)
+            .collect(),
     }
 }
 
