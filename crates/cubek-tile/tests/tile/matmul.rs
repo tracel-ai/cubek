@@ -19,6 +19,14 @@ use cubek_tile::*;
 
 use super::references;
 
+const MEMORY_LEAF: Leaf = Leaf::Memory {
+    config: MemoryMmaConfig {
+        unroll_limit: 16,
+        split_edge: false,
+        lane_fanout: false,
+    },
+};
+
 /// Skip guard for the tensor-core tests in this file, which all hardcode
 /// `8x8x8` `f32` fragments (the native Metal simdgroup shape). Checking only
 /// that *some* cmma config exists is not enough: drivers accept only the exact
@@ -1938,9 +1946,9 @@ fn matmul_leaf_stated_by_operands() {
         space.cube_count(),
         CubeDim::new_single(),
         1,
-        TileArgLaunch::new(a.tensor_arg(1), a.spec().leaf(Leaf::Memory)),
-        TileArgLaunch::new(b.tensor_arg(1), b.spec().leaf(Leaf::Memory)),
-        TileArgLaunch::new(c.tensor_arg(1), c.spec().leaf(Leaf::Memory)),
+        TileArgLaunch::new(a.tensor_arg(1), a.spec().leaf(MEMORY_LEAF)),
+        TileArgLaunch::new(b.tensor_arg(1), b.spec().leaf(MEMORY_LEAF)),
+        TileArgLaunch::new(c.tensor_arg(1), c.spec().leaf(MEMORY_LEAF)),
         space,
         dtype,
     );

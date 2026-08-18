@@ -45,9 +45,13 @@ impl<T: Numeric> PlaneTile<T> {
             }
             // `vector_size` is the promoting tile's, so the block's lines match the memory it
             // will drain into; the hardware encodings above have no say in their layout.
-            Leaf::Memory => {
-                PlaneTile::new_Register(RegisterData::<T>::alloc(m, n, vector_size, lane_share))
-            }
+            Leaf::Memory { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
+                m,
+                n,
+                vector_size,
+                lane_share,
+                config,
+            )),
         }
     }
 
@@ -73,7 +77,9 @@ impl<T: Numeric> PlaneTile<T> {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
             },
-            Leaf::Memory => panic!("PlaneTile::operand: the memory leaf has no plane tile"),
+            Leaf::Memory { .. } => {
+                panic!("PlaneTile::operand: the memory leaf has no plane tile")
+            }
         }
     }
 

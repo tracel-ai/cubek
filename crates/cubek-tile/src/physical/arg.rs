@@ -59,7 +59,7 @@ impl TileSpec {
             units: 0,
             storage: None,
             residence: SmallVec::new(),
-            leaf: Leaf::Memory,
+            leaf: Leaf::default(),
         }
     }
 

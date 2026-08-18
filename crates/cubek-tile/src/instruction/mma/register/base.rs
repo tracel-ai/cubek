@@ -4,7 +4,6 @@ use cubecl::prelude::*;
 
 use super::direct::mma_register_direct;
 use super::gather::mma_register_gather;
-use super::tuning::RegisterTuning;
 use crate::*;
 
 /// Run the register microkernel over each batch matrix, reading operands through the
@@ -24,12 +23,8 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
+    #[comptime] config: MemoryMmaConfig,
 ) {
-    // The leaf's lowering knobs are a device query, which cannot run in-kernel; `device_properties`
-    // is the trace-time hand-off of the client's own properties, so no caller plumbs them down.
-    let device_props = comptime::device_properties();
-    let tuning = comptime!(RegisterTuning::new(&device_props));
-
     let size!(L) = lhs.vector_size();
     let size!(V) = rhs.vector_size();
 
@@ -58,44 +53,44 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     if nd {
         if comptime!(pack_l == 1) {
             mma_register_gather::<E, EL, i8, L, ER, ER, V>(
-                acc, lhs, rhs, space, 1usize, 1usize, tuning,
+                acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         } else if comptime!(pack_l > 1) {
             mma_register_gather::<E, EL, u32, L, ER, ER, V>(
-                acc, lhs, rhs, space, pack_l, 1usize, tuning,
+                acc, lhs, rhs, space, pack_l, 1usize, config,
             );
         } else if comptime!(pack_r == 1) {
             mma_register_gather::<E, EL, EL, L, ER, i8, V>(
-                acc, lhs, rhs, space, 1usize, 1usize, tuning,
+                acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         } else if comptime!(pack_r > 1) {
             mma_register_gather::<E, EL, EL, L, ER, u32, V>(
-                acc, lhs, rhs, space, 1usize, pack_r, tuning,
+                acc, lhs, rhs, space, 1usize, pack_r, config,
             );
         } else {
             mma_register_gather::<E, EL, EL, L, ER, ER, V>(
-                acc, lhs, rhs, space, 1usize, 1usize, tuning,
+                acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         }
     } else if comptime!(pack_l == 1) {
         mma_register_direct::<E, EL, i8, L, ER, ER, V>(
-            acc, lhs, rhs, space, 1usize, 1usize, tuning,
+            acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     } else if comptime!(pack_l > 1) {
         mma_register_direct::<E, EL, u32, L, ER, ER, V>(
-            acc, lhs, rhs, space, pack_l, 1usize, tuning,
+            acc, lhs, rhs, space, pack_l, 1usize, config,
         );
     } else if comptime!(pack_r == 1) {
         mma_register_direct::<E, EL, EL, L, ER, i8, V>(
-            acc, lhs, rhs, space, 1usize, 1usize, tuning,
+            acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     } else if comptime!(pack_r > 1) {
         mma_register_direct::<E, EL, EL, L, ER, u32, V>(
-            acc, lhs, rhs, space, 1usize, pack_r, tuning,
+            acc, lhs, rhs, space, 1usize, pack_r, config,
         );
     } else {
         mma_register_direct::<E, EL, EL, L, ER, ER, V>(
-            acc, lhs, rhs, space, 1usize, 1usize, tuning,
+            acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     }
 }

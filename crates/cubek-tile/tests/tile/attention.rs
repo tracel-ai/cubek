@@ -8,8 +8,8 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Buffering, Cut, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
-    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
+    Axis, Buffering, Cut, Leaf, MaskProbe, MemData, MemoryMmaConfig, RowState, Space, StagePlan,
+    StreamFold, TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -20,6 +20,14 @@ const V: Axis = Axis(4); // value dim
 // Local labels for the kernel-allocated smem tiles.
 const R: Axis = Axis(5); // score rows = G × QP, group-major
 const C: Axis = Axis(6); // score cols = one S block
+
+const MEMORY_LEAF: Leaf = Leaf::Memory {
+    config: MemoryMmaConfig {
+        unroll_limit: 16,
+        split_edge: false,
+        lane_fanout: false,
+    },
+};
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -58,27 +66,27 @@ fn attention_fold_kernel<W: Size>(
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
     let mut score = MemData::<f32>::smem(
         score_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         score_space,
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let row_space = comptime!(Space::new(&[(R, rows)]));
     let mut factors = MemData::<f32>::smem(
         row_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(
         acc_space,
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
@@ -364,43 +372,43 @@ fn attention_fold_split_kernel<W: Size>(
     );
     let score_all = MemData::<f32>::smem(
         score_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let p_all = MemData::<f32>::smem(
         score_space,
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut factors_all = MemData::<f32>::smem(
         row_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let m_all = MemData::<f32>::smem(
         row_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let l_all = MemData::<f32>::smem(
         row_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut acc_all = MemData::<f32>::smem(
         acc_space,
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut recip = MemData::<f32>::smem(
         comptime!(Space::new(&[(R, rows)])),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );

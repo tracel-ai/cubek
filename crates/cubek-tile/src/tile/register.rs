@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    instruction::{mma::register::contract_block, mma::register::RegisterTuning, sum},
+    instruction::{mma::register::contract_block, sum},
     *,
 };
 
@@ -45,6 +45,9 @@ pub struct RegisterData<T: Numeric> {
     /// partial is not the answer until the plane's lanes are summed.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
+    /// Execution configuration for this register leaf.
+    #[cube(comptime)]
+    pub(crate) config: MemoryMmaConfig,
 }
 
 /// Bind the block width `RA` for the rest of the kernel's scope.
@@ -64,6 +67,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] n: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
+        #[comptime] config: MemoryMmaConfig,
     ) -> RegisterData<T> {
         comptime!(assert!(
             vector_size > 0 && n.is_multiple_of(vector_size),
@@ -77,6 +81,7 @@ impl<T: Numeric> RegisterData<T> {
             mr: m,
             nr,
             lane_share,
+            config,
         }
     }
 
@@ -192,11 +197,9 @@ impl<T: Numeric> RegisterData<T> {
         // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
         let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
 
-        // The same knobs the memory-backed leaf lowers with, from the same query: this block is
-        // the same straight-line code, so the budget on it cannot differ.
-        let device_props = comptime::device_properties();
-        let tuning = comptime!(RegisterTuning::new(&device_props));
-        let unroll = comptime!(mr * nr <= tuning.unroll_block);
+        let config = comptime!(self.config);
+        let unroll = comptime!(mr * nr <= config.unroll_limit);
+        let lane_fanout = comptime!(config.lane_fanout);
 
         contract_block::<T, EL, L, ER, RA>(
             &lhs_mat,
@@ -207,6 +210,7 @@ impl<T: Numeric> RegisterData<T> {
             nr,
             kc,
             unroll,
+            lane_fanout,
         );
     }
 }

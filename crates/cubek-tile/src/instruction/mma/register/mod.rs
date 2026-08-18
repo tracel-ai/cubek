@@ -5,14 +5,11 @@
 //!   memory-backed leaf and the promoted [`RegisterData`](crate::RegisterData).
 //! - [`direct`]: the 2-D microkernel ([`mma_register_direct`]) for single-contracted-axis cases.
 //! - [`gather`]: the N-D microkernel ([`mma_register_gather`]) for multi-contracted or gathered cases.
-//! - [`tuning`]: device-aware lowering knobs ([`RegisterTuning`]).
 
 mod base;
 mod block;
 mod direct;
 mod gather;
-mod tuning;
 
 pub(crate) use base::mma_register_memory;
 pub(crate) use block::contract_block;
-pub(crate) use tuning::RegisterTuning;

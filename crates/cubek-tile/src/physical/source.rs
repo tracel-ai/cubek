@@ -76,7 +76,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 residence: Vec::new(),
                 units: 0,
                 quant: None,
-                leaf: Leaf::Memory,
+                leaf: Leaf::default(),
             },
             _state: PhantomData,
         }
@@ -588,7 +588,7 @@ pub(crate) fn validate_dequant_at(dequant_at: DequantAt, leaf: Leaf) {
         (DequantAt::Load, _) => {}
         // The memory leaf reads through a matrix view; so does the manual-mma fragment load, which
         // addresses one element at a time. Only the intrinsic transports are opaque.
-        (DequantAt::Read, Leaf::Memory) => {}
+        (DequantAt::Read, Leaf::Memory { .. }) => {}
         (DequantAt::Read, Leaf::Mma { io, .. }) => assert!(
             matches!(io.lhs_load_method, LoadMethod::Manual)
                 && matches!(io.rhs_load_method, LoadMethod::Manual),

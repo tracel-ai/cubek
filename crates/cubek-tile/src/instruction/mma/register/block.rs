@@ -12,14 +12,9 @@ use crate::*;
 
 /// `c += lhs · rhs` over the block: `kc` rank-1 updates into the `mr × nr` lines of `c`.
 ///
-/// `K` is walked as (line, lane) rather than as one flat scalar step. The lhs lines along `K`, so a
-/// flat walk has to divide and remainder by `lw` every step and can only reach the element through
-/// `extract_dynamic`, which the backends lower through memory. Splitting the walk makes the lane a
-/// comptime index, so `extract` folds to a fixed component, and the `lw` reads of one K-line become
-/// loop-invariant across the lane fan-out.
-///
-/// `kc` arrives whole rather than pre-split so the line count and the tail are derived in one place
-/// for both callers.
+/// If `lane_fanout` is true (GPU), `K` is walked as (line, lane) with fixed comptime extracts,
+/// avoiding dynamic vector extraction on shader backends. If false (CPU or scalar lines), `K`
+/// is walked as a flat scalar loop which LLVM vectorizes more efficiently without loop body bloat.
 #[cube]
 pub(crate) fn contract_block<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
@@ -30,49 +25,70 @@ pub(crate) fn contract_block<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: S
     #[comptime] nr: usize,
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
+    #[comptime] lane_fanout: bool,
 ) {
-    let k_lines = comptime!(kc / lw);
-    let k_tail = comptime!(kc % lw);
-
-    // One rhs line per accumulator column, reused by every row of the rank-1 update. Held across
-    // the whole K walk rather than re-declared per step, so the trace allocates it once however
-    // many lane bodies the fan-out below emits.
     let mut b = Array::<Vector<E, V>>::new(nr);
 
-    for line in 0..k_lines {
+    if comptime!(lane_fanout && lw > 1) {
+        let k_lines = comptime!(kc / lw);
+        let k_tail = comptime!(kc % lw);
+
+        for line in 0..k_lines {
+            #[unroll]
+            for lane in 0..lw {
+                rank1_update::<E, EL, L, ER, V>(
+                    lhs,
+                    rhs,
+                    c,
+                    &mut b,
+                    (line * lw + lane) as u32,
+                    line as u32,
+                    lane,
+                    mr,
+                    nr,
+                    unroll,
+                );
+            }
+        }
+
+        // A line width that does not divide `kc` leaves a partial last line. Its lane count is comptime
+        // too, so the tail is straight-line code rather than a second, dynamic walk.
         #[unroll]
-        for lane in 0..lw {
+        for lane in 0..k_tail {
             rank1_update::<E, EL, L, ER, V>(
                 lhs,
                 rhs,
                 c,
                 &mut b,
-                (line * lw + lane) as u32,
-                line as u32,
+                comptime!(k_lines * lw + lane) as u32,
+                comptime!(k_lines) as u32,
                 lane,
                 mr,
                 nr,
                 unroll,
             );
         }
-    }
-
-    // A line width that does not divide `kc` leaves a partial last line. Its lane count is comptime
-    // too, so the tail is straight-line code rather than a second, dynamic walk.
-    #[unroll]
-    for lane in 0..k_tail {
-        rank1_update::<E, EL, L, ER, V>(
-            lhs,
-            rhs,
-            c,
-            &mut b,
-            comptime!(k_lines * lw + lane) as u32,
-            comptime!(k_lines) as u32,
-            lane,
-            mr,
-            nr,
-            unroll,
-        );
+    } else {
+        // Flat scalar walk (CPU or scalar lines)
+        for p in 0..kc {
+            #[unroll(unroll)]
+            for n in 0..nr {
+                b[n] = Vector::<E, V>::cast_from(rhs.read((p as u32, n as u32)));
+            }
+            #[unroll(unroll)]
+            for i in 0..mr {
+                let lhs_line = lhs.read((i as u32, (p / lw) as u32));
+                let a = if comptime!(lw == 1) {
+                    Vector::<E, V>::cast_from(lhs_line.extract(0usize))
+                } else {
+                    Vector::<E, V>::cast_from(lhs_line.extract_dynamic(p % lw))
+                };
+                #[unroll(unroll)]
+                for n in 0..nr {
+                    c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+                }
+            }
+        }
     }
 }
 

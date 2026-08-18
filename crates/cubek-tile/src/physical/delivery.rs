@@ -100,7 +100,7 @@ impl StageStorage {
     pub fn for_leaf(leaf: Leaf) -> Self {
         match leaf {
             Leaf::Cmma => StageStorage::Tiled,
-            Leaf::Memory | Leaf::Mma { .. } => StageStorage::Strided,
+            Leaf::Memory { .. } | Leaf::Mma { .. } => StageStorage::Strided,
         }
     }
 }

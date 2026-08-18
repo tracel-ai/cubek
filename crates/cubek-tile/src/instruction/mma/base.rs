@@ -34,7 +34,11 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
         // never promoted lands in the arms above and meets their kind-pairing panics; there is no
         // second declaration left to check this one against.
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space)
+            let config = comptime!(match acc.leaf {
+                Leaf::Memory { config } => config,
+                _ => panic!("mma_leaf: unpromoted Gmem/Smem accumulator must carry Leaf::Memory"),
+            });
+            mma_register_memory::<E, EL, ER>(g, lhs, rhs, space, config)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),

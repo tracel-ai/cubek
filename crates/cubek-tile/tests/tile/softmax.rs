@@ -11,11 +11,20 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
-    Axis, Leaf, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
+    Axis, Leaf, MaskProbe, MemData, MemoryMmaConfig, RowState, Space, StagePlan, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
+
+const MEMORY_LEAF: Leaf = Leaf::Memory {
+    config: MemoryMmaConfig {
+        unroll_limit: 16,
+        split_edge: false,
+        lane_fanout: false,
+    },
+};
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -38,13 +47,13 @@ fn softmax_walk_kernel(
     let mask_tile = mask.tile(space);
     let mut score = MemData::<f32>::smem(
         block_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         block_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
@@ -294,13 +303,13 @@ fn softmax_smem_acc_kernel(
     let mask_tile = mask.tile(space);
     let mut score = MemData::<f32>::smem(
         block_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         block_space.clone(),
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
@@ -313,14 +322,14 @@ fn softmax_smem_acc_kernel(
 
     let mut factors = MemData::<f32>::smem(
         kept_space,
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(
         acc_space,
-        Leaf::Memory,
+        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );

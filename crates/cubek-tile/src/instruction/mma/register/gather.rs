@@ -3,7 +3,6 @@
 use cubecl::prelude::*;
 
 use super::base::{load_accumulators, store_accumulators};
-use super::tuning::RegisterTuning;
 use crate::*;
 
 /// N-D variant of [`mma_register_direct`](super::direct::mma_register_direct) for operations with
@@ -24,7 +23,7 @@ pub(super) fn mma_register_gather<
     #[comptime] space: Space,
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
-    #[comptime] tuning: RegisterTuning,
+    #[comptime] config: MemoryMmaConfig,
 ) {
     let lw = lhs.vector_size();
     let vw = rhs.vector_size();
@@ -61,7 +60,7 @@ pub(super) fn mma_register_gather<
     // needs, and the lhs line index is the same for every lane of one line.
     let k_lines = comptime!(kc / lw);
 
-    let unroll_block = comptime!(tuning.unroll_block);
+    let unroll_limit = comptime!(config.unroll_limit);
 
     for mat in 0..matrices {
         let batch = unravel(
@@ -77,7 +76,7 @@ pub(super) fn mma_register_gather<
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
-        let unroll = comptime!(mr * nr <= unroll_block && !lhs_check && !rhs_check && !acc_check);
+        let unroll = comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
         let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held

@@ -238,7 +238,7 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::Gmem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
                 comptime!(match self.leaf {
-                    Leaf::Memory => true,
+                    Leaf::Memory { .. } => true,
                     Leaf::Mma { io } => {
                         matches!(io.lhs_load_method, LoadMethod::Manual)
                             && matches!(io.rhs_load_method, LoadMethod::Manual)
@@ -277,7 +277,7 @@ impl<T: Numeric> Tile<T> {
                 stage,
             )),
             space,
-            leaf: comptime!(Leaf::Memory),
+            leaf: comptime!(Leaf::default()),
         }
     }
 

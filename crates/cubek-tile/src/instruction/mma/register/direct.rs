@@ -4,7 +4,6 @@ use cubecl::prelude::*;
 
 use super::base::{load_accumulators, store_accumulators};
 use super::block::contract_block;
-use super::tuning::RegisterTuning;
 use crate::*;
 
 /// The register microkernel for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
@@ -34,7 +33,7 @@ pub(super) fn mma_register_direct<
     #[comptime] space: Space,
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
-    #[comptime] tuning: RegisterTuning,
+    #[comptime] config: MemoryMmaConfig,
 ) {
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
@@ -72,7 +71,8 @@ pub(super) fn mma_register_direct<
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
 
-    let unroll_block = comptime!(tuning.unroll_block);
+    let unroll_limit = comptime!(config.unroll_limit);
+    let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
         let lhs = lhs.matrix_transparent::<IL, WPL, L>(mat);
@@ -86,9 +86,9 @@ pub(super) fn mma_register_direct<
         let lhs_check = comptime!(lhs.check);
         let rhs_check = comptime!(rhs.check);
         let acc_check = acc.check();
-        let eligible = comptime!(mr * nr <= unroll_block);
+        let eligible = comptime!(mr * nr <= unroll_limit);
         let split_edge =
-            comptime!(eligible && tuning.split_edge && (lhs_check || rhs_check || acc_check));
+            comptime!(eligible && config.split_edge && (lhs_check || rhs_check || acc_check));
         if comptime!(split_edge) {
             let origin = (0u32.runtime(), 0u32.runtime());
             let lhs_extent = (
@@ -108,17 +108,41 @@ pub(super) fn mma_register_direct<
                 && acc.block_in_bounds(origin, acc_extent);
             if in_bounds {
                 mma_register_direct_body::<E, EL, L, ER, V>(
-                    &mut acc, &lhs, &rhs, lw, mr, nr, kc, true,
+                    &mut acc,
+                    &lhs,
+                    &rhs,
+                    lw,
+                    mr,
+                    nr,
+                    kc,
+                    true,
+                    lane_fanout,
                 );
             } else {
                 mma_register_direct_body::<E, EL, L, ER, V>(
-                    &mut acc, &lhs, &rhs, lw, mr, nr, kc, false,
+                    &mut acc,
+                    &lhs,
+                    &rhs,
+                    lw,
+                    mr,
+                    nr,
+                    kc,
+                    false,
+                    lane_fanout,
                 );
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
             mma_register_direct_body::<E, EL, L, ER, V>(
-                &mut acc, &lhs, &rhs, lw, mr, nr, kc, unroll,
+                &mut acc,
+                &lhs,
+                &rhs,
+                lw,
+                mr,
+                nr,
+                kc,
+                unroll,
+                lane_fanout,
             );
         }
     }
@@ -136,8 +160,9 @@ fn mma_register_direct_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Si
     #[comptime] nr: usize,
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
+    #[comptime] lane_fanout: bool,
 ) {
     let mut c = load_accumulators(acc, mr, nr, unroll);
-    contract_block::<E, EL, L, ER, V>(lhs, rhs, &mut c, lw, mr, nr, kc, unroll);
+    contract_block::<E, EL, L, ER, V>(lhs, rhs, &mut c, lw, mr, nr, kc, unroll, lane_fanout);
     store_accumulators(acc, c, mr, nr, unroll);
 }

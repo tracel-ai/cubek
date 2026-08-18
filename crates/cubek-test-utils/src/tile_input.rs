@@ -47,7 +47,7 @@ impl TileInput {
             client: client.clone(),
             space,
             levels: None,
-            leaf: Leaf::Memory,
+            leaf: Leaf::default(),
             residence: Vec::new(),
         }
     }

@@ -1,7 +1,7 @@
 //! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
 //! one decomposition level plus the partitioner for the subspaces it produces.
 
-use crate::{Axis, ByAxis, MmaIOConfig};
+use crate::{Axis, ByAxis, MemoryMmaConfig, MmaIOConfig};
 
 use super::{Distribution, WalkOrder};
 
@@ -46,17 +46,40 @@ impl Default for Buffering {
 /// What an operand *is* at the instruction: a memory window, or a plane fragment in one of the two
 /// encodings. Pure format, no shape — `m`/`n`/`k` belong to the contraction, not to any one operand,
 /// so every allocation site is handed them by whoever holds enough spaces to know them.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Leaf {
     /// A memory window contracted by the software microkernel.
-    #[default]
-    Memory,
+    Memory {
+        config: MemoryMmaConfig,
+    },
     Cmma,
     /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
     /// leaf because it comes from a device query, which cannot run in-kernel.
     Mma {
         io: MmaIOConfig,
     },
+}
+
+impl Default for Leaf {
+    fn default() -> Self {
+        Self::Memory {
+            config: MemoryMmaConfig::default(),
+        }
+    }
+}
+
+impl Leaf {
+    /// Memory leaf with explicit execution configuration.
+    pub const fn memory(config: MemoryMmaConfig) -> Self {
+        Self::Memory { config }
+    }
+
+    /// Memory leaf with configuration derived from device properties and operand vector size.
+    pub fn memory_from_props(props: &cubecl::ir::DeviceProperties, vector_size: usize) -> Self {
+        Self::Memory {
+            config: MemoryMmaConfig::new(props, vector_size),
+        }
+    }
 }
 
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
