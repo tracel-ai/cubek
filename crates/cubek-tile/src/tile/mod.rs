@@ -48,6 +48,33 @@ impl<T: Numeric> Tile<T> {
             StagePlan::in_place(),
         )
     }
+
+    /// Create a coordinate-backed tile yielding constant zero.
+    pub fn zeros(_space: Space) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_zeros(scope: &Scope, space: Space) -> TileExpand<T> {
+        Self::__expand_procedural::<Zeros>(scope, space, ZerosExpand {})
+    }
+
+    /// Create a coordinate-backed tile yielding constant one.
+    pub fn ones(_space: Space) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_ones(scope: &Scope, space: Space) -> TileExpand<T> {
+        Self::__expand_procedural::<Ones>(scope, space, OnesExpand {})
+    }
+
+    /// Create a coordinate-backed tile yielding a constant value.
+    pub fn constant(_space: Space, _value: T) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_constant(scope: &Scope, space: Space, value: NativeExpand<T>) -> TileExpand<T> {
+        Self::__expand_procedural::<Constant<T>>(scope, space, ConstantExpand::<T> { value })
+    }
 }
 
 /// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a

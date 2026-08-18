@@ -64,7 +64,8 @@ fn materialize<E: Numeric>(
     for region in walk {
         let staging = ring.slot_mut(0usize);
         staging.fill_streamed(source, &region);
-        staging.consume(|staged| output.at(&region).copy_from(staged));
+        staging.publish();
+        staging.consume(|staged| output.at(&region).copy_from(&staged.at(&region)));
     }
 }
 
