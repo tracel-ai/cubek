@@ -145,6 +145,12 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         scope: &Scope,
         pos: <CoordsDyn as CubeType>::ExpandType,
     ) -> NativeExpand<Vector<T, W>> {
+        assert_eq!(
+            W::__expand_value(scope),
+            1,
+            "ProceduralData: a procedural read is scalar; a vectorized read would broadcast \
+             the first lane's value instead of ramping the innermost coordinate"
+        );
         let value = self
             .clone()
             .__expand_evaluate_dyn_method(scope, &pos, self.space.clone());
