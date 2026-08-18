@@ -2,7 +2,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Buffering, CubeAxis, Cut, StorageTiling, Tiling, WalkOrder};
+use cubek_tile::{Axis, Buffering, CubeAxis, Cut, Leaf, StorageTiling, Tiling, WalkOrder};
 
 use crate::{
     definition::{
@@ -184,6 +184,10 @@ pub fn launch_ref<R: Runtime>(
     // inner extents and the `N` leaf edge.
     let rhs = rhs.into_data();
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], sz);
+    // The software leaf's unroll and K-walk strategy depend on the backend and the accumulator
+    // line width. All three operands carry the same leaf so promotion and direct accumulation
+    // select the identical specialization.
+    let leaf = Leaf::memory_from_props(client.properties(), v);
 
     // Load each operand through the tile builder over its subspace (the matrix `[row, col]` plus
     // batches). All operands get the full output batch-axis list; the builder right-aligns it to
@@ -194,6 +198,7 @@ pub fn launch_ref<R: Runtime>(
         .subspace(&[M, K])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, lhs_levels))
+        .leaf(leaf)
         .build();
     let b = launch
         .arg(rhs)
@@ -201,6 +206,7 @@ pub fn launch_ref<R: Runtime>(
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, rhs_levels))
         .vectorize(v)
+        .leaf(leaf)
         .build();
     let c = launch
         .arg(out)
@@ -208,6 +214,7 @@ pub fn launch_ref<R: Runtime>(
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)
+        .leaf(leaf)
         .build();
     cpu_gemm_kernel::launch::<R>(
         client,

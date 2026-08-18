@@ -194,6 +194,31 @@ impl Conv1d {
         buffering: Buffering,
         residence: &[Residence],
     ) {
+        self.check_at_with_leaf(
+            tile_oh,
+            tile_co,
+            in_v,
+            checked,
+            buffering,
+            residence,
+            Leaf::default(),
+        )
+    }
+
+    /// `check_at` with an explicit memory-leaf configuration. Kept separate so the fan-out path
+    /// can be traced on the CPU test runtime even though production CPU launches select the flat
+    /// walk.
+    #[allow(clippy::too_many_arguments)]
+    fn check_at_with_leaf(
+        &self,
+        tile_oh: usize,
+        tile_co: usize,
+        in_v: usize,
+        checked: bool,
+        buffering: Buffering,
+        residence: &[Residence],
+        leaf: Leaf,
+    ) {
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
             .level(WalkOrder::RowMajor, buffering, |l| {
@@ -214,6 +239,7 @@ impl Conv1d {
             ],
         ))
         .checked(checked)
+        .leaf(leaf)
         .residence(residence);
 
         let (got, input, weight) = run(
@@ -222,7 +248,7 @@ impl Conv1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO]).checked(checked),
+            TileSpec::direct(&[OH, CO]).checked(checked).leaf(leaf),
             space,
             in_v,
         );
@@ -570,6 +596,29 @@ fn conv1d_vectorized_input() {
         dilation: 1,
     }
     .check_at(4, 4, 2, false, Buffering::SINGLE, &[]);
+}
+
+/// The GPU specialization uses fixed lane extracts. Exercise that path on the CPU test runtime as
+/// well, even though production CPU launches select the compact flat walk.
+#[test]
+fn conv1d_vectorized_input_fanout() {
+    Conv1d {
+        oh: 8,
+        co: 4,
+        rh: 3,
+        ci: 4,
+        stride: 1,
+        dilation: 1,
+    }
+    .check_at_with_leaf(
+        4,
+        4,
+        2,
+        false,
+        Buffering::SINGLE,
+        &[],
+        Leaf::memory(MemoryMmaConfig::manual(16, false, true)),
+    );
 }
 
 /// Vectorized with stride and dilation both off `1`, so the line fold and the affine advance are

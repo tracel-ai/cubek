@@ -1,6 +1,7 @@
 //! N-D register microkernel for operations with multiple contracted axes or projected operands.
 
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 
 use super::base::{load_accumulators, store_accumulators};
 use crate::*;
@@ -43,7 +44,7 @@ pub(super) fn mma_register_gather<
     let kc = comptime!(reduce_extents.iter().product::<usize>());
 
     comptime!(assert_operand_shapes(
-        &lhs.space, &rhs.space, &space, &reduce, lw
+        &lhs.space, &rhs.space, &space, &reduce
     ));
 
     let lhs_view = lhs.nd::<IL, WPL, L>();
@@ -53,14 +54,14 @@ pub(super) fn mma_register_gather<
     let lhs_check = comptime!(lhs_view.check);
     let rhs_check = comptime!(rhs_view.check);
 
-    // `K` walks the flattened reduce space as (line, lane): the lhs lines along the fastest
-    // contracted axis and `assert_operand_shapes` has that axis's extent a multiple of `lw`, so
-    // `lw` divides `kc` and the lane of step `line * lw + lane` is `lane` outright. Comptime, so
-    // `extract` names a fixed component instead of the `frem` plus `extract_dynamic` a flat walk
-    // needs, and the lhs line index is the same for every lane of one line.
+    // The fan-out walk names the lane with a comptime extract. Its final physical line can be
+    // partial, just as the direct leaf's can, so retain a short tail rather than rejecting a
+    // perfectly valid checked tile.
     let k_lines = comptime!(kc / lw);
+    let k_tail = comptime!(kc % lw);
 
     let unroll_limit = comptime!(config.unroll_limit);
+    let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
         let batch = unravel(
@@ -84,12 +85,61 @@ pub(super) fn mma_register_gather<
         // however many lane bodies the fan-out below emits.
         let mut b = Array::<Vector<E, V>>::new(nr);
 
-        for line in 0..k_lines {
+        if comptime!(lane_fanout && lw > 1) {
+            for line in 0..k_lines {
+                #[unroll]
+                for lane in 0..lw {
+                    gather_fanout_step::<E, EL, L, ER, V>(
+                        &lhs_view,
+                        &rhs_view,
+                        &mut c,
+                        &mut b,
+                        &batch,
+                        line * lw + lane,
+                        lane,
+                        mr,
+                        nr,
+                        unroll,
+                        comptime!(space.clone()),
+                        comptime!(reduce.clone()),
+                        comptime!(reduce_extents.clone()),
+                        comptime!(lhs.space.clone()),
+                        comptime!(rhs.space.clone()),
+                        lw,
+                        vw,
+                    );
+                }
+            }
             #[unroll]
-            for lane in 0..lw {
+            for lane in 0..k_tail {
+                gather_fanout_step::<E, EL, L, ER, V>(
+                    &lhs_view,
+                    &rhs_view,
+                    &mut c,
+                    &mut b,
+                    &batch,
+                    comptime!(k_lines * lw + lane),
+                    lane,
+                    mr,
+                    nr,
+                    unroll,
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    comptime!(reduce_extents.clone()),
+                    comptime!(lhs.space.clone()),
+                    comptime!(rhs.space.clone()),
+                    lw,
+                    vw,
+                );
+            }
+        } else {
+            // CPU and scalar lines keep the compact flat walk. Besides respecting the selected
+            // configuration, this avoids cloning a wide fan-out body into LLVM IR when its fixed
+            // extracts provide no benefit.
+            for p in 0..kc {
                 let reduce_coords = unravel(
                     &const_coords(comptime!(reduce_extents.clone())),
-                    (line * lw + lane).fcast::<u32>(),
+                    p.fcast::<u32>(),
                 );
 
                 #[unroll(unroll)]
@@ -120,7 +170,7 @@ pub(super) fn mma_register_gather<
                         lw,
                         false,
                     );
-                    let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract(lane));
+                    let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract_dynamic(p % lw));
                     #[unroll(unroll)]
                     for n in 0..nr {
                         c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
@@ -130,6 +180,65 @@ pub(super) fn mma_register_gather<
         }
 
         store_accumulators(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
+    }
+}
+
+/// One gathered rank-1 update for the fan-out walk. `lane` is comptime so shader backends see a
+/// fixed `extract`; the dynamic flat walk above deliberately keeps its smaller loop body instead.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn gather_fanout_step<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+    lhs_view: &MaskedView<'_, Vector<EL, L>, CoordsDyn>,
+    rhs_view: &MaskedView<'_, Vector<ER, V>, CoordsDyn>,
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    batch: &Coords<u32>,
+    p: usize,
+    #[comptime] lane: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] unroll: bool,
+    #[comptime] space: Space,
+    #[comptime] reduce: Vec<Axis>,
+    #[comptime] reduce_extents: Vec<usize>,
+    #[comptime] lhs_space: Space,
+    #[comptime] rhs_space: Space,
+    #[comptime] lw: usize,
+    #[comptime] vw: usize,
+) {
+    let reduce_coords = unravel(&const_coords(reduce_extents), p.fcast::<u32>());
+
+    #[unroll(unroll)]
+    for n in 0..nr {
+        let acc_coords = acc_cell_coords(batch, 0u32, n as u32);
+        let pos = resolve_nd_coords(
+            comptime!(rhs_space.clone()),
+            comptime!(space.clone()),
+            comptime!(reduce.clone()),
+            &acc_coords,
+            &reduce_coords,
+            vw,
+            false,
+        );
+        b[n] = Vector::<E, V>::cast_from(rhs_view.read(pos));
+    }
+    #[unroll(unroll)]
+    for i in 0..mr {
+        let acc_coords = acc_cell_coords(batch, i as u32, 0u32);
+        let pos = resolve_nd_coords(
+            comptime!(lhs_space.clone()),
+            comptime!(space.clone()),
+            comptime!(reduce.clone()),
+            &acc_coords,
+            &reduce_coords,
+            lw,
+            false,
+        );
+        let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract(lane));
+        #[unroll(unroll)]
+        for n in 0..nr {
+            c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+        }
     }
 }
 
@@ -155,13 +264,7 @@ fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
 /// treat one axis per operand as the vectorized one and address it in lines; if that is not the
 /// axis the operand actually lines along, the reads are silently off by the width rather than
 /// wrong in a way a test would localize. Host-side, so a violation is a comptime message.
-fn assert_operand_shapes(
-    lhs: &Space,
-    rhs: &Space,
-    acc: &Space,
-    reduce: &[Axis],
-    lhs_vec_len: usize,
-) {
+fn assert_operand_shapes(lhs: &Space, rhs: &Space, acc: &Space, reduce: &[Axis]) {
     assert!(
         !reduce.is_empty(),
         "gather leaf: the operands contract no axis against the accumulator"
@@ -180,10 +283,6 @@ fn assert_operand_shapes(
     assert!(
         lhs.axis_at(lhs.rank() - 1) == fastest,
         "gather leaf: the lhs must line along the fastest contracted axis {fastest:?}"
-    );
-    assert!(
-        lhs_vec_len == 1 || lhs.extent(fastest).is_multiple_of(lhs_vec_len),
-        "gather leaf: the lhs's line width {lhs_vec_len} must divide its fastest contracted axis's extent"
     );
     assert!(
         rhs.axis_at(rhs.rank() - 1) == acc.axis_at(acc.rank() - 1),
