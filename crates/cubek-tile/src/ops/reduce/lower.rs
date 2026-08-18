@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use super::kind::{ReduceLeafKind, reduce_identity};
+use super::kind::ReduceLeafKind;
 use crate::*;
 
 #[cube]
@@ -295,7 +295,7 @@ fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
                 select(
                     valid,
                     in_view.read(in_coords),
-                    Vector::<In, V>::cast_from(reduce_identity::<In>(inst)),
+                    Vector::<In, V>::cast_from(ReduceLeafKind::identity::<In>(inst)),
                 )
             }
         };
@@ -314,17 +314,7 @@ fn reduce_element<Acc: Numeric, In: Numeric, V: Size>(
         };
         let in_cast = Acc::cast_from(in_val);
 
-        match comptime!(inst) {
-            ReduceLeafKind::Sum => {
-                curr_val += in_cast;
-            }
-            ReduceLeafKind::Max => {
-                curr_val = max(curr_val, in_cast);
-            }
-            ReduceLeafKind::Min => {
-                curr_val = min(curr_val, in_cast);
-            }
-        }
+        curr_val = ReduceLeafKind::combine::<Acc>(curr_val, in_cast, inst);
     }
 
     curr_val
