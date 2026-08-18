@@ -3,7 +3,7 @@
 
 use crate::{Axis, ByAxis, MmaIOConfig};
 
-use super::{Distribution, WalkOrder};
+use super::{ComputeScope, Distribution, WalkOrder};
 
 /// How deeply a level's walk buffers its regions, and nothing else: whether an operand is
 /// materialized at all, and into what, is the operand's own
@@ -68,9 +68,47 @@ pub enum Partitioner {
     Level(Box<Level>),
 }
 
-/// What a level does with the tiles below it: spread them across hardware instances, or
-/// partition them sequentially across a grid. Decided once, when the level is built, so no
-/// consumer re-folds the per-axis distributions.
+/// How finely a level separates its tiles: the smallest hardware scope any of its axes rides.
+/// Decided once, when the level is built, so no consumer re-folds the per-axis distributions.
+///
+/// The finest scope wins. A level with an axis on a cube dim and another on planes reaches
+/// inside a cube, and what a level separates inside a cube the cube's own cooperative
+/// transports already spread.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub enum LevelScope {
+    /// Every axis `Sequential`: one instance walks the whole grid.
+    Sequential,
+    /// Some axis rides a cube dim and none reaches inside a cube, so the level separates
+    /// exactly what the launch grid does.
+    Cubes,
+    /// Some axis rides the cube's planes.
+    Planes,
+    /// Some axis rides a plane's lanes.
+    Lanes,
+}
+
+impl LevelScope {
+    /// The scope one axis's distribution puts a level in.
+    fn of(dist: Distribution) -> Self {
+        match dist.scope() {
+            None => LevelScope::Sequential,
+            Some(ComputeScope::Cube(_)) => LevelScope::Cubes,
+            Some(ComputeScope::Plane) => LevelScope::Planes,
+            Some(ComputeScope::Unit) => LevelScope::Lanes,
+        }
+    }
+
+    /// The coarse reading, for consumers that only ask whether the level spreads at all.
+    pub(crate) fn role(self) -> LevelRole {
+        match self {
+            LevelScope::Sequential => LevelRole::Partition,
+            LevelScope::Cubes | LevelScope::Planes | LevelScope::Lanes => LevelRole::Instance,
+        }
+    }
+}
+
+/// Whether a level spreads its tiles across hardware at all, which is all most consumers ask.
+/// A view over [`LevelScope`], never stored: the scope is the level's own state.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LevelRole {
     /// Spreads its tiles across hardware instances (`Spatial` on some axis).
@@ -83,7 +121,7 @@ pub enum LevelRole {
 pub struct Level {
     edges: ByAxis<usize>,
     dists: ByAxis<Distribution>,
-    role: LevelRole,
+    scope: LevelScope,
     order: WalkOrder,
     buffering: Buffering,
     next: Partitioner,
@@ -94,8 +132,12 @@ impl Level {
         self.buffering
     }
 
+    pub(crate) fn scope(&self) -> LevelScope {
+        self.scope
+    }
+
     pub(crate) fn role(&self) -> LevelRole {
-        self.role
+        self.scope.role()
     }
 }
 
@@ -116,9 +158,15 @@ impl Partitioner {
         self.level().dists.get(axis)
     }
 
+    /// This level's [`LevelScope`]. Panics on [`Final`](Partitioner::Final), which carries no
+    /// level.
+    pub(crate) fn scope(&self) -> LevelScope {
+        self.level().scope
+    }
+
     /// This level's [`LevelRole`]. Panics on [`Final`](Partitioner::Final), which carries no level.
     pub(crate) fn role(&self) -> LevelRole {
-        self.level().role
+        self.level().scope.role()
     }
 
     /// The axes this level distributes, which outlive the space they came from: a level keeps
@@ -152,16 +200,16 @@ impl Partitioner {
                 let Level {
                     edges,
                     dists,
-                    role,
+                    scope,
                     order,
                     buffering,
                     next,
                 } = *level;
-                // Resolving lane counts keeps every axis `Spatial`, so the role is unchanged.
+                // Resolving lane counts keeps every axis `Spatial`, so the scope is unchanged.
                 Partitioner::Level(Box::new(Level {
                     edges,
                     dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
-                    role,
+                    scope,
                     order,
                     buffering,
                     next: next.resolve_lanes(plane_size),
@@ -177,7 +225,7 @@ impl Partitioner {
                 let Level {
                     edges: sub_tile,
                     dists,
-                    role,
+                    scope,
                     order,
                     buffering,
                     next,
@@ -185,7 +233,7 @@ impl Partitioner {
                 Partitioner::Level(Box::new(Level {
                     edges: sub_tile,
                     dists,
-                    role,
+                    scope,
                     order,
                     buffering,
                     next: next.append(tail),
@@ -231,18 +279,17 @@ impl PartitionerBuilder {
     /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
     fn finish(self, buffering: Buffering) -> Partitioner {
-        // Instance when any axis spreads across hardware, else a sequential partition.
-        let role = self
+        // The finest scope any axis rides; `Sequential` when none spreads at all.
+        let scope = self
             .dists
             .values()
-            .fold(LevelRole::Partition, |role, dist| match dist {
-                Distribution::Spatial { .. } => LevelRole::Instance,
-                Distribution::Sequential => role,
+            .fold(LevelScope::Sequential, |scope, dist| {
+                scope.max(LevelScope::of(dist))
             });
         Partitioner::Level(Box::new(Level {
             edges: self.sub_tile,
             dists: self.dists,
-            role,
+            scope,
             order: self.order,
             buffering,
             next: Partitioner::Final,
@@ -253,5 +300,63 @@ impl PartitionerBuilder {
     /// number, so naming a few of them would only hide that.
     pub fn buffered(self, buffering: Buffering) -> Partitioner {
         self.finish(buffering)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Axis, CubeAxis, Cut, Tiling};
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+
+    #[test]
+    fn a_level_with_no_spatial_axis_is_sequential() {
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4)).axis(N, Cut::sequential(4))
+            })
+            .build();
+        assert_eq!(space.partitioner().scope(), LevelScope::Sequential);
+        assert_eq!(space.partitioner().role(), LevelRole::Partition);
+    }
+
+    #[test]
+    fn cube_axes_alone_separate_what_the_launch_grid_does() {
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::cube(CubeAxis::Y, 4))
+                    .axis(N, Cut::cube(CubeAxis::X, 4))
+            })
+            .build();
+        assert_eq!(space.partitioner().scope(), LevelScope::Cubes);
+        assert_eq!(space.partitioner().role(), LevelRole::Instance);
+    }
+
+    /// The case the fold exists for: a cube axis beside a plane axis reaches inside a cube, so the
+    /// level reads as `Planes`. Reading only the first axis, or the coarsest, would say `Cubes`.
+    #[test]
+    fn a_plane_axis_beside_a_cube_axis_reaches_inside_the_cube() {
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::cube(CubeAxis::Y, 4)).axis(N, Cut::plane(4))
+            })
+            .build();
+        assert_eq!(space.partitioner().scope(), LevelScope::Planes);
+    }
+
+    #[test]
+    fn a_unit_axis_is_the_finest_scope() {
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::plane(4)).axis(N, Cut::unit(4))
+            })
+            .build();
+        assert_eq!(space.partitioner().scope(), LevelScope::Lanes);
     }
 }

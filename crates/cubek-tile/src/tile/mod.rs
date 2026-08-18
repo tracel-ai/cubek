@@ -293,24 +293,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether a level above already materialized this operand into plane-private registers.
-    /// Such a payload has no bytes any transport can move, so a slot holds the fragments themselves
-    /// and each read selects the region's block out of them by comptime coordinate
-    /// ([`AtRegion`](crate::SlotPayload::AtRegion)).
-    pub fn resident_fragment(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => comptime!(true),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
-        }
-    }
-
     /// How this operand's bytes move: a strided cooperative copy or a TMA hardware bulk
     /// copy. Comptime (the kind is fixed at trace); drives the staging sync. A resident
-    /// fragment has no bytes to move, so ask [`resident_fragment`](Tile::resident_fragment)
-    /// before this.
+    /// fragment has no bytes to move, so go through
+    /// [`stage_source`](Tile::stage_source) rather than calling this on one.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.tile_kind {
             TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Copy),
@@ -324,14 +310,21 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// How a staging slot obtains this operand: transport from a backing store, or fragments a
-    /// level above already placed in registers.
+    /// level above already placed in registers. A fragment has no bytes any transport can move, so
+    /// its slot holds the fragments themselves and each read selects the region's block out of them
+    /// by comptime coordinate ([`AtRegion`](crate::SlotPayload::AtRegion)).
     pub fn stage_source(&self) -> comptime_type!(StageSource) {
-        let fragment = self.resident_fragment();
-        if comptime!(fragment) {
-            comptime!(StageSource::ResidentFragment)
-        } else {
-            let delivery = self.delivery();
-            comptime!(StageSource::Transport(delivery))
+        match &self.tile_kind {
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(StageSource::ResidentFragment)
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                let delivery = self.delivery();
+                comptime!(StageSource::Transport(delivery))
+            }
         }
     }
 
@@ -708,9 +701,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Transfer `src` into `self`, each physical pairing dispatched to its transport leaf. A
-    /// partition source is matched first because it needs the whole destination tile, which the
-    /// pairing match below would keep borrowed.
+    /// Move `src` into `self`, the physical pairing picking the instruction that does it. This is
+    /// the move itself, not [`StageSource::Transport`](crate::StageSource), which is a staging
+    /// slot's plan to make one. A partition source is matched first because it needs the whole
+    /// destination tile, which the pairing match below would keep borrowed.
     pub fn copy_from(&mut self, src: &Tile<T>) {
         // Bound before the match, which borrows the kind: a memory fill needs the logical space
         // both sides carry (a gathered source is addressed per axis).

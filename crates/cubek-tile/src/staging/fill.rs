@@ -28,11 +28,6 @@ impl<'a> SlotOperand<'a> {
             space,
         }
     }
-
-    /// Whether a level above already materialized this operand into plane-private registers.
-    fn is_resident_fragment(&self) -> bool {
-        self.source.is_resident_fragment()
-    }
 }
 
 /// What every slot of one ring decides at comptime: how it rendezvouses, and per operand where it
@@ -177,9 +172,10 @@ fn compatible_slot_residences(residences: &[Residence]) -> bool {
 /// [`AtRegion`](SlotPayload::AtRegion)), and reaching here with any other residence means something
 /// asked to re-materialize a fragment.
 fn slot_admits_operands(operands: &[SlotOperand]) -> bool {
-    operands
-        .iter()
-        .all(|op| !op.is_resident_fragment() || op.residence == Residence::InPlace)
+    operands.iter().all(|op| match op.source {
+        StageSource::ResidentFragment => op.residence == Residence::InPlace,
+        StageSource::Transport(_) => true,
+    })
 }
 
 #[cube]
