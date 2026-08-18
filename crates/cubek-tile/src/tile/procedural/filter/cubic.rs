@@ -3,7 +3,7 @@ use cubecl_common::Ratio;
 
 use crate::Axis;
 
-use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
+use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand, RecipeMeta};
 
 /// Keys' cubic-convolution filter over an [`AffineCoordinate`].
 pub type CubicAxis<T> = Cubic<AffineCoordinate<T>>;
@@ -34,6 +34,10 @@ pub struct Cubic<C: CubeType> {
     pub coordinate: C,
     #[cube(comptime)]
     pub a: Ratio,
+}
+
+impl<C: RecipeMeta + CubeType> RecipeMeta for Cubic<C> {
+    const HALO: usize = C::HALO + 2;
 }
 
 #[cube]

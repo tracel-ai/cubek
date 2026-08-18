@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::Axis;
 
-use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
+use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand, RecipeMeta};
 
 /// Windowed-sinc Lanczos filter over an [`AffineCoordinate`].
 pub type LanczosAxis<T> = Lanczos<AffineCoordinate<T>>;
@@ -33,6 +33,10 @@ pub struct Lanczos<C: CubeType> {
     pub coordinate: C,
     #[cube(comptime)]
     pub lobes: u8,
+}
+
+impl<C: RecipeMeta + CubeType> RecipeMeta for Lanczos<C> {
+    const HALO: usize = C::HALO + 3;
 }
 
 #[cube]

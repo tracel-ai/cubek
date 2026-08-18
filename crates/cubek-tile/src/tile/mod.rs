@@ -61,10 +61,12 @@ impl<T: Numeric> Tile<T> {
         recipe: R::ExpandType,
         stage: StagePlan,
     ) -> TileExpand<T> {
+        let facts = RecipeFacts::of::<R>();
         Self::__expand_procedural_virtual(
             scope,
             space,
             VirtualRecipe::<T>::__expand_new::<R>(scope, recipe),
+            facts,
             stage,
         )
     }
@@ -324,12 +326,14 @@ impl<T: Numeric> Tile<T> {
     fn procedural_virtual(
         #[comptime] space: Space,
         recipe: VirtualRecipe<T>,
+        #[comptime] facts: RecipeFacts,
         #[comptime] stage: StagePlan,
     ) -> Self {
         Tile::<T> {
             tile_kind: TileKind::new_Procedural(ProceduralData::<T>::new_virtual(
                 comptime!(space.clone()),
                 recipe,
+                facts,
                 stage,
             )),
             space,

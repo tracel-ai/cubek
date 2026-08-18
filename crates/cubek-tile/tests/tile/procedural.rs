@@ -20,6 +20,8 @@ struct ProductAxes {
     col: Axis,
 }
 
+impl RecipeMeta for ProductAxes {}
+
 #[cube]
 impl<T: Float> Recipe<T> for ProductAxes {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
@@ -35,6 +37,8 @@ struct AxisValue {
     axis: Axis,
     scale: f32,
 }
+
+impl RecipeMeta for AxisValue {}
 
 #[cube]
 impl<T: Float> Recipe<T> for AxisValue {
@@ -632,5 +636,24 @@ fn divided_direct_copy_preserves_the_parent_bound() {
     assert_grid(
         &HostData::from_tensor_handle(&client, output, HostDataType::F32),
         |row, col| if row < 2 && col < 4 { 1.0 } else { 0.0 },
+    );
+}
+
+#[test]
+fn recipe_facts_compose_through_nesting() {
+    assert_eq!(RecipeFacts::of::<Zeros>().halo, 0);
+    assert_eq!(RecipeFacts::of::<Ones>().halo, 0);
+    assert_eq!(RecipeFacts::of::<Constant<f32>>().halo, 0);
+    assert_eq!(RecipeFacts::of::<AffineCoordinate<f32>>().halo, 0);
+    assert_eq!(RecipeFacts::of::<LinearAxis<f32>>().halo, 1);
+    assert_eq!(RecipeFacts::of::<CubicAxis<f32>>().halo, 2);
+    assert_eq!(RecipeFacts::of::<LanczosAxis<f32>>().halo, 3);
+    assert_eq!(
+        RecipeFacts::of::<Lanczos<Cubic<AffineCoordinate<f32>>>>().halo,
+        5
+    );
+    assert_eq!(
+        RecipeFacts::of::<Product<CubicAxis<f32>, LanczosAxis<f32>>>().halo,
+        3
     );
 }

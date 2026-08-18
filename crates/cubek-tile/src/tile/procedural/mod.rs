@@ -4,10 +4,12 @@ mod affine;
 mod base;
 mod constant;
 mod filter;
+mod product;
 mod recipe;
 
 pub use affine::*;
 pub use base::*;
 pub use constant::*;
 pub use filter::*;
+pub use product::*;
 pub use recipe::*;

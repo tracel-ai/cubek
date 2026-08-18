@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::Axis;
 
-use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
+use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand, RecipeMeta};
 
 /// A [`Linear`] filter applied directly to an [`AffineCoordinate`].
 pub type LinearAxis<T> = Linear<AffineCoordinate<T>>;
@@ -27,6 +27,10 @@ pub fn linear_along<T: Float>(
 #[derive(CubeType, Clone)]
 pub struct Linear<C: CubeType> {
     pub coordinate: C,
+}
+
+impl<C: RecipeMeta + CubeType> RecipeMeta for Linear<C> {
+    const HALO: usize = C::HALO + 1;
 }
 
 #[cube]
