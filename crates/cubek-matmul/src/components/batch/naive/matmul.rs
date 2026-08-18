@@ -176,8 +176,14 @@ fn load_unrolled<I: Numeric, N: Size, N2: Size>(
     } else {
         let (row, col) = pos;
         let mut out = Vector::empty();
+        // Cast host-side: `as` inside `#[cube]` emits an IR cast, whose result is not a constant,
+        // and an unrolled range rejects a non-constant bound.
         #[unroll]
-        for i in range_stepped(0, vector_size as u32, view_vector_size as u32) {
+        for i in range_stepped(
+            0u32,
+            comptime!(vector_size as u32),
+            comptime!(view_vector_size as u32),
+        ) {
             let pos = match layout {
                 MatrixLayout::RowMajor => (row, col + i),
                 MatrixLayout::ColMajor => (row + i, col),

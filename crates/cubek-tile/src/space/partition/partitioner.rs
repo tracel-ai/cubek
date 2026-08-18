@@ -3,7 +3,7 @@
 
 use crate::{Axis, ByAxis, MemoryMmaConfig, MmaIOConfig};
 
-use super::{Distribution, WalkOrder};
+use super::{ComputeScope, Distribution, WalkOrder};
 
 /// How deeply a level's walk buffers its regions, and nothing else: whether an operand is
 /// materialized at all, and into what, is the operand's own
@@ -91,9 +91,35 @@ pub enum Partitioner {
     Level(Box<Level>),
 }
 
-/// What a level does with the tiles below it: spread them across hardware instances, or
-/// partition them sequentially across a grid. Decided once, when the level is built, so no
-/// consumer re-folds the per-axis distributions.
+/// How finely a level separates its tiles: the smallest hardware scope any of its axes rides.
+/// Decided once, when the level is built, so no consumer re-folds the per-axis distributions.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub enum LevelScope {
+    Sequential,
+    Cubes,
+    Planes,
+    Lanes,
+}
+
+impl LevelScope {
+    fn of(dist: Distribution) -> Self {
+        match dist.scope() {
+            None => Self::Sequential,
+            Some(ComputeScope::Cube(_)) => Self::Cubes,
+            Some(ComputeScope::Plane) => Self::Planes,
+            Some(ComputeScope::Unit) => Self::Lanes,
+        }
+    }
+
+    pub(crate) fn role(self) -> LevelRole {
+        match self {
+            Self::Sequential => LevelRole::Partition,
+            Self::Cubes | Self::Planes | Self::Lanes => LevelRole::Instance,
+        }
+    }
+}
+
+/// Whether a level spreads its tiles across hardware at all, which is all most consumers ask.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LevelRole {
     /// Spreads its tiles across hardware instances (`Spatial` on some axis).
@@ -106,7 +132,7 @@ pub enum LevelRole {
 pub struct Level {
     edges: ByAxis<usize>,
     dists: ByAxis<Distribution>,
-    role: LevelRole,
+    scope: LevelScope,
     order: WalkOrder,
     buffering: Buffering,
     next: Partitioner,
@@ -117,8 +143,12 @@ impl Level {
         self.buffering
     }
 
+    pub(crate) fn scope(&self) -> LevelScope {
+        self.scope
+    }
+
     pub(crate) fn role(&self) -> LevelRole {
-        self.role
+        self.scope.role()
     }
 }
 
@@ -139,9 +169,14 @@ impl Partitioner {
         self.level().dists.get(axis)
     }
 
+    /// This level's [`LevelScope`]. Panics on [`Final`](Partitioner::Final), which carries no level.
+    pub(crate) fn scope(&self) -> LevelScope {
+        self.level().scope
+    }
+
     /// This level's [`LevelRole`]. Panics on [`Final`](Partitioner::Final), which carries no level.
     pub(crate) fn role(&self) -> LevelRole {
-        self.level().role
+        self.level().scope.role()
     }
 
     /// The axes this level distributes, which outlive the space they came from: a level keeps
@@ -175,7 +210,7 @@ impl Partitioner {
                 let Level {
                     edges,
                     dists,
-                    role,
+                    scope,
                     order,
                     buffering,
                     next,
@@ -184,7 +219,7 @@ impl Partitioner {
                 Partitioner::Level(Box::new(Level {
                     edges,
                     dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
-                    role,
+                    scope,
                     order,
                     buffering,
                     next: next.resolve_lanes(plane_size),
@@ -200,7 +235,7 @@ impl Partitioner {
                 let Level {
                     edges: sub_tile,
                     dists,
-                    role,
+                    scope,
                     order,
                     buffering,
                     next,
@@ -208,7 +243,7 @@ impl Partitioner {
                 Partitioner::Level(Box::new(Level {
                     edges: sub_tile,
                     dists,
-                    role,
+                    scope,
                     order,
                     buffering,
                     next: next.append(tail),
@@ -254,18 +289,17 @@ impl PartitionerBuilder {
     /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
     fn finish(self, buffering: Buffering) -> Partitioner {
-        // Instance when any axis spreads across hardware, else a sequential partition.
-        let role = self
+        // The finest scope any axis rides; `Sequential` when none spreads at all.
+        let scope = self
             .dists
             .values()
-            .fold(LevelRole::Partition, |role, dist| match dist {
-                Distribution::Spatial { .. } => LevelRole::Instance,
-                Distribution::Sequential => role,
+            .fold(LevelScope::Sequential, |scope, dist| {
+                scope.max(LevelScope::of(dist))
             });
         Partitioner::Level(Box::new(Level {
             edges: self.sub_tile,
             dists: self.dists,
-            role,
+            scope,
             order: self.order,
             buffering,
             next: Partitioner::Final,
