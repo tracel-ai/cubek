@@ -22,9 +22,9 @@ struct ProductAxes {
 
 #[cube]
 impl<T: Float> Recipe<T> for ProductAxes {
-    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
-        let row = coordinates.at(comptime!(space.position(self.row)));
-        let col = coordinates.at(comptime!(space.position(self.col)));
+    fn evaluate(&self, coordinates: &RecipeCoords) -> T {
+        let row = coordinates.along(self.row);
+        let col = coordinates.along(self.col);
         T::cast_from(row) * T::cast_from(col)
     }
 }
@@ -38,9 +38,8 @@ struct AxisValue {
 
 #[cube]
 impl<T: Float> Recipe<T> for AxisValue {
-    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
-        T::cast_from(coordinates.at(comptime!(space.position(self.axis))))
-            * T::cast_from(self.scale)
+    fn evaluate(&self, coordinates: &RecipeCoords) -> T {
+        T::cast_from(coordinates.along(self.axis)) * T::cast_from(self.scale)
     }
 }
 
@@ -83,17 +82,17 @@ fn materialize<E: Numeric>(
 
 // The `#[cube]` macro cannot parse a nested generic inside a struct-literal turbofish, so the
 // filter instantiations go through aliases.
-type LinearCol<E> = Linear<AffineCoordinates<E>>;
-type CubicCol<E> = Cubic<AffineCoordinates<E>>;
-type LanczosCol<E> = Lanczos<AffineCoordinates<E>>;
+type LinearCol<E> = Linear<AffineCoordinate<E>>;
+type CubicCol<E> = Cubic<AffineCoordinate<E>>;
+type LanczosCol<E> = Lanczos<AffineCoordinate<E>>;
 type LinearScaled = Linear<AxisValue>;
 
 /// `x = offset + coordinate[COL]`, built so the recipe carries genuinely runtime scalars across
 /// the staging walk rather than folding to comptime.
 #[cube]
-fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinates<E> {
+fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinate<E> {
     let zero = E::cast_from(0u32.runtime());
-    AffineCoordinates::<E> {
+    AffineCoordinate::<E> {
         offset: E::new(comptime!(offset.get())) + zero,
         coefficient: E::new(1.0_f32) + zero,
         axis: COL,
@@ -162,7 +161,7 @@ fn affine_kernel<E: Float>(
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<AffineCoordinates<E>>(
+    let source = Tile::<E>::procedural::<AffineCoordinate<E>>(
         comptime!(space.clone()),
         along_col::<E>(offset),
     );
@@ -221,7 +220,7 @@ fn lanczos_kernel<E: Float>(
     materialize(&source, output, space);
 }
 
-/// A filter over a recipe that is not an [`AffineCoordinates`], which is what the filters being
+/// A filter over a recipe that is not an [`AffineCoordinate`], which is what the filters being
 /// generic over their inner recipe buys.
 #[cube(launch)]
 fn linear_over_axis_value_kernel<E: Float>(

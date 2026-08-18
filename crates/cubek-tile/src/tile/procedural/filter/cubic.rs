@@ -1,9 +1,7 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 
-use crate::Space;
-
-use super::super::{AbsoluteCoords, Recipe, RecipeExpand};
+use super::super::{Recipe, RecipeCoords, RecipeExpand};
 
 /// Keys' cubic-convolution filter over the value of an inner recipe. `a` shapes the kernel:
 /// `-1/2` is the interpolating member of the family, `-3/4` the sharper one image resamplers
@@ -17,9 +15,9 @@ pub struct Cubic<C: CubeType> {
 
 #[cube]
 impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
-    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
+    fn evaluate(&self, coordinates: &RecipeCoords) -> T {
         let a = T::new(comptime!(self.a.as_f32()));
-        let x = self.coordinate.evaluate(coordinates, space).abs();
+        let x = self.coordinate.evaluate(coordinates).abs();
         let x2 = x * x;
         let x3 = x2 * x;
         let first = (a + T::new(2.0_f32)) * x3 - (a + T::new(3.0_f32)) * x2 + T::new(1.0_f32);

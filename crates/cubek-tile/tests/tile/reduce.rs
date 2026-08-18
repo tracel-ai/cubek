@@ -90,9 +90,9 @@ fn procedural_reduce_kernel<E: Float>(
     #[comptime] stage: StagePlan,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = Tile::<E>::procedural_resident::<AffineCoordinates<E>>(
+    let input = Tile::<E>::procedural_resident::<AffineCoordinate<E>>(
         comptime!(space.clone()),
-        AffineCoordinates::<E> {
+        AffineCoordinate::<E> {
             offset: E::new(0.0_f32),
             coefficient: E::new(1.0_f32),
             axis: K,

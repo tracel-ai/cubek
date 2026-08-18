@@ -1,8 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::Space;
-
-use super::super::{AbsoluteCoords, Recipe, RecipeExpand};
+use super::super::{Recipe, RecipeCoords, RecipeExpand};
 
 /// Windowed-sinc Lanczos filter over the value of an inner recipe, `sinc(x) * sinc(x / lobes)`
 /// inside the support and zero outside it. `lobes` is the half-width of the support in taps: two
@@ -16,12 +14,12 @@ pub struct Lanczos<C: CubeType> {
 
 #[cube]
 impl<T: Float, C: Recipe<T>> Recipe<T> for Lanczos<C> {
-    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T {
+    fn evaluate(&self, coordinates: &RecipeCoords) -> T {
         // Zero lobes would leave an empty support and divide by zero below. Checked here rather
         // than in a constructor, which a struct literal can bypass. It fires while the kernel
         // expands, so it surfaces on the client's compilation thread, not at the call site.
         comptime!(assert!(self.lobes > 0, "Lanczos: lobes must be non-zero"));
-        let x = self.coordinate.evaluate(coordinates, space);
+        let x = self.coordinate.evaluate(coordinates);
         let abs_x = x.abs();
         let pi_x = T::new(core::f32::consts::PI) * x;
         let lobes = T::cast_from(self.lobes);

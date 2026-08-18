@@ -9,7 +9,7 @@ use cubecl::{
 
 use crate::{Coords, Fold, FoldExpand, Region, Space, StagePlan};
 
-use super::{AbsoluteCoords, VirtualRecipe};
+use super::{RecipeCoords, VirtualRecipe};
 
 /// Runtime state of a procedural source. `origin` tracks regions selected by `Tile::at`.
 #[derive(CubeType, Clone)]
@@ -94,8 +94,8 @@ impl<T: Numeric> ProceduralData<T> {
     }
 
     pub(crate) fn evaluate(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
-        let absolute = AbsoluteCoords::new(&self.origin, pos);
-        self.recipe.evaluate(&absolute, space)
+        let absolute = RecipeCoords::new(&self.origin, pos, space);
+        self.recipe.evaluate(&absolute)
     }
 
     /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe

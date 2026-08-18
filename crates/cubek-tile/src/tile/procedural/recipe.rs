@@ -6,24 +6,31 @@ use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{Coords, Space};
+use crate::{Axis, Coords, Space};
 
 /// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
-/// position it is read at. Rebased one axis at a time on demand, so a recipe emits an add only for
-/// the axes it actually reads, and one that ignores its coordinates emits none.
+/// position it is read at, within its [`Space`]. Rebased one axis at a time on demand, so a recipe
+/// emits an add only for the axes it actually reads, and one that ignores its coordinates emits none.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct AbsoluteCoords {
+pub struct RecipeCoords {
     origin: Coords<u32>,
     offset: Coords<u32>,
+    #[cube(comptime)]
+    pub space: Space,
 }
 
 #[cube]
-impl AbsoluteCoords {
-    pub(crate) fn new(origin: &Coords<u32>, offset: &Coords<u32>) -> Self {
-        AbsoluteCoords {
+impl RecipeCoords {
+    pub(crate) fn new(
+        origin: &Coords<u32>,
+        offset: &Coords<u32>,
+        #[comptime] space: Space,
+    ) -> Self {
+        RecipeCoords {
             origin: origin.clone(),
             offset: offset.clone(),
+            space,
         }
     }
 
@@ -31,20 +38,28 @@ impl AbsoluteCoords {
     pub fn at(&self, #[comptime] p: usize) -> u32 {
         self.origin.at(p) + self.offset.at(p)
     }
+
+    /// The absolute coordinate along the specified `axis`.
+    pub fn along(&self, #[comptime] axis: Axis) -> u32 {
+        self.at(comptime!(self.space.position(axis)))
+    }
 }
 
 /// An N-dimensional scalar field evaluated at absolute logical coordinates.
+///
+/// Recipes implement [`Recipe<T>`] for any numeric element type `T: Numeric` (integers and floats),
+/// though continuous interpolation and filtering recipes (such as [`Linear`](super::Linear),
+/// [`Cubic`](super::Cubic), [`Lanczos`](super::Lanczos)) are defined over [`Float`] elements.
 #[cube(expand_base_traits = "ExpandTypeClone")]
 pub trait Recipe<T: Numeric> {
-    fn evaluate(&self, coordinates: &AbsoluteCoords, #[comptime] space: Space) -> T;
+    fn evaluate(&self, coordinates: &RecipeCoords) -> T;
 }
 
 pub(crate) trait RecipeOps<T: Numeric> {
     fn evaluate_virtual(
         &self,
         scope: &Scope,
-        coordinates: &AbsoluteCoordsExpand,
-        space: Space,
+        coordinates: &RecipeCoordsExpand,
     ) -> NativeExpand<T>;
 }
 
@@ -52,10 +67,9 @@ impl<T: Numeric, R: RecipeExpand<T>> RecipeOps<T> for R {
     fn evaluate_virtual(
         &self,
         scope: &Scope,
-        coordinates: &AbsoluteCoordsExpand,
-        space: Space,
+        coordinates: &RecipeCoordsExpand,
     ) -> NativeExpand<T> {
-        self.__expand_evaluate_method(scope, coordinates, space)
+        self.__expand_evaluate_method(scope, coordinates)
     }
 }
 
@@ -78,7 +92,7 @@ impl<T: Numeric> VirtualRecipe<T> {
         }
     }
 
-    pub fn evaluate(&self, _coordinates: &AbsoluteCoords, _space: Space) -> T {
+    pub fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
         unexpanded!()
     }
 }
@@ -87,10 +101,9 @@ impl<T: Numeric> VirtualRecipeExpand<T> {
     pub fn __expand_evaluate_method(
         &self,
         scope: &Scope,
-        coordinates: &AbsoluteCoordsExpand,
-        space: Space,
+        coordinates: &RecipeCoordsExpand,
     ) -> NativeExpand<T> {
-        self.state.evaluate_virtual(scope, coordinates, space)
+        self.state.evaluate_virtual(scope, coordinates)
     }
 }
 

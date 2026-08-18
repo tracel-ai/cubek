@@ -1,8 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::Space;
-
-use super::{AbsoluteCoords, Recipe, RecipeExpand};
+use super::{Recipe, RecipeCoords, RecipeExpand};
 
 /// A procedural field holding one value, which may be a runtime scalar.
 #[derive(CubeType, Clone)]
@@ -12,7 +10,7 @@ pub struct Constant<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Constant<T> {
-    fn evaluate(&self, _coordinates: &AbsoluteCoords, #[comptime] _space: Space) -> T {
+    fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
         self.value
     }
 }
@@ -24,7 +22,7 @@ pub struct Zeros;
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Zeros {
-    fn evaluate(&self, _coordinates: &AbsoluteCoords, #[comptime] _space: Space) -> T {
+    fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
         T::from_int(0)
     }
 }
@@ -35,7 +33,7 @@ pub struct Ones;
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Ones {
-    fn evaluate(&self, _coordinates: &AbsoluteCoords, #[comptime] _space: Space) -> T {
+    fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
         T::from_int(1)
     }
 }
