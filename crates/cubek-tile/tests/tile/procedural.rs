@@ -12,8 +12,11 @@ const COL: Axis = Axis(1);
 const ROWS: usize = 4;
 const COLS: usize = 6;
 
-/// `Product` takes two type parameters, which `#[cube]` cannot spell in a struct literal.
-type AxisProduct<T> = Product<AffineCoordinate<T>, AffineCoordinate<T>>;
+/// The rational `Phase` under test, `(2 * col - 3) / 4`, whose numerator goes negative so the
+/// floor is not the truncating division.
+const SCALE: u32 = 2;
+const OFFSET: i32 = -3;
+const DIVISOR: u32 = 4;
 
 #[derive(CubeType, Clone)]
 struct AxisValue {
@@ -68,15 +71,21 @@ fn materialize<E: Numeric>(
 
 type LinearScaled = Linear<AxisValue>;
 
+/// Forces a scalar value into a runtime GPU variable by adding a runtime zero,
+/// preventing the expander from folding it away at compile time.
+#[cube]
+fn runtime_scalar<E: Numeric>(value: E) -> E {
+    value + E::cast_from(0u32.runtime())
+}
+
 /// `x = offset + coordinate[COL]`, built so the recipe carries genuinely runtime scalars across
 /// the staging walk rather than folding to comptime.
 #[cube]
 fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinate<E> {
-    let zero = E::cast_from(0u32.runtime());
     affine_along(
         COL,
-        E::new(comptime!(offset.get())) + zero,
-        E::new(1.0_f32) + zero,
+        runtime_scalar(E::new(comptime!(offset.get()))),
+        runtime_scalar(E::new(1.0_f32)),
     )
 }
 
@@ -89,14 +98,61 @@ fn product_kernel<E: Float>(
     #[comptime] stage: StagePlan,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural_resident::<AxisProduct<E>>(
+    let source = Tile::<E>::procedural_resident::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
         comptime!(space.clone()),
-        AxisProduct::<E> {
-            lhs: affine_along(ROW, E::from_int(0), E::from_int(1)),
-            rhs: affine_along(COL, E::from_int(0), E::from_int(1)),
-        },
+        product_of(
+            affine_along(ROW, E::from_int(0), E::from_int(1)),
+            affine_along(COL, E::from_int(0), E::from_int(1)),
+        ),
         stage,
     );
+    materialize(&source, output, space);
+}
+
+/// The recipe under test: `row - frac((col * scale + offset) / divisor)`, a two-axis expression
+/// built by composition, which is the shape a resampling weight takes.
+#[cube]
+fn affine_plus_phase<E: Float>(
+    #[comptime] space: Space,
+    scale: u32,
+    offset: i32,
+    divisor: u32,
+) -> Tile<E> {
+    Tile::<E>::procedural::<Sum<AffineCoordinate<E>, Phase<E>>>(
+        space,
+        sum_of(
+            affine_along(ROW, E::from_int(0), runtime_scalar(E::new(1.0_f32))),
+            Phase::<E> {
+                coefficient: runtime_scalar(E::new(-1.0_f32)),
+                axis: COL,
+                numerator_scale: scale,
+                numerator_offset: offset,
+                divisor,
+            },
+        ),
+    )
+}
+
+/// `launch_ratio` decides whether the fraction is spelled in constants, which fold at expand time,
+/// or in values the kernel only receives at launch. Both go through the same `Phase`, and the grid
+/// must come out the same.
+#[cube(launch)]
+fn phase_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] launch_ratio: bool,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = if comptime!(launch_ratio) {
+        affine_plus_phase::<E>(
+            comptime!(space.clone()),
+            SCALE.runtime(),
+            OFFSET.runtime(),
+            DIVISOR.runtime(),
+        )
+    } else {
+        affine_plus_phase::<E>(comptime!(space.clone()), SCALE, OFFSET, DIVISOR)
+    };
     materialize(&source, output, space);
 }
 
@@ -132,7 +188,7 @@ fn constant_kernel<E: Float>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: E::new(-1.25_f32) + E::cast_from(0u32.runtime()),
+            value: runtime_scalar(E::new(-1.25_f32)),
         },
     );
     materialize(&source, output, space);
@@ -159,13 +215,12 @@ fn linear_kernel<E: Float>(
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let zero = E::cast_from(0u32.runtime());
     let source = Tile::<E>::procedural::<LinearAxis<E>>(
         comptime!(space.clone()),
         linear_along(
             COL,
-            E::new(comptime!(offset.get())) + zero,
-            E::new(1.0_f32) + zero,
+            runtime_scalar(E::new(comptime!(offset.get()))),
+            runtime_scalar(E::new(1.0_f32)),
         ),
     );
     materialize(&source, output, space);
@@ -179,13 +234,12 @@ fn cubic_kernel<E: Float>(
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let zero = E::cast_from(0u32.runtime());
     let source = Tile::<E>::procedural::<CubicAxis<E>>(
         comptime!(space.clone()),
         cubic_along(
             COL,
-            E::new(comptime!(offset.get())) + zero,
-            E::new(1.0_f32) + zero,
+            runtime_scalar(E::new(comptime!(offset.get()))),
+            runtime_scalar(E::new(1.0_f32)),
             a,
         ),
     );
@@ -200,13 +254,12 @@ fn lanczos_kernel<E: Float>(
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let zero = E::cast_from(0u32.runtime());
     let source = Tile::<E>::procedural::<LanczosAxis<E>>(
         comptime!(space.clone()),
         lanczos_along(
             COL,
-            E::new(comptime!(offset.get())) + zero,
-            E::new(1.0_f32) + zero,
+            runtime_scalar(E::new(comptime!(offset.get()))),
+            runtime_scalar(E::new(1.0_f32)),
             lobes,
         ),
     );
@@ -244,7 +297,7 @@ fn integer_kernel<E: Int>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: E::new(7) + E::cast_from(0u32.runtime()),
+            value: runtime_scalar(E::new(7)),
         },
     );
     materialize(&source, output, space);
@@ -260,7 +313,7 @@ fn direct_copy_kernel<E: Float>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: E::new(1.0_f32) + E::cast_from(0u32.runtime()),
+            value: runtime_scalar(E::new(1.0_f32)),
         },
     );
     let mut output = output.tile(space);
@@ -277,7 +330,7 @@ fn divided_direct_copy_kernel<E: Float>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: E::new(1.0_f32) + E::cast_from(0u32.runtime()),
+            value: runtime_scalar(E::new(1.0_f32)),
         },
     );
     let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
@@ -400,6 +453,36 @@ fn selecting_a_region_rebases_the_recipe_origin() {
         h.dtype,
     );
     assert_grid(&h.read(output), |_, _| 4.0);
+}
+
+/// Walk the affine-plus-phase recipe with the fraction folded or passed at launch; the grid is the
+/// same either way.
+fn check_phase(launch_ratio: bool) {
+    let h = Harness::new();
+    let output = h.output();
+    phase_kernel::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        launch_ratio,
+        h.dtype,
+    );
+    assert_grid(&h.read(output), |row, col| {
+        let numerator = (SCALE * col as u32) as i32 + OFFSET;
+        row as f32 - numerator.rem_euclid(DIVISOR as i32) as f32 / DIVISOR as f32
+    });
+}
+
+#[test]
+fn a_sum_of_an_affine_term_and_a_phase_reads_both_axes() {
+    check_phase(false);
+}
+
+#[test]
+fn a_phase_takes_a_ratio_fixed_only_at_launch() {
+    check_phase(true);
 }
 
 #[test]
