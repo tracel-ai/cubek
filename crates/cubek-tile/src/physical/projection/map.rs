@@ -292,6 +292,23 @@ impl PhysicalAxisMap {
         self.divisor
     }
 
+    /// The static physical step this term contributes outside this map's rational floor, when it
+    /// can be factored exactly: `⌊(base + digit * scale) / divisor⌋` is
+    /// `⌊base / divisor⌋ + digit * (scale / divisor)` for a static `scale` a static `divisor`
+    /// divides. The per-term counterpart of [`reduced`](Self::reduced), which needs *every*
+    /// coefficient divisible and takes the divisor away with them; this leaves the divisor in
+    /// place for the terms that still need it.
+    ///
+    /// `Some` implies [`is_rational`](Self::is_rational): a unit divisor divides every coefficient
+    /// and would empty the numerator, so readers that only add these back under a division are
+    /// entitled to skip them elsewhere.
+    pub(crate) fn static_offset_step(&self, term: usize) -> Option<usize> {
+        match (self.divisor, self.terms[term].scale) {
+            (Divisor::Static(d), Scale::Static(s)) if d > 1 && s.is_multiple_of(d) => Some(s / d),
+            _ => None,
+        }
+    }
+
     /// Whether this axis divides by anything but `1`, so the plain affine sum is not the physical
     /// coordinate and every path below has to carry the division.
     pub fn is_rational(&self) -> bool {
@@ -414,6 +431,36 @@ mod tests {
         assert!(dynamic_div.divisor().is_dynamic());
         assert_eq!(dynamic_div.origin(), None);
         assert_eq!(dynamic_div.residue(), None);
+    }
+
+    /// A rational map need not reduce as a whole for some of its terms to be exact steps. This is
+    /// the resampling shape: the spatial term stays under the floor, while a tap coefficient of
+    /// the divisor advances one physical cell at a time.
+    #[test]
+    fn a_rational_map_factors_exact_static_terms_into_offsets() {
+        let map = PhysicalAxisMap::affine_with_offset(&[(A, 5), (B, 6)], -2).over(6);
+
+        assert!(map.is_rational());
+        assert_eq!(map.static_offset_step(0), None);
+        assert_eq!(map.static_offset_step(1), Some(1));
+        for output in 0..8isize {
+            for tap in 0..3isize {
+                assert_eq!(
+                    (output * 5 + tap * 6 - 2).div_euclid(6),
+                    (output * 5 - 2).div_euclid(6) + tap
+                );
+            }
+        }
+
+        let strided_tap = PhysicalAxisMap::affine(&[(A, 5), (B, 12)]).over(6);
+        assert_eq!(strided_tap.static_offset_step(1), Some(2));
+
+        let fractional_tap = PhysicalAxisMap::affine(&[(A, 5), (B, 2)]).over(3);
+        assert_eq!(fractional_tap.static_offset_step(1), None);
+
+        let dynamic_divisor =
+            PhysicalAxisMap::affine(&[(A, 5), (B, 6)]).over(Divisor::Dynamic { min: 3 });
+        assert_eq!(dynamic_divisor.static_offset_step(1), None);
     }
 
     #[test]
