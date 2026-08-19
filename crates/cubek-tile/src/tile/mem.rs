@@ -1688,8 +1688,8 @@ fn gathered_origin(
                     .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
                     .fcast::<i32>(),
             };
-            let start = floor_div(offset, divisor);
-            (start, offset.fsub(start.fmul(divisor)).fcast::<u32>())
+            let (start, residue) = floor_div_rem(offset, divisor);
+            (start, residue.fcast::<u32>())
         }
     }
 }
