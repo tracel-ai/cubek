@@ -191,16 +191,16 @@ impl Layout for AxisProjection {
                     },
                 }
             }
-            let kept = terms.len();
-            let hoisted = offsets.len();
-            let sum = terms.fsum(comptime!((0..kept).collect::<Vec<_>>()));
+            let n_kept = terms.len();
+            let n_exact = offsets.len();
+            let sum = terms.fsum(comptime!((0..n_kept).collect::<Vec<_>>()));
 
             if comptime!(axis_map.is_rational()) {
                 match comptime!(axis_map.divisor()) {
                     // No offsets when the divisor is dynamic, and `fadd` folds the empty sum away,
                     // so only the static arm spells the addition.
                     Divisor::Static(d) => {
-                        let offset = offsets.fsum(comptime!((0..hoisted).collect::<Vec<_>>()));
+                        let offset = offsets.fsum(comptime!((0..n_exact).collect::<Vec<_>>()));
                         out.push(sum.fdiv(comptime!(d as u32)).fadd(offset));
                     }
                     Divisor::Dynamic { .. } => {
