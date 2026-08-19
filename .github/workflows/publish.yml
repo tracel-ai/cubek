@@ -14,7 +14,7 @@ on:
 
 jobs:
   publish-cubek-random:
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-random
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -24,7 +24,7 @@ jobs:
   publish-cubek-test-utils:
     needs:
       - publish-cubek-tile
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-test-utils
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -35,7 +35,7 @@ jobs:
     needs:
       - publish-cubek-tile
       - publish-cubek-test-utils
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-quant
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -46,7 +46,7 @@ jobs:
     needs:
       - publish-cubek-test-utils
       - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-reduce
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -60,7 +60,7 @@ jobs:
       - publish-cubek-tile
       - publish-cubek-test-utils
       - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-matmul
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -73,7 +73,7 @@ jobs:
       - publish-cubek-matmul
       - publish-cubek-test-utils
       - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-convolution
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -86,7 +86,7 @@ jobs:
       - publish-cubek-matmul
       - publish-cubek-test-utils
       - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-attention
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -97,7 +97,7 @@ jobs:
     needs:
       - publish-cubek-test-utils
       - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-fft
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -107,7 +107,7 @@ jobs:
   publish-cubek-interpolate:
     needs:
       - publish-cubek-test-utils
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-interpolate
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -117,7 +117,7 @@ jobs:
   publish-cubek-pool:
     needs:
       - publish-cubek-test-utils
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-pool
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -125,7 +125,7 @@ jobs:
       CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
 
   publish-cubek-tile:
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-tile
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -135,7 +135,7 @@ jobs:
   publish-cubek-resample:
     needs:
       - publish-cubek-test-utils
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-resample
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -145,7 +145,7 @@ jobs:
   publish-cubek-std:
     needs:
       - publish-cubek-test-utils
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek-std
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
@@ -167,7 +167,7 @@ jobs:
       - publish-cubek-tile
       - publish-cubek-test-utils
       - publish-cubek-std
-    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v8
+    uses: tracel-ai/github-actions/.github/workflows/publish-crate.yml@v11
     with:
       crate: cubek
       dry-run-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run-only || false }}
