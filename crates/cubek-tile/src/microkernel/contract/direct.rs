@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use crate::microkernel::block::{contract_block, load_accumulators, store_accumulators};
+use crate::microkernel::block;
 use crate::*;
 
 /// The contraction nest for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
@@ -13,11 +13,11 @@ use crate::*;
 /// inlines at trace time, so folding the rank-1 step in here costs nothing over a separate fn.
 ///
 /// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` address
-/// the operands. [`contract_memory`](super::contract_memory) routes anything else to
-/// [`contract_gather`](super::gather::contract_gather), so the two conditions below are
+/// the operands. [`memory`](super::memory) routes anything else to
+/// [`gather::contract`](super::gather::contract), so the two conditions below are
 /// re-asserted rather than re-decided.
 #[cube]
-pub(super) fn contract_direct<
+pub(super) fn contract<
     E: Numeric,
     EL: Numeric,
     IL: Numeric,
@@ -106,7 +106,7 @@ pub(super) fn contract_direct<
                 && rhs.block_in_bounds(origin, rhs_extent)
                 && acc.block_in_bounds(origin, acc_extent);
             if in_bounds {
-                contract_direct_body::<E, EL, L, ER, V>(
+                contract_body::<E, EL, L, ER, V>(
                     &mut acc,
                     &lhs,
                     &rhs,
@@ -118,7 +118,7 @@ pub(super) fn contract_direct<
                     lane_fanout,
                 );
             } else {
-                contract_direct_body::<E, EL, L, ER, V>(
+                contract_body::<E, EL, L, ER, V>(
                     &mut acc,
                     &lhs,
                     &rhs,
@@ -132,7 +132,7 @@ pub(super) fn contract_direct<
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
-            contract_direct_body::<E, EL, L, ER, V>(
+            contract_body::<E, EL, L, ER, V>(
                 &mut acc,
                 &lhs,
                 &rhs,
@@ -150,7 +150,7 @@ pub(super) fn contract_direct<
 /// The complete 2-D nest body, specialized at trace time for either register-resident local
 /// arrays (`unroll = true`) or the checked edge fallback (`unroll = false`).
 #[cube]
-fn contract_direct_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+fn contract_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     acc: &mut AccumulateView<'_, E, V>,
     lhs: &MatrixView<'_, Vector<EL, L>>,
     rhs: &MatrixView<'_, Vector<ER, V>>,
@@ -161,7 +161,7 @@ fn contract_direct_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
 ) {
-    let mut c = load_accumulators(acc, mr, nr, unroll);
-    contract_block::<E, EL, L, ER, V>(lhs, rhs, &mut c, lw, mr, nr, kc, unroll, lane_fanout);
-    store_accumulators(acc, c, mr, nr, unroll);
+    let mut c = block::seed(acc, mr, nr, unroll);
+    block::contract::<E, EL, L, ER, V>(lhs, rhs, &mut c, lw, mr, nr, kc, unroll, lane_fanout);
+    block::commit(acc, c, mr, nr, unroll);
 }

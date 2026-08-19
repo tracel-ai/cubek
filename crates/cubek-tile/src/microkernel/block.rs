@@ -1,7 +1,7 @@
 //! The `mr × nr` register block: seed it from the accumulator, contract into it, commit it back.
 //!
 //! The block is a parameter, not something this owns, which is the only difference between its
-//! two callers: the memory-backed nest ([`contract_direct`](super::contract)) seeds a local one
+//! two callers: the memory-backed nest ([`contract`](super::contract)) seeds a local one
 //! and commits it back per visit, while a promoted [`RegisterData`] *is* the
 //! accumulator and keeps it across the whole walk. How the block is contracted is the same either
 //! way.
@@ -16,7 +16,7 @@ use crate::*;
 /// avoiding dynamic vector extraction on shader backends. If false (CPU or scalar lines), `K`
 /// is walked as a flat scalar loop which LLVM vectorizes more efficiently without loop body bloat.
 #[cube]
-pub(crate) fn contract_block<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
     rhs: &MatrixView<'_, Vector<ER, V>>,
     c: &mut Array<Vector<E, V>>,
@@ -141,11 +141,12 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 }
 
 /// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the rank-1
-/// updates never touch memory. Shared by both nests: how a cell is addressed differs, how the
+/// updates never touch memory. Always under `Sum`: a contraction accumulates its rank-1 updates
+/// by definition, so the block's fold is not the caller's to pick the way a reduce's is. Shared by both nests: how a cell is addressed differs, how the
 /// block is held does not. `unroll` is the caller's decision, not a size test here, because a
 /// masked block must stay rolled whatever its size.
 #[cube]
-pub(crate) fn load_accumulators<E: Numeric, V: Size>(
+pub(crate) fn seed<E: Numeric, V: Size>(
     acc: &mut AccumulateView<'_, E, V>,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
@@ -156,17 +157,17 @@ pub(crate) fn load_accumulators<E: Numeric, V: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            c[i * nr + n] = acc.seed((i as u32, n as u32), comptime!(LeafOp::Sum));
+            c[i * nr + n] = acc.seed((i as u32, n as u32), LeafOp::Sum);
         }
     }
     c
 }
 
-/// The twin of [`load_accumulators`]: commit the block back once the whole reduce is folded into
+/// The twin of [`seed`]: commit the block back once the whole reduce is folded into
 /// it. Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
 /// rather than the leaf knowing it was split.
 #[cube]
-pub(crate) fn store_accumulators<E: Numeric, V: Size>(
+pub(crate) fn commit<E: Numeric, V: Size>(
     acc: &mut AccumulateView<'_, E, V>,
     c: Array<Vector<E, V>>,
     #[comptime] mr: usize,
@@ -177,7 +178,7 @@ pub(crate) fn store_accumulators<E: Numeric, V: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            acc.commit((i as u32, n as u32), c[i * nr + n], comptime!(LeafOp::Sum));
+            acc.commit((i as u32, n as u32), c[i * nr + n], LeafOp::Sum);
         }
     }
 }

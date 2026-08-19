@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 
 use crate::{
     instruction::plane,
-    microkernel::block::contract_block,
+    microkernel::block,
     *,
 };
 
@@ -203,7 +203,7 @@ impl<T: Numeric> RegisterData<T> {
         let unroll = comptime!(mr * nr <= config.unroll_limit);
         let lane_fanout = comptime!(config.lane_fanout);
 
-        contract_block::<T, EL, L, ER, RA>(
+        block::contract::<T, EL, L, ER, RA>(
             &lhs_mat,
             &rhs_mat,
             &mut self.data,

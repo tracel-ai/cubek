@@ -3,8 +3,8 @@
 
 use cubecl::prelude::*;
 
-use super::direct::contract_direct;
-use super::gather::contract_gather;
+use super::direct;
+use super::gather;
 use crate::*;
 
 /// Run the register microkernel over each batch matrix, reading operands through the
@@ -16,10 +16,10 @@ use crate::*;
 ///
 /// The 2-D microkernel reads each operand as a batch matrix, which is only a description of it
 /// when one axis is contracted *and* a logical coordinate is a physical one. Either condition
-/// failing takes the N-D nest ([`contract_gather`]); they are independent, so a stencil
+/// failing takes the N-D nest ([`gather::contract`](super::gather::contract)); they are independent, so a stencil
 /// contracting a single axis is a gather just as much as a two-axis reduce is.
 #[cube]
-pub(crate) fn contract_memory<E: Numeric, EL: Numeric, ER: Numeric>(
+pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
@@ -53,44 +53,44 @@ pub(crate) fn contract_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     );
     if nd {
         if comptime!(pack_l == 1) {
-            contract_gather::<E, EL, i8, L, ER, ER, V>(
+            gather::contract::<E, EL, i8, L, ER, ER, V>(
                 acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         } else if comptime!(pack_l > 1) {
-            contract_gather::<E, EL, u32, L, ER, ER, V>(
+            gather::contract::<E, EL, u32, L, ER, ER, V>(
                 acc, lhs, rhs, space, pack_l, 1usize, config,
             );
         } else if comptime!(pack_r == 1) {
-            contract_gather::<E, EL, EL, L, ER, i8, V>(
+            gather::contract::<E, EL, EL, L, ER, i8, V>(
                 acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         } else if comptime!(pack_r > 1) {
-            contract_gather::<E, EL, EL, L, ER, u32, V>(
+            gather::contract::<E, EL, EL, L, ER, u32, V>(
                 acc, lhs, rhs, space, 1usize, pack_r, config,
             );
         } else {
-            contract_gather::<E, EL, EL, L, ER, ER, V>(
+            gather::contract::<E, EL, EL, L, ER, ER, V>(
                 acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         }
     } else if comptime!(pack_l == 1) {
-        contract_direct::<E, EL, i8, L, ER, ER, V>(
+        direct::contract::<E, EL, i8, L, ER, ER, V>(
             acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     } else if comptime!(pack_l > 1) {
-        contract_direct::<E, EL, u32, L, ER, ER, V>(
+        direct::contract::<E, EL, u32, L, ER, ER, V>(
             acc, lhs, rhs, space, pack_l, 1usize, config,
         );
     } else if comptime!(pack_r == 1) {
-        contract_direct::<E, EL, EL, L, ER, i8, V>(
+        direct::contract::<E, EL, EL, L, ER, i8, V>(
             acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     } else if comptime!(pack_r > 1) {
-        contract_direct::<E, EL, EL, L, ER, u32, V>(
+        direct::contract::<E, EL, EL, L, ER, u32, V>(
             acc, lhs, rhs, space, 1usize, pack_r, config,
         );
     } else {
-        contract_direct::<E, EL, EL, L, ER, ER, V>(
+        direct::contract::<E, EL, EL, L, ER, ER, V>(
             acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     }

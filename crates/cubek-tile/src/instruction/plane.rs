@@ -21,7 +21,7 @@ pub fn broadcast<T: CubePrimitive<Scalar: PlaneNumeric>>(val: T, #[comptime] op:
     }
 }
 
-/// [`broadcast`] with the 1-lane/CPU fallback: a plane of one is already its own total, and the
+/// [`broadcast()`] with the 1-lane/CPU fallback: a plane of one is already its own total, and the
 /// intrinsic does not lower there.
 #[cube]
 pub fn reduce<T: CubePrimitive<Scalar: PlaneNumeric>>(
@@ -44,7 +44,7 @@ pub fn reduce<T: CubePrimitive<Scalar: PlaneNumeric>>(
 /// — every group folds at once, each over its own cell, with no guard and no branch.
 ///
 /// If the whole plane shares one cell without carries ([`LaneShare::Plane`](crate::LaneShare::Plane)),
-/// [`broadcast`] is the better instruction. The `fold_mask` bits must be the group's lane bits,
+/// [`broadcast()`] is the better instruction. The `fold_mask` bits must be the group's lane bits,
 /// since a wrong mask gives silently wrong results rather than an error.
 #[cube]
 pub fn group<E: Numeric, V: Size>(

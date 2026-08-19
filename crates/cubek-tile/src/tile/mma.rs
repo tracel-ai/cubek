@@ -242,7 +242,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
 
 /// Manual load, over the operand's storage element: `0` plain, `1` native i8, `>1` the packed-u32
 /// factor. The ladder is spelled out per call site because `#[cube]` takes neither a macro nor a
-/// closure to factor it (see the twin in `contract_memory`).
+/// closure to factor it (see the twin in `contract::memory`).
 #[cube]
 fn load_manual_dispatch<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile<T>,

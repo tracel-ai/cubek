@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::microkernel::contract::contract_memory;
+use crate::microkernel::contract;
 use crate::*;
 
 /// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
@@ -38,7 +38,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 Leaf::Memory { config } => config,
                 _ => panic!("mma_leaf: unpromoted Gmem/Smem accumulator must carry Leaf::Memory"),
             });
-            contract_memory::<E, EL, ER>(g, lhs, rhs, space, config)
+            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
@@ -83,7 +83,7 @@ fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compti
         "mma: a cmma or plane-register fragment reads one contracted axis off a directly \
          addressed operand; a gather or a wider reduce needs the manual-mma leaf, or an \
          unpromoted Gmem/Smem accumulator, whose software microkernel is the \
-         `contract_memory` arm of `mma_leaf`"
+         `contract::memory` arm of `mma_leaf`"
     ));
 }
 

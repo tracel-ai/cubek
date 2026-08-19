@@ -3,13 +3,13 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::microkernel::block::{load_accumulators, store_accumulators};
+use crate::microkernel::block;
 use crate::*;
 
-/// N-D variant of [`contract_direct`](super::direct::contract_direct) for operations with
+/// N-D variant of [`direct::contract`](super::direct::contract) for operations with
 /// multiple contracted axes or projected operands.
 #[cube]
-pub(super) fn contract_gather<
+pub(super) fn contract<
     E: Numeric,
     EL: Numeric,
     IL: Numeric,
@@ -78,7 +78,7 @@ pub(super) fn contract_gather<
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
-        let mut c = load_accumulators(&mut acc, comptime!(mr), comptime!(nr), unroll);
+        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
         // across the whole K walk rather than re-declared per step, so the trace allocates it once
@@ -159,7 +159,7 @@ pub(super) fn contract_gather<
             }
         }
 
-        store_accumulators(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
+        block::commit(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
     }
 }
 
