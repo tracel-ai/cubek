@@ -177,6 +177,7 @@ impl<T: Numeric> Tile<T> {
     /// element's scalar is the *stored* type — `u32` words for a packed scheme, `i8` native),
     /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
     /// them back in. The served width is the binding's width × the scheme's packing factor.
+    #[allow(clippy::too_many_arguments)]
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,

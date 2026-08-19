@@ -98,6 +98,7 @@ fn procedural_reduce_kernel<E: Float>(
             axis: K,
         },
         stage,
+        comptime!(output.spec.leaf),
     );
     let mut output = output.tile(space);
     reduce_body(&input, &mut output, comptime!(LeafOp::Max));

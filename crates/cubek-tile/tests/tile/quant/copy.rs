@@ -136,10 +136,9 @@ fn copy_quantized_per_tensor_matches_reference() {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
+            None.into(),
             TileSpec::direct(&[M, N], MEMORY_LEAF),
-            None.into(),
-            None.into(),
-            TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,
         ),
@@ -205,11 +204,13 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     let launcher = space.launcher_over(&client, &[]);
     let input_op = launcher
-        .arg(input.binding())
+        .arg(input.binding(), MEMORY_LEAF)
         .subspace(&[M, N])
         .vectorize(v)
         .quantized(&[scales.binding()], scheme, DequantAt::Read)
@@ -268,15 +269,17 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
     }
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .packed(&scheme, DequantAt::Read)
         .arange();
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     let launcher = space.launcher_over(&client, &[]);
     let input_op = launcher
-        .arg(input.tile.handle().binding())
+        .arg(input.tile.handle().binding(), MEMORY_LEAF)
         .subspace(&[M, N])
         .vectorize(pack)
         .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
@@ -379,11 +382,13 @@ fn copy_quantized_lookup_matches_reference() {
     ];
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .packed(&scheme, DequantAt::Read)
         .lookup_arange(&table);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     dequant_copy::launch::<TestRuntime>(
         &client,
@@ -444,11 +449,13 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
     assert!(w < pack && pack.is_multiple_of(w));
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .packed(&scheme, DequantAt::Load)
         .arange();
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     dequant_copy::launch::<TestRuntime>(
         &client,
@@ -502,11 +509,13 @@ fn copy_quantized_subword_lookup_matches_reference() {
     ];
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .packed(&scheme, DequantAt::Load)
         .lookup_arange(&table);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     dequant_copy::launch::<TestRuntime>(
         &client,
@@ -684,7 +693,7 @@ fn two_level_without_global_scale_refused_by_the_builder() {
     let space = Space::new(&[(M, m), (N, n)]);
     let launcher = space.launcher(&client);
     launcher
-        .arg(input.binding())
+        .arg(input.binding(), MEMORY_LEAF)
         .subspace(&[M, N])
         .quantized(&[scales.binding()], scheme, DequantAt::Read)
         .build();
@@ -764,10 +773,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N], MEMORY_LEAF),
             global_scale.map(|g| linear_view(g.binding())).into(),
             None.into(),
-            TileSpec::direct(&[M, N]),
+            TileSpec::direct(&[M, N], MEMORY_LEAF),
             scheme,
             DequantAt::Read,
         ),

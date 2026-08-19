@@ -33,8 +33,9 @@ use crate::*;
 
 impl<T: Numeric> Tile<T> {
     /// Create a coordinate-backed tile from an arbitrary procedural recipe. The concrete recipe
-    /// is erased only while CubeCL expands this call.
-    pub fn procedural<R: Recipe<T> + 'static>(_space: Space, _recipe: R) -> Self {
+    /// is erased only while CubeCL expands this call. `leaf` is what will consume the tile, which
+    /// a recipe has no spec to carry: it is the leaf the peer operands state.
+    pub fn procedural<R: Recipe<T> + 'static>(_space: Space, _recipe: R, _leaf: Leaf) -> Self {
         unexpanded!()
     }
 
@@ -42,8 +43,9 @@ impl<T: Numeric> Tile<T> {
         scope: &Scope,
         space: Space,
         recipe: R::ExpandType,
+        leaf: Leaf,
     ) -> TileExpand<T> {
-        Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place())
+        Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place(), leaf)
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
@@ -53,6 +55,7 @@ impl<T: Numeric> Tile<T> {
         _space: Space,
         _recipe: R,
         _stage: StagePlan,
+        _leaf: Leaf,
     ) -> Self {
         unexpanded!()
     }
@@ -62,40 +65,47 @@ impl<T: Numeric> Tile<T> {
         space: Space,
         recipe: R::ExpandType,
         stage: StagePlan,
+        leaf: Leaf,
     ) -> TileExpand<T> {
         Self::__expand_procedural_virtual(
             scope,
             space,
             VirtualRecipe::<T>::__expand_new::<R>(scope, recipe),
             stage,
+            leaf,
         )
     }
 
     /// Create a coordinate-backed tile yielding constant zero.
-    pub fn zeros(_space: Space) -> Self {
+    pub fn zeros(_space: Space, _leaf: Leaf) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_zeros(scope: &Scope, space: Space) -> TileExpand<T> {
-        Self::__expand_procedural::<Zeros>(scope, space, ZerosExpand {})
+    pub fn __expand_zeros(scope: &Scope, space: Space, leaf: Leaf) -> TileExpand<T> {
+        Self::__expand_procedural::<Zeros>(scope, space, ZerosExpand {}, leaf)
     }
 
     /// Create a coordinate-backed tile yielding constant one.
-    pub fn ones(_space: Space) -> Self {
+    pub fn ones(_space: Space, _leaf: Leaf) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_ones(scope: &Scope, space: Space) -> TileExpand<T> {
-        Self::__expand_procedural::<Ones>(scope, space, OnesExpand {})
+    pub fn __expand_ones(scope: &Scope, space: Space, leaf: Leaf) -> TileExpand<T> {
+        Self::__expand_procedural::<Ones>(scope, space, OnesExpand {}, leaf)
     }
 
     /// Create a coordinate-backed tile yielding a constant value.
-    pub fn constant(_space: Space, _value: T) -> Self {
+    pub fn constant(_space: Space, _value: T, _leaf: Leaf) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_constant(scope: &Scope, space: Space, value: NativeExpand<T>) -> TileExpand<T> {
-        Self::__expand_procedural::<Constant<T>>(scope, space, ConstantExpand::<T> { value })
+    pub fn __expand_constant(
+        scope: &Scope,
+        space: Space,
+        value: NativeExpand<T>,
+        leaf: Leaf,
+    ) -> TileExpand<T> {
+        Self::__expand_procedural::<Constant<T>>(scope, space, ConstantExpand::<T> { value }, leaf)
     }
 }
 
