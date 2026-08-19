@@ -1,9 +1,9 @@
 //! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
 //! then one [`level`](LeveledTiling::level) per decomposition: its walk order, buffering,
 //! and the per-axis [`Cut`]. Each [`level`](LeveledTiling::level) maps 1:1 to the
-//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose. The
-//! [`leaf`](LeveledTiling::leaf) is the terminal level: it names the contraction
-//! instruction and builds, so nothing stacks after it.
+//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose.
+//! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
+//! closure, so an operand states where it lives at the level that cuts it.
 
 use crate::{Axis, ByAxis, Space};
 
@@ -69,29 +69,16 @@ impl Tiling {
         }
     }
 
-    /// Build a space together with its operands: each level closure gets the cut collector and
+    /// Build a space together with its operands, `extents` declaring every axis and its top
+    /// extent as in [`extents`](Tiling::extents). Each level closure gets the cut collector and
     /// the operand set, so an operand's residence at a level is stated where the level is
     /// declared ([`Operand::stage`](crate::Operand::stage)); a level that states nothing for an
     /// operand leaves it in place. [`build`](OperandTiling::build) returns the space and the
-    /// operands with their ladders sealed.
-    pub fn over<O: OperandSet>(operands: O) -> TilingOver<O> {
-        TilingOver { operands }
-    }
-}
-
-/// The seed of a [`Tiling::over`] build: holds the operands until
-/// [`extents`](TilingOver::extents) opens the level chain.
-pub struct TilingOver<O> {
-    operands: O,
-}
-
-impl<O: OperandSet> TilingOver<O> {
-    /// Declare every axis and its top extent, fixing the canonical axis order (see
-    /// [`Tiling::extents`]).
-    pub fn extents(self, extents: &[(Axis, usize)]) -> OperandTiling<O> {
+    /// operands, sealed.
+    pub fn over<O: OperandSet>(operands: O, extents: &[(Axis, usize)]) -> OperandTiling<O> {
         OperandTiling {
             tiling: Tiling::new().extents(extents),
-            operands: self.operands,
+            operands,
         }
     }
 }
@@ -122,9 +109,12 @@ impl<O: OperandSet> OperandTiling<O> {
         self
     }
 
-    /// Build the [`Space`] and hand the operands back, their ladders sealed one residence per
-    /// level.
-    pub fn build(self) -> (Space, O) {
+    /// Build the [`Space`] and hand the operands back, sealed: one residence per level, and
+    /// every later [`stage`](crate::Operand::stage) panics.
+    pub fn build(mut self) -> (Space, O) {
+        for operand in self.operands.each() {
+            operand.seal();
+        }
         (self.tiling.build(), self.operands)
     }
 }

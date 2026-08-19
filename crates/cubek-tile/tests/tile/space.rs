@@ -249,8 +249,7 @@ fn over_builds_the_space_plain_tiling_would() {
         })
         .build();
 
-    let (space, _) = Tiling::over(matmul_operands())
-        .extents(&[(M, 64), (N, 64), (K, 16)])
+    let (space, _) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(32))
@@ -269,11 +268,10 @@ fn over_builds_the_space_plain_tiling_would() {
 }
 
 #[test]
-fn over_seals_ladders_and_omission_is_in_place() {
+fn over_seals_residences_and_omission_is_in_place() {
     // Three levels: inputs staged at the first, the accumulator at the second, silence at the
     // third. Every unstated slot seals to InPlace, one residence per level.
-    let (_, ops) = Tiling::over(matmul_operands())
-        .extents(&[(M, 64), (N, 64), (K, 16)])
+    let (_, ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
@@ -306,8 +304,7 @@ fn over_seals_ladders_and_omission_is_in_place() {
 #[test]
 #[should_panic(expected = "more than one residence")]
 fn over_double_statement_at_one_level_panics() {
-    let _ = Tiling::over(matmul_operands())
-        .extents(&[(M, 64), (N, 64), (K, 16)])
+    let _ = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
@@ -316,4 +313,19 @@ fn over_double_statement_at_one_level_panics() {
             o.a.stage(Residence::Plane);
         })
         .build();
+}
+
+/// The build seals its operands: a residence stated afterwards would describe a level that
+/// does not exist, silently misaligning every residence under it.
+#[test]
+#[should_panic(expected = "after the space was built")]
+fn over_staging_after_build_panics() {
+    let (_, mut ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+        })
+        .build();
+    ops.a.stage(Residence::Smem);
 }
