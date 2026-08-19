@@ -2,7 +2,7 @@ use cubecl::{
     TestRuntime, features::TypeUsage, ir::ElemType, prelude::*,
     std::tensor::layout::linear::linear_view, zspace::Shape,
 };
-use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, MEMORY_LEAF, StridedLayout, TestInput, TestOutcome,
     TileInput, ValidationResult, assert_equals_approx,
@@ -137,6 +137,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N], MEMORY_LEAF),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, N]),
             scheme,
@@ -343,6 +344,202 @@ fn copy_quantized_packed_u32_matches_reference() {
     // Q4S packs 8 values per u32, so a block must cover at least a whole word.
     run_quantized_packed(8, 8, QuantValue::Q4S, 4, 8);
     run_quantized_packed(8, 16, QuantValue::Q4S, 8, 8);
+}
+
+/// Packed-u32 lookup-quantized ([`QuantMode::Lookup`]): each 4-bit field is an index into a
+/// 16-entry table, so `out == table[q] * scale[i/bm, j/bn]`. The table is deliberately not
+/// affine in the index — a decode that fell back to the integer cast would reconstruct the
+/// index itself and miss every entry. Block scales beside it pin that the two lookups (block →
+/// scale, field → entry) stay independent.
+#[test]
+fn copy_quantized_lookup_matches_reference() {
+    let (m, n, bm, bn) = (8usize, 8usize, 4usize, 8usize);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let scheme = QuantScheme::default()
+        .per_block([bm as u8, bn as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q4F)
+        .with_mode(QuantMode::Lookup);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below the lookup scheme's packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    // Ascending and centroid-like, nothing an integer cast could reproduce.
+    let table: [f32; 16] = [
+        -100.0, -10.0, -4.0, -2.0, -1.0, -0.5, -0.25, 0.0, 0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 8.0,
+        42.0,
+    ];
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let input = TileInput::builder(&client, space.clone())
+        .untiled()
+        .packed(&scheme, DequantAt::Read)
+        .lookup_arange(&table);
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        1,
+        pack,
+        input.arg(),
+        output.arg(),
+        space,
+        u32::elem_type_native(),
+        f32::elem_type_native(),
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let sn = n / bn;
+    let shape = Shape::from(vec![m, n]);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            (0..m * n)
+                .map(|k| {
+                    let (i, j) = (k / n, k % n);
+                    input.table_values[input.q[k] as usize]
+                        * input.scale_values[(i / bm) * sn + (j / bn)]
+                })
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
+/// Sub-word packed-u32: the output's line is **narrower than a word**, so the source serves
+/// one-line-per-word (a scalar `u32` binding) and the fill unpacks each word across
+/// `num_quants / w` lines (`scan_words`). This is the regime a vec4 device reads 4- and 2-bit
+/// caches in; it needs no width skip, which is the point. The innermost block covers whole
+/// words, `scan_words`' scale rule.
+#[test]
+fn copy_quantized_subword_matches_reference() {
+    run_quantized_subword(8, 8, QuantValue::Q4S, 4, 8, 4); // 8 per word, 2 lines each
+    run_quantized_subword(8, 16, QuantValue::Q2S, 8, 16, 4); // 16 per word, 4 lines each
+    run_quantized_subword(8, 8, QuantValue::Q8S, 4, 4, 2); // 4 per word, 2 lines each
+}
+
+/// [`run_quantized_packed`]'s sub-word twin: the input serves whole words, the output is
+/// vectorized at `w < num_quants`.
+fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: usize, w: usize) {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let scheme = QuantScheme::default()
+        .per_block([bm as u8, bn as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(value);
+    let pack = scheme.num_quants();
+    assert!(w < pack && pack.is_multiple_of(w));
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let input = TileInput::builder(&client, space.clone())
+        .untiled()
+        .packed(&scheme, DequantAt::Load)
+        .arange();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        1,
+        w,
+        input.arg(),
+        output.arg(),
+        space,
+        u32::elem_type_native(),
+        f32::elem_type_native(),
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let sn = n / bn;
+    let shape = Shape::from(vec![m, n]);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            (0..m * n)
+                .map(|k| {
+                    let (i, j) = (k / n, k % n);
+                    input.q[k] as f32 * input.scale_values[(i / bm) * sn + (j / bn)]
+                })
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
+}
+
+/// Sub-word **lookup**: each word's fields index the table and unpack across several output
+/// lines — the exact read a vec4 device gives a 4-bit lookup-quantized cache.
+#[test]
+fn copy_quantized_subword_lookup_matches_reference() {
+    let (m, n, bm, bn, w) = (8usize, 8usize, 4usize, 8usize, 4usize);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+
+    let scheme = QuantScheme::default()
+        .per_block([bm as u8, bn as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q4F)
+        .with_mode(QuantMode::Lookup);
+
+    let table: [f32; 16] = [
+        -100.0, -10.0, -4.0, -2.0, -1.0, -0.5, -0.25, 0.0, 0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 8.0,
+        42.0,
+    ];
+
+    let space = Space::new(&[(M, m), (N, n)]);
+    let input = TileInput::builder(&client, space.clone())
+        .untiled()
+        .packed(&scheme, DequantAt::Load)
+        .lookup_arange(&table);
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+
+    dequant_copy::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        1,
+        w,
+        input.arg(),
+        output.arg(),
+        space,
+        u32::elem_type_native(),
+        f32::elem_type_native(),
+    );
+
+    let got = HostData::from_tensor_handle(&client, output.handle(), HostDataType::F32);
+    let sn = n / bn;
+    let shape = Shape::from(vec![m, n]);
+    let expected = HostData {
+        data: HostDataVec::F32(
+            (0..m * n)
+                .map(|k| {
+                    let (i, j) = (k / n, k % n);
+                    input.table_values[input.q[k] as usize]
+                        * input.scale_values[(i / bm) * sn + (j / bn)]
+                })
+                .collect(),
+        ),
+        strides: StridedLayout::RowMajor.compute_strides(&shape),
+        shape,
+    };
+    assert_equals_approx(&got, &expected, 1e-6)
+        .as_test_outcome()
+        .enforce();
 }
 
 /// Copy a `bm×bn` block-scaled packed input and check each value used its own block's scale:
@@ -569,6 +766,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
             scales.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N], MEMORY_LEAF),
             global_scale.map(|g| linear_view(g.binding())).into(),
+            None.into(),
             TileSpec::direct(&[M, N]),
             scheme,
             DequantAt::Read,

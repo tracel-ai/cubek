@@ -276,6 +276,16 @@ pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
     select(n % d < 0, q - 1, q)
 }
 
+/// [`floor_div`] together with the remainder it leaves, `n - d * floor(n/d)`. For a positive `d`
+/// that remainder is non-negative, which the stock `%` is not: it is the phase a floored division
+/// hands on, whether to a child window or to a resampling filter. Returned as a pair because the
+/// quotient is computed on the way and a caller wanting both should not divide twice.
+#[cube]
+pub(crate) fn floor_div_rem(n: i32, d: i32) -> (i32, i32) {
+    let q = floor_div(n, d);
+    (q, n.fsub(q.fmul(d)))
+}
+
 /// Converts a comptime list of extents into constant [`Coords<u32>`].
 #[cube]
 // `#[unroll]` needs a range loop; an iterator has no expansion.

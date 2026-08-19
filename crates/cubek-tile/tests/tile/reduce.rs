@@ -80,35 +80,24 @@ fn reduce_kernel_v4<E: Numeric>(
 }
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
+/// `stage` decides whether the recipe is evaluated at the leaf or first materialized into shared
+/// memory; either way the source's partial-tile mask must survive, rather than folding values from
+/// the padded overhang.
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] stage: StagePlan,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = Tile::<E>::procedural(
+    let input = Tile::<E>::procedural_resident::<AffineCoordinate<E>>(
         comptime!(space.clone()),
-        comptime!(ProceduralRecipe::axis_index(K)),
-        MEMORY_LEAF,
-    );
-    let mut output = output.tile(space);
-    reduce_body(&input, &mut output, comptime!(LeafOp::Max));
-}
-
-/// The shared-memory variant must retain the procedural source's partial-tile mask while it
-/// materializes the recipe, rather than folding values from the padded overhang.
-#[cube(launch)]
-fn staged_procedural_reduce_kernel<E: Float>(
-    output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
-    let input = Tile::<E>::procedural_resident(
-        comptime!(space.clone()),
-        comptime!(ProceduralRecipe::axis_index(K)),
+        AffineCoordinate::<E> {
+            offset: E::new(0.0_f32),
+            coefficient: E::new(1.0_f32),
+            axis: K,
+        },
         stage,
-        MEMORY_LEAF,
     );
     let mut output = output.tile(space);
     reduce_body(&input, &mut output, comptime!(LeafOp::Max));
@@ -843,8 +832,9 @@ fn test_reduce_axis_max_nondivisible_k() {
     }
 }
 
-#[test]
-fn test_procedural_max_masks_nondivisible_k() {
+/// Max over `k` of the axis-index recipe, with the source staged as `stage` says. The last real
+/// `k` is 5, so a mask that leaked the padded overhang would report the tile edge instead.
+fn check_procedural_reduce(stage: StagePlan) {
     let (m, k, tk) = (4, 6, 4);
     let space = nondivisible_k_space(m, k, tk, Buffering::SINGLE);
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -863,6 +853,7 @@ fn test_procedural_max_masks_nondivisible_k() {
             TileSpec::direct(&[M], MEMORY_LEAF),
         ),
         space,
+        stage,
         dtype,
     );
 
@@ -873,32 +864,13 @@ fn test_procedural_max_masks_nondivisible_k() {
 }
 
 #[test]
+fn test_procedural_max_masks_nondivisible_k() {
+    check_procedural_reduce(StagePlan::in_place());
+}
+
+#[test]
 fn test_staged_procedural_max_masks_nondivisible_k() {
-    let (m, k, tk) = (4, 6, 4);
-    let space = nondivisible_k_space(m, k, tk, Buffering::SINGLE);
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let output = TestInput::builder(client.clone(), shape![m])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    staged_procedural_reduce_kernel::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M], MEMORY_LEAF),
-        ),
-        space,
-        dtype,
-    );
-
-    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
-    for row in 0..m {
-        assert_eq!(got.get_f32(&[row]), 5.0);
-    }
+    check_procedural_reduce(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
 }
 
 /// `ramp`'s data is nonnegative, so a masked overhang cell falling back to zero (Sum's identity)

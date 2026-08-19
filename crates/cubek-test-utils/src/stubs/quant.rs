@@ -59,6 +59,10 @@ fn quantized_values(
                 (v / scale).round().clamp(range_min, range_max)
             })
             .collect(),
+        // A lookup field is a table index, not a rounded value; these stubs carry no table, so
+        // a lookup test states its indices exactly ([`pack_q_values`]) and folds the table into
+        // its own host reference.
+        QuantMode::Lookup => panic!("quantize stub: lookup takes exact indices via pack_q_values"),
     }
 }
 
@@ -77,6 +81,10 @@ fn dequantized_values(
             .enumerate()
             .map(|(i, &q)| q * scales[scale_index(i, shape, block_dims, scales_shape)])
             .collect(),
+        QuantMode::Lookup => panic!(
+            "dequantize stub: lookup carries no table here; fold table[index] * scale into the \
+             test's own host reference"
+        ),
     }
 }
 

@@ -4,6 +4,7 @@
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
+    std::quant::unpack_fields,
     std::quant::view::KnownScale,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
@@ -180,6 +181,7 @@ impl<T: Numeric> Tile<T> {
         values: &Tensor<E>,
         scales: &Tensor<f32>,
         known: KnownScale,
+        table: ComptimeOption<Box<[f32]>>,
         #[comptime] scheme: QuantScheme,
         #[comptime] dequant_at: DequantAt,
         #[comptime] space: Space,
@@ -188,6 +190,10 @@ impl<T: Numeric> Tile<T> {
         // The engine's own backstop: the builder checks this too, but a hand-built
         // `QuantTileArgLaunch` reaches here without passing through it.
         comptime!(validate_dequant_at(dequant_at, spec.leaf));
+        comptime!(cubecl::std::quant::check_table_bindings(
+            &scheme,
+            table.is_some()
+        ));
         let rank = comptime!(spec.axes().len());
         let block = comptime!(block_edges(scheme, rank));
         let mut strides = Coords::<u32>::new();
@@ -209,6 +215,7 @@ impl<T: Numeric> Tile<T> {
             dequant_at: comptime!(dequant_at),
             // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
             scale_shape: comptime!(Vec::new()),
+            table,
             scheme: comptime!(scheme),
         };
         Tile::<T>::of_impl::<E>(
@@ -473,6 +480,7 @@ impl<T: Numeric> MemData<T> {
                                 leaf,
                                 vector_size,
                                 stage,
+                                info.table.clone(),
                                 comptime!(info.scheme),
                             ),
                             other => panic!(
@@ -485,6 +493,7 @@ impl<T: Numeric> MemData<T> {
                             leaf,
                             vector_size,
                             stage,
+                            info.table.clone(),
                             comptime!(info.scheme),
                         ),
                         other => panic!(
@@ -593,6 +602,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
+        table: ComptimeOption<Box<[f32]>>,
         #[comptime] scheme: QuantScheme,
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
@@ -600,7 +610,7 @@ impl<T: Numeric> MemData<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, stage.storage));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
-        let quant = smem_quant_info(comptime!(space.clone()), comptime!(scheme));
+        let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
@@ -800,8 +810,15 @@ impl<T: Numeric> MemData<T> {
                         ),
                     },
                     QuantStore::PackedU32(_) => {
-                        let size!(WP) = comptime!(src.store.vector_size / info.scheme.num_quants());
-                        self.scan_transparent::<u32, WP, W>(src)
+                        if comptime!(src.store.vector_size == self.store.vector_size) {
+                            let size!(WP) =
+                                comptime!(src.store.vector_size / info.scheme.num_quants());
+                            self.scan_transparent::<u32, WP, W>(src)
+                        } else {
+                            // The source's line is one whole word and this stage
+                            // is narrower: unpack each word across several lines.
+                            self.scan_words::<W>(src)
+                        }
                     }
                     other => panic!(
                         "MemData::fill_from: quant storage {:?} is not wired (native or packed-u32)",
@@ -985,6 +1002,84 @@ impl<T: Numeric> MemData<T> {
             // staged buffer is unchecked, so the full padded cell is still written.
             d.write(i, s.read(i));
             i += workers;
+        }
+    }
+
+    /// The sub-word twin of [`scan_transparent`](MemData::scan_transparent): the source's served
+    /// line is one whole packed word (`vector_size == num_quants`, a scalar `u32` binding), and
+    /// each word unpacks into `num_quants / W` lines of this store's width — how a packed operand
+    /// fills a stage on a device whose vectors cannot cover a word. Word-serving is what keeps the
+    /// line/storage-line correspondence exact (one line **is** one word), so no other width plays.
+    ///
+    /// Unchecked only — and unreachable any other way: a checked operand cannot vectorize
+    /// ([`realize`](crate::StridedTileSource) refuses it), and a word-serving operand is
+    /// `num_quants` wide, so a checked source never gets here; the assert below is a backstop for
+    /// hand-built args. The ragged-tail obligation this leaves is the engine's ordinary unchecked
+    /// contract, stated at the operand: a cut that overhangs the buffer *panics at launch* unless
+    /// the caller declared `checked(false)`, and that declaration is the caller's claim that every
+    /// staged block lies inside the allocation (e.g. an S block pinned to a divisor of the cache's
+    /// capacity) with consumption clipped at the leaves. The innermost scale block must cover
+    /// whole words, so a word never straddles two scales.
+    fn scan_words<W: Size>(&mut self, src: &MemData<T>) {
+        #[comptime]
+        match &src.store.quant {
+            ComptimeOption::Some(info) => {
+                let nq = comptime!(info.scheme.num_quants());
+                comptime!(assert!(
+                    src.store.vector_size == nq,
+                    "MemData::scan_words: the source serves whole words (vector_size == num_quants)"
+                ));
+                let w = comptime!(self.store.vector_size);
+                comptime!(assert!(
+                    w < nq && nq.is_multiple_of(w),
+                    "MemData::scan_words: the stage width must divide the packing factor"
+                ));
+                comptime!(assert!(
+                    !src.access.overhang.masks(),
+                    "MemData::scan_words: a sub-word fill reads unchecked"
+                ));
+                comptime!(assert!(
+                    info.block.last().unwrap().is_multiple_of(nq),
+                    "MemData::scan_words: the innermost scale block must cover whole words"
+                ));
+                let lpw = comptime!(nq / w);
+                let size!(NW) = 1usize;
+                let words = src
+                    .lines_storage::<u32, NW>()
+                    .view(src.base())
+                    .view(src.window())
+                    .view(FlatLayout::new(src.window.extent.clone()));
+                let scales = info
+                    .buffer
+                    .view(ScaleLayout::new(
+                        info.strides.clone(),
+                        info.window_start,
+                        comptime!(info.block.clone()),
+                        comptime!(src.store.vector_size),
+                        comptime!(info.extent.clone()),
+                    ))
+                    .view(FlatLayout::new(src.window.extent.clone()));
+                let mut d = self.flat_mut::<W>();
+                let total = d.shape();
+                let workers = CUBE_DIM as usize;
+                let mut i = UNIT_POS as usize;
+                while i < total {
+                    let word = words.read(i / lpw).extract(0usize);
+                    let scale = scales.read(i / lpw);
+                    let first = ((i % lpw) * w) as u32;
+                    let vals = unpack_fields::<T, W>(
+                        word,
+                        first,
+                        info.table.clone(),
+                        comptime!(info.scheme),
+                    );
+                    d.write(i, vals * Vector::new(T::cast_from(scale)));
+                    i += workers;
+                }
+            }
+            ComptimeOption::None => {
+                panic!("MemData::scan_words: a plain source has no words to unpack")
+            }
         }
     }
 
@@ -1695,8 +1790,8 @@ fn gathered_origin(
                     .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
                     .fcast::<i32>(),
             };
-            let start = floor_div(offset, divisor);
-            (start, offset.fsub(start.fmul(divisor)).fcast::<u32>())
+            let (start, residue) = floor_div_rem(offset, divisor);
+            (start, residue.fcast::<u32>())
         }
     }
 }
@@ -1818,6 +1913,7 @@ fn gathered_descent(
 #[cube]
 fn smem_quant_info(
     #[comptime] space: Space,
+    table: ComptimeOption<Box<[f32]>>,
     #[comptime] scheme: QuantScheme,
 ) -> ComptimeOption<QuantInfo> {
     let rank = comptime!(space.rank());
@@ -1851,6 +1947,8 @@ fn smem_quant_info(
         // path reaching here.
         dequant_at: comptime!(DequantAt::Read),
         scale_shape: comptime!(nb),
+        // The gmem table rides through: it is never staged, only re-read.
+        table,
         scheme: comptime!(staged_scheme(scheme)),
     })
 }

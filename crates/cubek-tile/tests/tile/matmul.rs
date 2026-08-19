@@ -2,17 +2,17 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    TestRuntime,
     cmma::{MatrixIdent, MatrixLayout},
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
     zspace::shape,
+    TestRuntime,
 };
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
-    HostData, HostDataType, MEMORY_LEAF, TestInput, TestOutcome, TileInput, ValidationResult,
-    assert_equals_approx,
+    assert_equals_approx, HostData, HostDataType, TestInput, TestOutcome, TileInput,
+    ValidationResult, MEMORY_LEAF,
 };
 
 use cubek_tile::*;

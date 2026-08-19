@@ -183,6 +183,10 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     /// The global level's whole-tensor scale in its first element, bound exactly when the scheme
     /// has a second level.
     pub global: ComptimeOption<LinearView<'static, f32>>,
+    /// A lookup scheme's `2^bits`-entry table, present exactly under
+    /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode): reads reconstruct
+    /// `table[field] * scale` instead of casting the field.
+    pub table: ComptimeOption<Box<[f32]>>,
     #[cube(comptime)]
     pub spec: TileSpec,
     #[cube(comptime)]
@@ -214,6 +218,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             self.values,
             self.scales,
             known,
+            self.table.clone(),
             comptime!(self.scheme),
             comptime!(self.dequant_at),
             space,

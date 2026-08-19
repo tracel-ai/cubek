@@ -1,48 +1,15 @@
-//! A memory-free tile source evaluated from logical coordinates.
-
 use core::marker::PhantomData;
 
+use cubecl::frontend::IntoExpand;
+use cubecl::ir::Scope;
 use cubecl::{
     prelude::{barrier::Barrier, *},
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Axis, Coords, Fold, FoldExpand, Region, Space, StagePlan};
+use crate::{Coords, Fold, FoldExpand, Region, Space, StagePlan};
 
-/// Built-in recipes for a [`TileKind::Procedural`](crate::TileKind::Procedural) source.
-///
-/// Recipes are comptime values, not runtime callbacks. [`AxisProduct`](Self::AxisProduct)
-/// deliberately preserves separability so a later operand reader can cache one factor per axis.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum ProceduralRecipe {
-    Zero,
-    One,
-    Uniform { denominator: usize },
-    AxisIndex { axis: Axis },
-    AxisProduct(Vec<ProceduralRecipe>),
-}
-
-impl ProceduralRecipe {
-    pub fn zero() -> Self {
-        Self::Zero
-    }
-    pub fn one() -> Self {
-        Self::One
-    }
-    pub fn uniform(denominator: usize) -> Self {
-        assert!(
-            denominator > 0,
-            "ProceduralRecipe::uniform: denominator must be non-zero"
-        );
-        Self::Uniform { denominator }
-    }
-    pub fn axis_index(axis: Axis) -> Self {
-        Self::AxisIndex { axis }
-    }
-    pub fn axis_product(factors: Vec<ProceduralRecipe>) -> Self {
-        Self::AxisProduct(factors)
-    }
-}
+use super::{RecipeCoords, VirtualRecipe};
 
 /// Runtime state of a procedural source. `origin` tracks regions selected by `Tile::at`.
 #[derive(CubeType, Clone)]
@@ -57,13 +24,14 @@ pub struct ProceduralData<T: Numeric> {
     /// descends, because the leaf space alone no longer records an ancestor's overhang.
     #[cube(comptime)]
     pub(crate) bounds_check: bool,
-    #[cube(comptime)]
-    recipe: ProceduralRecipe,
+    recipe: VirtualRecipe<T>,
     #[cube(comptime)]
     space: Space,
-    /// Where this source lives at each level below. A recipe has no bytes to leave in place, so the
-    /// default stages nothing; a level asking for a stage cooperatively materializes it
-    /// ([`MemData::fill_procedural`](crate::MemData)).
+    /// Where this source lives at each level below. A recipe has no bytes to leave in place, so
+    /// [`Tile::procedural`](crate::Tile::procedural) stages nothing; a level asking for a stage
+    /// through [`Tile::procedural_resident`](crate::Tile::procedural_resident) cooperatively
+    /// materializes the recipe into it ([`MemData::fill_procedural`](crate::MemData)), which is
+    /// how a source with no bytes reaches a leaf that cannot evaluate one.
     #[cube(comptime)]
     pub(crate) stage: StagePlan,
     #[cube(comptime)]
@@ -72,9 +40,9 @@ pub struct ProceduralData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> ProceduralData<T> {
-    pub(crate) fn new(
+    pub(crate) fn new_virtual(
         #[comptime] space: Space,
-        #[comptime] recipe: ProceduralRecipe,
+        recipe: VirtualRecipe<T>,
         #[comptime] stage: StagePlan,
     ) -> Self {
         let mut origin = Coords::<u32>::new();
@@ -83,9 +51,6 @@ impl<T: Numeric> ProceduralData<T> {
         for p in 0..comptime!(space.rank()) {
             origin.push(0u32.runtime());
             let axis = comptime!(space.axis_at(p));
-            // Keep `bound` rank-aligned with `origin` even after `Space::divide` turns child
-            // axes static. A recipe has no runtime bound for a dynamic axis, so its sentinel
-            // deliberately leaves that axis unmasked.
             let extent = comptime!(if space.is_dynamic(axis) {
                 u32::MAX.runtime()
             } else {
@@ -121,7 +86,7 @@ impl<T: Numeric> ProceduralData<T> {
             origin,
             bound: self.bound.clone(),
             bounds_check: comptime!(self.bounds_check),
-            recipe: comptime!(self.recipe.clone()),
+            recipe: self.recipe.clone(),
             space: comptime!(space.divide()),
             stage: comptime!(self.stage.descend()),
             _marker: PhantomData,
@@ -129,7 +94,8 @@ impl<T: Numeric> ProceduralData<T> {
     }
 
     pub(crate) fn evaluate(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
-        self.value_recipe(pos, space, comptime!(self.recipe.clone()))
+        let absolute = RecipeCoords::new(&self.origin, pos, space);
+        self.recipe.evaluate(&absolute)
     }
 
     /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe
@@ -149,38 +115,6 @@ impl<T: Numeric> ProceduralData<T> {
             coords.push(pos[p]);
         }
         self.evaluate(&coords, space)
-    }
-
-    fn value_recipe(
-        &self,
-        pos: &Coords<u32>,
-        #[comptime] space: Space,
-        #[comptime] recipe: ProceduralRecipe,
-    ) -> T {
-        match comptime!(recipe) {
-            ProceduralRecipe::Zero => T::from_int(0),
-            ProceduralRecipe::One => T::from_int(1),
-            ProceduralRecipe::Uniform { denominator } => {
-                T::from_int(1) / T::from_int(denominator as i64)
-            }
-            ProceduralRecipe::AxisIndex { axis } => {
-                let p = comptime!(space.position(axis));
-                T::cast_from(self.origin.at(p) + pos.at(p))
-            }
-            ProceduralRecipe::AxisProduct(factors) => {
-                let mut value = T::from_int(1);
-                #[allow(clippy::needless_range_loop)]
-                #[unroll]
-                for i in 0..comptime!(factors.len()) {
-                    value *= self.value_recipe(
-                        pos,
-                        comptime!(space.clone()),
-                        comptime!(factors[i].clone()),
-                    );
-                }
-                value
-            }
-        }
     }
 
     fn is_in_bounds(&self, pos: &Coords<u32>) -> bool {
@@ -211,6 +145,12 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         scope: &Scope,
         pos: <CoordsDyn as CubeType>::ExpandType,
     ) -> NativeExpand<Vector<T, W>> {
+        assert_eq!(
+            W::__expand_value(scope),
+            1,
+            "ProceduralData: a procedural read is scalar; a vectorized read would broadcast \
+             the first lane's value instead of ramping the innermost coordinate"
+        );
         let value = self
             .clone()
             .__expand_evaluate_dyn_method(scope, &pos, self.space.clone());
