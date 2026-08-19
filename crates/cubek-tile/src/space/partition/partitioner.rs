@@ -60,31 +60,17 @@ pub enum Leaf {
     },
 }
 
-impl Default for Leaf {
-    fn default() -> Self {
-        Self::Memory {
-            config: MemoryMmaConfig::default(),
-        }
-    }
-}
-
 impl Leaf {
     /// Memory leaf with explicit execution configuration.
     pub const fn memory(config: MemoryMmaConfig) -> Self {
         Self::Memory { config }
     }
-
-    /// Memory leaf with configuration derived from device properties and operand vector size.
-    pub fn memory_from_props(props: &cubecl::ir::DeviceProperties, vector_size: usize) -> Self {
-        Self::Memory {
-            config: MemoryMmaConfig::new(props, vector_size),
-        }
-    }
 }
 
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
 /// hands [`next`](Partitioner::next) down. A `Level` carries how deeply its walk buffers
-/// ([`Buffering`]); `Final` carries how to contract the terminal tile ([`Leaf`]).
+/// ([`Buffering`]); `Final` carries nothing, since how the terminal tile contracts ([`Leaf`]) is
+/// each operand's own statement.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
     Final,

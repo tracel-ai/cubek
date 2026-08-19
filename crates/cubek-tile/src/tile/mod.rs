@@ -251,12 +251,17 @@ impl<T: Numeric> Tile<T> {
 
     /// Create a scalar, memory-free tile over a logical space, evaluated where it is read at every
     /// level. Dynamic extents are supplied by another operand when an operation is walked; a
-    /// procedural tile never witnesses them.
-    pub fn procedural(#[comptime] space: Space, #[comptime] recipe: ProceduralRecipe) -> Self
+    /// procedural tile never witnesses them. `leaf` is what will consume it, stated here like
+    /// every other operand states it.
+    pub fn procedural(
+        #[comptime] space: Space,
+        #[comptime] recipe: ProceduralRecipe,
+        #[comptime] leaf: Leaf,
+    ) -> Self
     where
         T: Float,
     {
-        Tile::<T>::procedural_resident(space, recipe, comptime!(StagePlan::in_place()))
+        Tile::<T>::procedural_resident(space, recipe, comptime!(StagePlan::in_place()), leaf)
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
@@ -266,6 +271,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] recipe: ProceduralRecipe,
         #[comptime] stage: StagePlan,
+        #[comptime] leaf: Leaf,
     ) -> Self
     where
         T: Float,
@@ -277,7 +283,7 @@ impl<T: Numeric> Tile<T> {
                 stage,
             )),
             space,
-            leaf: comptime!(Leaf::default()),
+            leaf,
         }
     }
 

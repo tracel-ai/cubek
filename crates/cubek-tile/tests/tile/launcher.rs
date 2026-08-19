@@ -5,6 +5,7 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
 };
+use cubek_test_utils::MEMORY_LEAF;
 use cubek_tile::{
     Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap,
     Projection, Residence, Scale, StridedOperand, Tiling, WalkOrder,
@@ -115,14 +116,14 @@ fn arg_derives_check_from_subspace_overhang() {
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
 
     let touches_k = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), MEMORY_LEAF)
         .subspace(&[M, K])
         .build();
     assert!(touches_k.spec.is_checked());
     assert_eq!(touches_k.spec.boundary, Some(cubek_tile::Boundary::Zero));
 
     let avoids_k = launch
-        .arg(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]), MEMORY_LEAF)
         .subspace(&[M, N])
         .build();
     assert!(!avoids_k.spec.is_checked());
@@ -130,7 +131,7 @@ fn arg_derives_check_from_subspace_overhang() {
 
     // An explicit override still wins over the derivation.
     let forced = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), MEMORY_LEAF)
         .subspace(&[M, K])
         .checked(false)
         .build();
@@ -145,7 +146,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
 
     // One leading dim: right-aligns to B1 (the trailing axis of the full list).
     let one_batch = launch
-        .arg(binding(&client, &[3, 64, 16]))
+        .arg(binding(&client, &[3, 64, 16]), MEMORY_LEAF)
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
@@ -154,7 +155,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
 
     // A size-1 dim drops out entirely (broadcast omission).
     let broadcast = launch
-        .arg(binding(&client, &[1, 64, 16]))
+        .arg(binding(&client, &[1, 64, 16]), MEMORY_LEAF)
         .subspace(&[M, K])
         .batches(&[B0, B1])
         .build();
@@ -185,7 +186,7 @@ fn arg_gathered_states_its_own_mapping() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
 
     let input = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .build();
 
@@ -205,14 +206,14 @@ fn arg_gathered_derives_check_from_overhang() {
     let launch = batched_space(1, 1, 64, 64, 18).launcher_over(&client, &[N]);
 
     let input = launch
-        .arg(binding(&client, &[81, 64]))
+        .arg(binding(&client, &[81, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .build();
     assert_eq!(input.spec.boundary, Some(Boundary::Zero));
 
     // An explicit override still wins over the derivation.
     let forced = launch
-        .arg(binding(&client, &[81, 64]))
+        .arg(binding(&client, &[81, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .checked(false)
         .build();
@@ -227,20 +228,20 @@ fn arg_gathered_derives_check_from_underflow() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
 
     let padded = launch
-        .arg(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, -1))
         .build();
     assert_eq!(padded.spec.boundary, Some(Boundary::Zero));
 
     // A runtime offset's sign is unknown at launch, so it arms the guard conservatively.
     let dynamic = launch
-        .arg(binding(&client, &[64, 64]))
+        .arg(binding(&client, &[64, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, Offset::Dynamic))
         .build();
     assert_eq!(dynamic.spec.boundary, Some(Boundary::Zero));
 
     let shifted = launch
-        .arg(binding(&client, &[96, 64]))
+        .arg(binding(&client, &[96, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 1))
         .build();
     assert_eq!(shifted.spec.boundary, None);
@@ -254,7 +255,7 @@ fn arg_gathered_alongside_a_subspace_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
     let _ = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .subspace(&[M, N])
         .gathered(window(1, 1, 0))
         .build();
@@ -268,7 +269,7 @@ fn arg_gathered_rank_mismatch_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
     let _ = launch
-        .arg(binding(&client, &[4, 79, 64]))
+        .arg(binding(&client, &[4, 79, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .build();
 }
@@ -281,7 +282,7 @@ fn arg_gathered_validates_the_innermost_dim() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M]);
     let _ = launch
-        .arg(binding(&client, &[64, 79]))
+        .arg(binding(&client, &[64, 79]), MEMORY_LEAF)
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -304,7 +305,7 @@ fn arg_gathered_dynamic_axis_is_accepted() {
     // `K` shares the gathered dim with `M`, so neither reads an extent off *this* operand.
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N, K]);
     let _ = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .build();
 }
@@ -317,7 +318,7 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
 
     let input = launch
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .build();
     assert_eq!(input.spec.axes(), &[M, K, N]);
@@ -340,7 +341,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         .build()
         .launcher_over(&client, &[N]);
     let _ = staged
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .residence(&[Residence::Smem])
         .gathered(Projection::new(
             &[M, K, N],
@@ -369,7 +370,7 @@ fn arg_gathered_rational_stages() {
         .build()
         .launcher_over(&client, &[N]);
     let _ = staged
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .residence(&[Residence::Smem])
         .gathered(Projection::new(
             &[M, K, N],
@@ -396,7 +397,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         .build()
         .launcher_over(&client, &[N]);
     let _ = staged
-        .arg(binding(&client, &[79, 64]))
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
         .residence(&[Residence::Smem])
         .gathered(Projection::new(
             &[M, K, N],
@@ -431,7 +432,7 @@ fn arg_gathered_cancelling_divisor_stages() {
     );
     assert!(!projection.is_rational());
     let _ = staged
-        .arg(binding(&client, &[512, 64]))
+        .arg(binding(&client, &[512, 64]), MEMORY_LEAF)
         .residence(&[Residence::Smem])
         .gathered(projection)
         .build();
@@ -501,7 +502,7 @@ fn arg_checked_and_vectorized_panics() {
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let _ = launch
-        .arg(binding(&client, &[64, 18]))
+        .arg(binding(&client, &[64, 18]), MEMORY_LEAF)
         .subspace(&[M, K])
         .vectorize(4)
         .build();
@@ -523,7 +524,7 @@ fn arg_more_batch_dims_than_axes_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
     let _ = launch
-        .arg(binding(&client, &[4, 3, 64, 16]))
+        .arg(binding(&client, &[4, 3, 64, 16]), MEMORY_LEAF)
         .subspace(&[M, K])
         .batches(&[B1])
         .build();
@@ -537,7 +538,7 @@ fn arg_more_batch_dims_than_axes_panics() {
 fn quantize(v: usize, scheme: QuantScheme) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
-    let _ = StridedOperand::source(binding(&client, &[64, 16]))
+    let _ = StridedOperand::source(binding(&client, &[64, 16]), MEMORY_LEAF)
         .space(&space)
         .subspace(&[M, K])
         .vectorize(v)

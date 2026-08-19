@@ -12,7 +12,7 @@ use cubek_matmul::routines::cpu_gemm::{
     CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{TestInput, skip_unless_cpu};
+use cubek_test_utils::{MEMORY_LEAF, TestInput, skip_unless_cpu};
 use cubek_tile::{Axis, Projection, Space, TileArg, TileArgLaunch, TileSpec};
 
 use super::Dims;
@@ -149,7 +149,10 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
 fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V, TestRuntime> {
     let (tensor, tiling) = op.layout.tensor_arg(physical_binding(op), 1);
     let axes: Vec<_> = (0..op.space.rank()).map(|i| op.space.axis_at(i)).collect();
-    TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, tiling)))
+    TileArgLaunch::new(
+        tensor,
+        TileSpec::new(Projection::tiled(&axes, tiling), MEMORY_LEAF),
+    )
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.

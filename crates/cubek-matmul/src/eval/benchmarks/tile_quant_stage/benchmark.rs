@@ -12,6 +12,10 @@ use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
 use cubek_tile::*;
 
 use super::problem::TileQuantStageProblem;
+
+/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
+/// fan-out. Every operand shares it so the numbers measure the staging, not the leaf.
+const LEAF: Leaf = Leaf::memory(MemoryMmaConfig::new(64, false, false));
 use super::strategy::StageDepth;
 
 const M: Axis = Axis(0);
@@ -124,14 +128,14 @@ impl Benchmark for TileQuantStageBench {
 
     fn prepare(&self) -> Self::Input {
         let space = self.space();
-        let a = TileInput::builder(&self.client, space.project(&[M, K]))
+        let a = TileInput::builder(&self.client, space.project(&[M, K]), LEAF)
             .untiled()
             .arange();
-        let b = TileInput::builder(&self.client, space.project(&[K, N]))
+        let b = TileInput::builder(&self.client, space.project(&[K, N]), LEAF)
             .untiled()
             .packed(&self.scheme, DequantAt::Read)
             .arange();
-        let c = TileInput::builder(&self.client, space.project(&[M, N]))
+        let c = TileInput::builder(&self.client, space.project(&[M, N]), LEAF)
             .untiled()
             .zeros();
         Arc::new((a, b, c))
@@ -144,12 +148,12 @@ impl Benchmark for TileQuantStageBench {
         // L0 takes a shared stage, L1 reads windows of it: the staging this bench measures.
         let staged = [Residence::Smem, Residence::InPlace];
         let a = launcher
-            .arg(a.handle().binding())
+            .arg(a.handle().binding(), LEAF)
             .subspace(&[M, K])
             .residence(&staged)
             .build();
         let b = launcher
-            .arg(b.tile.handle().binding())
+            .arg(b.tile.handle().binding(), LEAF)
             .subspace(&[K, N])
             .vectorize(self.pack)
             .residence(&staged)
@@ -157,7 +161,7 @@ impl Benchmark for TileQuantStageBench {
             .build();
         // The register microkernel lines the accumulator at the RHS's served width.
         let c = launcher
-            .arg(c.handle().binding())
+            .arg(c.handle().binding(), LEAF)
             .subspace(&[M, N])
             .vectorize(self.pack)
             .build();

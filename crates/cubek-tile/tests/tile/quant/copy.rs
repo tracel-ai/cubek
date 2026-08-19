@@ -1,8 +1,8 @@
 use cubecl::{TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::Shape};
 use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
 use cubek_test_utils::{
-    HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome, TileInput,
-    ValidationResult, assert_equals_approx,
+    HostData, HostDataType, HostDataVec, MEMORY_LEAF, StridedLayout, TestInput, TestOutcome,
+    TileInput, ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
     Axis, Buffering, CubeAxis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
@@ -19,10 +19,12 @@ fn copy_non_quantized_matches_reference() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = Space::new(&[(M, m), (N, n)]);
 
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .arange();
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     let dtype = f32::elem_type_native();
     plain_copy::launch::<TestRuntime>(
@@ -62,10 +64,12 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         .launcher_over(&client, &[]);
     let space = launch.space().clone();
 
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .arange();
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     plain_copy::launch::<TestRuntime>(
         &client,
@@ -113,7 +117,9 @@ fn copy_quantized_per_tensor_matches_reference() {
         .generate_with_f32_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
     let scales = TestInput::builder(client.clone(), Shape::from(vec![1usize]))
         .custom(vec![scale])
         .generate_without_host_data();
@@ -127,7 +133,7 @@ fn copy_quantized_per_tensor_matches_reference() {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            TileSpec::direct(&[M, N], MEMORY_LEAF),
             scheme,
             DequantAt::Read,
         ),
@@ -212,11 +218,13 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     }
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let input = TileInput::builder(&client, space.clone())
+    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
         .untiled()
         .packed(&scheme, DequantAt::Read)
         .arange();
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     let input_dtype = u32::elem_type_native();
     let out_dtype = f32::elem_type_native();
@@ -318,7 +326,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         .build();
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+        .untiled()
+        .zeros();
 
     // One distinct scale per block, row-major over the block grid; a partial block still has one.
     let (sm, sn) = (m.div_ceil(bm), n.div_ceil(bn));
@@ -336,7 +346,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize) {
         QuantTileArgLaunch::new(
             input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            TileSpec::direct(&[M, N], MEMORY_LEAF),
             scheme,
             DequantAt::Read,
         ),

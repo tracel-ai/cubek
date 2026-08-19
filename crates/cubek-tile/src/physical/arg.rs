@@ -37,47 +37,42 @@ pub struct TileSpec {
     /// nothing.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
     /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
-    /// two encodings. A format decision, so it belongs to the operand rather than to the
-    /// partitioning; [`Tile::of`](crate::Tile::of) carries it onto the tile. Operands that disagree
-    /// meet the kind-pairing panics at the instruction.
+    /// two encodings. Stated when the spec is built, so no operand ever carries an implied one; a
+    /// format decision, so it belongs to the operand rather than to the partitioning.
+    /// [`Tile::of`](crate::Tile::of) carries it onto the tile, and operands that disagree meet the
+    /// kind-pairing panics at the instruction.
     pub leaf: Leaf,
 }
 
 impl TileSpec {
-    /// An operand's spec from its mapping alone; the optional halves are the safe defaults
-    /// (unchecked, cube size unknown, memory leaf, nothing staged) and are set by
+    /// An operand's spec from its mapping and its leaf; the optional halves are the safe defaults
+    /// (unchecked, cube size unknown, nothing staged) and are set by
     /// [`boundary`](Self::boundary), [`checked`](Self::checked), [`units`](Self::units),
-    /// [`storage`](Self::storage), [`residence`](Self::residence), and [`leaf`](Self::leaf).
+    /// [`storage`](Self::storage), and [`residence`](Self::residence).
     ///
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
     /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
     /// that is where it runs instead.
-    pub fn new(projection: Projection) -> Self {
+    pub fn new(projection: Projection, leaf: Leaf) -> Self {
         TileSpec {
             projection,
             boundary: None,
             units: 0,
             storage: None,
             residence: SmallVec::new(),
-            leaf: Leaf::default(),
+            leaf,
         }
     }
 
     /// [`new`](Self::new) over the [`direct`](Projection::direct) mapping: one logical axis per
     /// physical axis, which is every non-gather, untiled operand.
-    pub fn direct(axes: &[Axis]) -> Self {
-        Self::new(Projection::direct(axes))
+    pub fn direct(axes: &[Axis], leaf: Leaf) -> Self {
+        Self::new(Projection::direct(axes), leaf)
     }
 
     /// The axes this operand spans, in its logical order.
     pub fn axes(&self) -> &[Axis] {
         self.projection.logical_axes()
-    }
-
-    /// State what this operand is at the instruction (default [`Leaf::Memory`], the memory form).
-    pub fn leaf(mut self, leaf: Leaf) -> Self {
-        self.leaf = leaf;
-        self
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
@@ -327,7 +322,7 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes).leaf(leaf).residence(residence))
+        Self::new(view, TileSpec::direct(axes, leaf).residence(residence))
     }
 }
 

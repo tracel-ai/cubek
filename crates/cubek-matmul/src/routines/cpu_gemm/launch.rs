@@ -2,7 +2,9 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Buffering, CubeAxis, Cut, Leaf, StorageTiling, Tiling, WalkOrder};
+use cubek_tile::{
+    Axis, Buffering, CubeAxis, Cut, Leaf, MemoryMmaConfig, StorageTiling, Tiling, WalkOrder,
+};
 
 use crate::{
     definition::{
@@ -184,37 +186,34 @@ pub fn launch_ref<R: Runtime>(
     // inner extents and the `N` leaf edge.
     let rhs = rhs.into_data();
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], sz);
-    // The software leaf's unroll and K-walk strategy depend on the backend and the accumulator
-    // line width. All three operands carry the same leaf so promotion and direct accumulation
-    // select the identical specialization.
-    let leaf = Leaf::memory_from_props(client.properties(), v);
+    // A CPU backend: a wide scalar budget to unroll against, the dual-path edge specialization,
+    // and a flat scalar K-walk (no lanes to fan out over). All three operands carry the same leaf
+    // so promotion and direct accumulation select the identical specialization.
+    let leaf = Leaf::memory(MemoryMmaConfig::new(256 / v, true, false));
 
     // Load each operand through the tile builder over its subspace (the matrix `[row, col]` plus
     // batches). All operands get the full output batch-axis list; the builder right-aligns it to
     // each operand's leading dims (numpy broadcast, size-1 dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let a = launch
-        .arg(lhs.into_data())
+        .arg(lhs.into_data(), leaf)
         .subspace(&[M, K])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, lhs_levels))
-        .leaf(leaf)
         .build();
     let b = launch
-        .arg(rhs)
+        .arg(rhs, leaf)
         .subspace(&[K, N])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, rhs_levels))
         .vectorize(v)
-        .leaf(leaf)
         .build();
     let c = launch
-        .arg(out)
+        .arg(out, leaf)
         .subspace(&[M, N])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)
-        .leaf(leaf)
         .build();
     cpu_gemm_kernel::launch::<R>(
         client,

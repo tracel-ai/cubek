@@ -18,11 +18,16 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Leaf, Projection, QuantTileArgLaunch, Residence, Space, StorageTiling,
-    TileArgLaunch, TileSpec as CubekTileSpec,
+    DequantAt, Leaf, MemoryMmaConfig, Projection, QuantTileArgLaunch, Residence, Space,
+    StorageTiling, TileArgLaunch, TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
+
+/// The memory leaf tests contract through: a modest unroll budget, no edge specialization, no
+/// lane fan-out. Named once here so a test that does not exercise the microkernel's shape has
+/// something to state without inventing one.
+pub const MEMORY_LEAF: Leaf = Leaf::memory(MemoryMmaConfig::new(16, false, false));
 
 /// A tile-shaped test input: the device buffer plus the logical [`Space`] it's
 /// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view
@@ -42,12 +47,16 @@ impl TileInput {
     /// recursion, or [`untiled`](TileInputBuilder::untiled) for none — then a data
     /// finalizer ([`arange`](TileInputBuilder::arange) /
     /// [`zeros`](TileInputBuilder::zeros)).
-    pub fn builder(client: &ComputeClient<TestRuntime>, space: Space) -> TileInputBuilder {
+    pub fn builder(
+        client: &ComputeClient<TestRuntime>,
+        space: Space,
+        leaf: Leaf,
+    ) -> TileInputBuilder {
         TileInputBuilder {
             client: client.clone(),
             space,
             levels: None,
-            leaf: Leaf::default(),
+            leaf,
             residence: Vec::new(),
         }
     }
@@ -147,9 +156,7 @@ impl TileInput {
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
         let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling))
-            .leaf(self.leaf)
-            .residence(&self.residence)
+        CubekTileSpec::new(Projection::tiled(&axes, tiling), self.leaf).residence(&self.residence)
     }
 
     /// The semantic space the tile lives in.
@@ -185,12 +192,6 @@ pub struct TileInputBuilder {
 }
 
 impl TileInputBuilder {
-    /// What this operand is at the instruction (default [`Leaf::Memory`], the memory form).
-    pub fn leaf(mut self, leaf: Leaf) -> Self {
-        self.leaf = leaf;
-        self
-    }
-
     /// Where this operand lives at each level of the space, coarse to fine (default: every level
     /// [`Residence::InPlace`], staging nothing).
     pub fn residence(mut self, residence: &[Residence]) -> Self {

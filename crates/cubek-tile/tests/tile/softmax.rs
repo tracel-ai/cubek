@@ -9,22 +9,13 @@
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
 use cubek_tile::{
-    Axis, Leaf, MaskProbe, MemData, MemoryMmaConfig, RowState, Space, StagePlan, TileArg,
-    TileArgLaunch, TileSpec,
+    Axis, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
 };
 
 const Q: Axis = Axis(0);
 const S: Axis = Axis(1);
-
-const MEMORY_LEAF: Leaf = Leaf::Memory {
-    config: MemoryMmaConfig {
-        unroll_limit: 16,
-        split_edge: false,
-        lane_fanout: false,
-    },
-};
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -186,11 +177,11 @@ fn run(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S]),
+            TileSpec::direct(&[Q, S], MEMORY_LEAF),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S]),
+            TileSpec::direct(&[Q, S], MEMORY_LEAF),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
@@ -478,11 +469,11 @@ fn run_smem_acc(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S]),
+            TileSpec::direct(&[Q, S], MEMORY_LEAF),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S]),
+            TileSpec::direct(&[Q, S], MEMORY_LEAF),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),

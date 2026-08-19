@@ -42,7 +42,7 @@ struct TileSourceData<'a, R: Runtime> {
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization<R>>,
-    /// What this operand is at the instruction; default [`Leaf::Memory`], the memory form.
+    /// What this operand is at the instruction, stated when the builder is started.
     leaf: Leaf,
 }
 
@@ -60,7 +60,7 @@ pub struct StridedTileSource<'a, Sp, Sub, Q, R: Runtime> {
 }
 
 impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
-    pub(crate) fn new(binding: TensorBinding<R>) -> Self {
+    pub(crate) fn new(binding: TensorBinding<R>, leaf: Leaf) -> Self {
         StridedTileSource {
             data: TileSourceData {
                 binding,
@@ -76,7 +76,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 residence: Vec::new(),
                 units: 0,
                 quant: None,
-                leaf: Leaf::default(),
+                leaf,
             },
             _state: PhantomData,
         }
@@ -175,14 +175,6 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// unchecked, `Some` forces checked at that mode).
     pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
         self.data.boundary = Some(boundary);
-        self
-    }
-
-    /// What this operand is at the instruction: a memory window ([`Leaf::Memory`], the default)
-    /// or a plane fragment in one of the two encodings. The partitioning says nothing about it;
-    /// operands that disagree meet the kind-pairing panics at the instruction.
-    pub fn leaf(mut self, leaf: Leaf) -> Self {
-        self.data.leaf = leaf;
         self
     }
 
@@ -323,8 +315,8 @@ impl<R: Runtime> QuantOperand<R> {
 }
 
 impl<R: Runtime> StridedOperand<R> {
-    /// Start describing a strided tile kernel operand sourced from `binding`: a
-    /// [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space)
+    /// Start describing a strided tile kernel operand sourced from `binding`, contracted at
+    /// `leaf`: a [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space)
     /// and either [`subspace`](StridedTileSource::subspace) or
     /// [`gathered`](StridedTileSource::gathered) (`build` won't compile until both are
     /// set), then optionally [`batches`](StridedTileSource::batches),
@@ -332,8 +324,11 @@ impl<R: Runtime> StridedOperand<R> {
     /// [`residence`](StridedTileSource::residence) or [`checked`](StridedTileSource::checked).
     /// Most optional defaults are conservative; residency defaults to reading in place, so a
     /// fragment leaf that cannot address its source must state where it is materialized.
-    pub fn source<'a>(binding: TensorBinding<R>) -> StridedTileSource<'a, Unset, Unset, Unset, R> {
-        StridedTileSource::new(binding)
+    pub fn source<'a>(
+        binding: TensorBinding<R>,
+        leaf: Leaf,
+    ) -> StridedTileSource<'a, Unset, Unset, Unset, R> {
+        StridedTileSource::new(binding, leaf)
     }
 }
 
@@ -409,10 +404,9 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             residence.len()
         );
 
-        let mut spec = TileSpec::new(projection)
+        let mut spec = TileSpec::new(projection, leaf)
             .with_boundary(boundary)
             .units(units)
-            .leaf(leaf)
             .residence(&residence);
         if let Some(storage) = storage {
             spec = spec.storage(storage);

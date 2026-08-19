@@ -288,11 +288,10 @@ fn launch_strided<R: Runtime>(
         let [outer, inner] = axes;
         let v = launch.vector_size(inner, &[(&binding, &[outer, inner])], dtype.size());
         launch
-            .arg(binding)
+            .arg(binding, leaf)
             .subspace(&[outer, inner])
             .batches(out_batch_axes)
             .vectorize(v)
-            .leaf(leaf)
             .residence(residence)
             .build()
     };
@@ -381,11 +380,10 @@ fn launch_tma<R: Runtime>(
     );
     let v_out = launch.vector_size(N, &[(&out, &[M, N])], dtypes.acc_global.size());
     let c = launch
-        .arg(out)
+        .arg(out, leaf)
         .subspace(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
-        .leaf(leaf)
         .build();
     cmma_kernel::launch::<Tma, R>(
         client,

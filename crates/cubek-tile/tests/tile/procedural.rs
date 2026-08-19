@@ -1,7 +1,7 @@
 //! Procedural tiles evaluate logical coordinates without a tensor-backed source.
 
 use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -15,7 +15,7 @@ fn procedural_kernel<E: Float>(
     #[comptime] recipe: ProceduralRecipe,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe, MEMORY_LEAF);
     // Select the second 2x3 tile, then evaluate its first logical coordinate. This exercises
     // `Tile::at`'s origin rebasing rather than merely the top-level recipe evaluation.
     let region = Region::trailing(comptime!(space.clone()), 1usize, 1usize);
@@ -38,7 +38,7 @@ fn procedural_stage_kernel<E: Float>(
     #[comptime] recipe: ProceduralRecipe,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe, MEMORY_LEAF);
     let output = output.tile(comptime!(space.clone()));
     let mut ring = Ring::unary(
         &source,
@@ -68,6 +68,7 @@ fn procedural_mma_kernel<E: Float>(
     let lhs = Tile::<E>::procedural(
         comptime!(space.project(&[ROW, REDUCE])),
         comptime!(ProceduralRecipe::axis_index(REDUCE)),
+        MEMORY_LEAF,
     );
     let rhs = rhs.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
@@ -97,7 +98,7 @@ fn run(recipe: ProceduralRecipe) -> HostData {
         space.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         recipe,
@@ -129,7 +130,7 @@ fn run_copy(recipe: ProceduralRecipe) -> HostData {
         space.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         recipe,
@@ -168,11 +169,11 @@ fn run_mma(buffering: Buffering) -> HostData {
             rhs.binding().into_tensor_arg(),
             // Only the tensor operand takes a stage; the procedural lhs stays coordinate-backed
             // at its default all-in-place residence, which is the point of the test.
-            TileSpec::direct(&[REDUCE, COL]).residence(&[Residence::Smem]),
+            TileSpec::direct(&[REDUCE, COL], MEMORY_LEAF).residence(&[Residence::Smem]),
         ),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         dtype,
@@ -190,7 +191,8 @@ fn procedural_smem_stage_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     let stage = comptime!(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
-    let source = Tile::<E>::procedural_resident(comptime!(space.clone()), recipe, stage);
+    let source =
+        Tile::<E>::procedural_resident(comptime!(space.clone()), recipe, stage, MEMORY_LEAF);
     let output = output.tile(comptime!(space.clone()));
     let mut ring = Ring::unary(
         &source,
@@ -217,7 +219,7 @@ fn procedural_direct_copy_kernel<E: Float>(
     #[comptime] recipe: ProceduralRecipe,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe, MEMORY_LEAF);
     let mut output = output.tile(space);
     output.copy_from(&source);
 }
@@ -231,7 +233,7 @@ fn procedural_divided_copy_kernel<E: Float>(
     #[comptime] recipe: ProceduralRecipe,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe);
+    let source = Tile::<E>::procedural(comptime!(space.clone()), recipe, MEMORY_LEAF);
     let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
     let source = source.at(&region);
     let output = output.tile(comptime!(space.clone()));
@@ -261,7 +263,7 @@ fn run_smem_stage(recipe: ProceduralRecipe) -> HostData {
         space.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         recipe,
@@ -286,7 +288,7 @@ fn run_direct_copy(recipe: ProceduralRecipe) -> HostData {
         space.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         recipe,
@@ -368,7 +370,7 @@ fn dynamic_procedural_axis_does_not_require_a_source_bound() {
         concrete.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         ProceduralRecipe::one(),
@@ -407,7 +409,7 @@ fn dynamic_axis_keeps_static_procedural_bound_aligned_after_divide() {
         concrete.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL]),
+            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
         ),
         space,
         ProceduralRecipe::one(),

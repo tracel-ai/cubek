@@ -11,7 +11,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
 
 use cubek_tile::*;
 
@@ -89,6 +89,7 @@ fn procedural_reduce_kernel<E: Float>(
     let input = Tile::<E>::procedural(
         comptime!(space.clone()),
         comptime!(ProceduralRecipe::axis_index(K)),
+        MEMORY_LEAF,
     );
     let mut output = output.tile(space);
     reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
@@ -107,6 +108,7 @@ fn staged_procedural_reduce_kernel<E: Float>(
         comptime!(space.clone()),
         comptime!(ProceduralRecipe::axis_index(K)),
         stage,
+        MEMORY_LEAF,
     );
     let mut output = output.tile(space);
     reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
@@ -154,15 +156,15 @@ fn run(
         space.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
-            TileSpec::direct(a_axes),
+            TileSpec::direct(a_axes, MEMORY_LEAF),
         ),
         TileArgLaunch::new(
             b_handle.binding().into_tensor_arg(),
-            TileSpec::direct(b_axes),
+            TileSpec::direct(b_axes, MEMORY_LEAF),
         ),
         TileArgLaunch::new(
             c_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(c_axes),
+            TileSpec::direct(c_axes, MEMORY_LEAF),
         ),
         space,
         f32_ty,
@@ -429,9 +431,12 @@ fn run_reduce_with_vw(
                 space.cube_dim(&client),
                 TileArgLaunch::new(
                     in_binding.into_tensor_arg(),
-                    TileSpec::direct(in_axes).residence(in_residence),
+                    TileSpec::direct(in_axes, MEMORY_LEAF).residence(in_residence),
                 ),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
+                TileArgLaunch::new(
+                    out_binding.into_tensor_arg(),
+                    TileSpec::direct(out_axes, MEMORY_LEAF),
+                ),
                 space,
                 op,
                 f32_ty,
@@ -444,9 +449,12 @@ fn run_reduce_with_vw(
                 space.cube_dim(&client),
                 TileArgLaunch::new(
                     in_binding.into_tensor_arg(),
-                    TileSpec::direct(in_axes).residence(in_residence),
+                    TileSpec::direct(in_axes, MEMORY_LEAF).residence(in_residence),
                 ),
-                TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
+                TileArgLaunch::new(
+                    out_binding.into_tensor_arg(),
+                    TileSpec::direct(out_axes, MEMORY_LEAF),
+                ),
                 space,
                 op,
                 f32_ty,
@@ -721,11 +729,14 @@ fn run_reduce_checked(
         space.cube_dim(&client),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
-            TileSpec::direct(in_axes)
+            TileSpec::direct(in_axes, MEMORY_LEAF)
                 .checked(true)
                 .residence(in_residence),
         ),
-        TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
+        TileArgLaunch::new(
+            out_binding.into_tensor_arg(),
+            TileSpec::direct(out_axes, MEMORY_LEAF),
+        ),
         space,
         op,
         f32_ty,
@@ -884,7 +895,7 @@ fn test_procedural_max_masks_nondivisible_k() {
         space.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M]),
+            TileSpec::direct(&[M], MEMORY_LEAF),
         ),
         space,
         dtype,
@@ -913,7 +924,7 @@ fn test_staged_procedural_max_masks_nondivisible_k() {
         space.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M]),
+            TileSpec::direct(&[M], MEMORY_LEAF),
         ),
         space,
         dtype,
