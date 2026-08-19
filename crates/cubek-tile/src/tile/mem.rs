@@ -663,7 +663,11 @@ impl<T: Numeric> MemData<T> {
                     projection: gmem_projection,
                 },
                 // Stage origins are never negative, and smem never overhangs (`Overhang::Never`
-                // below), so the boundary policy is never consulted.
+                // below), so the boundary policy is never consulted. The empty list is the only
+                // thing it *can* be: this window is shaped over the buffer's own dims (a tiled
+                // stage's grid and tile fragments), while the sub-windows that inherit it are
+                // shaped over coordinates, so any per-axis list minted here would land on the
+                // wrong axes one level down.
                 window: Window::new(origin, extent, bound, false, comptime!(SmallVec::new())),
                 projection: comptime!(form.projection),
                 map,
@@ -1329,6 +1333,9 @@ impl<T: Numeric> MemData<T> {
     /// that is the aliasing [`matrix_mut`](MemData::matrix_mut) already refuses a gather for,
     /// arriving by a second route. Refused rather than silently raced.
     fn write_check(&self) -> comptime_type!(bool) {
+        // Whole-operand on purpose, unlike the per-axis mask below it: one clamped axis is enough
+        // to fold two distinct cells onto one, so there is no such thing as a partly writable
+        // clamped operand.
         comptime!(assert!(
             !self.window.boundaries.contains(&Some(Boundary::Clamp))
                 || !self.access.overhang.masks(),
@@ -2278,6 +2285,19 @@ impl Window {
         #[comptime] signed: bool,
         #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
     ) -> Self {
+        // Both walks index `origin`, `pos` and `boundaries` by one counter, so a rank slip there
+        // would silently apply one axis's mode to another rather than fail. `bound` is left out:
+        // a sub-window inherits its parent's, which on a stage is the buffer's own rank (a tiled
+        // stage's fragments) rather than the coordinate rank the origin is at.
+        let origin_rank = origin.len();
+        let extent_rank = extent.len();
+        comptime!(assert!(
+            extent_rank == origin_rank
+                && (boundaries.is_empty() || boundaries.len() == origin_rank),
+            "Window: origin ({origin_rank}), extent ({extent_rank}) and boundaries ({}) index the \
+             same axes and must agree in rank",
+            boundaries.len()
+        ));
         Window {
             origin,
             extent,
@@ -2343,8 +2363,10 @@ impl Layout for Window {
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
         let mut valid = true;
+        // `origin`, not `bound`: the two share a rank on every window a mode can reach, and this
+        // is the one `pos` and `boundaries` are indexed by.
         #[unroll]
-        for i in 0..self.bound.len() {
+        for i in 0..self.origin.len() {
             if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
                 let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
                 let inside = if comptime!(self.signed) {

@@ -112,7 +112,9 @@ impl TileSpec {
         self.with_boundary(check.then_some(Boundary::Zero))
     }
 
-    /// Set the optional boundary handling mode for out-of-bounds access.
+    /// Set one boundary handling mode for out-of-bounds access on every coordinate axis. Flattens
+    /// whatever per-axis list [`boundaries`](Self::boundaries) may have set, so sequence the
+    /// per-axis call after this one, not before it.
     pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
         let coord_rank = self.projection.coordinate_rank();
         self.boundaries = match boundary {
@@ -124,7 +126,17 @@ impl TileSpec {
 
     /// State the boundary mode for every coordinate axis. An all-`None` list collapses to the
     /// empty one, so "nothing is checked" has a single representation whichever setter minted it.
+    /// The list is shaped over [`coordinate_rank`](Projection::coordinate_rank), not the buffer's
+    /// physical rank, which storage tiling splits into grid and tile fragments no
+    /// [`Window`](crate::Window) ever addresses.
     pub fn boundaries(mut self, boundaries: &[Option<Boundary>]) -> Self {
+        let coord_rank = self.projection.coordinate_rank();
+        assert!(
+            boundaries.len() == coord_rank,
+            "TileSpec::boundaries: {} modes stated but the operand has {coord_rank} coordinate \
+             axes",
+            boundaries.len()
+        );
         self.boundaries = match boundaries.iter().any(Option::is_some) {
             true => SmallVec::from_slice(boundaries),
             false => SmallVec::new(),

@@ -8,7 +8,7 @@ use cubecl::{
 use cubek_test_utils::MEMORY_LEAF;
 use cubek_tile::{
     Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap,
-    Projection, Residence, Scale, StorageTiling, StridedOperand, Tiling, WalkOrder,
+    Projection, Residence, Scale, StorageTiling, StridedOperand, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -537,7 +537,7 @@ fn vector_size_falls_back_to_scalar() {
 }
 
 #[test]
-#[should_panic(expected = "can overhang")]
+#[should_panic(expected = "not provably in bounds")]
 fn arg_checked_and_vectorized_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
@@ -565,6 +565,33 @@ fn arg_vectorized_with_outer_axis_overhang_succeeds() {
         arg.spec.boundaries.as_slice(),
         &[Some(Boundary::Zero), None]
     );
+}
+
+/// `checked(true)` states the mode, not the axis list: the per-axis derivation still keeps it off
+/// the axes that cannot leave the buffer. Only `checked(false)` disarms outright.
+#[test]
+fn arg_explicit_check_still_narrows_to_the_unsettled_axes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4); M divides, so no override can put a mask on it.
+    let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
+
+    let forced = launch
+        .arg(binding(&client, &[64, 18]), MEMORY_LEAF)
+        .subspace(&[M, K])
+        .checked(true)
+        .build();
+    assert_eq!(
+        forced.spec.boundaries.as_slice(),
+        &[None, Some(Boundary::Zero)]
+    );
+}
+
+/// The list is shaped over coordinate axes, and the setter is where a hand-built spec should learn
+/// that: `Tile::of` would only catch it in-kernel, one comptime expansion away from the call.
+#[test]
+#[should_panic(expected = "2 coordinate axes")]
+fn tile_spec_boundaries_must_match_the_coordinate_rank() {
+    let _ = TileSpec::new(Projection::direct(&[M, N]), MEMORY_LEAF).boundaries(&[None]);
 }
 
 #[test]

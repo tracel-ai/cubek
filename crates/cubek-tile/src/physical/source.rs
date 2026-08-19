@@ -167,13 +167,20 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// overwrites whatever mode was set before it, so a `with_boundary(Some(Boundary::Clamp))`
     /// before this call is silently dropped back to `Zero`. Sequence a `Clamp` override after
     /// `checked`, not before it.
+    ///
+    /// `checked(false)` disarms the operand outright. `checked(true)` states the *mode*, not the
+    /// axis list: [`build`](Self::build) still lands it only on the coordinate axes that can
+    /// leave the buffer, so an axis whose map is the identity of a logical axis whose tiling
+    /// divides stays unchecked whatever this says. That filtering is what lets a clamped operand
+    /// keep a vectorized innermost axis; there is no setter that masks a settled axis.
     pub fn checked(mut self, check: bool) -> Self {
         self.data.boundary = Some(if check { Some(Boundary::Zero) } else { None });
         self
     }
 
     /// Set the boundary handling mode for out-of-bounds access explicitly (`None` forces
-    /// unchecked, `Some` forces checked at that mode).
+    /// unchecked, `Some` forces checked at that mode). Like [`checked`](Self::checked), a `Some`
+    /// states the mode and [`build`](Self::build) picks the axes it lands on.
     pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
         self.data.boundary = Some(boundary);
         self
@@ -453,28 +460,39 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         projection.validate(v);
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
+        assert!(
+            coord_rank > 0,
+            "StridedTileSource: an operand must address at least one coordinate"
+        );
 
         // Whether coordinate axis `pa` is inside the buffer by construction. Only an identity map
         // can be: it reaches exactly as far as its own coordinate, so it stays inside whenever its
-        // tiling divides. An affine map reaches further than any axis extent describes, and how
-        // far is the caller's to size the buffer for, which is the trust the derivation above
-        // already runs on; no proof here can retire its policy.
+        // tiling divides. Its `Offset::Static(0)` is also what keeps it clear of the *underflow*
+        // half of the derivation above: a negative or `Dynamic` offset makes a map non-identity,
+        // so the axis whose origin can fall below zero is never one settled here. An affine map
+        // reaches further than any axis extent describes, and how far is the caller's to size the
+        // buffer for, which is the trust the derivation above already runs on; no proof here can
+        // retire its policy.
         let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
+            // An axis the concrete space does not describe is unproven, not proven: the
+            // derivation above already skips it when *arming* the mode, so nothing here may use
+            // that same silence to drop one.
             Some(axis) => {
-                concrete.is_some_and(|space| !space.contains(axis) || !space.overhangs(axis))
+                concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
             }
             None => false,
         };
 
-        // A vector line only needs a scalar fallback when its own innermost axis can overhang.
+        // A vector line only needs a scalar fallback when its own innermost axis is unsettled.
         // Other coordinate axes may still be masked or clamped independently (NHWC interpolation
         // clamps H/W while serving a contiguous C line).
-        let innermost_overhangs = !settled(coord_rank - 1);
+        let innermost_unsettled = !settled(coord_rank - 1);
         assert!(
-            !(boundary.is_some() && v > 1 && innermost_overhangs),
-            "StridedTileSource: the innermost axis is served in vector lines but can overhang; \
-             serve it scalar or \
-             state `checked(false)` if the launch proves its vector lines are in bounds"
+            !(boundary.is_some() && v > 1 && innermost_unsettled),
+            "StridedTileSource: the innermost axis is served in vector lines but is not provably \
+             in bounds (it overhangs its tiling, or its map is affine and reaches past any extent \
+             stated here); serve it scalar, or state `checked(false)` if the launch proves its \
+             vector lines are in bounds"
         );
 
         // The mode covers the coordinate axes that can leave the buffer, and only those: a settled
