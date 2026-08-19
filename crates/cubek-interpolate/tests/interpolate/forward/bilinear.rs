@@ -1,19 +1,120 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, TileSize},
+    interpolate_tile,
     launch::InterpolateStrategy,
     routines::{
         BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
         SharedMemoryStrategy,
     },
 };
+use cubek_test_utils::TestInput;
 
-use super::{make_problem, run_interpolate_global_test};
+use super::{
+    build_output_tensor, make_problem, output_host_f32, run_interpolate_global_test, validate_test,
+};
 
 const BILINEAR_TOLERANCE: f32 = 0.00001;
 const BILINEAR_HIGH_RESOLUTION_TOLERANCE: f32 = 0.0001;
 
 const TILE_SIZE: TileSize = TileSize::new(16, 16);
+
+#[test]
+fn test_interpolate_tile_upsample_half_pixel() {
+    let client = TestRuntime::client(&Default::default());
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    let problem = make_problem([2, 3, 5, 3], [7, 9], options);
+    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
+        .uniform(42, -3.0, 3.0)
+        .generate_with_f32_host_data();
+    let expected = cubek_interpolate::eval::cpu_reference::cpu_reference_interpolate_from_host(
+        &input_data,
+        &problem.output_shape(),
+        &options,
+    );
+    let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
+
+    let result = interpolate_tile(
+        &client,
+        input.clone().binding(),
+        output.clone().binding(),
+        options,
+        input.dtype,
+    );
+
+    validate_test(
+        result,
+        output_host_f32(&client, output),
+        expected,
+        BILINEAR_TOLERANCE,
+    );
+}
+
+/// A channel count that fills a plane, so the lanes divide the channels rather than the columns
+/// ([`TileGeometry::heuristic`]). That is a different space, and a different leaf shape.
+#[test]
+fn test_interpolate_tile_wide_channels() {
+    let client = TestRuntime::client(&Default::default());
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    let problem = make_problem([2, 5, 4, 32], [9, 11], options);
+    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
+        .uniform(7, -3.0, 3.0)
+        .generate_with_f32_host_data();
+    let expected = cubek_interpolate::eval::cpu_reference::cpu_reference_interpolate_from_host(
+        &input_data,
+        &problem.output_shape(),
+        &options,
+    );
+    let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
+
+    let result = interpolate_tile(
+        &client,
+        input.clone().binding(),
+        output.clone().binding(),
+        options,
+        input.dtype,
+    );
+
+    validate_test(
+        result,
+        output_host_f32(&client, output),
+        expected,
+        BILINEAR_TOLERANCE,
+    );
+}
+
+/// A channel block of sixteen takes the `Const<4>` channel-line path while the bilinear gather
+/// still clamps only the spatial coordinates at the image edge.
+#[test]
+fn test_interpolate_tile_vectorized_channels() {
+    let client = TestRuntime::client(&Default::default());
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    let problem = make_problem([1, 3, 5, 16], [7, 9], options);
+    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
+        .uniform(11, -3.0, 3.0)
+        .generate_with_f32_host_data();
+    let expected = cubek_interpolate::eval::cpu_reference::cpu_reference_interpolate_from_host(
+        &input_data,
+        &problem.output_shape(),
+        &options,
+    );
+    let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
+
+    let result = interpolate_tile(
+        &client,
+        input.clone().binding(),
+        output.clone().binding(),
+        options,
+        input.dtype,
+    );
+
+    validate_test(
+        result,
+        output_host_f32(&client, output),
+        expected,
+        BILINEAR_TOLERANCE,
+    );
+}
 
 #[test]
 fn test_interpolate_bilinear_identity() {

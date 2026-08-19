@@ -7,17 +7,17 @@ mod strategy;
 pub use benchmark::bench;
 pub use correctness::InterpolateCorrectness;
 pub use problem::problems;
-pub use strategy::strategies;
+pub use strategy::{InterpolateBenchmarkStrategy, strategies};
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
-use crate::{definition::InterpolateProblem, launch::InterpolateStrategy};
+use crate::definition::InterpolateProblem;
 
 pub struct Category;
 
 impl cubek_test_utils::Category for Category {
     type Problem = InterpolateProblem;
-    type Strategy = InterpolateStrategy;
+    type Strategy = InterpolateBenchmarkStrategy;
 
     fn id(&self) -> &'static str {
         "interpolate"
@@ -31,13 +31,13 @@ impl cubek_test_utils::Category for Category {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<InterpolateStrategy>> {
+    fn strategies(&self) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
         strategies()
     }
 
     fn bench(
         &self,
-        strategy: &InterpolateStrategy,
+        strategy: &InterpolateBenchmarkStrategy,
         problem: &InterpolateProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
@@ -48,7 +48,7 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<
         &dyn cubek_test_utils::Correctness<
             Problem = InterpolateProblem,
-            Strategy = InterpolateStrategy,
+            Strategy = InterpolateBenchmarkStrategy,
         >,
     > {
         Some(&InterpolateCorrectness)

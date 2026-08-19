@@ -2,6 +2,7 @@ mod bicubic;
 mod bilinear;
 mod lanczos3;
 mod nearest;
+mod tile;
 
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_interpolate::{

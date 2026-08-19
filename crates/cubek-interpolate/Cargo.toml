@@ -30,6 +30,7 @@ cubecl-common = { workspace = true }
 half = { workspace = true }
 thiserror = { workspace = true }
 cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.2", default-features = false, optional = true }
+cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.2", default-features = false }
 serde = { workspace = true }
 
 [dev-dependencies]

@@ -9,11 +9,13 @@ use cubecl::{
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{definition::InterpolateProblem, launch::InterpolateStrategy};
+use crate::{definition::InterpolateProblem, interpolate_tile};
 use crate::{interpolate, interpolate_backward};
 
+use super::InterpolateBenchmarkStrategy;
+
 pub fn bench(
-    strategy: &InterpolateStrategy,
+    strategy: &InterpolateBenchmarkStrategy,
     problem: &InterpolateProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -40,7 +42,7 @@ pub fn bench(
 
 struct InterpolateBench {
     problem: InterpolateProblem,
-    strategy: InterpolateStrategy,
+    strategy: InterpolateBenchmarkStrategy,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     dtype: ElemType,
@@ -67,19 +69,31 @@ impl Benchmark for InterpolateBench {
             InterpolateProblem::Forward(prob) => {
                 let output = TensorHandle::empty(&self.client, prob.output_shape(), self.dtype);
 
-                interpolate(
-                    &self.client,
-                    input.binding(),
-                    output.clone().binding(),
-                    prob.options,
-                    self.strategy,
-                    self.dtype,
-                )
+                match self.strategy {
+                    InterpolateBenchmarkStrategy::Standard(strategy) => interpolate(
+                        &self.client,
+                        input.binding(),
+                        output.clone().binding(),
+                        prob.options,
+                        strategy,
+                        self.dtype,
+                    ),
+                    InterpolateBenchmarkStrategy::Tile => interpolate_tile(
+                        &self.client,
+                        input.binding(),
+                        output.clone().binding(),
+                        prob.options,
+                        self.dtype,
+                    ),
+                }
                 .map_err(|err| format!("{err}"))?;
 
                 Ok(output)
             }
             InterpolateProblem::Backward(prob) => {
+                if self.strategy == InterpolateBenchmarkStrategy::Tile {
+                    return Err("tile interpolation does not support backward problems".to_string());
+                }
                 let [n, _, _, c] = prob.out_grad_shape;
                 let input_grad_shape = vec![n, prob.input_size[0], prob.input_size[1], c];
 
@@ -115,7 +129,8 @@ impl Benchmark for InterpolateBench {
     fn name(&self) -> String {
         match &self.problem {
             InterpolateProblem::Forward(prob) => format!(
-                "interpolate-{:?}-{:?}-{:?}-{:?}",
+                "interpolate-{:?}-{:?}-{:?}-{:?}-{:?}",
+                self.strategy,
                 self.dtype,
                 prob.options.mode,
                 self.device,
@@ -123,8 +138,8 @@ impl Benchmark for InterpolateBench {
             )
             .to_lowercase(),
             InterpolateProblem::Backward(prob) => format!(
-                "interpolate-backward-{:?}-{:?}-{:?}-{:?}",
-                self.dtype, prob.options.mode, self.device, prob.out_grad_shape,
+                "interpolate-backward-{:?}-{:?}-{:?}-{:?}-{:?}",
+                self.strategy, self.dtype, prob.options.mode, self.device, prob.out_grad_shape,
             )
             .to_lowercase(),
         }

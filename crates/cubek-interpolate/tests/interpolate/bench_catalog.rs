@@ -3,7 +3,9 @@
 #![cfg(feature = "benchmarks")]
 
 use cubek_interpolate::eval::benchmarks::InterpolateCorrectness;
-use cubek_interpolate::{definition::InterpolateProblem, launch::InterpolateStrategy};
+use cubek_interpolate::{
+    definition::InterpolateProblem, eval::benchmarks::InterpolateBenchmarkStrategy,
+};
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
@@ -21,7 +23,7 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 fn run(strategy_id: &str, problem_id: &str) {
     use cubek_interpolate::eval::benchmarks::{problems, strategies};
 
-    let strategy: InterpolateStrategy = lookup(strategies(), strategy_id);
+    let strategy: InterpolateBenchmarkStrategy = lookup(strategies(), strategy_id);
     let problem: InterpolateProblem = lookup(problems(), problem_id);
 
     let actual = match InterpolateCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
