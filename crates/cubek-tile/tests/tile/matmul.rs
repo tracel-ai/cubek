@@ -2,17 +2,17 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
+    TestRuntime,
     cmma::{MatrixIdent, MatrixLayout},
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
     zspace::shape,
-    TestRuntime,
 };
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
-    assert_equals_approx, HostData, HostDataType, TestInput, TestOutcome, TileInput,
-    ValidationResult, MEMORY_LEAF,
+    HostData, HostDataType, MEMORY_LEAF, TestInput, TestOutcome, TileInput, ValidationResult,
+    assert_equals_approx,
 };
 
 use cubek_tile::*;
@@ -1832,6 +1832,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
+            None.into(),
             TileSpec::direct(&[M, K], MEMORY_LEAF),
             scheme,
             DequantAt::Load,
@@ -2438,6 +2439,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
+            None.into(),
             TileSpec::direct(&[M, K], MEMORY_LEAF),
             scheme,
             DequantAt::Load,
@@ -2520,6 +2522,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K], MEMORY_LEAF),
             scheme,
@@ -2635,6 +2638,7 @@ fn mma_matmul_quant_until_read() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
+            None.into(),
             TileSpec::direct(&[M, K], leaf).residence(&[Residence::Smem]),
             scheme,
             DequantAt::Read,
@@ -2723,6 +2727,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K], leaf).residence(&[Residence::Smem]),
             scheme,
@@ -2817,6 +2822,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
+            None.into(),
             TileSpec::direct(&[M, K], leaf).residence(&[Residence::Smem]),
             scheme,
             DequantAt::Load,
@@ -2910,6 +2916,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
             None.into(),
+            None.into(),
             TileSpec::direct(&[M, K], leaf).residence(&[Residence::Smem]),
             scheme,
             DequantAt::Load,
@@ -3002,6 +3009,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K], leaf).residence(&[Residence::Smem]),
             scheme,
@@ -3509,6 +3517,7 @@ fn run_register_matmul_quant(
         QuantTileArgLaunch::new(
             a_arg,
             scales_arg,
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K], MEMORY_LEAF).residence(residence),
             scheme,

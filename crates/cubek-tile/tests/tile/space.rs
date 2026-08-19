@@ -1,6 +1,9 @@
 //! Unit tests for [`Space`]
 
-use cubek_tile::{Axis, Buffering, ByAxis, Distribution, Partitioner, Space};
+use cubek_tile::{
+    Axis, Buffering, ByAxis, Cut, Distribution, Operand, OperandSet, Partitioner, Residence, Space,
+    Tiling, WalkOrder,
+};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -206,4 +209,111 @@ fn with_partitioner_stacks_levels_and_divide_descends() {
     // `final_space()` shortcuts straight to the bottom of the stack.
     assert_eq!(space.final_space().extent(M), 4);
     assert!(space.final_space().is_final());
+}
+
+// ---- Tiling::over -----------------------------------------------------------
+
+struct MatmulOperands {
+    a: Operand,
+    b: Operand,
+    out: Operand,
+}
+
+impl OperandSet for MatmulOperands {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.a, &mut self.b, &mut self.out].into_iter()
+    }
+}
+
+fn matmul_operands() -> MatmulOperands {
+    MatmulOperands {
+        a: Operand::input(&[M, K]),
+        b: Operand::input(&[K, N]),
+        out: Operand::output(&[M, N]),
+    }
+}
+
+#[test]
+fn over_builds_the_space_plain_tiling_would() {
+    let plain = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(32))
+                .axis(K, Cut::sequential(16))
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4))
+        })
+        .build();
+
+    let (space, _) = Tiling::over(matmul_operands())
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(32))
+                .axis(K, Cut::sequential(16));
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4));
+        })
+        .build();
+
+    assert_eq!(space.partitioner(), plain.partitioner());
+    assert_eq!(space.rank(), plain.rank());
+    assert_eq!(space.extent(M), plain.extent(M));
+}
+
+#[test]
+fn over_seals_ladders_and_omission_is_in_place() {
+    // Three levels: inputs staged at the first, the accumulator at the second, silence at the
+    // third. Every unstated slot seals to InPlace, one residence per level.
+    let (_, ops) = Tiling::over(matmul_operands())
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage(Residence::Smem);
+            o.b.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4));
+            o.out.stage(Residence::Plane);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4));
+        })
+        .build();
+
+    let in_place = Residence::InPlace;
+    assert_eq!(ops.a.residences(), &[Residence::Smem, in_place, in_place]);
+    assert_eq!(ops.b.residences(), &[Residence::Smem, in_place, in_place]);
+    assert_eq!(
+        ops.out.residences(),
+        &[in_place, Residence::Plane, in_place]
+    );
+}
+
+#[test]
+#[should_panic(expected = "more than one residence")]
+fn over_double_statement_at_one_level_panics() {
+    let _ = Tiling::over(matmul_operands())
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage(Residence::Smem);
+            o.a.stage(Residence::Plane);
+        })
+        .build();
 }

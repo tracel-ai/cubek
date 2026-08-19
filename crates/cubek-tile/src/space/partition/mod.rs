@@ -3,6 +3,7 @@
 mod distribution;
 mod geometry;
 mod launcher;
+mod operand;
 mod partitioner;
 mod tiling;
 mod walk;
@@ -10,6 +11,7 @@ mod walk_order;
 
 pub use distribution::*;
 pub use launcher::*;
+pub use operand::*;
 pub use partitioner::*;
 pub use tiling::*;
 pub use walk::*;
