@@ -1,12 +1,11 @@
-//! The 2-D register microkernel: a single contracted axis, no gathered operands.
+//! The 2-D contraction nest: a single contracted axis, no gathered operands.
 
 use cubecl::prelude::*;
 
-use super::base::{load_accumulators, store_accumulators};
-use super::block::contract_block;
+use crate::microkernel::block::{contract_block, load_accumulators, store_accumulators};
 use crate::*;
 
-/// The register microkernel for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
+/// The contraction nest for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
 /// matrix, the `mr × nr` block of `V`-wide accumulators lives in registers (load once, `kc` rank-1
 /// updates, store once). `pack_l`/`pack_r` narrow each operand's physical line (`served / pack`,
 /// `1` for plain/native). The storage element per operand is the price of a typed quant view
@@ -14,11 +13,11 @@ use crate::*;
 /// inlines at trace time, so folding the rank-1 step in here costs nothing over a separate fn.
 ///
 /// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` address
-/// the operands. [`mma_register_memory`](super::base::mma_register_memory) routes anything else to
-/// [`mma_register_gather`](super::gather::mma_register_gather), so the two conditions below are
+/// the operands. [`contract_memory`](super::contract_memory) routes anything else to
+/// [`contract_gather`](super::gather::contract_gather), so the two conditions below are
 /// re-asserted rather than re-decided.
 #[cube]
-pub(super) fn mma_register_direct<
+pub(super) fn contract_direct<
     E: Numeric,
     EL: Numeric,
     IL: Numeric,
@@ -37,13 +36,13 @@ pub(super) fn mma_register_direct<
 ) {
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
-        "register leaf: the 2-D microkernel contracts exactly one axis"
+        "contract: the 2-D nest contracts exactly one axis"
     ));
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered,
-        "register leaf: a gathered operand has no 2-D matrix view; it needs the N-D nest"
+        "contract: a gathered operand has no 2-D matrix view; it needs the N-D nest"
     ));
 
     // `nr` is a line count (spans `N` in `V`-wide lines); `mr` (rows) and `kc` (scalar `K`, off
@@ -107,7 +106,7 @@ pub(super) fn mma_register_direct<
                 && rhs.block_in_bounds(origin, rhs_extent)
                 && acc.block_in_bounds(origin, acc_extent);
             if in_bounds {
-                mma_register_direct_body::<E, EL, L, ER, V>(
+                contract_direct_body::<E, EL, L, ER, V>(
                     &mut acc,
                     &lhs,
                     &rhs,
@@ -119,7 +118,7 @@ pub(super) fn mma_register_direct<
                     lane_fanout,
                 );
             } else {
-                mma_register_direct_body::<E, EL, L, ER, V>(
+                contract_direct_body::<E, EL, L, ER, V>(
                     &mut acc,
                     &lhs,
                     &rhs,
@@ -133,7 +132,7 @@ pub(super) fn mma_register_direct<
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
-            mma_register_direct_body::<E, EL, L, ER, V>(
+            contract_direct_body::<E, EL, L, ER, V>(
                 &mut acc,
                 &lhs,
                 &rhs,
@@ -148,10 +147,10 @@ pub(super) fn mma_register_direct<
     }
 }
 
-/// The complete direct leaf body, specialized at trace time for either register-resident local
+/// The complete 2-D nest body, specialized at trace time for either register-resident local
 /// arrays (`unroll = true`) or the checked edge fallback (`unroll = false`).
 #[cube]
-fn mma_register_direct_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+fn contract_direct_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     acc: &mut AccumulateView<'_, E, V>,
     lhs: &MatrixView<'_, Vector<EL, L>>,
     rhs: &MatrixView<'_, Vector<ER, V>>,

@@ -1,9 +1,10 @@
-//! The register leaf entry point and shared accumulator helpers.
+//! The contraction nest's entry point: resolve each operand's quant packing, then route to
+//! the 2-D or the N-D nest.
 
 use cubecl::prelude::*;
 
-use super::direct::mma_register_direct;
-use super::gather::mma_register_gather;
+use super::direct::contract_direct;
+use super::gather::contract_gather;
 use crate::*;
 
 /// Run the register microkernel over each batch matrix, reading operands through the
@@ -15,10 +16,10 @@ use crate::*;
 ///
 /// The 2-D microkernel reads each operand as a batch matrix, which is only a description of it
 /// when one axis is contracted *and* a logical coordinate is a physical one. Either condition
-/// failing takes the N-D nest ([`mma_register_gather`]); they are independent, so a stencil
+/// failing takes the N-D nest ([`contract_gather`]); they are independent, so a stencil
 /// contracting a single axis is a gather just as much as a two-axis reduce is.
 #[cube]
-pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
+pub(crate) fn contract_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
@@ -52,91 +53,45 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     );
     if nd {
         if comptime!(pack_l == 1) {
-            mma_register_gather::<E, EL, i8, L, ER, ER, V>(
+            contract_gather::<E, EL, i8, L, ER, ER, V>(
                 acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         } else if comptime!(pack_l > 1) {
-            mma_register_gather::<E, EL, u32, L, ER, ER, V>(
+            contract_gather::<E, EL, u32, L, ER, ER, V>(
                 acc, lhs, rhs, space, pack_l, 1usize, config,
             );
         } else if comptime!(pack_r == 1) {
-            mma_register_gather::<E, EL, EL, L, ER, i8, V>(
+            contract_gather::<E, EL, EL, L, ER, i8, V>(
                 acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         } else if comptime!(pack_r > 1) {
-            mma_register_gather::<E, EL, EL, L, ER, u32, V>(
+            contract_gather::<E, EL, EL, L, ER, u32, V>(
                 acc, lhs, rhs, space, 1usize, pack_r, config,
             );
         } else {
-            mma_register_gather::<E, EL, EL, L, ER, ER, V>(
+            contract_gather::<E, EL, EL, L, ER, ER, V>(
                 acc, lhs, rhs, space, 1usize, 1usize, config,
             );
         }
     } else if comptime!(pack_l == 1) {
-        mma_register_direct::<E, EL, i8, L, ER, ER, V>(
+        contract_direct::<E, EL, i8, L, ER, ER, V>(
             acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     } else if comptime!(pack_l > 1) {
-        mma_register_direct::<E, EL, u32, L, ER, ER, V>(
+        contract_direct::<E, EL, u32, L, ER, ER, V>(
             acc, lhs, rhs, space, pack_l, 1usize, config,
         );
     } else if comptime!(pack_r == 1) {
-        mma_register_direct::<E, EL, EL, L, ER, i8, V>(
+        contract_direct::<E, EL, EL, L, ER, i8, V>(
             acc, lhs, rhs, space, 1usize, 1usize, config,
         );
     } else if comptime!(pack_r > 1) {
-        mma_register_direct::<E, EL, EL, L, ER, u32, V>(
+        contract_direct::<E, EL, EL, L, ER, u32, V>(
             acc, lhs, rhs, space, 1usize, pack_r, config,
         );
     } else {
-        mma_register_direct::<E, EL, EL, L, ER, ER, V>(
+        contract_direct::<E, EL, EL, L, ER, ER, V>(
             acc, lhs, rhs, space, 1usize, 1usize, config,
         );
-    }
-}
-
-/// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the rank-1
-/// updates never touch memory. Shared by both microkernels: how a cell is addressed differs, how
-/// the block is held does not. `unroll` is the caller's decision, not a size test here, because a
-/// masked block must stay rolled whatever its size.
-#[cube]
-pub(super) fn load_accumulators<E: Numeric, V: Size>(
-    acc: &mut AccumulateView<'_, E, V>,
-    #[comptime] mr: usize,
-    #[comptime] nr: usize,
-    #[comptime] unroll: bool,
-) -> Array<Vector<E, V>> {
-    let mut c = Array::<Vector<E, V>>::new(mr * nr);
-    #[unroll(unroll)]
-    for i in 0..mr {
-        #[unroll(unroll)]
-        for n in 0..nr {
-            c[i * nr + n] = acc.seed((i as u32, n as u32), comptime!(ReduceLeafKind::Sum));
-        }
-    }
-    c
-}
-
-/// The twin of [`load_accumulators`]: commit the block back once the whole reduce is folded into
-/// it. Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
-/// rather than the leaf knowing it was split.
-#[cube]
-pub(super) fn store_accumulators<E: Numeric, V: Size>(
-    acc: &mut AccumulateView<'_, E, V>,
-    c: Array<Vector<E, V>>,
-    #[comptime] mr: usize,
-    #[comptime] nr: usize,
-    #[comptime] unroll: bool,
-) {
-    #[unroll(unroll)]
-    for i in 0..mr {
-        #[unroll(unroll)]
-        for n in 0..nr {
-            acc.commit(
-                (i as u32, n as u32),
-                c[i * nr + n],
-                comptime!(ReduceLeafKind::Sum),
-            );
-        }
     }
 }

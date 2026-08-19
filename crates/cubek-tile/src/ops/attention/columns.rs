@@ -8,7 +8,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::sum, *};
+use crate::{microkernel::horizontal, *};
 
 #[cube]
 impl<EA: Float> Tile<EA> {
@@ -80,7 +80,7 @@ impl<EA: Float> Tile<EA> {
                 }
                 #[unroll]
                 for i in 0..height {
-                    let s = sum::vector::<EA, WI>(acc[i], wq);
+                    let s = horizontal::vector::<EA, WI>(acc[i], wq, LeafOp::Sum);
                     out.write((base + i) * cols + c, Vector::cast_from(s));
                 }
             }

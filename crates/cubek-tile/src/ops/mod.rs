@@ -10,6 +10,5 @@ mod reduce;
 mod softmax;
 
 pub use attention::*;
-pub use reduce::*;
 pub use softmax::*;
-// matmul adds `Tile` impls only; nothing to re-export.
+// matmul and reduce add `Tile` impls only; nothing to re-export.

@@ -3,6 +3,7 @@
 
 mod fold;
 pub mod instruction;
+pub mod microkernel;
 mod mma_config;
 mod ops;
 mod physical;
@@ -10,9 +11,8 @@ mod space;
 mod staging;
 mod tile;
 
-// `Axis`/`MAX_AXES` and `ConcreteLayout` are the storage-layout vocabulary; clients reach them
-// through `cubek_tile::{Axis, ...}`.
 pub use fold::*;
+pub use instruction::*;
 pub use mma_config::*;
 pub use ops::*;
 pub use physical::*;

@@ -1,8 +1,13 @@
-//! Unit tests for leaf microkernels in `instruction/`.
+//! Unit tests for the leaf instructions in `instruction/` and the 1-D register folds in
+//! `microkernel/horizontal.rs`.
 
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::instruction::{logsumexp, max, min, sum};
+use cubek_tile::{
+    LeafOp,
+    instruction::{logsumexp, plane},
+    microkernel::horizontal,
+};
 
 #[cube(launch)]
 fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
@@ -18,18 +23,18 @@ fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
     v2.insert(0usize, input[0]);
     v2.insert(1usize, input[1]);
 
-    output[0] = sum::vector(v4, 4usize);
-    output[1] = sum::vector(v4, 2usize);
-    output[2] = sum::vector(v2, 2usize);
+    output[0] = horizontal::vector(v4, 4usize, LeafOp::Sum);
+    output[1] = horizontal::vector(v4, 2usize, LeafOp::Sum);
+    output[2] = horizontal::vector(v2, 2usize, LeafOp::Sum);
 
     let mut arr = Array::<f32>::new(4usize);
     arr[0] = 1.0f32;
     arr[1] = 2.0f32;
     arr[2] = 3.0f32;
     arr[3] = 4.0f32;
-    output[3] = sum::array(&arr, 4usize);
-    output[4] = sum::array(&arr, 2usize);
-    output[5] = sum::array_from(&arr, 4usize, 5.0f32);
+    output[3] = horizontal::array(&arr, 4usize, LeafOp::Sum);
+    output[4] = horizontal::array(&arr, 2usize, LeafOp::Sum);
+    output[5] = horizontal::array_from(&arr, 4usize, 5.0f32, LeafOp::Sum);
 }
 
 #[cube(launch)]
@@ -46,20 +51,20 @@ fn test_extrema_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
     v2.insert(0usize, input[0]);
     v2.insert(1usize, input[1]);
 
-    output[0] = max::vector(v4, 4usize);
-    output[1] = min::vector(v4, 4usize);
-    output[2] = max::vector(v2, 2usize);
-    output[3] = min::vector(v2, 2usize);
+    output[0] = horizontal::vector(v4, 4usize, LeafOp::Max);
+    output[1] = horizontal::vector(v4, 4usize, LeafOp::Min);
+    output[2] = horizontal::vector(v2, 2usize, LeafOp::Max);
+    output[3] = horizontal::vector(v2, 2usize, LeafOp::Min);
 
     let mut arr = Array::<f32>::new(4usize);
     arr[0] = 3.0f32;
     arr[1] = 1.0f32;
     arr[2] = 7.0f32;
     arr[3] = 2.0f32;
-    output[4] = max::array(&arr, 4usize);
-    output[5] = min::array(&arr, 4usize);
-    output[6] = max::array_from(&arr, 4usize, 10.0f32);
-    output[7] = min::array_from(&arr, 4usize, -10.0f32);
+    output[4] = horizontal::array(&arr, 4usize, LeafOp::Max);
+    output[5] = horizontal::array(&arr, 4usize, LeafOp::Min);
+    output[6] = horizontal::array_from(&arr, 4usize, 10.0f32, LeafOp::Max);
+    output[7] = horizontal::array_from(&arr, 4usize, -10.0f32, LeafOp::Min);
 }
 
 #[cube(launch)]
@@ -86,30 +91,30 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     let val = (lane_id + 1u32) as f32; // Lane 0: 1.0, Lane 1: 2.0, Lane 2: 3.0, Lane 3: 4.0
 
     // Non-trivial 4-lane plane operations
-    let p_sum = sum::plane::<f32>(val, 4usize);
-    let p_max = max::plane::<f32>(val, 4usize);
-    let p_min = min::plane::<f32>(val, 4usize);
+    let p_sum = plane::reduce::<f32>(val, 4usize, LeafOp::Sum);
+    let p_max = plane::reduce::<f32>(val, 4usize, LeafOp::Max);
+    let p_min = plane::reduce::<f32>(val, 4usize, LeafOp::Min);
 
     // Non-trivial 4-lane butterfly group fold (mask 0b11 = folds all 4 lanes)
     let size!(W2) = 2;
     let mut v2 = Vector::<f32, W2>::zeroed();
     v2.insert(0usize, val);
     v2.insert(1usize, val * 2.0f32);
-    let folded_full = sum::group::<f32, W2>(v2, 0b11usize);
+    let folded_full = plane::group::<f32, W2>(v2, 0b11usize, LeafOp::Sum);
 
     // 2-lane sub-group butterfly fold (mask 0b01 = folds (0,1) and (2,3) separately)
-    let folded_pair = sum::group::<f32, W2>(v2, 0b01usize);
+    let folded_pair = plane::group::<f32, W2>(v2, 0b01usize, LeafOp::Sum);
 
     // The same butterfly under max and min
-    let max_full = max::group::<f32, W2>(v2, 0b11usize);
-    let min_full = min::group::<f32, W2>(v2, 0b11usize);
-    let min_pair = min::group::<f32, W2>(v2, 0b01usize);
+    let max_full = plane::group::<f32, W2>(v2, 0b11usize, LeafOp::Max);
+    let min_full = plane::group::<f32, W2>(v2, 0b11usize, LeafOp::Min);
+    let min_pair = plane::group::<f32, W2>(v2, 0b01usize, LeafOp::Min);
 
     // 1-lane fallback paths (lanes = 1, mask = 0)
-    let s_fallback = sum::plane::<f32>(val, 1usize);
-    let m_fallback = max::plane::<f32>(val, 1usize);
-    let n_fallback = min::plane::<f32>(val, 1usize);
-    let g_fallback = sum::group::<f32, W2>(v2, 0usize);
+    let s_fallback = plane::reduce::<f32>(val, 1usize, LeafOp::Sum);
+    let m_fallback = plane::reduce::<f32>(val, 1usize, LeafOp::Max);
+    let n_fallback = plane::reduce::<f32>(val, 1usize, LeafOp::Min);
+    let g_fallback = plane::group::<f32, W2>(v2, 0usize, LeafOp::Sum);
 
     // Store per-lane results at lane_id * 15
     let base = (lane_id * 15u32) as usize;
@@ -141,10 +146,10 @@ fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
     v2.insert(1usize, val * 2.0f32);
 
     let base = (lane_id * 15u32) as usize;
-    output[base + 7] = sum::plane::<f32>(val, 1usize);
-    output[base + 8] = max::plane::<f32>(val, 1usize);
-    output[base + 9] = min::plane::<f32>(val, 1usize);
-    output[base + 10] = sum::group::<f32, W2>(v2, 0usize).extract(0usize);
+    output[base + 7] = plane::reduce::<f32>(val, 1usize, LeafOp::Sum);
+    output[base + 8] = plane::reduce::<f32>(val, 1usize, LeafOp::Max);
+    output[base + 9] = plane::reduce::<f32>(val, 1usize, LeafOp::Min);
+    output[base + 10] = plane::group::<f32, W2>(v2, 0usize, LeafOp::Sum).extract(0usize);
 }
 
 #[test]

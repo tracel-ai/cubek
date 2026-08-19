@@ -3,7 +3,7 @@ use cubecl::{
     std::tensor::layout::{Coordinates, Coords2d},
 };
 
-use crate::{ops::ReduceLeafKind, *};
+use crate::{instruction::plane, *};
 
 /// The view a register block accumulates through: [`seed`](AccumulateView::seed) it, contract into
 /// it, [`commit`](AccumulateView::commit) it back. The write-side mirror of a
@@ -39,10 +39,10 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// A block's starting value for an `inst` fold. A partial starts at `inst`'s identity: the
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
     /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.
-    pub fn seed(&self, pos: C, #[comptime] inst: ReduceLeafKind) -> Vector<E, V> {
+    pub fn seed(&self, pos: C, #[comptime] inst: LeafOp) -> Vector<E, V> {
         match comptime!(self.lane_share) {
             LaneShare::Plane | LaneShare::Group { .. } => {
-                Vector::<E, V>::cast_from(ReduceLeafKind::identity::<E>(inst))
+                Vector::<E, V>::cast_from(LeafOp::identity::<E>(inst))
             }
             LaneShare::Whole => self.values.read(pos),
         }
@@ -52,23 +52,23 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// and leaves every lane holding a partial of it with the total, so one of them writes and its
     /// siblings don't all hit the address: the plane's first lane where the whole plane shares one
     /// cell, each group's first lane where the plane carries a cell per group.
-    pub fn commit(&mut self, pos: C, value: Vector<E, V>, #[comptime] inst: ReduceLeafKind) {
+    pub fn commit(&mut self, pos: C, value: Vector<E, V>, #[comptime] inst: LeafOp) {
         match comptime!(self.lane_share) {
             LaneShare::Plane => {
-                let combined = ReduceLeafKind::plane_broadcast(value, inst);
+                let combined = plane::reduce_vector(value, inst);
                 if UNIT_POS_X == 0 {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, ReduceLeafKind::combine_vector(old, combined, inst));
+                        .write(pos, LeafOp::combine_vector(old, combined, inst));
                 }
             }
             LaneShare::Group { fold_mask } => {
-                let combined = ReduceLeafKind::group_fold(value, fold_mask, inst);
+                let combined = plane::group(value, fold_mask, inst);
                 let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                 if lane_in_group == 0 {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, ReduceLeafKind::combine_vector(old, combined, inst));
+                        .write(pos, LeafOp::combine_vector(old, combined, inst));
                 }
             }
             LaneShare::Whole => self.values.write(pos, value),

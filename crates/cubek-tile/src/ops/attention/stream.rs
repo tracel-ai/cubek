@@ -11,7 +11,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::sum, *};
+use crate::{instruction::plane, microkernel::horizontal, *};
 
 /// One plane's share of the streamed fold.
 ///
@@ -139,7 +139,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                     let kv = Vector::<EA, N>::cast_from(kf[s * lines + li]);
                     #[unroll]
                     for g in 0..rows {
-                        partial[g] += sum::vector::<EA, N>(self.q[g * per_lane + p] * kv, w);
+                        partial[g] += horizontal::vector::<EA, N>(self.q[g * per_lane + p] * kv, w, LeafOp::Sum);
                     }
                 }
             }
@@ -148,7 +148,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             let mut weights = Array::<EA>::new(rows);
             #[unroll]
             for g in 0..rows {
-                let dot = sum::plane::<EA>(partial[g], lanes);
+                let dot = plane::reduce::<EA>(partial[g], lanes, LeafOp::Sum);
                 let score = dot * scale;
                 let rescale = self.state.absorb(g, score);
                 corrections[g] = rescale.correction;

@@ -4,7 +4,6 @@
 
 use cubecl::prelude::*;
 
-use super::kind::ReduceLeafKind;
 use crate::*;
 
 /// One level's reduction as a [`Pipelined`] operation: the accumulator it writes and the single
@@ -14,7 +13,7 @@ pub(crate) struct ReduceWalk<Acc: Numeric, In: Numeric> {
     acc: Tile<Acc>,
     input: Tile<In>,
     #[cube(comptime)]
-    inst: ReduceLeafKind,
+    inst: LeafOp,
 }
 
 #[cube]
@@ -76,7 +75,7 @@ impl<Acc: Numeric> Tile<Acc> {
     pub(crate) fn reduce_buffered<In: Numeric>(
         &mut self,
         input: &Tile<In>,
-        #[comptime] inst: ReduceLeafKind,
+        #[comptime] inst: LeafOp,
         op_space: Space,
         #[comptime] depth: usize,
     ) {

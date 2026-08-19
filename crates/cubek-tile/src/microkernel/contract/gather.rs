@@ -1,15 +1,15 @@
-//! N-D register microkernel for operations with multiple contracted axes or projected operands.
+//! The N-D contraction nest: multiple contracted axes, or projected operands.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use super::base::{load_accumulators, store_accumulators};
+use crate::microkernel::block::{load_accumulators, store_accumulators};
 use crate::*;
 
-/// N-D variant of [`mma_register_direct`](super::direct::mma_register_direct) for operations with
+/// N-D variant of [`contract_direct`](super::direct::contract_direct) for operations with
 /// multiple contracted axes or projected operands.
 #[cube]
-pub(super) fn mma_register_gather<
+pub(super) fn contract_gather<
     E: Numeric,
     EL: Numeric,
     IL: Numeric,
@@ -267,7 +267,7 @@ fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
 fn assert_operand_shapes(lhs: &Space, rhs: &Space, acc: &Space, reduce: &[Axis]) {
     assert!(
         !reduce.is_empty(),
-        "gather leaf: the operands contract no axis against the accumulator"
+        "contract gather: the operands contract no axis against the accumulator"
     );
     // `Space::contracted` merges lhs-first, so an axis only the rhs spans lands past every lhs
     // one and would take the `fastest` slot below. That reads as the lhs being lined wrong, which
@@ -275,17 +275,17 @@ fn assert_operand_shapes(lhs: &Space, rhs: &Space, acc: &Space, reduce: &[Axis])
     for &axis in reduce {
         assert!(
             lhs.contains(axis),
-            "gather leaf: the lhs must span every contracted axis, but {axis:?} is contracted by \
+            "contract gather: the lhs must span every contracted axis, but {axis:?} is contracted by \
              the rhs alone"
         );
     }
     let fastest = reduce[reduce.len() - 1];
     assert!(
         lhs.axis_at(lhs.rank() - 1) == fastest,
-        "gather leaf: the lhs must line along the fastest contracted axis {fastest:?}"
+        "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
     );
     assert!(
         rhs.axis_at(rhs.rank() - 1) == acc.axis_at(acc.rank() - 1),
-        "gather leaf: the rhs must line along the accumulator's innermost axis"
+        "contract gather: the rhs must line along the accumulator's innermost axis"
     );
 }

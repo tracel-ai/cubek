@@ -4,7 +4,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    instruction::{mma::register::contract_block, sum},
+    instruction::plane,
+    microkernel::block::contract_block,
     *,
 };
 
@@ -153,9 +154,10 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = sum::group::<T, RA>(
+                        let combined = plane::group::<T, RA>(
                             self.data[comptime!(i * self.nr + n)],
                             comptime!(fold_mask),
+                            LeafOp::Sum,
                         );
                         let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                         if lane_in_group == 0 {

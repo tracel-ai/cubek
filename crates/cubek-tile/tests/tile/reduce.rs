@@ -42,13 +42,13 @@ fn reduce_matmul_kernel<E: Numeric>(
 
 /// Seeds `output` for `op` (the identity a fold starts from), then reduces `input` into it.
 /// One body serves Sum/Max/Min alike, which is the point: the three kernels below differed only
-/// in this seed and the `ReduceLeafKind` passed to `reduce_axis`.
+/// in this seed and the `LeafOp` passed to `reduce_axis`.
 #[cube]
-fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] op: ReduceLeafKind) {
+fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] op: LeafOp) {
     match comptime!(op) {
-        ReduceLeafKind::Sum => output.zero(),
-        ReduceLeafKind::Max => output.init(E::min_value()),
-        ReduceLeafKind::Min => output.init(E::max_value()),
+        LeafOp::Sum => output.zero(),
+        LeafOp::Max => output.init(E::min_value()),
+        LeafOp::Min => output.init(E::max_value()),
     }
     output.reduce_axis(input, op);
 }
@@ -58,7 +58,7 @@ fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] op: ReduceLeafKind,
+    #[comptime] op: LeafOp,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
@@ -71,7 +71,7 @@ fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] op: ReduceLeafKind,
+    #[comptime] op: LeafOp,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
@@ -92,7 +92,7 @@ fn procedural_reduce_kernel<E: Float>(
         MEMORY_LEAF,
     );
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
+    reduce_body(&input, &mut output, comptime!(LeafOp::Max));
 }
 
 /// The shared-memory variant must retain the procedural source's partial-tile mask while it
@@ -111,7 +111,7 @@ fn staged_procedural_reduce_kernel<E: Float>(
         MEMORY_LEAF,
     );
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, comptime!(ReduceLeafKind::Max));
+    reduce_body(&input, &mut output, comptime!(LeafOp::Max));
 }
 
 /// Small integers, so every product and partial sum is exact in `f32` and the two kernels can be
@@ -326,7 +326,7 @@ fn run_reduce(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: ReduceLeafKind,
+    op: LeafOp,
 ) -> HostData {
     run_reduce_with_vw(in_shape, out_shape, in_axes, out_axes, space, op, 1, &[])
 }
@@ -339,7 +339,7 @@ fn run_reduce_resident(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: ReduceLeafKind,
+    op: LeafOp,
     in_residence: &[Residence],
 ) -> HostData {
     run_reduce_with_vw(
@@ -362,7 +362,7 @@ fn check_2d_reduce(
     k: usize,
     tm: usize,
     tk: usize,
-    op: ReduceLeafKind,
+    op: LeafOp,
 ) {
     let space = Tiling::new()
         .extents(&[(M, m), (K, k)])
@@ -384,9 +384,9 @@ fn check_2d_reduce(
     for i in 0..m {
         let values = (0..k).map(|j| ((i * k + j) % 7) as f32);
         let want = match op {
-            ReduceLeafKind::Sum => values.sum(),
-            ReduceLeafKind::Max => values.fold(f32::NEG_INFINITY, f32::max),
-            ReduceLeafKind::Min => values.fold(f32::INFINITY, f32::min),
+            LeafOp::Sum => values.sum(),
+            LeafOp::Max => values.fold(f32::NEG_INFINITY, f32::max),
+            LeafOp::Min => values.fold(f32::INFINITY, f32::min),
         };
         assert_eq!(
             got.get_f32(&[i]),
@@ -403,7 +403,7 @@ fn run_reduce_with_vw(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: ReduceLeafKind,
+    op: LeafOp,
     in_vw: usize,
     in_residence: &[Residence],
 ) -> HostData {
@@ -482,7 +482,7 @@ fn test_reduce_axis_sum_2d_to_1d() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
     );
 
     for i in 0..m {
@@ -507,7 +507,7 @@ fn test_reduce_axis_sum_walked_levels() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
     );
 
     for i in 0..m {
@@ -532,7 +532,7 @@ fn test_reduce_axis_max_2d_to_1d() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Max,
+        LeafOp::Max,
     );
 
     for i in 0..m {
@@ -559,7 +559,7 @@ fn test_reduce_axis_min_2d_to_1d() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Min,
+        LeafOp::Min,
     );
 
     for i in 0..m {
@@ -588,7 +588,7 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
         &[B, M, K],
         &[B],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
     );
 
     for bi in 0..b {
@@ -605,32 +605,32 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
 
 #[test]
 fn test_reduce_axis_sum_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, ReduceLeafKind::Sum);
+    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, LeafOp::Sum);
 }
 
 #[test]
 fn test_reduce_axis_sum_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, ReduceLeafKind::Sum);
+    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, LeafOp::Sum);
 }
 
 #[test]
 fn test_reduce_axis_max_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, ReduceLeafKind::Max);
+    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, LeafOp::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, ReduceLeafKind::Min);
+    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, LeafOp::Min);
 }
 
 #[test]
 fn test_reduce_axis_max_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, ReduceLeafKind::Max);
+    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, LeafOp::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, ReduceLeafKind::Min);
+    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, LeafOp::Min);
 }
 
 /// Reduction over an outer axis while retaining the innermost axis (which lines along vector width).
@@ -650,7 +650,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
         &[M, K],
         &[K],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         1,
         &[],
     );
@@ -679,7 +679,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
         &[M, K],
         &[K],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         4,
         &[],
     );
@@ -705,7 +705,7 @@ fn run_reduce_checked(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: ReduceLeafKind,
+    op: LeafOp,
     in_residence: &[Residence],
 ) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -766,7 +766,7 @@ fn test_reduce_axis_sum_nondivisible_k() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         &[],
     );
 
@@ -788,7 +788,7 @@ fn test_reduce_axis_sum_nondivisible_k_staged() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         &[Residence::Smem],
     );
 
@@ -813,7 +813,7 @@ fn test_reduce_axis_sum_in_place_double_buffered() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         &[Residence::InPlace],
     );
 
@@ -839,7 +839,7 @@ fn test_reduce_axis_sum_nondivisible_k_double_buffered() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         &[Residence::Smem],
     );
 
@@ -865,7 +865,7 @@ fn test_reduce_axis_max_nondivisible_k() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        ReduceLeafKind::Max,
+        LeafOp::Max,
         &[],
     );
 
@@ -951,7 +951,7 @@ fn test_reduce_axis_max_nondivisible_k_negative_data() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        ReduceLeafKind::Max,
+        LeafOp::Max,
         &[],
     );
 
@@ -978,7 +978,7 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        ReduceLeafKind::Min,
+        LeafOp::Min,
         &[],
     );
 
@@ -1007,7 +1007,7 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
         &[M, K],
         &[K],
         space,
-        ReduceLeafKind::Max,
+        LeafOp::Max,
         4,
         &[],
     );
@@ -1040,7 +1040,7 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
         &[M, K],
         &[K],
         space,
-        ReduceLeafKind::Min,
+        LeafOp::Min,
         4,
         &[],
     );
@@ -1074,7 +1074,7 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         4,
         &[],
     );
@@ -1108,7 +1108,7 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
         &[B, M, K],
         &[B, K],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
         4,
         &[],
     );
@@ -1152,7 +1152,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Sum,
+        LeafOp::Sum,
     );
 
     for i in 0..m {
@@ -1186,7 +1186,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Max,
+        LeafOp::Max,
     );
 
     for i in 0..m {
@@ -1222,7 +1222,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
         &[M, K],
         &[M],
         space,
-        ReduceLeafKind::Min,
+        LeafOp::Min,
     );
 
     for i in 0..m {

@@ -1,10 +1,10 @@
-//! The K walk into an `mr × nr` register block, shared by both register-leaf callers.
+//! The `mr × nr` register block: seed it from the accumulator, contract into it, commit it back.
 //!
-//! The block is a parameter, not something this owns, which is the only difference between the
-//! two: the memory-backed leaf ([`mma_register_direct`](super::direct::mma_register_direct))
-//! seeds a local one from the accumulator and commits it back per visit, while a promoted
-//! [`RegisterData`](crate::RegisterData) *is* the accumulator and keeps it across the whole walk.
-//! How the block is contracted is the same either way.
+//! The block is a parameter, not something this owns, which is the only difference between its
+//! two callers: the memory-backed nest ([`contract_direct`](super::contract)) seeds a local one
+//! and commits it back per visit, while a promoted [`RegisterData`] *is* the
+//! accumulator and keeps it across the whole walk. How the block is contracted is the same either
+//! way.
 
 use cubecl::prelude::*;
 
@@ -126,6 +126,48 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             // contraction on the CPU backend), doubling the FP instruction count and serializing
             // the accumulate. `fma` emits one fused op (`fmla`).
             c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+        }
+    }
+}
+
+/// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the rank-1
+/// updates never touch memory. Shared by both nests: how a cell is addressed differs, how the
+/// block is held does not. `unroll` is the caller's decision, not a size test here, because a
+/// masked block must stay rolled whatever its size.
+#[cube]
+pub(crate) fn load_accumulators<E: Numeric, V: Size>(
+    acc: &mut AccumulateView<'_, E, V>,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] unroll: bool,
+) -> Array<Vector<E, V>> {
+    let mut c = Array::<Vector<E, V>>::new(mr * nr);
+    #[unroll(unroll)]
+    for i in 0..mr {
+        #[unroll(unroll)]
+        for n in 0..nr {
+            c[i * nr + n] = acc.seed((i as u32, n as u32), comptime!(LeafOp::Sum));
+        }
+    }
+    c
+}
+
+/// The twin of [`load_accumulators`]: commit the block back once the whole reduce is folded into
+/// it. Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
+/// rather than the leaf knowing it was split.
+#[cube]
+pub(crate) fn store_accumulators<E: Numeric, V: Size>(
+    acc: &mut AccumulateView<'_, E, V>,
+    c: Array<Vector<E, V>>,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] unroll: bool,
+) {
+    #[unroll(unroll)]
+    for i in 0..mr {
+        #[unroll(unroll)]
+        for n in 0..nr {
+            acc.commit((i as u32, n as u32), c[i * nr + n], comptime!(LeafOp::Sum));
         }
     }
 }
