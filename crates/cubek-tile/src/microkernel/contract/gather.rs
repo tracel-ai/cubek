@@ -8,6 +8,14 @@ use crate::*;
 
 /// N-D variant of [`direct::contract`](super::direct::contract) for operations with
 /// multiple contracted axes or projected operands.
+///
+/// The outer product it runs is an optimization, not the definition of the contraction: it holds
+/// only while the lhs is free of the accumulator's column and the rhs free of its row, which is
+/// what lets one read of each serve a whole row or column of cells. A resampling operand breaks
+/// that: the gather makes the value depend on the output position, and a procedural weight
+/// depends on it too, so an operand spanning the other's free axis is read at the cell instead,
+/// and the rank-1 update degenerates to a per-cell `fma`. Only the reads change; what is
+/// contracted, and the accumulator block living in registers across `kc`, do not.
 #[cube]
 pub(super) fn contract<
     E: Numeric,
@@ -43,8 +51,20 @@ pub(super) fn contract<
     let reduce_extents = comptime!(reduce.iter().map(|&a| merged.extent(a)).collect::<Vec<_>>());
     let kc = comptime!(reduce_extents.iter().product::<usize>());
 
+    // Whether either operand varies along the axis the outer product assumes it is free of.
+    // `rhs_spans_col` separates an rhs that merely varies down the rows, and so still holds for a
+    // whole row of cells, from one that varies cell by cell.
+    let lhs_spans_col = comptime!(lhs.space.contains(space.axis_at(rank - 1)));
+    let rhs_spans_row = comptime!(rhs.space.contains(space.axis_at(rank - 2)));
+    let rhs_spans_col = comptime!(rhs.space.contains(space.axis_at(rank - 1)));
+
     comptime!(assert_operand_shapes(
-        &lhs.space, &rhs.space, &space, &reduce
+        &lhs.space,
+        &rhs.space,
+        &space,
+        &reduce,
+        vw,
+        lhs_spans_col
     ));
 
     let lhs_view = lhs.nd::<IL, WPL, L>();
@@ -82,7 +102,8 @@ pub(super) fn contract<
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
         // across the whole K walk rather than re-declared per step, so the trace allocates it once
-        // however many lane bodies the fan-out below emits.
+        // however many lane bodies the fan-out below emits. An rhs varying down the rows has no
+        // such per-column value, and leaves this unwritten for the trace to fold away.
         let mut b = Array::<Vector<E, V>>::new(nr);
 
         if comptime!(lane_fanout && lw > 1) {
@@ -107,6 +128,9 @@ pub(super) fn contract<
                         comptime!(rhs.space.clone()),
                         lw,
                         vw,
+                        lhs_spans_col,
+                        rhs_spans_row,
+                        rhs_spans_col,
                     );
                 }
             }
@@ -130,6 +154,9 @@ pub(super) fn contract<
                     comptime!(rhs.space.clone()),
                     lw,
                     vw,
+                    lhs_spans_col,
+                    rhs_spans_row,
+                    rhs_spans_col,
                 );
             }
         } else {
@@ -155,6 +182,9 @@ pub(super) fn contract<
                     comptime!(rhs.space.clone()),
                     lw,
                     vw,
+                    lhs_spans_col,
+                    rhs_spans_row,
+                    rhs_spans_col,
                 );
             }
         }
@@ -166,6 +196,10 @@ pub(super) fn contract<
 /// One gathered rank-1 update. `lane` names the component to take when the caller walks `K` as
 /// (line, lane), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
 /// the component from `p` instead.
+///
+/// The span flags say which operand reads hoist out of the cell loop: each read is taken at the
+/// coarsest cell the operand is invariant over, so the plain outer product still reads one lhs
+/// per row and one rhs per column.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
@@ -186,47 +220,148 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] rhs_space: Space,
     #[comptime] lw: usize,
     #[comptime] vw: usize,
+    #[comptime] lhs_spans_col: bool,
+    #[comptime] rhs_spans_row: bool,
+    #[comptime] rhs_spans_col: bool,
 ) {
     let reduce_coords = unravel(&const_coords(reduce_extents), p.fcast::<u32>());
 
-    #[unroll(unroll)]
-    for n in 0..nr {
-        let acc_coords = acc_cell_coords(batch, 0u32, n as u32);
-        let pos = resolve_nd_coords(
-            comptime!(rhs_space.clone()),
-            comptime!(space.clone()),
-            comptime!(reduce.clone()),
-            &acc_coords,
-            &reduce_coords,
-            vw,
-            false,
-        );
-        b[n] = Vector::<E, V>::cast_from(rhs_view.read(pos));
+    // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
+    // down the `i` loop.
+    if comptime!(!rhs_spans_row) {
+        #[unroll(unroll)]
+        for n in 0..nr {
+            b[n] = Vector::<E, V>::cast_from(cell_read::<ER, V>(
+                rhs_view,
+                batch,
+                0u32,
+                n as u32,
+                &reduce_coords,
+                comptime!(rhs_space.clone()),
+                comptime!(space.clone()),
+                comptime!(reduce.clone()),
+                vw,
+            ));
+        }
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let acc_coords = acc_cell_coords(batch, i as u32, 0u32);
-        // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line index,
-        // so this is the same position for every lane of one line.
-        let pos = resolve_nd_coords(
-            comptime!(lhs_space.clone()),
-            comptime!(space.clone()),
-            comptime!(reduce.clone()),
-            &acc_coords,
-            &reduce_coords,
-            lw,
-            false,
-        );
-        let lhs_line = lhs_view.read(pos);
-        let a = if comptime!(lane.is_some()) {
-            Vector::<E, V>::cast_from(lhs_line.extract(comptime!(lane.unwrap())))
-        } else {
-            Vector::<E, V>::cast_from(lhs_line.extract_dynamic(p % lw))
-        };
+        // Whatever is invariant across the row's cells is read once here. Each stays at zero, and
+        // folds away, when the cell loop reads that operand for itself.
+        let mut a_row = Vector::<E, V>::cast_from(E::from_int(0));
+        if comptime!(!lhs_spans_col) {
+            // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line
+            // index, so this is the same position for every lane of one line.
+            let line = cell_read::<EL, L>(
+                lhs_view,
+                batch,
+                i as u32,
+                0u32,
+                &reduce_coords,
+                comptime!(lhs_space.clone()),
+                comptime!(space.clone()),
+                comptime!(reduce.clone()),
+                lw,
+            );
+            a_row = lane_component::<E, EL, L, V>(line, p, lane, lw);
+        }
+        let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
+        if comptime!(rhs_spans_row && !rhs_spans_col) {
+            b_row = Vector::<E, V>::cast_from(cell_read::<ER, V>(
+                rhs_view,
+                batch,
+                i as u32,
+                0u32,
+                &reduce_coords,
+                comptime!(rhs_space.clone()),
+                comptime!(space.clone()),
+                comptime!(reduce.clone()),
+                vw,
+            ));
+        }
         #[unroll(unroll)]
         for n in 0..nr {
-            c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+            let a = if comptime!(lhs_spans_col) {
+                let line = cell_read::<EL, L>(
+                    lhs_view,
+                    batch,
+                    i as u32,
+                    n as u32,
+                    &reduce_coords,
+                    comptime!(lhs_space.clone()),
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    lw,
+                );
+                lane_component::<E, EL, L, V>(line, p, lane, lw)
+            } else {
+                a_row
+            };
+            let v = if comptime!(!rhs_spans_row) {
+                b[n]
+            } else if comptime!(!rhs_spans_col) {
+                b_row
+            } else {
+                Vector::<E, V>::cast_from(cell_read::<ER, V>(
+                    rhs_view,
+                    batch,
+                    i as u32,
+                    n as u32,
+                    &reduce_coords,
+                    comptime!(rhs_space.clone()),
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    vw,
+                ))
+            };
+            // Explicit `fma`, for the reason [`block::rank1_update`] gives.
+            c[i * nr + n] = fma(a, v, c[i * nr + n]);
         }
+    }
+}
+
+/// One operand read at the accumulator cell `(row, col)` of the batch matrix `batch` names.
+/// `width` is the operand's own line width, since only its innermost axis is addressed in lines.
+#[cube]
+fn cell_read<T: Numeric, W: Size>(
+    view: &MaskedView<'_, Vector<T, W>, CoordsDyn>,
+    batch: &Coords<u32>,
+    row: u32,
+    col: u32,
+    reduce_coords: &Coords<u32>,
+    #[comptime] operand: Space,
+    #[comptime] acc: Space,
+    #[comptime] reduce: Vec<Axis>,
+    #[comptime] width: usize,
+) -> Vector<T, W> {
+    let acc_coords = acc_cell_coords(batch, row, col);
+    let pos = resolve_nd_coords(
+        operand,
+        acc,
+        reduce,
+        &acc_coords,
+        reduce_coords,
+        width,
+        false,
+    );
+    view.read(pos)
+}
+
+/// The `K` component of one lhs line, widened into the accumulate element. Fixed when the caller
+/// walks `K` as (line, lane), resolved from `p` on the flat walk.
+#[cube]
+fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
+    line: Vector<EL, L>,
+    p: usize,
+    #[comptime] lane: Option<usize>,
+    #[comptime] lw: usize,
+) -> Vector<E, V> {
+    if comptime!(lane.is_some()) {
+        Vector::<E, V>::cast_from(line.extract(comptime!(lane.unwrap())))
+    } else if comptime!(lw == 1) {
+        Vector::<E, V>::cast_from(line.extract(0usize))
+    } else {
+        Vector::<E, V>::cast_from(line.extract_dynamic(p % lw))
     }
 }
 
@@ -252,7 +387,14 @@ fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
 /// treat one axis per operand as the vectorized one and address it in lines; if that is not the
 /// axis the operand actually lines along, the reads are silently off by the width rather than
 /// wrong in a way a test would localize. Host-side, so a violation is a comptime message.
-fn assert_operand_shapes(lhs: &Space, rhs: &Space, acc: &Space, reduce: &[Axis]) {
+fn assert_operand_shapes(
+    lhs: &Space,
+    rhs: &Space,
+    acc: &Space,
+    reduce: &[Axis],
+    rhs_vec_len: usize,
+    lhs_spans_col: bool,
+) {
     assert!(
         !reduce.is_empty(),
         "contract gather: the operands contract no axis against the accumulator"
@@ -272,8 +414,21 @@ fn assert_operand_shapes(lhs: &Space, rhs: &Space, acc: &Space, reduce: &[Axis])
         lhs.axis_at(lhs.rank() - 1) == fastest,
         "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
     );
+    // Only a vectorized rhs has to line along that axis; a scalar one is addressed in elements
+    // and so need not span it at all, which is what lets a weight shared by every column live in
+    // a space that simply omits it.
     assert!(
-        rhs.axis_at(rhs.rank() - 1) == acc.axis_at(acc.rank() - 1),
-        "contract gather: the rhs must line along the accumulator's innermost axis"
+        rhs_vec_len == 1 || rhs.axis_at(rhs.rank() - 1) == acc.axis_at(acc.rank() - 1),
+        "contract gather: a vectorized rhs must line along the accumulator's innermost axis"
+    );
+    // An lhs varying along the column is read once per cell, and a cell is `rhs_vec_len` columns
+    // wide. The lhs lines along a contracted axis, not this one, so one read cannot cover them:
+    // it would need a value per lane off an axis it does not line along, and the broadcast would
+    // silently serve the first column's value to all of them.
+    assert!(
+        !lhs_spans_col || rhs_vec_len == 1,
+        "contract gather: an lhs spanning the accumulator's innermost axis needs a value per \
+         column, so that axis cannot also be served in lines (the accumulator is {rhs_vec_len} \
+         wide)"
     );
 }
