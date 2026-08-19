@@ -450,14 +450,39 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             None => Some(Boundary::Zero),
         });
 
-        // Bounds-checked operands cannot be vectorized.
-        assert!(
-            !(boundary.is_some() && v > 1),
-            "StridedTileSource: a bounds-checked operand cannot be vectorized; serve it scalar or \
-             state `checked(false)` if the launch proves every access in bounds"
-        );
-        // Validate projection vector width alignment on the host side.
         projection.validate(v);
+        let coords = projection.untiled();
+        let coord_rank = projection.coordinate_rank();
+
+        // Whether coordinate axis `pa` is inside the buffer by construction. Only an identity map
+        // can be: it reaches exactly as far as its own coordinate, so it stays inside whenever its
+        // tiling divides. An affine map reaches further than any axis extent describes, and how
+        // far is the caller's to size the buffer for, which is the trust the derivation above
+        // already runs on; no proof here can retire its policy.
+        let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
+            Some(axis) => {
+                concrete.is_some_and(|space| !space.contains(axis) || !space.overhangs(axis))
+            }
+            None => false,
+        };
+
+        // A vector line only needs a scalar fallback when its own innermost axis can overhang.
+        // Other coordinate axes may still be masked or clamped independently (NHWC interpolation
+        // clamps H/W while serving a contiguous C line).
+        let innermost_overhangs = !settled(coord_rank - 1);
+        assert!(
+            !(boundary.is_some() && v > 1 && innermost_overhangs),
+            "StridedTileSource: the innermost axis is served in vector lines but can overhang; \
+             serve it scalar or \
+             state `checked(false)` if the launch proves its vector lines are in bounds"
+        );
+
+        // The mode covers the coordinate axes that can leave the buffer, and only those: a settled
+        // axis would pay for a mask that can never fire, and a settled *innermost* axis must be
+        // left alone outright, since a window clamps in lines and would alias the edge line.
+        let boundaries = (0..coord_rank)
+            .map(|pa| boundary.filter(|_| !settled(pa)))
+            .collect::<Vec<_>>();
 
         // Validate that explicit residences match the space's depth: extra or missing levels lead
         // to silent misconfiguration.
@@ -469,7 +494,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         );
 
         let mut spec = TileSpec::new(projection, leaf)
-            .with_boundary(boundary)
+            .boundaries(&boundaries)
             .units(units)
             .residence(&residence);
         if let Some(storage) = storage {

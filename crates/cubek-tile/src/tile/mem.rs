@@ -1,6 +1,7 @@
 //! The addressable backing store ([`MemData`], gmem and smem): its layouts, windows, and
 //! the memory-side [`Tile`] operations (construction, views, the cooperative copy).
 
+use cubecl::zspace::SmallVec;
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
@@ -281,13 +282,18 @@ impl<T: Numeric> Tile<T> {
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows.
         comptime!(projection.validate(vector_size));
-        // A window clamps in *lines*, so the cell it folds onto is the edge *element* only when a
-        // line is one element. `StridedTileSource::realize` refuses a checked vectorized operand
-        // already; this catches the hand-built spec, which never passes through it.
+        let coord_rank = comptime!(projection.coordinate_rank());
         comptime!(assert!(
-            spec.boundary != Some(Boundary::Clamp) || vector_size == 1,
-            "Tile::of: Boundary::Clamp needs a scalar operand, the window clamps to a line index \
-             (served at {vector_size})"
+            spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
+            "Tile::of: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
+            spec.boundaries.len()
+        ));
+        // A clamped vector line is only valid if the innermost coordinate axis is not clamped. The
+        // source builder derives that per-axis mask; this catches hand-built specs too.
+        comptime!(assert!(
+            vector_size == 1 || spec.boundaries.last().copied().flatten() != Some(Boundary::Clamp),
+            "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
+             {vector_size})"
         ));
         // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
         // than its logical space has axes, and a storage-tiled one has more.
@@ -355,7 +361,7 @@ impl<T: Numeric> Tile<T> {
                     extent,
                     bound,
                     comptime!(coords.may_underflow()),
-                    comptime!(spec.boundary.unwrap_or(Boundary::Zero)),
+                    comptime!(spec.boundaries.clone()),
                 ),
                 projection: comptime!(coords),
                 map,
@@ -363,9 +369,10 @@ impl<T: Numeric> Tile<T> {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    overhang: match spec.boundary {
-                        None => Overhang::Fits,
-                        Some(Boundary::Zero) | Some(Boundary::Clamp) => Overhang::Masked,
+                    overhang: if spec.is_checked() {
+                        Overhang::Masked
+                    } else {
+                        Overhang::Fits
                     },
                     stage,
                 }),
@@ -657,7 +664,7 @@ impl<T: Numeric> MemData<T> {
                 },
                 // Stage origins are never negative, and smem never overhangs (`Overhang::Never`
                 // below), so the boundary policy is never consulted.
-                window: Window::new(origin, extent, bound, false, Boundary::Zero),
+                window: Window::new(origin, extent, bound, false, comptime!(SmallVec::new())),
                 projection: comptime!(form.projection),
                 map,
                 offsets: Coords::<i32>::new(),
@@ -1323,7 +1330,8 @@ impl<T: Numeric> MemData<T> {
     /// arriving by a second route. Refused rather than silently raced.
     fn write_check(&self) -> comptime_type!(bool) {
         comptime!(assert!(
-            self.window.boundary != Boundary::Clamp || !self.access.overhang.masks(),
+            !self.window.boundaries.contains(&Some(Boundary::Clamp))
+                || !self.access.overhang.masks(),
             "MemData: a Boundary::Clamp operand is read-only, a clamped write aliases the edge cell"
         ));
         comptime!(self.access.overhang.masks())
@@ -1661,7 +1669,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 self.window.bound.clone(),
                 comptime!(self.window.signed),
-                comptime!(self.window.boundary),
+                comptime!(self.window.boundaries.clone()),
             ),
             // How the logical axes address the physical ones is a fact about the buffer, invariant
             // down the descent. The offsets only placed the top window, which `origin` above
@@ -2255,10 +2263,10 @@ pub struct Window {
     /// Whether the origin can be negative.
     #[cube(comptime)]
     pub(crate) signed: bool,
-    /// How a coordinate past `bound` is handled. Only consulted when this window's
-    /// [`Access::overhang`](crate::Access::overhang) masks; harmless otherwise.
+    /// Per-coordinate-axis boundary handling, same rank as `bound`. `None` means that axis is in
+    /// bounds by construction; an empty list makes every axis `None`.
     #[cube(comptime)]
-    pub(crate) boundary: Boundary,
+    pub(crate) boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
 }
 
 #[cube]
@@ -2268,14 +2276,14 @@ impl Window {
         extent: Coords<u32>,
         bound: Coords<u32>,
         #[comptime] signed: bool,
-        #[comptime] boundary: Boundary,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
     ) -> Self {
         Window {
             origin,
             extent,
             bound,
             signed,
-            boundary,
+            boundaries,
         }
     }
 }
@@ -2301,11 +2309,10 @@ impl Layout for Window {
             } else {
                 abs.fcast::<u32>()
             };
-            // Under `Clamp`, fold a coordinate past `bound` onto the edge cell rather than
-            // leaving it for the mask: the physical address this returns is always valid,
-            // checked or not.
-            let shifted = match comptime!(self.boundary) {
-                Boundary::Clamp => {
+            // Under `Clamp`, fold this coordinate onto its axis's edge cell rather than
+            // leaving it for the mask.
+            let shifted = match comptime!(self.boundaries.get(i).copied().flatten()) {
+                Some(Boundary::Clamp) => {
                     let bound_i = self.bound.at(i);
                     // A zero-extent axis has no edge cell to fold onto, and `bound - 1` would
                     // wrap into a wild line index; it folds to `0` like an underflow instead.
@@ -2317,7 +2324,7 @@ impl Layout for Window {
                         shifted
                     }
                 }
-                Boundary::Zero => shifted,
+                None | Some(Boundary::Zero) => shifted,
             };
             out.push(shifted);
         }
@@ -2335,28 +2342,20 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        match comptime!(self.boundary) {
-            // `to_source_pos` already folds an out-of-range coordinate onto a valid one, so
-            // there is nothing left to mask.
-            Boundary::Clamp => true,
-            Boundary::Zero => {
-                let mut valid = true;
-
-                // Check if the absolute coordinate is within [0, bound).
-                #[unroll]
-                for i in 0..self.bound.len() {
-                    let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-                    let inside = if comptime!(self.signed) {
-                        abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
-                    } else {
-                        abs.fcast::<u32>() < self.bound.at(i)
-                    };
-                    valid = valid && inside;
-                }
-
-                valid
+        let mut valid = true;
+        #[unroll]
+        for i in 0..self.bound.len() {
+            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
+                let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
+                let inside = if comptime!(self.signed) {
+                    abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
+                } else {
+                    abs.fcast::<u32>() < self.bound.at(i)
+                };
+                valid = valid && inside;
             }
         }
+        valid
     }
 }
 

@@ -344,19 +344,26 @@ impl PhysicalAxisMap {
             .map_or(0, |t| t.scale.get())
     }
 
+    /// The one [`Axis`] this map is the identity of, `None` when it combines several, scales,
+    /// shifts or divides. An identity map reaches exactly as far as its own coordinate, which is
+    /// what lets a caller prove it stays inside the buffer; anything else reaches further.
+    pub fn identity_axis(&self) -> Option<Axis> {
+        match self.terms.as_slice() {
+            [
+                AxisTerm {
+                    axis,
+                    scale: Scale::Static(1),
+                },
+            ] if self.offset == Offset::Static(0) && self.divisor.is_unit() => Some(*axis),
+            _ => None,
+        }
+    }
+
     /// Whether this physical axis is exactly `axis` at coefficient `1` with zero offset and no
     /// division. Says nothing about digit extraction, which is a property of the whole
     /// [`Projection`](crate::Projection) (how many physical axes carry `axis`), not of one map.
     pub fn is_identity(&self, axis: Axis) -> bool {
-        self.offset == Offset::Static(0)
-            && self.divisor.is_unit()
-            && matches!(
-                self.terms.as_slice(),
-                [AxisTerm {
-                    axis: a,
-                    scale: Scale::Static(1)
-                }] if *a == axis
-            )
+        self.identity_axis() == Some(axis)
     }
 }
 
