@@ -33,8 +33,8 @@ use crate::*;
 
 impl<T: Numeric> Tile<T> {
     /// Create a coordinate-backed tile from an arbitrary procedural recipe. The concrete recipe
-    /// is erased only while CubeCL expands this call. `leaf` is what will consume it, stated here
-    /// like every other operand states it.
+    /// is erased only while CubeCL expands this call. `leaf` is what will consume the tile, which
+    /// a recipe has no spec to carry: it is the leaf the peer operands state.
     pub fn procedural<R: Recipe<T> + 'static>(_space: Space, _recipe: R, _leaf: Leaf) -> Self {
         unexpanded!()
     }
