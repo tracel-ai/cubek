@@ -1,9 +1,6 @@
-//! The hardware contraction leaves: CMMA/WMMA fragments and manual MMA, plus the dispatcher that
-//! picks between them and the software microkernel in
-//! [`microkernel::contract`](crate::microkernel::contract).
+//! The hardware contraction leaves: a CMMA/WMMA fragment and a manual MMA fragment, each
+//! executing its own instruction. Impl blocks only; the dispatch that reaches one of them is the
+//! verb's, in `ops/matmul/lower.rs`.
 
-mod base;
 mod cmma;
 mod manual;
-
-pub use base::*;

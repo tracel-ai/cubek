@@ -2,12 +2,13 @@
 //! over data.
 //!
 //! Executed only at final tiles ([`Partitioner::Final`](crate::Partitioner::Final)). Zero
-//! awareness of global spaces, memory stages, or global tile walks. The register loop nests that
-//! issue these repeatedly are one layer up, in [`microkernel`](crate::microkernel); the leaf
-//! dispatcher that picks between a hardware leaf and a nest is [`mma_leaf`](fn@mma::mma_leaf).
+//! awareness of global spaces, memory stages, or global tile walks, and nothing here reaches
+//! up into [`microkernel`](crate::microkernel) or the verbs: the register loop nests that issue
+//! these repeatedly are one layer up, and the leaf dispatch that picks between a hardware leaf
+//! and a nest is the verb's, one layer above that.
 
 pub mod logsumexp;
-pub mod mma;
+mod mma;
 mod op;
 pub mod plane;
 

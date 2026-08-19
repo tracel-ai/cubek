@@ -1,5 +1,5 @@
 //! The software contraction nest: `acc += lhs · rhs` into a plain `Gmem`/`Smem` accumulator, the
-//! peer of the hardware leaves in [`instruction::mma`](crate::instruction::mma).
+//! peer of the hardware leaves in `instruction/mma`, reached from the same dispatch.
 //!
 //! `base` is the entry point (`memory`): it resolves each operand's quant packing, then
 //! routes to `direct` (the 2-D nest, a single contracted axis off directly addressed operands) or
