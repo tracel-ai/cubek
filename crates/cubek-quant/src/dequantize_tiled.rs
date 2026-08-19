@@ -2,7 +2,7 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
-    quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
     Axis, Buffering, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space,
@@ -29,11 +29,11 @@ pub fn launch_ref<R: Runtime>(
         "only native quantization is supported for now."
     );
     assert!(
-        scheme.level == QuantLevel::Tensor,
+        scheme.num_levels() == 1 && scheme.block_size().is_none(),
         "only per tensor quantization is supported for now."
     );
     assert!(
-        scheme.param == QuantParam::F32,
+        scheme.scale_dtype() == ScaleDtype::F32,
         "only f32 scales are supported for now."
     );
     check_i8_supported(client, scheme);
@@ -62,7 +62,7 @@ pub fn launch_ref<R: Runtime>(
         .subspace(&[M, N])
         .checked(false)
         // Nothing stages this operand, so its read is what decodes it.
-        .quantized(scales.into_tensor_arg(), *scheme, DequantAt::Read)
+        .quantized(&[scales], *scheme, DequantAt::Read)
         .build();
     let output_op = StridedOperand::source(output)
         .space(&space)

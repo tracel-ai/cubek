@@ -11,7 +11,7 @@ use cubecl::{
 };
 use cubek_quant::{
     quantize,
-    scheme::{QuantLevel, QuantScheme, QuantStore},
+    scheme::{QuantScheme, QuantStore},
 };
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
@@ -119,22 +119,20 @@ struct QuantMatmulInputs {
 }
 
 fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match &scheme.level {
-        QuantLevel::Tensor => vec![1; shape.len()],
-        QuantLevel::Block(block) => {
-            let rank = shape.len();
-            let block_dims = block.to_dim_vec(rank);
-            shape
-                .iter()
-                .zip(block_dims.iter())
-                .map(|(d, b)| d / (*b as usize))
-                .collect()
-        }
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
+    if scheme.num_levels() > 1 {
+        unimplemented!("two-level quantization is not supported here, got {scheme:?}");
     }
+
+    let Some(block) = scheme.block_size() else {
+        return vec![1; shape.len()];
+    };
+
+    let block_dims = block.to_dim_vec(shape.len());
+    shape
+        .iter()
+        .zip(block_dims.iter())
+        .map(|(d, b)| d / (*b as usize))
+        .collect()
 }
 
 fn quantize_operand(
@@ -175,8 +173,11 @@ fn quantize_operand(
         client,
         input.binding(),
         data.clone().binding(),
-        scale_in.binding(),
-        scale_out.clone().binding(),
+        // A `QuantOperand` carries one scale, so a two-level scheme has nowhere to put its outer
+        // one; `check_scale_bindings` refuses it here rather than quantizing against a factor the
+        // matmul never sees.
+        &[scale_in.binding()],
+        &[scale_out.clone().binding()],
         scheme,
         input_elem,
     )
@@ -337,7 +338,7 @@ fn validate_spec(problem: &QuantizedMatmulProblem) -> Result<(), String> {
                 "{label} pack axis={last} incompatible with num_quants={nq}"
             ));
         }
-        if let QuantLevel::Block(_) = &scheme.level {
+        if scheme.block_size().is_some() {
             let scales = scales_shape(&scheme, shape);
             if scales.contains(&0) {
                 return Err(format!("{label} block size exceeds a dim in {shape:?}"));

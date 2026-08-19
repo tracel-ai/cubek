@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
     View, ViewMut,
-    launch::ViewArg,
+    launch::{ScaleBindings, ViewArg},
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
 use cubecl::unexpanded;
@@ -225,7 +225,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: BatchMatmulR
                     scale.into_tensor_arg(),
                     scales_layout,
                 );
-                ViewArg::new_quantized(data_view, scales_view, scheme)
+                ViewArg::new_quantized(data_view, ScaleBindings::one(scales_view), scheme)
             }
         };
         let batch_layout = |handle: &InputBinding<R>| match handle {

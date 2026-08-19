@@ -6,7 +6,7 @@ use cubecl::{
     client::ComputeClient,
     future,
     prelude::*,
-    quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_test_utils::{QuantizedTileInput, RunSamples, TileInput};
 use cubek_tile::*;
@@ -44,10 +44,9 @@ pub fn bench(
     let client = <TestRuntime as Runtime>::client(&device);
 
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([1, problem.bn as u8]))
+        .per_block([1, problem.bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let pack = scheme.num_quants();
     let max_width = client.properties().hardware.max_vector_size;
     if pack > max_width {
@@ -153,7 +152,7 @@ impl Benchmark for TileQuantStageBench {
             .subspace(&[K, N])
             .vectorize(self.pack)
             .residence(&staged)
-            .quantized(b.scales_arg(), self.scheme, DequantAt::Read)
+            .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
             .build();
         // The register microkernel lines the accumulator at the RHS's served width.
         let c = launcher

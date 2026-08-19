@@ -9,7 +9,7 @@ use cubecl::{
     prelude::*,
     zspace::shape,
 };
-use cubek_quant::scheme::{QuantLevel, QuantParam, QuantScheme, QuantStore, QuantValue};
+use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx,
@@ -1652,10 +1652,9 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     // A: i8 quantized, with host values to build the reference.
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -1686,6 +1685,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K]),
             scheme,
@@ -2279,10 +2279,9 @@ fn cmma_matmul_quant_block_m_8x8x8() {
 
     let bm = 4usize; // 2 blocks along M, each 4×8; one scale each
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, 8]))
+        .per_block([bm as u8, 8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2313,6 +2312,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K]),
             scheme,
@@ -2363,10 +2363,9 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 
     let bk = 4usize; // 2 blocks along K, each 8×4; the scale changes at p = 4
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([8, bk as u8]))
+        .per_block([8, bk as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2397,6 +2396,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K]),
             scheme,
@@ -2480,10 +2480,9 @@ fn mma_matmul_quant_until_read() {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -2514,6 +2513,7 @@ fn mma_matmul_quant_until_read() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
@@ -2573,10 +2573,9 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
 
     let scale = 0.05f32;
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::Tensor)
+        .per_tensor(ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     // A: i8 quantized (m×k), with host values for the reference.
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2608,6 +2607,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
@@ -2671,10 +2671,9 @@ fn cmma_matmul_quant_block_m_k_walk() {
 
     // One scale per M-block, over the full K: block `[bm, k]`, scales shaped (m/bm, 1).
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..m / bm).map(|b| 0.05 * (b + 1) as f32).collect();
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2706,6 +2705,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
@@ -2769,10 +2769,9 @@ fn cmma_matmul_quant_block_k_k_walk() {
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .per_block([m as u8, bk as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2804,6 +2803,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
@@ -2867,10 +2867,9 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
 
     // One scale per K-block, over the full M: block `[m, bk]`, scales shaped (1, k/bk).
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([m as u8, bk as u8]))
+        .per_block([m as u8, bk as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let scale_vals: Vec<f32> = (0..k / bk).map(|b| 0.05 * (b + 1) as f32).collect();
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -2902,6 +2901,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K])
                 .leaf(leaf)
@@ -3229,10 +3229,9 @@ fn register_matmul_quant_native_block_m() {
 
     let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -3281,10 +3280,9 @@ fn register_matmul_quant_native_direct_serve() {
 
     let (m, n, k, bm) = (8usize, 8usize, 8usize, 4usize);
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::Native)
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
     let (lo, hi) = scheme.value.range();
@@ -3340,10 +3338,9 @@ fn run_register_matmul_quant_packed(
     bm: usize,
 ) {
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([bm as u8, k as u8]))
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
-        .with_value(value)
-        .with_param(QuantParam::F32);
+        .with_value(value);
     let pack = scheme.num_quants();
 
     let max_width = client.properties().hardware.max_vector_size;
@@ -3370,7 +3367,7 @@ fn run_register_matmul_quant_packed(
         a.tile.tensor_arg(1),
         a_dtype,
         scheme,
-        a.scales_arg(),
+        a.scales_binding().into_tensor_arg(),
         a.scale_values.clone(),
         bm,
         q,
@@ -3414,6 +3411,7 @@ fn run_register_matmul_quant(
         QuantTileArgLaunch::new(
             a_arg,
             scales_arg,
+            None.into(),
             None.into(),
             TileSpec::direct(&[M, K]).residence(residence),
             scheme,
@@ -3479,6 +3477,7 @@ fn register_matmul_quant_rhs_packed_q8() {
         4,
         DequantAt::Read,
         &[Residence::Smem],
+        None,
     );
 }
 
@@ -3494,6 +3493,7 @@ fn register_matmul_quant_rhs_packed_q4() {
         8,
         DequantAt::Read,
         &[Residence::Smem],
+        None,
     );
 }
 
@@ -3510,6 +3510,7 @@ fn register_matmul_quant_rhs_gemv_row() {
         4,
         DequantAt::Read,
         &[Residence::Smem],
+        None,
     );
 }
 
@@ -3536,6 +3537,7 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
         4,
         DequantAt::Read,
         &[Residence::Smem],
+        None,
     );
 }
 
@@ -3566,6 +3568,7 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
         4,
         DequantAt::Read,
         &[Residence::InPlace],
+        None,
     );
 }
 
@@ -3596,6 +3599,7 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
         4,
         DequantAt::Read,
         &[Residence::Smem],
+        None,
     );
 }
 
@@ -3624,6 +3628,63 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
         4,
         DequantAt::Load,
         &[Residence::Smem],
+        None,
+    );
+}
+
+/// Two-level through the staged `DequantAt::Read` path: the stage keeps the packed weight, and
+/// `stage_scales` writes `global * local` into the smem scale grid, so the reads below see
+/// effective one-level scales. The expectation carries the global scale, so a fold that never
+/// happens (or happens twice) fails by that factor.
+#[test]
+fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        .build()
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(
+        client,
+        (4, 8, 16),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Read,
+        &[Residence::Smem],
+        Some(0.5),
+    );
+}
+
+/// Two-level through the staged `DequantAt::Load` path: the fill dequantizes into the stage, so
+/// the global scale folds in the gmem read itself and the stage carries plain served values.
+#[test]
+fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plan = Tiling::new()
+        .extents(&[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+        })
+        .build()
+        .partitioner()
+        .clone();
+    run_register_matmul_quant_rhs(
+        client,
+        (4, 8, 16),
+        plan,
+        QuantValue::Q8S,
+        4,
+        DequantAt::Load,
+        &[Residence::Smem],
+        Some(0.5),
     );
 }
 
@@ -3636,10 +3697,9 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
 fn quant_until_read_refused_by_a_cmma_leaf() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([1, 4]))
+        .per_block([1, 4], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
-        .with_value(QuantValue::Q8S)
-        .with_param(QuantParam::F32);
+        .with_value(QuantValue::Q8S);
     let leaf = Leaf::Cmma;
     let plan = Tiling::new()
         .extents(&[(M, 8), (N, 8), (K, 8)])
@@ -3665,7 +3725,7 @@ fn quant_until_read_refused_by_a_cmma_leaf() {
         .subspace(&[K, N])
         .vectorize(scheme.num_quants())
         .leaf(leaf)
-        .quantized(b.scales_arg(), scheme, DequantAt::Read)
+        .quantized(&[b.scales_binding()], scheme, DequantAt::Read)
         .build();
 }
 
@@ -3680,12 +3740,18 @@ fn run_register_matmul_quant_rhs(
     bn: usize,
     dequant_at: DequantAt,
     residence: &[Residence],
+    global: Option<f32>,
 ) {
-    let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([1, bn as u8]))
+    // The data is minted against the one-level scheme either way: a two-level tensor holds the
+    // same value and block-scale bytes, plus the global scale in its own binding.
+    let mint_scheme = QuantScheme::default()
+        .per_block([1, bn as u8], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
-        .with_value(value)
-        .with_param(QuantParam::F32);
+        .with_value(value);
+    let scheme = match global {
+        Some(_) => mint_scheme.per_tensor(ScaleDtype::F32),
+        None => mint_scheme,
+    };
     let pack = scheme.num_quants();
 
     let max_width = client.properties().hardware.max_vector_size;
@@ -3705,8 +3771,13 @@ fn run_register_matmul_quant_rhs(
     // The weight and its per-(k, N-group) scales, minted together.
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .untiled()
-        .packed(&scheme, dequant_at)
+        .packed(&mint_scheme, dequant_at)
         .arange();
+    let global_scale = global.map(|g| {
+        TestInput::builder(client.clone(), shape![1])
+            .custom(vec![g])
+            .generate_without_host_data()
+    });
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
@@ -3721,13 +3792,14 @@ fn run_register_matmul_quant_rhs(
         .subspace(&[M, K])
         .residence(residence)
         .build();
-    let b_op = launcher
+    let b_src = launcher
         .arg(b.tile.handle().binding())
         .subspace(&[K, N])
         .vectorize(pack)
-        .residence(residence)
-        .quantized(b.scales_arg(), scheme, dequant_at)
-        .build();
+        .residence(residence);
+    let mut scales = vec![b.scales_binding()];
+    scales.extend(global_scale.map(|g| g.binding()));
+    let b_op = b_src.quantized(&scales, scheme, dequant_at).build();
     // The register microkernel lines the accumulator at the RHS's served width.
     let c_op = launcher
         .arg(c.handle().binding())
@@ -3751,12 +3823,16 @@ fn run_register_matmul_quant_rhs(
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     // A is arange over (m, k): a[i, p] = i·k + p.
     let sn = n / bn;
+    let g = global.unwrap_or(1.0);
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
             let (i, j) = (idx / n, idx % n);
             (0..k)
                 .map(|p| {
-                    ((i * k + p) as f32) * (b.q[p * n + j] as f32) * b.scale_values[p * sn + j / bn]
+                    ((i * k + p) as f32)
+                        * (b.q[p * n + j] as f32)
+                        * b.scale_values[p * sn + j / bn]
+                        * g
                 })
                 .sum()
         })

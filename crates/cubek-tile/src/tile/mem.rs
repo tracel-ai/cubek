@@ -3,9 +3,9 @@
 
 use cubecl::{
     prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue},
     std::quant::unpack_fields,
-    std::quant::view::QuantizedView as DequantView,
+    std::quant::view::KnownScale,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
         layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
@@ -180,6 +180,7 @@ impl<T: Numeric> Tile<T> {
     pub fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
+        known: KnownScale,
         table: ComptimeOption<Box<[f32]>>,
         #[comptime] scheme: QuantScheme,
         #[comptime] dequant_at: DequantAt,
@@ -198,7 +199,7 @@ impl<T: Numeric> Tile<T> {
         let mut strides = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            if comptime!(scheme.level == QuantLevel::Tensor) {
+            if comptime!(scheme.block_size().is_none()) {
                 strides.push(0u32);
             } else {
                 strides.push(scales.stride(p) as u32);
@@ -206,9 +207,11 @@ impl<T: Numeric> Tile<T> {
         }
         let info = QuantInfo {
             buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
+            known,
             strides,
             window_start: 0u32,
             block: comptime!(block),
+            extent: comptime!(window_extents(&space.project(spec.axes()), rank)),
             dequant_at: comptime!(dequant_at),
             // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
             scale_shape: comptime!(Vec::new()),
@@ -959,7 +962,10 @@ impl<T: Numeric> MemData<T> {
                     .frem(comptime!(nb[p] as u32));
                 src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
             }
-            dst_scales[bl] = src_scales[src_idx.fcast::<usize>()];
+            // The grid holds *effective* scales: a two-level source's global level folds in here,
+            // once per block per stage, so everything below the stage serves a one-level scheme
+            // and no global scale threads past this point.
+            dst_scales[bl] = sinfo.known.effective(src_scales[src_idx.fcast::<usize>()]);
             bl += workers;
         }
     }
@@ -1050,6 +1056,7 @@ impl<T: Numeric> MemData<T> {
                         info.window_start,
                         comptime!(info.block.clone()),
                         comptime!(src.store.vector_size),
+                        comptime!(info.extent.clone()),
                     ))
                     .view(FlatLayout::new(src.window.extent.clone()));
                 let mut d = self.flat_mut::<W>();
@@ -1361,30 +1368,27 @@ impl<T: Numeric> MemData<T> {
     ) -> FlatView<'_, Vector<T, W>> {
         #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => FlatView::new(
-                DequantView::<I, WP, f32, T, W, Coords1d>::new(
-                    // The storage view groups at the *physical* width: a packed buffer holds
-                    // `W / num_quants` elements per served line.
-                    self.lines_storage::<I, WP>()
-                        .view(self.base())
-                        .view(self.window())
-                        .view(FlatLayout::new(self.window.extent.clone())),
-                    info.buffer
-                        .view(ScaleLayout::new(
-                            info.strides.clone(),
-                            info.window_start,
-                            comptime!(info.block.clone()),
-                            comptime!(self.store.vector_size),
-                        ))
-                        .view(FlatLayout::new(self.window.extent.clone())),
-                    // No per-tensor scale; see `transparent`.
-                    ComptimeOption::new_None(),
-                    info.table.clone(),
-                    comptime!(info.scheme),
-                )
-                .view(),
-                comptime!(self.access.overhang.masks()),
-            ),
+            ComptimeOption::Some(info) => {
+                // The storage view groups at the *physical* width: a packed buffer holds
+                // `W / num_quants` elements per served line.
+                let values = self
+                    .lines_storage::<I, WP>()
+                    .view(self.base())
+                    .view(self.window())
+                    .view(FlatLayout::new(self.window.extent.clone()));
+                let scales = info
+                    .buffer
+                    .view(ScaleLayout::new(
+                        info.strides.clone(),
+                        info.window_start,
+                        comptime!(info.block.clone()),
+                        comptime!(self.store.vector_size),
+                        comptime!(info.extent.clone()),
+                    ))
+                    .view(FlatLayout::new(self.window.extent.clone()));
+                let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
+                FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+            }
             ComptimeOption::None => self.flat::<W>(),
         }
     }
@@ -1409,35 +1413,30 @@ impl<T: Numeric> MemData<T> {
         match &self.store.quant {
             // A quantized view *is* a view: cubecl's decodes on read and answers as `Vector<T, W>`,
             // so both arms hand back the same masked view and no caller learns the difference.
-            ComptimeOption::Some(info) => MaskedView::new(
-                DequantView::<I, WP, f32, T, W, C>::new(
-                    // The storage view groups at the *physical* width: a packed buffer holds
-                    // `W / num_quants` elements per served line.
-                    self.lines_storage::<I, WP>()
-                        .view(self.base())
-                        .view(self.window())
-                        .view(layout.clone()),
-                    // The scales over this same window: `ScaleLayout` resolves a window coordinate
-                    // to its block's scale, addressed by the same `layout` as the values, so both
-                    // answer the same coordinate.
-                    info.buffer
-                        .view(ScaleLayout::new(
-                            info.strides.clone(),
-                            info.window_start,
-                            comptime!(info.block.clone()),
-                            comptime!(self.store.vector_size),
-                        ))
-                        .view(layout),
-                    // No per-tensor scale: a tile's scales are the scheme's own level, and the
-                    // two-level schemes that carry a global on top are rejected before this
-                    // (`block_edges`), so there is never a second factor to fold in here.
-                    ComptimeOption::new_None(),
-                    info.table.clone(),
-                    comptime!(info.scheme),
-                )
-                .view(),
-                comptime!(self.access.overhang.masks()),
-            ),
+            ComptimeOption::Some(info) => {
+                // The storage view groups at the *physical* width: a packed buffer holds
+                // `W / num_quants` elements per served line.
+                let values = self
+                    .lines_storage::<I, WP>()
+                    .view(self.base())
+                    .view(self.window())
+                    .view(layout.clone());
+                // The scales over this same window: `ScaleLayout` resolves a window coordinate
+                // to its block's scale, addressed by the same `layout` as the values, so both
+                // answer the same coordinate.
+                let scales = info
+                    .buffer
+                    .view(ScaleLayout::new(
+                        info.strides.clone(),
+                        info.window_start,
+                        comptime!(info.block.clone()),
+                        comptime!(self.store.vector_size),
+                        comptime!(info.extent.clone()),
+                    ))
+                    .view(layout);
+                let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
+                MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+            }
             ComptimeOption::None => self.masked::<W, C, L>(layout),
         }
     }
@@ -1632,10 +1631,17 @@ impl<T: Numeric> MemData<T> {
                     "MemData::at: a quantized operand cannot carry a negative window origin, its \
                      scale grid is addressed unsigned"
                 ));
+                // A quantized operand is direct (asserted at construction), so the child window's
+                // extent per axis is this level's cut edge.
                 ComptimeOption::new_Some(info.window(
                     &origin_u32,
                     rank,
                     comptime!(self.store.vector_size),
+                    comptime!(
+                        (0..rank)
+                            .map(|p| space.partitioner().edge(space.axis_at(p)))
+                            .collect::<Vec<_>>()
+                    ),
                 ))
             }
             ComptimeOption::None => ComptimeOption::new_None(),
@@ -1929,16 +1935,21 @@ fn smem_quant_info(
     }
     ComptimeOption::new_Some(QuantInfo {
         buffer,
+        // The fill folds a two-level source's global level into the staged grid
+        // ([`MemData::stage_scales`]), so the stage serves effective scales under the one-level
+        // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
+        known: KnownScale::new_None(),
         strides,
         window_start: 0u32,
         block: comptime!(block),
+        extent: comptime!(window_extents(&space, rank)),
         // A stage only keeps its quantized form when the read is what decodes it; that is the one
         // path reaching here.
         dequant_at: comptime!(DequantAt::Read),
         scale_shape: comptime!(nb),
         // The gmem table rides through: it is never staged, only re-read.
         table,
-        scheme: comptime!(scheme),
+        scheme: comptime!(staged_scheme(scheme)),
     })
 }
 
@@ -1951,7 +1962,7 @@ fn smem_scale_grid(
     scheme: QuantScheme,
 ) -> (Vec<usize>, Vec<usize>) {
     let rank = space.rank();
-    let per_tensor = matches!(scheme.level, QuantLevel::Tensor);
+    let per_tensor = scheme.block_size().is_none();
     let nb: Vec<usize> = (0..rank)
         .map(|p| {
             if per_tensor {

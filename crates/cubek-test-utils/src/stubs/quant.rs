@@ -1,7 +1,7 @@
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
     e4m3, e5m2,
-    quant::scheme::{QuantLevel, QuantScheme, QuantStore, QuantValue},
+    quant::scheme::{QuantScheme, QuantStore, QuantValue},
 };
 
 pub fn quantize(
@@ -11,7 +11,7 @@ pub fn quantize(
     block_dims: &[usize],
     scheme: &QuantScheme,
 ) -> Vec<u8> {
-    let scales_shape = scales_shape(shape, block_dims);
+    let scales_shape = crate::quant_layout::scales_grid(shape, block_dims);
     let quantized = quantized_values(values, shape, scales, block_dims, &scales_shape, scheme);
 
     match scheme.store {
@@ -29,7 +29,7 @@ pub fn dequantize(
     block_dims: &[usize],
     scheme: &QuantScheme,
 ) -> Vec<f32> {
-    let scales_shape = scales_shape(shape, block_dims);
+    let scales_shape = crate::quant_layout::scales_grid(shape, block_dims);
 
     let quants = match scheme.store {
         QuantStore::Native => decode_native(bytes, scheme.value),
@@ -187,41 +187,23 @@ fn quant_mask(size_quant: usize) -> u32 {
     }
 }
 
-/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
-pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => shape.to_vec(),
-        QuantLevel::Block(bs) => bs
-            .to_dim_vec(shape.len())
-            .iter()
-            .map(|&b| b as usize)
-            .collect(),
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
-    }
+/// Refuse a scheme this reference cannot stand in for.
+///
+/// It quantizes with one scale per value, so a two-level scheme would give a reference that
+/// ignores the outer factor. A kernel that drops it too would then agree with the reference, and
+/// the test would pass with both of them wrong.
+pub(crate) fn assert_supported(scheme: &QuantScheme) {
+    assert!(
+        scheme.num_levels() <= 1,
+        "two-level quantization is not supported by the reference quantizer, got {scheme:?}"
+    );
 }
 
-/// Shape of the per-block scale grid: each dimension divided by its block
-/// extent.
-pub(crate) fn scales_shape(shape: &[usize], block_dims: &[usize]) -> Vec<usize> {
-    assert_eq!(
-        shape.len(),
-        block_dims.len(),
-        "shape/block_dims rank mismatch"
-    );
-    shape
-        .iter()
-        .zip(block_dims)
-        .map(|(&d, &b)| {
-            assert!(
-                d.is_multiple_of(b),
-                "block dim {b} must divide dimension {d}"
-            );
-            d / b
-        })
-        .collect()
+/// The scheme's per-axis block edges over `shape`: per-tensor is one block spanning it all.
+pub(crate) fn block_dims(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+    assert_supported(scheme);
+
+    crate::quant_layout::block_dims(scheme, shape)
 }
 
 /// Map a logical (row-major) element index to the index of its block in the
@@ -250,21 +232,19 @@ fn scale_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cubecl_common::quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantStore, QuantValue};
+    use cubecl_common::quant::scheme::{QuantMode, QuantStore, QuantValue, ScaleDtype};
 
-    fn scheme(value: QuantValue, store: QuantStore, level: QuantLevel) -> QuantScheme {
+    fn scheme(value: QuantValue, store: QuantStore) -> QuantScheme {
         QuantScheme::default()
             .with_mode(QuantMode::Symmetric)
-            .with_level(level)
             .with_value(value)
             .with_store(store)
-            .with_param(QuantParam::F32)
     }
 
     /// Quantize then dequantize and assert the round-trip stays within one
     /// quantization step (`scale`), the worst-case symmetric error.
     fn assert_round_trips(value: QuantValue, store: QuantStore, scale: f32) {
-        let s = scheme(value, store, QuantLevel::Tensor);
+        let s = scheme(value, store).per_tensor(ScaleDtype::F32);
         let n = 64; // multiple of every num_quants we test (≤16)
         let values: Vec<f32> = (0..n).map(|i| (i as f32 / n as f32) * 2.0 - 1.0).collect();
 
@@ -289,7 +269,7 @@ mod tests {
             &[values.len()],
             &[scale],
             &[values.len()],
-            &scheme(QuantValue::Q8S, QuantStore::Native, QuantLevel::Tensor),
+            &scheme(QuantValue::Q8S, QuantStore::Native).per_tensor(ScaleDtype::F32),
         );
 
         let got: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
@@ -317,11 +297,7 @@ mod tests {
     #[test]
     fn block_level_uses_per_block_scale() {
         // Two blocks of 4 along the last dim, each with its own scale.
-        let s = scheme(
-            QuantValue::Q8S,
-            QuantStore::Native,
-            QuantLevel::block([4u8]),
-        );
+        let s = scheme(QuantValue::Q8S, QuantStore::Native).per_block([4u8], ScaleDtype::F32);
         let values = vec![
             0.1, 0.2, 0.3, 0.4, // block 0
             10.0, 20.0, 30.0, 40.0, // block 1

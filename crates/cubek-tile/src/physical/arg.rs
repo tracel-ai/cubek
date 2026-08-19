@@ -3,10 +3,11 @@
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantParam, QuantScheme, QuantStore};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
+use cubecl::std::quant::view::KnownScale;
 use cubecl::std::tensor::{
     ViewMut,
-    layout::{CoordsDyn, Layout, LayoutExpand},
+    layout::{CoordsDyn, Layout, LayoutExpand, linear::LinearView},
     view::launch::ViewArg,
 };
 use cubecl::zspace::SmallVec;
@@ -184,6 +185,9 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub values: &'a Tensor<Vector<E, V>>,
     pub scales: &'a Tensor<f32>,
+    /// The global level's whole-tensor scale in its first element, bound exactly when the scheme
+    /// has a second level.
+    pub global: ComptimeOption<LinearView<'static, f32>>,
     /// A lookup scheme's `2^bits`-entry table, present exactly under
     /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode): reads reconstruct
     /// `table[field] * scale` instead of casting the field.
@@ -202,9 +206,23 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`] of the served type `O`: the kernel's one `space`
     /// projected onto this operand's `spec` axes, reads dequantizing per the scheme.
     pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
+        // The engine's own backstop, like `validate_dequant_at`: the builder checks the binding
+        // contract too, but a hand-built `QuantTileArgLaunch` reaches here without it.
+        comptime!(cubecl::std::quant::check_scale_bindings(
+            &self.scheme,
+            1 + self.global.is_some() as usize
+        ));
+        // One read for the whole kernel; every window below shares the register.
+        let known = if comptime!(self.global.is_some()) {
+            let buffer = self.global.unwrap();
+            KnownScale::new_Global(buffer.read(0))
+        } else {
+            KnownScale::new_None()
+        };
         Tile::<O>::of_dequant(
             self.values,
             self.scales,
+            known,
             self.table.clone(),
             comptime!(self.scheme),
             comptime!(self.dequant_at),
@@ -247,7 +265,8 @@ impl<E: Numeric> TmaTileArg<E> {
 /// ([`ScaleLayout`]), which is the true block only if no window straddles a block edge. Every
 /// window is a level's cut, and its origin is a multiple of that cut, so per axis each level's
 /// edge must tile whole blocks or fit inside one. A line is one read, so it may not straddle
-/// either. Per-tensor's block edges are `1` and divide everything.
+/// either. A per-tensor scale covers every window and line, so only the store and param rules
+/// apply to it.
 pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
@@ -277,10 +296,15 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
     // The scales ride a plain `f32` tensor read straight through, so a narrower param
     // would reinterpret its bytes.
     assert!(
-        scheme.param == QuantParam::F32,
+        scheme.scale_dtype() == ScaleDtype::F32,
         "StridedTileSource::quantized: scales are read as f32, got {:?}",
-        scheme.param
+        scheme.scale_dtype()
     );
+
+    // A per-tensor scale has no edge to straddle, whatever the cuts and the served width.
+    if scheme.block_size().is_none() {
+        return;
+    }
 
     let rank = space.rank();
     let block = block_edges(scheme, rank);

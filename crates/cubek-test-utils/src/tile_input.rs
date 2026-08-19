@@ -7,7 +7,7 @@
 
 use cubecl::prelude::{Numeric, Size};
 use cubecl::{
-    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg,
+    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg, prelude::TensorBinding,
     quant::scheme::QuantScheme, zspace::Shape,
 };
 use cubecl::{
@@ -359,7 +359,7 @@ impl QuantizedTileInputBuilder {
         let handle = self.client.create(Bytes::from_elems(words));
 
         let block = crate::stubs::quant::block_dims(&self.scheme, &shape);
-        let grid = crate::stubs::quant::scales_shape(&shape, &block);
+        let grid = crate::quant_layout::scales_grid(&shape, &block);
         let scale_values: Vec<f32> = (0..grid.iter().product())
             .map(|g| 0.05 * (g + 1) as f32)
             .collect();
@@ -416,7 +416,7 @@ impl QuantizedTileInputBuilder {
         let handle = self.client.create(Bytes::from_elems(words));
 
         let block = crate::stubs::quant::block_dims(&self.scheme, &shape);
-        let grid = crate::stubs::quant::scales_shape(&shape, &block);
+        let grid = crate::quant_layout::scales_grid(&shape, &block);
         let scale_values: Vec<f32> = (0..grid.iter().product())
             .map(|g| 0.05 * (g + 1) as f32)
             .collect();
@@ -467,9 +467,9 @@ pub struct QuantizedTileInput {
 }
 
 impl QuantizedTileInput {
-    /// Launch arg for the scales tensor.
-    pub fn scales_arg(&self) -> TensorArg<TestRuntime> {
-        self.scales.clone().binding().into_tensor_arg()
+    /// Binding for the innermost level's scales tensor.
+    pub fn scales_binding(&self) -> TensorBinding<TestRuntime> {
+        self.scales.clone().binding()
     }
 
     /// The quantized tile as one launch argument: values, scales, spec, scheme, and how far the
@@ -477,7 +477,8 @@ impl QuantizedTileInput {
     pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V, TestRuntime> {
         QuantTileArgLaunch::new(
             self.tile.tensor_arg(1),
-            self.scales_arg(),
+            self.scales_binding().into_tensor_arg(),
+            None.into(),
             self.table
                 .as_ref()
                 .map(|t| t.clone().binding().into_tensor_arg().into_buffer_arg())

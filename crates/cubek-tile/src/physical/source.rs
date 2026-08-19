@@ -7,6 +7,7 @@ use core::marker::PhantomData;
 use cubecl::prelude::*;
 
 use cubecl::quant::scheme::QuantScheme;
+use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
     Axis, Boundary, ConcreteLayout, DequantAt, Leaf, LoadMethod, PhysicalAxis, Projection,
@@ -223,6 +224,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
     /// **in values**; a packed store's buffer is narrower than its shape by the packing
     /// factor), and `scales` + `scheme` let reads dequantize into the kernel's served type.
+    /// `scales` holds one binding per scheme level, innermost first.
     /// [`vectorize`](Self::vectorize) still names the *served* width. `dequant_at` says how far the
     /// quantized form travels; it rides here rather than in its own setter because the quantized
     /// form ends at exactly one boundary, so one call says it once by construction. Which values
@@ -230,7 +232,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// refuses one nothing can honour. Flips the typestate: `build` now yields a [`QuantOperand`].
     pub fn quantized(
         mut self,
-        scales: TensorArg<R>,
+        scales: &[TensorBinding<R>],
         scheme: QuantScheme,
         dequant_at: DequantAt,
     ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
@@ -266,7 +268,11 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 /// none of the three says anything on its own — a scheme without scales cannot be applied, and an
 /// [`DequantAt`] without a scheme has nothing to bound.
 pub struct Quantization<R: Runtime> {
+    /// The innermost level's scales, the only ones addressed per position.
     pub scales: TensorArg<R>,
+    /// The global level's scale, one for the whole tensor, present exactly when the scheme has a
+    /// second level ([`validate`](Self::validate) holds the two together).
+    pub global: Option<TensorBinding<R>>,
     /// A lookup scheme's `2^bits`-entry table, present exactly under
     /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode);
     /// [`validate`](Self::validate) holds the two together.
@@ -276,9 +282,23 @@ pub struct Quantization<R: Runtime> {
 }
 
 impl<R: Runtime> Quantization<R> {
-    pub fn new(scales: TensorArg<R>, scheme: QuantScheme, dequant_at: DequantAt) -> Self {
+    /// `scales` holds one binding per scheme level, innermost first. Only the innermost level's
+    /// scales are addressed per position; an global level covers the whole tensor, so its binding
+    /// is read once from its first element. This only checks the slice holds 1 or 2 bindings;
+    /// whether that count actually matches `scheme`'s own level count is [`validate`](Self::validate)'s
+    /// job, via `check_scale_bindings`.
+    pub fn new(scales: &[TensorBinding<R>], scheme: QuantScheme, dequant_at: DequantAt) -> Self {
+        let (inner, global) = match scales {
+            [inner] => (inner, None),
+            [inner, global] => (inner, Some(global.clone())),
+            _ => panic!(
+                "StridedTileSource::quantized: {} scale bindings, expected 1 or 2 (innermost first)",
+                scales.len()
+            ),
+        };
         Quantization {
-            scales,
+            scales: inner.clone().into_tensor_arg(),
+            global,
             table: None,
             scheme,
             dequant_at,
@@ -294,6 +314,7 @@ impl<R: Runtime> Quantization<R> {
     ) -> Self {
         Quantization {
             scales,
+            global: None,
             table: Some(table),
             scheme,
             dequant_at,
@@ -309,6 +330,7 @@ impl<R: Runtime> Quantization<R> {
     /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
     /// it. Both rules live here because both are facts about this quantization and nothing else.
     pub(crate) fn validate(&self, space: &Space, vector_size: usize, leaf: Leaf) {
+        cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
         validate_scheme(space, vector_size, self.scheme);
         validate_dequant_at(self.dequant_at, leaf);
         cubecl::std::quant::check_table_bindings(&self.scheme, self.table.is_some());
@@ -355,6 +377,7 @@ impl<R: Runtime> QuantOperand<R> {
         QuantTileArgLaunch::new(
             self.tensor,
             self.quant.scales,
+            self.quant.global.map(linear_view).into(),
             self.quant.table.into(),
             self.spec,
             self.quant.scheme,
