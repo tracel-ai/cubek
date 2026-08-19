@@ -386,7 +386,9 @@ impl QuantizedTileInputBuilder {
     }
 
     /// [`arange`](Self::arange) for a lookup scheme: the packed fields walk the table indices
-    /// `0, 1, …, 2^bits - 1, 0, …` so every entry is read, the scales are the same
+    /// **descending** — `2^bits - 1, …, 1, 0, 2^bits - 1, …` — so every entry is read *and* the
+    /// field is never the identity of its position: a decode that indexed the table by position
+    /// instead of by the unpacked field would pass an ascending walk. The scales are the same
     /// distinct-per-block ramp, and `table` uploads beside them. Panics unless the scheme's mode
     /// is lookup and the table holds exactly `2^bits` entries.
     pub fn lookup_arange(self, table: &[f32]) -> QuantizedTileInput {
@@ -408,7 +410,7 @@ impl QuantizedTileInputBuilder {
             .collect();
 
         let q: Vec<i32> = (0..shape.iter().product())
-            .map(|i| (i % span) as i32)
+            .map(|i| (span - 1 - (i % span)) as i32)
             .collect();
         let words = crate::stubs::quant::pack_q_values(&q, &self.scheme);
         let handle = self.client.create(Bytes::from_elems(words));

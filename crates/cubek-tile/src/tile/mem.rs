@@ -1005,9 +1005,15 @@ impl<T: Numeric> MemData<T> {
     /// fills a stage on a device whose vectors cannot cover a word. Word-serving is what keeps the
     /// line/storage-line correspondence exact (one line **is** one word), so no other width plays.
     ///
-    /// Unchecked only: the word walk has no masked read, and the callers that stage a bounded
-    /// window clip at the leaves instead. The innermost scale block must cover whole words, so a
-    /// word never straddles two scales.
+    /// Unchecked only — and unreachable any other way: a checked operand cannot vectorize
+    /// ([`realize`](crate::StridedTileSource) refuses it), and a word-serving operand is
+    /// `num_quants` wide, so a checked source never gets here; the assert below is a backstop for
+    /// hand-built args. The ragged-tail obligation this leaves is the engine's ordinary unchecked
+    /// contract, stated at the operand: a cut that overhangs the buffer *panics at launch* unless
+    /// the caller declared `checked(false)`, and that declaration is the caller's claim that every
+    /// staged block lies inside the allocation (e.g. an S block pinned to a divisor of the cache's
+    /// capacity) with consumption clipped at the leaves. The innermost scale block must cover
+    /// whole words, so a word never straddles two scales.
     fn scan_words<W: Size>(&mut self, src: &MemData<T>) {
         #[comptime]
         match &src.store.quant {
