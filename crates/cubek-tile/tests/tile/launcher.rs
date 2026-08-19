@@ -241,7 +241,10 @@ fn arg_gathered_derives_check_from_overhang() {
         .build();
     // The gathered coordinate takes the mask; N is its own coordinate and divides, so it is
     // settled whatever the gather does.
-    assert_eq!(input.spec.boundaries.as_slice(), &[Some(Boundary::Zero), None]);
+    assert_eq!(
+        input.spec.boundaries.as_slice(),
+        &[Some(Boundary::Zero), None]
+    );
 
     // An explicit override still wins over the derivation.
     let forced = launch
