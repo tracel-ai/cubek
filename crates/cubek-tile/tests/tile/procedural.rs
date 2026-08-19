@@ -84,8 +84,8 @@ fn runtime_scalar<E: Numeric>(value: E) -> E {
 fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordinate<E> {
     affine_along(
         COL,
-        runtime_scalar(E::new(comptime!(offset.get()))),
-        runtime_scalar(E::new(1.0_f32)),
+        runtime_scalar::<E>(E::new(comptime!(offset.get()))),
+        runtime_scalar::<E>(E::new(1.0_f32)),
     )
 }
 
@@ -121,9 +121,9 @@ fn affine_plus_phase<E: Float>(
     Tile::<E>::procedural::<Sum<AffineCoordinate<E>, Phase<E>>>(
         space,
         sum_of(
-            affine_along(ROW, E::from_int(0), runtime_scalar(E::new(1.0_f32))),
+            affine_along(ROW, E::from_int(0), runtime_scalar::<E>(E::new(1.0_f32))),
             Phase::<E> {
-                coefficient: runtime_scalar(E::new(-1.0_f32)),
+                coefficient: runtime_scalar::<E>(E::new(-1.0_f32)),
                 axis: COL,
                 numerator_scale: scale,
                 numerator_offset: offset,
@@ -188,7 +188,7 @@ fn constant_kernel<E: Float>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: runtime_scalar(E::new(-1.25_f32)),
+            value: runtime_scalar::<E>(E::new(-1.25_f32)),
         },
     );
     materialize(&source, output, space);
@@ -219,8 +219,8 @@ fn linear_kernel<E: Float>(
         comptime!(space.clone()),
         linear_along(
             COL,
-            runtime_scalar(E::new(comptime!(offset.get()))),
-            runtime_scalar(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
+            runtime_scalar::<E>(E::new(1.0_f32)),
         ),
     );
     materialize(&source, output, space);
@@ -238,8 +238,8 @@ fn cubic_kernel<E: Float>(
         comptime!(space.clone()),
         cubic_along(
             COL,
-            runtime_scalar(E::new(comptime!(offset.get()))),
-            runtime_scalar(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
+            runtime_scalar::<E>(E::new(1.0_f32)),
             a,
         ),
     );
@@ -258,8 +258,8 @@ fn lanczos_kernel<E: Float>(
         comptime!(space.clone()),
         lanczos_along(
             COL,
-            runtime_scalar(E::new(comptime!(offset.get()))),
-            runtime_scalar(E::new(1.0_f32)),
+            runtime_scalar::<E>(E::new(comptime!(offset.get()))),
+            runtime_scalar::<E>(E::new(1.0_f32)),
             lobes,
         ),
     );
@@ -297,7 +297,7 @@ fn integer_kernel<E: Int>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: runtime_scalar(E::new(7)),
+            value: runtime_scalar::<E>(E::new(7)),
         },
     );
     materialize(&source, output, space);
@@ -313,7 +313,7 @@ fn direct_copy_kernel<E: Float>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: runtime_scalar(E::new(1.0_f32)),
+            value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
     );
     let mut output = output.tile(space);
@@ -330,7 +330,7 @@ fn divided_direct_copy_kernel<E: Float>(
     let source = Tile::<E>::procedural::<Constant<E>>(
         comptime!(space.clone()),
         Constant::<E> {
-            value: runtime_scalar(E::new(1.0_f32)),
+            value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
     );
     let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
