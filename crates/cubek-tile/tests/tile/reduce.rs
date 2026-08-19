@@ -356,14 +356,7 @@ fn run_reduce_resident(
 
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
-fn check_2d_reduce(
-    buffering: Buffering,
-    m: usize,
-    k: usize,
-    tm: usize,
-    tk: usize,
-    op: LeafOp,
-) {
+fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usize, op: LeafOp) {
     let space = Tiling::new()
         .extents(&[(M, m), (K, k)])
         .level(WalkOrder::RowMajor, buffering, |l| {
@@ -476,14 +469,7 @@ fn test_reduce_axis_sum_2d_to_1d() {
         })
         .build();
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Sum,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -501,14 +487,7 @@ fn test_reduce_axis_sum_walked_levels() {
         })
         .build();
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Sum,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -526,14 +505,7 @@ fn test_reduce_axis_max_2d_to_1d() {
         })
         .build();
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Max,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Max);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -553,14 +525,7 @@ fn test_reduce_axis_min_2d_to_1d() {
         })
         .build();
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Min,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Min);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1146,14 +1111,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
         .build()
         .resolve_lanes(lanes);
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Sum,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -1180,14 +1138,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
         .build()
         .resolve_lanes(lanes);
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Max,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Max);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1216,14 +1167,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
         .build()
         .resolve_lanes(lanes);
 
-    let got = run_reduce(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        LeafOp::Min,
-    );
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Min);
 
     for i in 0..m {
         let want: f32 = (0..k)

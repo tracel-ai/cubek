@@ -74,24 +74,14 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
             );
         }
     } else if comptime!(pack_l == 1) {
-        direct::contract::<E, EL, i8, L, ER, ER, V>(
-            acc, lhs, rhs, space, 1usize, 1usize, config,
-        );
+        direct::contract::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize, config);
     } else if comptime!(pack_l > 1) {
-        direct::contract::<E, EL, u32, L, ER, ER, V>(
-            acc, lhs, rhs, space, pack_l, 1usize, config,
-        );
+        direct::contract::<E, EL, u32, L, ER, ER, V>(acc, lhs, rhs, space, pack_l, 1usize, config);
     } else if comptime!(pack_r == 1) {
-        direct::contract::<E, EL, EL, L, ER, i8, V>(
-            acc, lhs, rhs, space, 1usize, 1usize, config,
-        );
+        direct::contract::<E, EL, EL, L, ER, i8, V>(acc, lhs, rhs, space, 1usize, 1usize, config);
     } else if comptime!(pack_r > 1) {
-        direct::contract::<E, EL, EL, L, ER, u32, V>(
-            acc, lhs, rhs, space, 1usize, pack_r, config,
-        );
+        direct::contract::<E, EL, EL, L, ER, u32, V>(acc, lhs, rhs, space, 1usize, pack_r, config);
     } else {
-        direct::contract::<E, EL, EL, L, ER, ER, V>(
-            acc, lhs, rhs, space, 1usize, 1usize, config,
-        );
+        direct::contract::<E, EL, EL, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize, config);
     }
 }

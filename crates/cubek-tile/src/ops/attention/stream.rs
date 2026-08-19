@@ -139,7 +139,11 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                     let kv = Vector::<EA, N>::cast_from(kf[s * lines + li]);
                     #[unroll]
                     for g in 0..rows {
-                        partial[g] += horizontal::vector::<EA, N>(self.q[g * per_lane + p] * kv, w, LeafOp::Sum);
+                        partial[g] += horizontal::vector::<EA, N>(
+                            self.q[g * per_lane + p] * kv,
+                            w,
+                            LeafOp::Sum,
+                        );
                     }
                 }
             }
