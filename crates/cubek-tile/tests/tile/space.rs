@@ -227,9 +227,9 @@ impl OperandSet for MatmulOperands {
 
 fn matmul_operands() -> MatmulOperands {
     MatmulOperands {
-        a: Operand::input(&[M, K]),
-        b: Operand::input(&[K, N]),
-        out: Operand::output(&[M, N]),
+        a: Operand::new(&[M, K]),
+        b: Operand::new(&[K, N]),
+        out: Operand::new(&[M, N]),
     }
 }
 

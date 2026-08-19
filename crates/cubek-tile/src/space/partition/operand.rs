@@ -1,40 +1,24 @@
-//! An operand of a [`Tiling::over`](crate::Tiling::over) build: what it is before the space
-//! exists (role, axes), plus the per-level residences the level closures write. Each level
-//! states [`stage`](Operand::stage) for the operands it materializes; an operand a level
-//! leaves unstated is [`InPlace`](Residence::InPlace) there.
+//! An operand of a [`Tiling::over`](crate::Tiling::over) build: the axes it spans, plus the
+//! per-level residences the level closures write. Each level states
+//! [`stage`](Operand::stage) for the operands it materializes; an operand a level leaves
+//! unstated is [`InPlace`](Residence::InPlace) there. Direction is not the operand's to say:
+//! whether a residence fills or drains is stated by the op call that consumes the tile (a
+//! written operand is the call's `&mut` receiver).
 
 use crate::{Axis, Residence};
 
-/// Which way an operand crosses a residence: an input fills descending, an output drains
-/// ascending.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Role {
-    Input,
-    Output,
-}
-
-/// One operand's space-independent spec: its [`Role`], the axes it spans, and the residences
-/// accumulated while the levels are declared ([`stage`](Operand::stage)).
+/// One operand's space-independent spec: the axes it spans, and the residences accumulated
+/// while the levels are declared ([`stage`](Operand::stage)).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Operand {
-    role: Role,
     axes: Vec<Axis>,
     residences: Vec<Residence>,
     sealed: bool,
 }
 
 impl Operand {
-    pub fn input(axes: &[Axis]) -> Self {
-        Operand::new(Role::Input, axes)
-    }
-
-    pub fn output(axes: &[Axis]) -> Self {
-        Operand::new(Role::Output, axes)
-    }
-
-    fn new(role: Role, axes: &[Axis]) -> Self {
+    pub fn new(axes: &[Axis]) -> Self {
         Operand {
-            role,
             axes: axes.to_vec(),
             residences: Vec::new(),
             sealed: false,
@@ -50,10 +34,6 @@ impl Operand {
             "Operand::stage: stated after the space was built"
         );
         self.residences.push(residence);
-    }
-
-    pub fn role(&self) -> Role {
-        self.role
     }
 
     pub fn axes(&self) -> &[Axis] {
@@ -72,8 +52,7 @@ impl Operand {
     pub(crate) fn close_level(&mut self, index: usize) {
         assert!(
             self.residences.len() <= index + 1,
-            "Operand::stage: {:?} {:?} stated more than one residence at level {index}",
-            self.role,
+            "Operand::stage: {:?} stated more than one residence at level {index}",
             self.axes
         );
         if self.residences.len() == index {
