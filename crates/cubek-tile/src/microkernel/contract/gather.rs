@@ -89,14 +89,14 @@ pub(super) fn contract_gather<
             for line in 0..k_lines {
                 #[unroll]
                 for lane in 0..lw {
-                    gather_fanout_step::<E, EL, L, ER, V>(
+                    rank1_update::<E, EL, L, ER, V>(
                         &lhs_view,
                         &rhs_view,
                         &mut c,
                         &mut b,
                         &batch,
                         line * lw + lane,
-                        lane,
+                        comptime!(Some(lane)),
                         mr,
                         nr,
                         unroll,
@@ -112,14 +112,14 @@ pub(super) fn contract_gather<
             }
             #[unroll]
             for lane in 0..k_tail {
-                gather_fanout_step::<E, EL, L, ER, V>(
+                rank1_update::<E, EL, L, ER, V>(
                     &lhs_view,
                     &rhs_view,
                     &mut c,
                     &mut b,
                     &batch,
                     comptime!(k_lines * lw + lane),
-                    lane,
+                    comptime!(Some(lane)),
                     mr,
                     nr,
                     unroll,
@@ -137,45 +137,25 @@ pub(super) fn contract_gather<
             // configuration, this avoids cloning a wide fan-out body into LLVM IR when its fixed
             // extracts provide no benefit.
             for p in 0..kc {
-                let reduce_coords = unravel(
-                    &const_coords(comptime!(reduce_extents.clone())),
-                    p.fcast::<u32>(),
+                rank1_update::<E, EL, L, ER, V>(
+                    &lhs_view,
+                    &rhs_view,
+                    &mut c,
+                    &mut b,
+                    &batch,
+                    p,
+                    comptime!(None),
+                    mr,
+                    nr,
+                    unroll,
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    comptime!(reduce_extents.clone()),
+                    comptime!(lhs.space.clone()),
+                    comptime!(rhs.space.clone()),
+                    lw,
+                    vw,
                 );
-
-                #[unroll(unroll)]
-                for n in 0..nr {
-                    let acc_coords = acc_cell_coords(&batch, 0u32, n as u32);
-                    let pos = resolve_nd_coords(
-                        comptime!(rhs.space.clone()),
-                        comptime!(space.clone()),
-                        comptime!(reduce.clone()),
-                        &acc_coords,
-                        &reduce_coords,
-                        vw,
-                        false,
-                    );
-                    b[n] = Vector::<E, V>::cast_from(rhs_view.read(pos));
-                }
-                #[unroll(unroll)]
-                for i in 0..mr {
-                    let acc_coords = acc_cell_coords(&batch, i as u32, 0u32);
-                    // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a
-                    // line index, so this is the same position for every lane of one line.
-                    let pos = resolve_nd_coords(
-                        comptime!(lhs.space.clone()),
-                        comptime!(space.clone()),
-                        comptime!(reduce.clone()),
-                        &acc_coords,
-                        &reduce_coords,
-                        lw,
-                        false,
-                    );
-                    let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract_dynamic(p % lw));
-                    #[unroll(unroll)]
-                    for n in 0..nr {
-                        c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
-                    }
-                }
             }
         }
 
@@ -183,18 +163,19 @@ pub(super) fn contract_gather<
     }
 }
 
-/// One gathered rank-1 update for the fan-out walk. `lane` is comptime so shader backends see a
-/// fixed `extract`; the dynamic flat walk above deliberately keeps its smaller loop body instead.
+/// One gathered rank-1 update. `lane` names the component to take when the caller walks `K` as
+/// (line, lane), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
+/// the component from `p` instead.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn gather_fanout_step<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
+fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     lhs_view: &MaskedView<'_, Vector<EL, L>, CoordsDyn>,
     rhs_view: &MaskedView<'_, Vector<ER, V>, CoordsDyn>,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
     batch: &Coords<u32>,
     p: usize,
-    #[comptime] lane: usize,
+    #[comptime] lane: Option<usize>,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
@@ -225,6 +206,8 @@ fn gather_fanout_step<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[unroll(unroll)]
     for i in 0..mr {
         let acc_coords = acc_cell_coords(batch, i as u32, 0u32);
+        // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line index,
+        // so this is the same position for every lane of one line.
         let pos = resolve_nd_coords(
             comptime!(lhs_space.clone()),
             comptime!(space.clone()),
@@ -234,7 +217,12 @@ fn gather_fanout_step<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             lw,
             false,
         );
-        let a = Vector::<E, V>::cast_from(lhs_view.read(pos).extract(lane));
+        let lhs_line = lhs_view.read(pos);
+        let a = if comptime!(lane.is_some()) {
+            Vector::<E, V>::cast_from(lhs_line.extract(comptime!(lane.unwrap())))
+        } else {
+            Vector::<E, V>::cast_from(lhs_line.extract_dynamic(p % lw))
+        };
         #[unroll(unroll)]
         for n in 0..nr {
             c[i * nr + n] = fma(a, b[n], c[i * nr + n]);

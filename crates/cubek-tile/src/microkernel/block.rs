@@ -41,9 +41,10 @@ pub(crate) fn contract_block<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: S
                     rhs,
                     c,
                     &mut b,
-                    (line * lw + lane) as u32,
+                    line * lw + lane,
                     line as u32,
-                    lane,
+                    comptime!(Some(lane)),
+                    lw,
                     mr,
                     nr,
                     unroll,
@@ -60,9 +61,10 @@ pub(crate) fn contract_block<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: S
                 rhs,
                 c,
                 &mut b,
-                comptime!(k_lines * lw + lane) as u32,
+                comptime!(k_lines * lw + lane),
                 comptime!(k_lines) as u32,
-                lane,
+                comptime!(Some(lane)),
+                lw,
                 mr,
                 nr,
                 unroll,
@@ -71,55 +73,63 @@ pub(crate) fn contract_block<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: S
     } else {
         // Flat scalar walk (CPU or scalar lines)
         for p in 0..kc {
-            #[unroll(unroll)]
-            for n in 0..nr {
-                b[n] = Vector::<E, V>::cast_from(rhs.read((p as u32, n as u32)));
-            }
-            #[unroll(unroll)]
-            for i in 0..mr {
-                let lhs_line = lhs.read((i as u32, (p / lw) as u32));
-                let a = if comptime!(lw == 1) {
-                    Vector::<E, V>::cast_from(lhs_line.extract(0usize))
-                } else {
-                    Vector::<E, V>::cast_from(lhs_line.extract_dynamic(p % lw))
-                };
-                #[unroll(unroll)]
-                for n in 0..nr {
-                    c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
-                }
-            }
+            rank1_update::<E, EL, L, ER, V>(
+                lhs,
+                rhs,
+                c,
+                &mut b,
+                p,
+                (p / lw) as u32,
+                comptime!(None),
+                lw,
+                mr,
+                nr,
+                unroll,
+            );
         }
     }
 }
 
 /// One rank-1 update `c += outer(A[:, k], B[k, :])` at scalar contraction step `k`, taking the lhs
-/// from element `lane` of its `k_line`-th K-line. `B`'s `V`-wide lines widen from `ER` into the
+/// from the `k_line`-th K-line of each row. `B`'s `V`-wide lines widen from `ER` into the
 /// accumulate element `E`; reads past the operands' logical bound contribute `0` to the
 /// contraction.
 ///
-/// `lane` is comptime, which is the whole point of walking `K` as (line, lane): `extract` names a
-/// fixed component, and the `mr` line reads are the same reads for every lane of one line, so the
-/// backend folds the fan-out's copies into one.
+/// `lane` names the component to take when the caller walks `K` as (line, lane), which is the
+/// whole point of that walk: `extract` names a fixed component, and the `mr` line reads are the
+/// same reads for every lane of one line, so the backend folds the fan-out's copies into one.
+/// `None` is the flat walk, which resolves the component from `k` instead. `k_line` stays a
+/// parameter rather than `k / lw` so the fan-out keeps handing the backend one loop-invariant
+/// line index per lane body.
 #[cube]
+#[allow(clippy::too_many_arguments)]
 fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
     rhs: &MatrixView<'_, Vector<ER, V>>,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
-    k: u32,
+    k: usize,
     k_line: u32,
-    #[comptime] lane: usize,
+    #[comptime] lane: Option<usize>,
+    #[comptime] lw: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
 ) {
     #[unroll(unroll)]
     for n in 0..nr {
-        b[n] = Vector::<E, V>::cast_from(rhs.read((k, n as u32)));
+        b[n] = Vector::<E, V>::cast_from(rhs.read((k as u32, n as u32)));
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let a = Vector::<E, V>::cast_from(lhs.read((i as u32, k_line)).extract(lane));
+        let lhs_line = lhs.read((i as u32, k_line));
+        let a = if comptime!(lane.is_some()) {
+            Vector::<E, V>::cast_from(lhs_line.extract(comptime!(lane.unwrap())))
+        } else if comptime!(lw == 1) {
+            Vector::<E, V>::cast_from(lhs_line.extract(0usize))
+        } else {
+            Vector::<E, V>::cast_from(lhs_line.extract_dynamic(k % lw))
+        };
         #[unroll(unroll)]
         for n in 0..nr {
             // Explicit `fma`: `+= a * b` lowers to a separate mul + dependent add (no fast-math
