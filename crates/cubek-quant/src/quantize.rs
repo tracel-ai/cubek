@@ -4,7 +4,7 @@ use cubecl::{
     ir::ElemType,
     prelude::*,
     std::{
-        quant::round::round_up_to_param,
+        quant::{check_scale_bindings, round::round_up_to_dtype},
         tensor::{
             View, ViewMut, into_contiguous,
             layout::linear::{LinearView, LinearViewMut, linear_view},
@@ -15,22 +15,23 @@ use cubecl::{
 
 use crate::{
     layout::{ScalesLayout, ScalesViewMut, scales_view},
+    scale::{GlobalScale, Scale, split_levels},
     utils::{check_block_size_compat, packed_storage_elem},
 };
 use crate::{
     layout::{ScalesView, scales_layout},
-    scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue},
+    scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 
 #[cube]
 fn quantize_symmetric<F: Float, N: Size, FS: CubePrimitive>(
     value: Vector<F, N>,
-    scale: FS,
+    scale: Scale<FS>,
     range_min: F,
     range_max: F,
 ) -> Vector<F, N> {
     clamp(
-        Vector::round(value / Vector::cast_from(scale)),
+        Vector::round(scale.quantize_symmetric::<F, N>(value)),
         Vector::new(range_min),
         Vector::new(range_max),
     )
@@ -39,7 +40,7 @@ fn quantize_symmetric<F: Float, N: Size, FS: CubePrimitive>(
 #[cube]
 fn quantize_symmetric_q<F: Float, N: Size, FS: CubePrimitive, Q: Scalar>(
     value: Vector<F, N>,
-    scale: FS,
+    scale: Scale<FS>,
     range_min: F,
     range_max: F,
 ) -> Vector<Q, N> {
@@ -51,7 +52,7 @@ fn quantize_symmetric_q<F: Float, N: Size, FS: CubePrimitive, Q: Scalar>(
 #[cube]
 fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
     value: Vector<F, N>,
-    scale: FS,
+    scale: Scale<FS>,
     range_min: F,
     range_max: F,
     #[comptime] scheme: QuantScheme,
@@ -89,32 +90,35 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     in_pos: usize,
     scale: View<F, usize>,
     mut out_scale: ViewMut<FS, usize>,
+    global: &GlobalScale,
     scales_layout: ScalesLayout,
-    #[comptime] param: QuantParam,
-) -> FS {
+    #[comptime] param: ScaleDtype,
+) -> Scale<FS> {
     // Rounded up rather than cast to nearest, which can land below the scale calibration asked for
     // and clip every value at the block maximum. The CPU backends round up too, and both have to,
     // or a tensor quantized on one reconstructs differently on the other.
-    let scale = FS::cast_from(round_up_to_param::<F>(scale.read(in_pos), param));
+    let inner = FS::cast_from(round_up_to_dtype::<F>(scale.read(in_pos), param));
 
     // Write the scale into the output buffer
     if scales_layout.is_block_start(in_pos) {
-        out_scale.write(in_pos, scale);
+        out_scale.write(in_pos, inner);
     }
 
-    scale
+    global.at::<FS>(inner)
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
+    global: ComptimeOption<LinearView<'_, f32>>,
     range_min: InputScalar,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, Vector<Q, N>>,
     out_scale: ScalesViewMut<'_, FS>,
+    out_global: ComptimeOption<LinearViewMut<'_, f32>>,
     scales_layout: ScalesLayout,
-    #[comptime] param: QuantParam,
+    #[comptime] param: ScaleDtype,
     #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -123,7 +127,9 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 
     let native_packing = Q::packing_factor();
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
-    let scale = write_scale(in_pos, scale, out_scale, scales_layout, param);
+    let global = GlobalScale::read(global);
+    global.write(out_global);
+    let scale = write_scale(in_pos, scale, out_scale, &global, scales_layout, param);
 
     output.write(
         ABSOLUTE_POS,
@@ -140,10 +146,12 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
 fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
     input: LinearView<'_, Vector<F, N>>,
     scale: ScalesView<'_, F>,
+    global: ComptimeOption<LinearView<'_, f32>>,
     range_min: InputScalar,
     range_max: InputScalar,
     mut output: LinearViewMut<'_, QS>,
     out_scale: ScalesViewMut<'_, FS>,
+    out_global: ComptimeOption<LinearViewMut<'_, f32>>,
     scales_layout: ScalesLayout,
     #[comptime] scheme: QuantScheme,
     #[define(F, FS, QS)] _dtypes: [ElemType; 3],
@@ -154,7 +162,16 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
 
     let num_quants = scheme.num_quants();
     let packed_pos = ABSOLUTE_POS * num_quants;
-    let scale = write_scale(packed_pos, scale, out_scale, scales_layout, scheme.param);
+    let global = GlobalScale::read(global);
+    global.write(out_global);
+    let scale = write_scale(
+        packed_pos,
+        scale,
+        out_scale,
+        &global,
+        scales_layout,
+        scheme.scale_dtype(),
+    );
 
     if input.vector_size().comptime() == num_quants {
         output.write(
@@ -193,20 +210,24 @@ pub fn launch_ref<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
-    scale: TensorBinding<R>,
-    out_scale: TensorBinding<R>,
+    scales: &[TensorBinding<R>],
+    out_scales: &[TensorBinding<R>],
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
+    check_scale_bindings(scheme, scales.len());
+    check_scale_bindings(scheme, out_scales.len());
     // Refused here rather than during kernel expansion, where the caller can no longer read the
     // scheme off the error.
     assert!(
-        scheme.param.round_up(1.0).is_some(),
+        scheme.scale_dtype().round_up(1.0).is_some(),
         "{:?} scales have no round-up rule, which quantization requires",
-        scheme.param
+        scheme.scale_dtype()
     );
 
-    let scale_dtype = ElemType::from_quant_param(scheme.param);
+    let scale_dtype = ElemType::from_scale_dtype(scheme.scale_dtype());
+    let (scale, global) = split_levels(scales);
+    let (out_scale, out_global) = split_levels(out_scales);
 
     match scheme {
         QuantScheme {
@@ -217,7 +238,9 @@ pub fn launch_ref<R: Runtime>(
             input,
             scheme,
             scale,
+            global,
             out_scale,
+            out_global,
             output,
             input_elem,
             scale_dtype,
@@ -244,7 +267,9 @@ pub fn launch_ref<R: Runtime>(
                 input,
                 scheme,
                 scale,
+                global,
                 out_scale,
+                out_global,
                 output,
                 input_elem,
                 scale_dtype,
@@ -266,7 +291,9 @@ fn quantize_native<R: Runtime>(
     input: TensorBinding<R>,
     scheme: &QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
@@ -289,7 +316,6 @@ fn quantize_native<R: Runtime>(
 
     match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
             store: QuantStore::Native,
             ..
@@ -314,12 +340,14 @@ fn quantize_native<R: Runtime>(
                     linear_view(input),
                     // scale is computed based on input float dtype, but stored based on qparams precision
                     scales_view(output.clone(), scale, 1, scheme),
+                    global.map(linear_view).into(),
                     InputScalar::new(range_min, input_dtype),
                     InputScalar::new(range_max, input_dtype),
                     linear_view(output.clone()),
                     scales_view(output, out_scale, 1, scheme),
+                    out_global.map(linear_view).into(),
                     scales_layout,
-                    scheme.param,
+                    scheme.scale_dtype(),
                     [input_dtype, scale_dtype, output_dtype],
                 )
             }
@@ -336,7 +364,9 @@ fn quantize_packed<R: Runtime>(
     input: TensorBinding<R>,
     scheme: &QuantScheme,
     scale: TensorBinding<R>,
+    global: Option<TensorBinding<R>>,
     out_scale: TensorBinding<R>,
+    out_global: Option<TensorBinding<R>>,
     output: TensorBinding<R>,
     input_dtype: ElemType,
     scale_dtype: ElemType,
@@ -346,7 +376,6 @@ fn quantize_packed<R: Runtime>(
     // Determine if we can use vectorized packing
     let mut can_vectorize = match scheme {
         QuantScheme {
-            level: QuantLevel::Tensor | QuantLevel::Block(_),
             mode: QuantMode::Symmetric,
             store: QuantStore::PackedU32(dim),
             ..
@@ -395,10 +424,12 @@ fn quantize_packed<R: Runtime>(
             linear_view(input),
             // scale is computed based on input float dtype, but stored based on qparams precision
             scales_view(output.clone(), scale, 1, scheme),
+            global.map(linear_view).into(),
             InputScalar::new(range_min, input_dtype),
             InputScalar::new(range_max, input_dtype),
             linear_view(output.clone()),
             scales_view(output, out_scale, 1, scheme),
+            out_global.map(linear_view).into(),
             scales_layout,
             *scheme,
             [input_dtype, scale_dtype, output_dtype],

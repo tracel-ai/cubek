@@ -27,6 +27,9 @@ pub struct ScaleLayout {
     /// the physical line by the packing factor.
     #[cube(comptime)]
     vector_size: usize,
+    /// Per-axis window extent in elements, [`usize::MAX`] where it is not comptime.
+    #[cube(comptime)]
+    extent: Vec<usize>,
 }
 
 #[cube]
@@ -36,13 +39,22 @@ impl ScaleLayout {
         window_start: u32,
         #[comptime] block: Vec<usize>,
         #[comptime] vector_size: usize,
+        #[comptime] extent: Vec<usize>,
     ) -> Self {
         ScaleLayout {
             strides,
             window_start,
             block,
             vector_size,
+            extent,
         }
+    }
+
+    /// Whether axis `p` still distinguishes scales: an extent that fits inside a block leaves one
+    /// scale for the whole window, already folded into `window_start`, so the term is dropped at
+    /// comptime rather than dividing a runtime coordinate that can only answer `0`.
+    fn addresses(&self, #[comptime] p: usize) -> comptime_type!(bool) {
+        comptime!(self.extent[p] > self.block[p])
     }
 }
 
@@ -58,14 +70,22 @@ impl Layout for ScaleLayout {
         let mut terms = Sequence::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            // Only the innermost axis counts lines; blocks are cut in elements, so widen it.
-            let w = comptime!((if p == last { self.vector_size } else { 1 }) as u32);
-            let block = comptime!(self.block[p] as u32);
-            terms.push(pos[p].fmul(w).fdiv(block).fmul(self.strides.at(p)));
+            if self.addresses(p) {
+                // Only the innermost axis counts lines; blocks are cut in elements, so widen it.
+                let w = comptime!((if p == last { self.vector_size } else { 1 }) as u32);
+                let block = comptime!(self.block[p] as u32);
+                terms.push(pos[p].fmul(w).fdiv(block).fmul(self.strides.at(p)));
+            }
         }
-        self.window_start
-            .fadd(terms.fsum(comptime!((0..rank).collect::<Vec<_>>())))
-            .fcast::<usize>()
+        let kept = terms.len();
+        if comptime!(kept == 0) {
+            // Every axis holds one scale: the window's own, already in `window_start`.
+            self.window_start.fcast::<usize>()
+        } else {
+            self.window_start
+                .fadd(terms.fsum(comptime!((0..kept).collect::<Vec<_>>())))
+                .fcast::<usize>()
+        }
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

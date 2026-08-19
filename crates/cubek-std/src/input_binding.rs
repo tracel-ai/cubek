@@ -1,3 +1,4 @@
+use cubecl::std::tensor::{into_contiguous_packed, into_contiguous_pitched};
 use cubecl::{
     Runtime,
     client::ComputeClient,
@@ -6,10 +7,6 @@ use cubecl::{
     prelude::TensorBinding,
     server::LaunchError,
     zspace::Shape,
-};
-use cubecl::{
-    quant::scheme::{BlockSize, QuantLevel},
-    std::tensor::{into_contiguous_packed, into_contiguous_pitched},
 };
 use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
@@ -70,19 +67,20 @@ impl<R: Runtime> InputBinding<R> {
                 data_dtype: _,
                 scale_dtype: _,
             } => {
+                if scheme.num_levels() > 1 {
+                    unimplemented!("two-level quantization is not supported here, got {scheme:?}");
+                }
+
                 let rank = data.shape.len();
 
                 data.shape.swap(dim0, dim1);
                 data.strides.swap(dim0, dim1);
 
                 // Swap dims for scale and block size if block scaled quant is used
-                if let QuantLevel::Block(block) = &mut scheme.level {
+                if scheme.block_size().is_some() {
                     scale.shape.swap(dim0, dim1);
                     scale.strides.swap(dim0, dim1);
-
-                    let mut block_size = block.to_dim_vec(rank);
-                    block_size.swap(dim0, dim1);
-                    *block = BlockSize::new_trim(block_size)
+                    scheme.swap_block_dims(rank, dim0, dim1);
                 }
 
                 shape.swap(dim0, dim1);

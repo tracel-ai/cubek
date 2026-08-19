@@ -12,7 +12,7 @@ use cubecl::{
     std::tensor::TensorHandle,
     {TestRuntime, zspace::shape},
 };
-use cubek_quant::scheme::{QuantLevel, QuantMode, QuantParam, QuantScheme, QuantStore, QuantValue};
+use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 const M: usize = 8;
 const N: usize = 32;
@@ -49,10 +49,9 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
         .collect();
 
     let scheme = QuantScheme::default()
-        .with_level(QuantLevel::block([BLOCK as u8]))
+        .per_block([BLOCK as u8], ScaleDtype::F16)
         .with_value(QuantValue::Q8S)
         .with_store(QuantStore::PackedU32(0))
-        .with_param(QuantParam::F16)
         .with_mode(QuantMode::Symmetric);
 
     // The scale grid is per axis: shape[i] / block[i], so one block per row here.
@@ -71,8 +70,8 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
         &client,
         input.binding(),
         values.binding(),
-        scale.binding(),
-        stored.clone().binding(),
+        &[scale.binding()],
+        &[stored.clone().binding()],
         &scheme,
         ElemType::Float(FloatKind::F32),
     )

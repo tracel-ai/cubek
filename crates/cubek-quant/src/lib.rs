@@ -14,20 +14,19 @@ pub mod quantize;
 #[cfg(feature = "kernels")]
 pub mod layout;
 
+#[cfg(feature = "kernels")]
+pub mod scale;
+
 pub use cubecl_common::quant::scheme;
 
 #[cfg(feature = "kernels")]
 pub(crate) mod utils {
-    use crate::scheme::{QuantLevel, QuantScheme, QuantStore};
+    use crate::scheme::{QuantScheme, QuantStore};
     use cubecl::ir::{ElemType, UIntKind};
 
     pub(crate) fn check_block_size_compat(scheme: &QuantScheme, div: usize) {
         // Validate block size compatibility
-        if let QuantScheme {
-            level: QuantLevel::Block(block_size),
-            ..
-        } = scheme
-        {
+        if let Some(block_size) = scheme.block_size() {
             let block_size = *block_size.as_slice().last().unwrap() as usize;
             assert!(
                 block_size.is_multiple_of(div),

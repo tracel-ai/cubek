@@ -7,7 +7,7 @@ use cubecl::std::{
 };
 use cubecl::{prelude::*, std::tensor::launch::ViewArg};
 
-use crate::scheme::{QuantLevel, QuantScheme};
+use crate::scheme::QuantScheme;
 
 /// Layout for quantization scales, indexed by quant element index and returns the corresponding
 /// scale based on the quantization type.
@@ -223,9 +223,11 @@ pub fn scales_layout<R: Runtime>(
 ) -> ScalesLayoutArgs<R> {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
 
-    match &scheme.level {
-        QuantLevel::Tensor => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
-        QuantLevel::Block(block_size) => {
+    // The innermost level's grid, which a two-level scheme lays out exactly like a one-level block
+    // scheme. Its global scale covers the whole tensor and rides its own binding, not this layout.
+    match scheme.block_size() {
+        None => ScalesLayoutArgs::PerTensor(PerTensorLayoutLaunch::new(values_len)),
+        Some(block_size) => {
             let tensor_shape = shape_divmod_quant(&values.shape, scheme.num_quants());
             let scales_strides = strides_seq(&scales.strides);
             ScalesLayoutArgs::BlockScaled(BlockScaledLayoutLaunch::new(
@@ -236,10 +238,6 @@ pub fn scales_layout<R: Runtime>(
                 scales_vector_size,
             ))
         }
-        QuantLevel::BlockTensor { .. } => unimplemented!(
-            "two-level quantization is not supported here, got {:?}",
-            scheme.level
-        ),
     }
 }
 

@@ -23,7 +23,9 @@ pub use view::*;
 
 use cubecl::{
     prelude::*,
-    quant::scheme::{QuantLevel, QuantScheme},
+    quant::scheme::QuantScheme,
+    std::quant::view::{KnownScale, QuantizedView as DequantView},
+    std::tensor::{View, layout::Coordinates},
 };
 
 use crate::*;
@@ -116,10 +118,20 @@ pub enum DequantAt {
 #[expand(derive(Clone))]
 pub struct QuantInfo {
     pub(crate) buffer: Box<[f32]>,
+    /// What every read below this window already holds of its scale, settled once at
+    /// construction: the global level's scale read from its binding, or nothing. Never
+    /// [`KnownScale::Whole`] here: a stage's scales do not exist until its fill, so a uniform
+    /// window promotes to it at read time ([`dequant_view`](QuantInfo::dequant_view)).
+    pub(crate) known: KnownScale,
     pub(crate) strides: Coords<u32>,
     pub(crate) window_start: u32,
     #[cube(comptime)]
     pub(crate) block: Vec<usize>,
+    /// Per-axis extent of the window these scales cover, in elements; [`usize::MAX`] where it is
+    /// not comptime (a dynamic top-level axis). An axis whose extent fits inside a block has no
+    /// distinct scales left to address, which is what [`ScaleLayout`] drops its term for.
+    #[cube(comptime)]
+    pub(crate) extent: Vec<usize>,
     /// Where this operand's quantized form ends. Read by [`MemData::smem_like`], which is why no
     /// call site asks an operand whether it is quantized before staging it.
     #[cube(comptime)]
@@ -135,23 +147,103 @@ pub struct QuantInfo {
 }
 
 /// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
-/// tensor, so its edges are an unused placeholder ([`Tile::of_dequant`] pairs them with `0`
-/// strides); a block scheme's edges come straight from the scheme.
+/// tensor, so every axis reports `usize::MAX`: with `0` strides ([`Tile::of_dequant`]) the value
+/// never addresses a real block, and it makes [`uniform_window`] report the whole window as
+/// uniform, which per-tensor always is. A block scheme's edges come straight from the scheme.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
-    match scheme.level {
-        QuantLevel::Tensor => vec![1; rank],
-        QuantLevel::Block(bs) => bs.to_dim_vec(rank).iter().map(|&b| b as usize).collect(),
-        QuantLevel::BlockTensor { .. } => {
-            unimplemented!(
-                "two-level quantization is not supported here, got {:?}",
-                scheme.level
-            )
-        }
+    let Some(block) = scheme.block_size() else {
+        return vec![usize::MAX; rank];
+    };
+    block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
+}
+
+/// Whether one scale covers a window of `extent` under `block` edges: every axis fits inside a
+/// block, so there is nothing left for [`ScaleLayout`] to address and the scale can be read once
+/// ([`QuantInfo::uniform_scale`]) instead of per value.
+fn uniform_window(block: &[usize], extent: &[usize]) -> bool {
+    (0..block.len()).all(|p| extent[p] <= block[p])
+}
+
+impl QuantInfo {
+    /// See [`uniform_window`]. Both this and its expand twin exist because a `comptime!` branch
+    /// typechecks as host code as well as expanded.
+    pub(crate) fn uniform(&self) -> bool {
+        uniform_window(&self.block, &self.extent)
     }
+}
+
+impl QuantInfoExpand {
+    /// See [`uniform_window`].
+    pub(crate) fn uniform(&self) -> bool {
+        uniform_window(&self.block, &self.extent)
+    }
+}
+
+/// Per-axis window extent in elements for a space's own level, [`usize::MAX`] where an axis is
+/// dynamic. What [`QuantInfo`] carries so [`ScaleLayout`] can drop the axes that hold one scale.
+pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
+    (0..rank)
+        .map(|p| match space.extent_raw(space.axis_at(p)) {
+            Extent::Static(e) => e,
+            Extent::Dynamic => usize::MAX,
+        })
+        .collect()
+}
+
+/// The scheme a staged side-channel serves: its grid holds *effective* scales
+/// ([`MemData::stage_scales`] folds the global level in), so a two-level scheme stages as its
+/// one-level block form and reads below the stage carry no global scale.
+pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
+    let Some(block) = scheme.block_scale() else {
+        return scheme;
+    };
+    // Rebuilt rather than cleared: the levels are set additively and there is no way to drop one.
+    QuantScheme::default()
+        .with_value(scheme.value)
+        .with_store(scheme.store)
+        .with_mode(scheme.mode)
+        .per_block(block.size.as_slice(), block.dtype)
 }
 
 #[cube]
 impl QuantInfo {
+    /// The one scale this whole window reconstructs against, global level folded in. Only
+    /// meaningful where [`uniform`](QuantInfoExpand::uniform) holds; one load for the whole tile.
+    pub(crate) fn uniform_scale(&self) -> f32 {
+        self.known
+            .effective(self.buffer[self.window_start.fcast::<usize>()])
+    }
+
+    /// The [`DequantView`] this info's scale data resolves to for a values/scales view pair over
+    /// the same coordinates: a uniform window promotes to one whole scale, read here so no read
+    /// below pays for the scales view at all; any other window reads with what it already
+    /// [`known`](QuantInfo::known). Shared by [`flat_transparent`](MemData::flat_transparent) and
+    /// [`transparent`](MemData::transparent).
+    pub(crate) fn dequant_view<
+        'a,
+        I: Numeric,
+        WP: Size,
+        T: Numeric,
+        W: Size,
+        C: Coordinates + 'static,
+    >(
+        &self,
+        values: View<'a, Vector<I, WP>, C>,
+        scales: View<'a, f32, C>,
+    ) -> DequantView<'a, I, WP, f32, T, W, C> {
+        let known = if comptime!(self.uniform()) {
+            KnownScale::new_Whole(self.uniform_scale())
+        } else {
+            self.known
+        };
+        DequantView::<I, WP, f32, T, W, C>::new_with_known_scale(
+            values,
+            scales,
+            known,
+            comptime!(self.scheme),
+        )
+    }
+
     /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
     /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
     /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
@@ -162,6 +254,7 @@ impl QuantInfo {
         origin: &Coords<u32>,
         #[comptime] rank: usize,
         #[comptime] vector_size: usize,
+        #[comptime] extent: Vec<usize>,
     ) -> QuantInfo {
         let last = comptime!(rank - 1);
         let mut advances = Coords::<u32>::new();
@@ -174,9 +267,11 @@ impl QuantInfo {
         }
         QuantInfo {
             buffer: unsafe { self.buffer.as_boxed_unchecked() },
+            known: self.known,
             strides: self.strides.clone(),
             window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
+            extent: comptime!(extent),
             dequant_at: comptime!(self.dequant_at),
             scale_shape: comptime!(self.scale_shape.clone()),
             scheme: comptime!(self.scheme),

@@ -6,7 +6,7 @@ use cubecl::std::{
     },
 };
 use cubecl::zspace::Shape;
-use cubecl_common::quant::scheme::{QuantLevel, QuantScheme};
+use cubecl_common::quant::scheme::QuantScheme;
 use cubek_std::MatrixLayout;
 
 use crate::{
@@ -255,9 +255,15 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
         let scales_layout = {
             let shape = (rows as u32, cols as u32);
 
-            match scheme.level {
-                QuantLevel::Tensor => GlobalScaleLayoutArgs::PerTensor { shape },
-                QuantLevel::Block(block_size) => {
+            if scheme.num_levels() > 1 {
+                unimplemented!(
+                    "two-level quantization is not supported by the quantized matmul, got {scheme:?}"
+                );
+            }
+
+            match scheme.block_size() {
+                None => GlobalScaleLayoutArgs::PerTensor { shape },
+                Some(block_size) => {
                     let [block_row, block_col] = block_size.as_dim();
                     // Scales are never vectorized because we require that `block_size >= vector_size * num_quants`.
                     let scales_layout =
@@ -268,10 +274,6 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
                         (block_row as u32, block_col as u32),
                     ))
                 }
-                QuantLevel::BlockTensor { .. } => unimplemented!(
-                    "two-level quantization is not supported by the quantized matmul, got {:?}",
-                    scheme.level
-                ),
             }
         };
 
