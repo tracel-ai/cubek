@@ -55,11 +55,11 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub fn commit(&mut self, pos: C, value: Vector<E, V>, #[comptime] inst: LeafOp) {
         match comptime!(self.lane_share) {
             LaneShare::Plane => {
-                let combined = plane::reduce_vector(value, inst);
+                let combined = plane::broadcast::<Vector<E, V>>(value, inst);
                 if UNIT_POS_X == 0 {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, LeafOp::combine_vector(old, combined, inst));
+                        .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, inst));
                 }
             }
             LaneShare::Group { fold_mask } => {
@@ -68,7 +68,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 if lane_in_group == 0 {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, LeafOp::combine_vector(old, combined, inst));
+                        .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, inst));
                 }
             }
             LaneShare::Whole => self.values.write(pos, value),

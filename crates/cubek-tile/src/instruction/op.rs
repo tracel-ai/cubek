@@ -31,20 +31,14 @@ impl LeafOp {
     }
 
     /// Fold `rhs` into `lhs` under `op`.
-    pub fn combine<E: Numeric>(lhs: E, rhs: E, #[comptime] op: LeafOp) -> E {
-        match comptime!(op) {
-            LeafOp::Sum => lhs + rhs,
-            LeafOp::Max => max(lhs, rhs),
-            LeafOp::Min => min(lhs, rhs),
-        }
-    }
-
-    /// Lane-wise [`combine`](LeafOp::combine). Separate because `Vector` is not `Numeric`.
-    pub fn combine_vector<E: Numeric, V: Size>(
-        lhs: Vector<E, V>,
-        rhs: Vector<E, V>,
+    ///
+    /// Generic over scalars and lines alike: these three need only ordering and addition, which
+    /// `Vector` has, so the bound stays well below `Numeric` (which it does not have).
+    pub fn combine<T: CubePartialOrd + CubeAdd + core::ops::Add<T, Output = T>>(
+        lhs: T,
+        rhs: T,
         #[comptime] op: LeafOp,
-    ) -> Vector<E, V> {
+    ) -> T {
         match comptime!(op) {
             LeafOp::Sum => lhs + rhs,
             LeafOp::Max => max(lhs, rhs),
