@@ -63,17 +63,18 @@ fn at_least_one_value_per_bin_int_uniform() {
 }
 
 fn get_random_uniform_data(shape: &[usize], lower_bound: f32, upper_bound: f32) -> Vec<TestDType> {
-    seed(0);
     let client = TestRuntime::client(&Default::default());
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
-    random_uniform(
-        &client,
-        lower_bound,
-        upper_bound,
-        output.clone().binding(),
-        TestDType::elem_type_native(),
-    )
+    with_seed(0, || {
+        random_uniform(
+            &client,
+            lower_bound,
+            upper_bound,
+            output.clone().binding(),
+            TestDType::elem_type_native(),
+        )
+    })
     .unwrap();
 
     let output_data = client.read_one_unchecked_tensor(output.into_copy_descriptor());
