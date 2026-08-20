@@ -42,7 +42,7 @@ fn conv_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(instruction);
+    let mut out = out.tile(comptime!(space.with_instruction(instruction)));
     out.zero();
     out.mma(&input, &weight);
 }
@@ -61,7 +61,7 @@ fn conv_kernel_lined<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(instruction);
+    let mut out = out.tile(comptime!(space.with_instruction(instruction)));
     out.zero();
     out.mma(&input, &weight);
 }
@@ -920,7 +920,7 @@ fn conv_kernel_dynamic<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(MICROKERNEL);
+    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
     out.zero();
     out.mma(&input, &weight);
 }
@@ -1053,7 +1053,7 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(MICROKERNEL);
+    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
     out.zero();
     out.mma(&input, &weight);
 }
@@ -1079,7 +1079,7 @@ fn conv_kernel_all_dynamic<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(MICROKERNEL);
+    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
     out.zero();
     out.mma(&input, &weight);
 }
@@ -1936,7 +1936,7 @@ fn conv_mma_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(instruction);
+    let mut out = out.tile(comptime!(space.with_instruction(instruction)));
     let mut acc = out.promote(&input);
     acc.zero();
     acc.mma(&input, &weight);
@@ -2293,7 +2293,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space).instruction(MICROKERNEL);
+    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
     out.zero();
     out.mma(&input, &weight);
 }

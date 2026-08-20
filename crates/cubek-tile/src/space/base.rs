@@ -4,7 +4,9 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, LevelRole, MAX_AXES, Partitioner};
+use crate::{
+    Axis, ComputeScope, Distribution, LaneShare, LevelRole, MAX_AXES, Partitioner, RegisterKind,
+};
 
 use super::ByAxis;
 
@@ -93,12 +95,22 @@ pub struct Space {
     pub(crate) extents: Extents,
     #[cube(comptime)]
     partitioner: Partitioner,
+    /// What runs at the floor, once the levels are exhausted. Stated by the space's terminal
+    /// level and read by [`mma_leaf`](crate::mma_leaf); `None` for a space nothing contracts
+    /// in (a plain copy), and for one whose accumulator is promoted to a hardware form that
+    /// answers for itself.
+    #[cube(comptime)]
+    instruction: Option<RegisterKind>,
 }
 
 // Identity is the comptime tiling spec only; the `Extents` sizes are runtime, never a key.
+// The instruction is part of it: it picks the leaf's codegen, so two spaces that differ only
+// there must not share a compiled kernel.
 impl PartialEq for Space {
     fn eq(&self, other: &Self) -> bool {
-        self.extents.kinds == other.extents.kinds && self.partitioner == other.partitioner
+        self.extents.kinds == other.extents.kinds
+            && self.partitioner == other.partitioner
+            && self.instruction == other.instruction
     }
 }
 impl Eq for Space {}
@@ -106,6 +118,7 @@ impl std::hash::Hash for Space {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.extents.kinds.hash(state);
         self.partitioner.hash(state);
+        self.instruction.hash(state);
     }
 }
 
@@ -118,6 +131,7 @@ impl SpaceExpand {
         Space {
             extents: Extents::fixed(self.extents.kinds.clone()),
             partitioner: self.partitioner.clone(),
+            instruction: self.instruction,
         }
     }
 
@@ -151,6 +165,7 @@ impl Space {
                 sizes,
             },
             partitioner: comptime!(space.partitioner.clone()),
+            instruction: comptime!(space.instruction),
         }
     }
 }
@@ -169,7 +184,21 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
             partitioner: Partitioner::Final,
+            instruction: None,
         }
+    }
+
+    /// State what runs at the floor. Said once, by the routine that owns the contraction;
+    /// every space derived from this one ([`divide`](Space::divide),
+    /// [`project`](Space::project)) carries it down to the leaf.
+    pub fn with_instruction(mut self, instruction: RegisterKind) -> Self {
+        self.instruction = Some(instruction);
+        self
+    }
+
+    /// What runs at the floor, if this space states it.
+    pub fn instruction(&self) -> Option<RegisterKind> {
+        self.instruction
     }
 
     /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), keeping the partitioner. The
@@ -330,9 +359,13 @@ impl Space {
             .cloned()
             .unwrap_or(Partitioner::Final);
 
+        // Same reasoning for the floor: the operands of one operation share it.
+        let instruction = parts.iter().find_map(|p| p.instruction);
+
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner,
+            instruction,
         }
     }
 
@@ -344,6 +377,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
+            instruction: self.instruction,
         }
     }
 
@@ -500,6 +534,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.next().clone(),
+            instruction: self.instruction,
         }
     }
 
@@ -528,6 +563,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
+            instruction: self.instruction,
         }
     }
 

@@ -374,7 +374,6 @@ impl<T: Numeric> Tile<T> {
                 lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(space),
-            instruction: comptime!(None),
         }
     }
 }
@@ -660,7 +659,6 @@ impl<T: Numeric> MemData<T> {
                 lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(meta.space),
-            instruction: comptime!(None),
         }
     }
 }

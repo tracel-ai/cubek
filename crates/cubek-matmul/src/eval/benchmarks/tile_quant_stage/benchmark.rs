@@ -38,7 +38,7 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.mma(&a, &b);
 }
 

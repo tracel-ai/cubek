@@ -1330,7 +1330,7 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.mma(&a, &b);
 }
 
@@ -1348,7 +1348,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(instruction);
+    let mut c = c.tile(comptime!(space.with_instruction(instruction)));
     let mut acc = c.promote(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1371,7 +1371,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(instruction);
+    let mut c = c.tile(comptime!(space.with_instruction(instruction)));
     let mut acc = c.promote(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1392,7 +1392,7 @@ fn launch_cpu_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.zero();
     c.mma(&a, &b);
 }
@@ -1410,7 +1410,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     let mut acc = c.promote::<EA, _>(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1560,7 +1560,7 @@ fn launch_cpu_matmul_lined<E: Numeric, LV: Size, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.zero();
     c.mma(&a, &b);
 }
@@ -1577,7 +1577,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     let mut acc = c.promote::<EA, _>(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -3396,7 +3396,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.mma(&a, &b);
 }
 
@@ -3666,7 +3666,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.mma(&a, &b);
 }
 

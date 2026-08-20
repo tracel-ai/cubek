@@ -5,7 +5,7 @@
 //! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
 //! closure, so an operand states where it lives at the level that cuts it.
 
-use crate::{Axis, ByAxis, Space};
+use crate::{Axis, ByAxis, RegisterKind, Space};
 
 use super::{Buffering, CubeAxis, Distribution, OperandSet, Partitioner, WalkOrder};
 
@@ -66,6 +66,7 @@ impl Tiling {
         LeveledTiling {
             extents: extents.to_vec(),
             levels: Vec::new(),
+            instruction: None,
         }
     }
 
@@ -109,6 +110,14 @@ impl<O: OperandSet> OperandTiling<O> {
         self
     }
 
+    /// State what runs at the floor, once the levels are exhausted. Said after the last
+    /// level because that is where it acts: it consumes whatever staging left and moves
+    /// nothing itself. A space nothing contracts in leaves it unsaid.
+    pub fn instruction(mut self, instruction: RegisterKind) -> Self {
+        self.tiling = self.tiling.instruction(instruction);
+        self
+    }
+
     /// Build the [`Space`] and hand the operands back, sealed: one residence per level, and
     /// every later [`stage`](crate::Operand::stage) panics.
     pub fn build(mut self) -> (Space, O) {
@@ -131,6 +140,7 @@ impl Default for Tiling {
 pub struct LeveledTiling {
     extents: Vec<(Axis, usize)>,
     levels: Vec<LevelSpec>,
+    instruction: Option<RegisterKind>,
 }
 
 impl LeveledTiling {
@@ -172,8 +182,19 @@ impl LeveledTiling {
         });
     }
 
-    /// Build the [`Space`]: the extents plus the stack of levels, and nothing about what the
-    /// pieces become. Formats are the operands' ([`TileSpec::leaf`](crate::TileSpec::leaf)).
+    /// State what runs at the floor. See [`OperandTiling::instruction`].
+    pub fn instruction(mut self, instruction: RegisterKind) -> Self {
+        assert!(
+            self.instruction.is_none(),
+            "LeveledTiling::instruction: the floor is stated once, already {:?}",
+            self.instruction
+        );
+        self.instruction = Some(instruction);
+        self
+    }
+
+    /// Build the [`Space`]: the extents, the stack of levels, and what runs once they are
+    /// exhausted. Where each operand *lives* is the operands' own statement.
     pub fn build(self) -> Space {
         let mut space = Space::new(&self.extents);
         for level in &self.levels {
@@ -207,7 +228,10 @@ impl LeveledTiling {
             let partitioner = builder.buffered(level.buffering);
             space = space.with_partitioner(partitioner);
         }
-        space
+        match self.instruction {
+            Some(instruction) => space.with_instruction(instruction),
+            None => space,
+        }
     }
 }
 

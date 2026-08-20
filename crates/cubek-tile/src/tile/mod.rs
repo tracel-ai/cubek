@@ -369,26 +369,6 @@ pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
-    /// The instruction contracting into this accumulator, bound by the kernel
-    /// ([`instruction`](Tile::instruction)): the blueprint's statement for an accumulator no
-    /// operand ladder answers for. `None` everywhere else.
-    #[cube(comptime)]
-    pub instruction: Option<RegisterKind>,
-}
-
-#[cube]
-impl<T: Numeric> Tile<T> {
-    /// State the instruction that contracts into this accumulator: the blueprint's
-    /// [`RegisterKind`], bound at the kernel's top onto the tile `mma`/`reduce_axis` is called
-    /// on. Read where no operand ladder stages a register form: the software microkernel
-    /// (`Array` carries its config) and hardware mma consuming raw memory windows.
-    pub fn instruction(self, #[comptime] instruction: RegisterKind) -> Tile<T> {
-        Tile::<T> {
-            tile_kind: self.tile_kind,
-            space: comptime!(self.space.clone()),
-            instruction: comptime!(Some(instruction)),
-        }
-    }
 }
 
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
@@ -454,7 +434,6 @@ impl<T: Numeric> Tile<T> {
                 stage,
             )),
             space,
-            instruction: comptime!(None),
         }
     }
 
@@ -761,7 +740,6 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
-            instruction: comptime!(self.instruction),
         }
     }
 

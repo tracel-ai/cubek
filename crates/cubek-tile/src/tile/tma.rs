@@ -49,7 +49,6 @@ impl<T: Numeric> TmaData<T> {
                 stage,
             }),
             space: comptime!(space),
-            instruction: comptime!(None),
         }
     }
 }

@@ -216,7 +216,6 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
             }),
-            instruction: comptime!(Some(form)),
             // The fragments above were sized from the partitioner alone (`partition_shape`
             // and `final_space` read edges, never extents), so the tile carries the space it
             // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
@@ -270,7 +269,6 @@ impl<T: Numeric> PlanePartition<T> {
                 n_tiles: t1,
             }),
             space: comptime!(window),
-            instruction: comptime!(None),
         }
     }
 

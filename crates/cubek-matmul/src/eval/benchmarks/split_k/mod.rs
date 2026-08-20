@@ -74,7 +74,7 @@ fn launch_split_k_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space).instruction(MICROKERNEL);
+    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
     c.mma(&a, &b);
 }
 

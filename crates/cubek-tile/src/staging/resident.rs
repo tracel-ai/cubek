@@ -29,8 +29,8 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `lhs` is the operand this accumulator will contract against, and its ladder states the
     /// register form the accumulator takes: a staged cmma or manual-mma operand meets a
     /// matching fragment. A ladder staging no register form leaves the instruction open (memory
-    /// windows serve the software microkernel and both hardware mmas alike), so the kernel's
-    /// own statement on this accumulator decides ([`Tile::instruction`]). `lhs` also sizes the
+    /// windows serve the software microkernel and both hardware mmas alike), so the space's
+    /// floor decides ([`Space::instruction`]). `lhs` also sizes the
     /// fragment: a hardware fragment is the whole `m × n × k` instruction, and an accumulator
     /// spans only `m × n`, so the contraction depth has to come from a side that has it. The
     /// `mma` call is the next line at every call site, so it is already in hand.
@@ -43,10 +43,9 @@ impl<Acc: Numeric> Tile<Acc> {
         let plan = lhs.stage_plan();
         let form = comptime!(match plan.register_stage() {
             Some(kind) => kind,
-            None => self.instruction.expect(
-                "Tile::promote: no operand ladder stages a register form, so the instruction \
-                 is the kernel's to state; bind it at the kernel top with \
-                 `.instruction(...)` on the output tile"
+            None => self.space.instruction().expect(
+                "Tile::promote: no operand ladder stages a register form, so the floor is the \
+                 space's to state; add `.instruction(...)` to its tiling"
             ),
         });
         // The block's lines match the memory it drains back into; the hardware

@@ -11,7 +11,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, MICROKERNEL, TestInput};
 
 use cubek_tile::*;
 
@@ -171,6 +171,7 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
                 .axis(N, Cut::sequential(tn))
                 .axis(K, Cut::sequential(k))
         })
+        .instruction(MICROKERNEL)
         .build();
     run(
         shape![m, k],
@@ -193,6 +194,7 @@ fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -
                 .axis(N, Cut::sequential(tn))
                 .axis(K, Cut::sequential(k))
         })
+        .instruction(MICROKERNEL)
         .build();
     run(
         shape![b, m, k],
@@ -236,6 +238,7 @@ fn split_k_whole_reduce_at_leaf() {
                 .axis(K1, Cut::sequential(k1))
                 .axis(K2, Cut::sequential(k2))
         })
+        .instruction(MICROKERNEL)
         .build();
 
     let got = run(
@@ -265,6 +268,7 @@ fn split_k_major_half_walked() {
                 .axis(K1, Cut::sequential(1))
                 .axis(K2, Cut::sequential(k2))
         })
+        .instruction(MICROKERNEL)
         .build();
 
     let got = run(
@@ -295,6 +299,7 @@ fn split_k_with_a_batch_axis() {
                 .axis(K1, Cut::sequential(k1))
                 .axis(K2, Cut::sequential(k2))
         })
+        .instruction(MICROKERNEL)
         .build();
 
     let got = run(

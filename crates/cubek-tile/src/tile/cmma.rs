@@ -56,7 +56,6 @@ impl<T: Numeric> CmmaData<T> {
                 layout,
             })),
             space: comptime!(space),
-            instruction: comptime!(None),
         }
     }
 

@@ -77,17 +77,17 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
         // meets their kind-pairing panics; there is no second declaration left to check this one
         // against.
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            let config = comptime!(match acc.instruction {
+            let config = comptime!(match space.instruction() {
                 Some(RegisterKind::Array { config }) => config,
                 Some(other) => panic!(
                     "mma_leaf: a Gmem/Smem accumulator contracts in place through the software \
-                     microkernel, but the kernel states {other:?}; promote the accumulator for \
+                     microkernel, but the space's floor is {other:?}; promote the accumulator for \
                      a hardware instruction"
                 ),
                 None => panic!(
                     "mma_leaf: a Gmem/Smem accumulator contracts through the software \
-                     microkernel; bind it at the kernel top with \
-                     `.instruction(RegisterKind::Array {{ config }})` on the output tile"
+                     microkernel; state it on the space with \
+                     `.instruction(RegisterKind::Array {{ config }})`"
                 ),
             });
             contract::memory::<E, EL, ER>(g, lhs, rhs, space, config)

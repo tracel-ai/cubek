@@ -3,7 +3,7 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, MemoryMmaConfig, StorageTiling, Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, MemoryMmaConfig, RegisterKind, StorageTiling, Tiling, WalkOrder,
 };
 
 use crate::{
@@ -187,9 +187,12 @@ pub fn launch_ref<R: Runtime>(
     let rhs = rhs.into_data();
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], sz);
     // A CPU backend: a wide scalar budget to unroll against, the dual-path edge specialization,
-    // and a flat scalar K-walk (no lanes to fan out over). Bound on the accumulator at the
-    // kernel's top, where `mma` reads it.
-    let microkernel = MemoryMmaConfig::new(256 / v, true, false);
+    // and a flat scalar K-walk (no lanes to fan out over). Stated on the space's floor, where
+    // `mma_leaf` reads it. It waits until here because the unroll budget is sized from the line
+    // width, which the launcher only settles once the space exists.
+    let instruction = RegisterKind::Array {
+        config: MemoryMmaConfig::new(256 / v, true, false),
+    };
 
     // Bind each operand to its binding: the subspace comes off the operand, the batch list and
     // storage tiling are per-binding launch facts. All operands get the full output batch-axis
@@ -223,8 +226,7 @@ pub fn launch_ref<R: Runtime>(
         a.arg(),
         b.arg(),
         c.arg(),
-        launch.space().clone(),
-        microkernel,
+        launch.space().clone().with_instruction(instruction),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,
