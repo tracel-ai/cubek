@@ -1,6 +1,6 @@
 mod base;
 mod strategy;
-mod tile;
+pub(crate) mod tile;
 mod tune_key;
 
 pub use base::*;

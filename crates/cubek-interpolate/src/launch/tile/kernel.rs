@@ -2,7 +2,7 @@ use super::{
     filter::{SeparableFilter, SeparableFilterFamily, SeparableWeights, TapDistance},
     space::*,
 };
-use cubecl::{ir::ElemType, prelude::*, std::FastDivmod};
+use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::*;
 
 #[cube]
@@ -11,7 +11,7 @@ fn tap_distance<E: Float>(
     #[comptime] output: Axis,
     scale: u32,
     offset: i32,
-    divisor: FastDivmod<u32>,
+    divisor: u32,
     #[comptime] radius: usize,
 ) -> TapDistance<E> {
     sum_of(
@@ -32,10 +32,10 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     output: &TileArg<'_, E, V>,
     row_scale: u32,
     row_offset: i32,
-    row_divisor: FastDivmod<u32>,
+    row_divisor: u32,
     col_scale: u32,
     col_offset: i32,
-    col_divisor: FastDivmod<u32>,
+    col_divisor: u32,
     #[comptime] radius: usize,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,

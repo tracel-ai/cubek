@@ -8,11 +8,6 @@ use crate::{
 };
 
 /// The established interpolation implementations and the experimental tile path.
-///
-/// The tile path is entered twice, once per input residence, because those are its only two
-/// distinct kernels: the ring is single-slot everywhere ([`interpolate_space`]), so a deeper
-/// buffering would compile the same shader and time the same noise. `TileConfig::auto` is not
-/// listed for the same reason, being whichever of the two the tap window selects.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InterpolateBenchmarkStrategy {
     Standard(InterpolateStrategy),
@@ -21,6 +16,7 @@ pub enum InterpolateBenchmarkStrategy {
 
 pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
     vec![
+        // Standard baseline strategies
         CatalogEntry::new(
             "global_memory",
             "Global Memory",
@@ -39,6 +35,13 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
                 }),
             )),
         ),
+        // Geometry derives the stable choices: four planes per cube, about 32 columns per cube,
+        // and one row per plane when downsampling. Only residence remains worth comparing.
+        CatalogEntry::new(
+            "tile_auto",
+            "Tile gather-reduce (auto residence)",
+            InterpolateBenchmarkStrategy::Tile(TileConfig::auto()),
+        ),
         CatalogEntry::new(
             "tile_smem",
             "Tile gather-reduce (staged input)",
@@ -50,4 +53,24 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
             InterpolateBenchmarkStrategy::Tile(TileConfig::forced(Residence::InPlace)),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalogue_only_compares_residence_for_the_derived_geometry() {
+        let ids: Vec<_> = strategies().into_iter().map(|entry| entry.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "global_memory",
+                "shared_memory",
+                "tile_auto",
+                "tile_smem",
+                "tile_in_place"
+            ]
+        );
+    }
 }

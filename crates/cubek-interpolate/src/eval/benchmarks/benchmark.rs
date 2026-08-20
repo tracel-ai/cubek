@@ -1,11 +1,11 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
     client::ComputeClient,
     future,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::Shape,
+    Runtime, TestRuntime,
 };
 use cubek_test_utils::{RunSamples, TestInput};
 use cubek_tile::Residence;
@@ -25,7 +25,10 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
 
-    if client.properties().hardware.num_cpu_cores.is_some()
+    let hardware = &client.properties().hardware;
+    let is_cpu = hardware.num_cpu_cores.is_some();
+
+    if is_cpu
         && (matches!(
             strategy,
             InterpolateBenchmarkStrategy::Standard(InterpolateStrategy::SharedMemoryStrategy(_))
@@ -38,6 +41,67 @@ pub fn bench(
     }
 
     let dtype = f32::elem_type_native();
+
+    if let InterpolateBenchmarkStrategy::Tile(config) = strategy {
+        let lanes = hardware.plane_size_max as usize;
+        let planes = config.planes_per_cube.unwrap_or(4);
+        let units_per_cube = planes * lanes;
+        if units_per_cube > hardware.max_units_per_cube as usize {
+            return Err(format!(
+                "tile units per cube ({units_per_cube}) exceeds device max ({})",
+                hardware.max_units_per_cube
+            ));
+        }
+
+        if let InterpolateProblem::Forward(prob) = problem {
+            if config.input_residence() == Some(Residence::Smem) {
+                let geometry = config.resolve_geometry(
+                    prob.channels,
+                    lanes,
+                    prob.input_height > prob.output_height || prob.input_width > prob.output_width,
+                );
+                let (row, col) = (
+                    crate::launch::tile::coordinate::Rational::of(
+                        crate::definition::get_transform(
+                            prob.input_height,
+                            prob.output_height,
+                            prob.options,
+                        ),
+                    ),
+                    crate::launch::tile::coordinate::Rational::of(
+                        crate::definition::get_transform(
+                            prob.input_width,
+                            prob.output_width,
+                            prob.options,
+                        ),
+                    ),
+                );
+                let taps = match prob.options.mode {
+                    crate::definition::InterpolateMode::Nearest(_) => 1,
+                    crate::definition::InterpolateMode::Bilinear => 2,
+                    crate::definition::InterpolateMode::Bicubic => 4,
+                    crate::definition::InterpolateMode::Lanczos3 => 6,
+                };
+                let radius = (taps - 1) / 2;
+                let vector_size = 1;
+                let requested_smem = crate::launch::tile::space::stage_window_bytes(
+                    row,
+                    col,
+                    taps,
+                    radius,
+                    geometry,
+                    vector_size,
+                    dtype.size(),
+                );
+                if requested_smem > hardware.max_shared_memory_size {
+                    return Err(format!(
+                        "requested shared memory {requested_smem} bytes exceeds device limit of {} bytes",
+                        hardware.max_shared_memory_size
+                    ));
+                }
+            }
+        }
+    }
 
     let bench = InterpolateBench {
         problem: problem.clone(),

@@ -5,11 +5,11 @@
 //! reduces the taps into NHWC output channels.
 
 mod base;
-mod coordinate;
+pub(crate) mod coordinate;
 mod filter;
 mod geometry;
 mod kernel;
-mod space;
+pub(crate) mod space;
 
 pub use base::*;
 pub use geometry::*;

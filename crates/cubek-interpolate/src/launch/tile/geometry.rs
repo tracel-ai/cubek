@@ -21,16 +21,22 @@ pub struct TileGeometry {
 
 impl TileGeometry {
     pub fn heuristic(channels: usize, lanes: usize) -> Self {
+        const TARGET_COLS_PER_CUBE: usize = 32;
+
         // A lane's channel run is one memory line, and past four `f32` a wider line buys nothing.
         let channel_block = divisor_at_most(channels, 4);
         // Lanes cover the channel axis first, then spill onto the columns. `gcd` is the widest
         // split that both divides the plane and leaves whole channel blocks per lane.
         let lane_channels = gcd(lanes, channels / channel_block);
+        let lane_cols = lanes / lane_channels;
         Self {
             planes_per_cube: 4,
             rows_per_plane: 2,
-            lane_cols: lanes / lane_channels,
-            cols_per_lane: 1,
+            lane_cols,
+            // Keep one cube's width near a memory line regardless of how many lanes first cover
+            // channels. RGB spreads all lanes across columns; wider channel groups leave fewer
+            // column lanes and each should walk farther in registers.
+            cols_per_lane: TARGET_COLS_PER_CUBE.div_ceil(lane_cols).max(1),
             lane_channels,
             channel_block,
         }
@@ -54,4 +60,22 @@ fn divisor_at_most(n: usize, cap: usize) -> usize {
         .rev()
         .find(|d| n.is_multiple_of(*d))
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heuristic_keeps_a_cube_near_one_memory_line_wide() {
+        let rgb = TileGeometry::heuristic(3, 32);
+        assert_eq!(rgb.lane_cols, 32);
+        assert_eq!(rgb.cols_per_lane, 1);
+        assert_eq!(rgb.cols_per_cube(), 32);
+
+        let wide = TileGeometry::heuristic(16, 32);
+        assert_eq!(wide.lane_cols, 8);
+        assert_eq!(wide.cols_per_lane, 4);
+        assert_eq!(wide.cols_per_cube(), 32);
+    }
 }

@@ -52,6 +52,22 @@ fn test_interpolate_tile_staging_configurations() {
 }
 
 #[test]
+fn test_interpolate_tile_geometry_configurations() {
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    for config in [
+        TileConfig::auto().with_cols_per_lane(2),
+        TileConfig::auto().with_rows_per_plane(4),
+        TileConfig::auto().with_planes_per_cube(2),
+        TileConfig::forced(Residence::InPlace)
+            .with_planes_per_cube(2)
+            .with_rows_per_plane(4)
+            .with_cols_per_lane(2),
+    ] {
+        tile_output_with(options, config);
+    }
+}
+
+#[test]
 fn test_interpolate_tile_nearest_exact() {
     tile_output(
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact))
