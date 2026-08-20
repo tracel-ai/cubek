@@ -1,6 +1,7 @@
 //! The addressable backing store ([`MemData`], gmem and smem): its layouts, windows, and
 //! the memory-side [`Tile`] operations (construction, views, the cooperative copy).
 
+use cubecl::zspace::SmallVec;
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
@@ -281,13 +282,18 @@ impl<T: Numeric> Tile<T> {
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows.
         comptime!(projection.validate(vector_size));
-        // A window clamps in *lines*, so the cell it folds onto is the edge *element* only when a
-        // line is one element. `StridedTileSource::realize` refuses a checked vectorized operand
-        // already; this catches the hand-built spec, which never passes through it.
+        let coord_rank = comptime!(projection.coordinate_rank());
         comptime!(assert!(
-            spec.boundary != Some(Boundary::Clamp) || vector_size == 1,
-            "Tile::of: Boundary::Clamp needs a scalar operand, the window clamps to a line index \
-             (served at {vector_size})"
+            spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
+            "Tile::of: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
+            spec.boundaries.len()
+        ));
+        // A clamped vector line is only valid if the innermost coordinate axis is not clamped. The
+        // source builder derives that per-axis mask; this catches hand-built specs too.
+        comptime!(assert!(
+            vector_size == 1 || spec.boundaries.last().copied().flatten() != Some(Boundary::Clamp),
+            "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
+             {vector_size})"
         ));
         // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
         // than its logical space has axes, and a storage-tiled one has more.
@@ -355,7 +361,7 @@ impl<T: Numeric> Tile<T> {
                     extent,
                     bound,
                     comptime!(coords.may_underflow()),
-                    comptime!(spec.boundary.unwrap_or(Boundary::Zero)),
+                    comptime!(spec.boundaries.clone()),
                 ),
                 projection: comptime!(coords),
                 map,
@@ -363,9 +369,10 @@ impl<T: Numeric> Tile<T> {
                 window_start: 0u32,
                 access: comptime!(Access {
                     whole: true,
-                    overhang: match spec.boundary {
-                        None => Overhang::Fits,
-                        Some(Boundary::Zero) | Some(Boundary::Clamp) => Overhang::Masked,
+                    overhang: if spec.is_checked() {
+                        Overhang::Masked
+                    } else {
+                        Overhang::Fits
                     },
                     stage,
                 }),
@@ -656,8 +663,12 @@ impl<T: Numeric> MemData<T> {
                     projection: gmem_projection,
                 },
                 // Stage origins are never negative, and smem never overhangs (`Overhang::Never`
-                // below), so the boundary policy is never consulted.
-                window: Window::new(origin, extent, bound, false, Boundary::Zero),
+                // below), so the boundary policy is never consulted. The empty list is the only
+                // thing it *can* be: this window is shaped over the buffer's own dims (a tiled
+                // stage's grid and tile fragments), while the sub-windows that inherit it are
+                // shaped over coordinates, so any per-axis list minted here would land on the
+                // wrong axes one level down.
+                window: Window::new(origin, extent, bound, false, comptime!(SmallVec::new())),
                 projection: comptime!(form.projection),
                 map,
                 offsets: Coords::<i32>::new(),
@@ -1322,8 +1333,12 @@ impl<T: Numeric> MemData<T> {
     /// that is the aliasing [`matrix_mut`](MemData::matrix_mut) already refuses a gather for,
     /// arriving by a second route. Refused rather than silently raced.
     fn write_check(&self) -> comptime_type!(bool) {
+        // Whole-operand on purpose, unlike the per-axis mask below it: one clamped axis is enough
+        // to fold two distinct cells onto one, so there is no such thing as a partly writable
+        // clamped operand.
         comptime!(assert!(
-            self.window.boundary != Boundary::Clamp || !self.access.overhang.masks(),
+            !self.window.boundaries.contains(&Some(Boundary::Clamp))
+                || !self.access.overhang.masks(),
             "MemData: a Boundary::Clamp operand is read-only, a clamped write aliases the edge cell"
         ));
         comptime!(self.access.overhang.masks())
@@ -1661,7 +1676,7 @@ impl<T: Numeric> MemData<T> {
                 extent,
                 self.window.bound.clone(),
                 comptime!(self.window.signed),
-                comptime!(self.window.boundary),
+                comptime!(self.window.boundaries.clone()),
             ),
             // How the logical axes address the physical ones is a fact about the buffer, invariant
             // down the descent. The offsets only placed the top window, which `origin` above
@@ -2255,10 +2270,10 @@ pub struct Window {
     /// Whether the origin can be negative.
     #[cube(comptime)]
     pub(crate) signed: bool,
-    /// How a coordinate past `bound` is handled. Only consulted when this window's
-    /// [`Access::overhang`](crate::Access::overhang) masks; harmless otherwise.
+    /// Per-coordinate-axis boundary handling, same rank as `bound`. `None` means that axis is in
+    /// bounds by construction; an empty list makes every axis `None`.
     #[cube(comptime)]
-    pub(crate) boundary: Boundary,
+    pub(crate) boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
 }
 
 #[cube]
@@ -2268,14 +2283,27 @@ impl Window {
         extent: Coords<u32>,
         bound: Coords<u32>,
         #[comptime] signed: bool,
-        #[comptime] boundary: Boundary,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
     ) -> Self {
+        // Both walks index `origin`, `pos` and `boundaries` by one counter, so a rank slip there
+        // would silently apply one axis's mode to another rather than fail. `bound` is left out:
+        // a sub-window inherits its parent's, which on a stage is the buffer's own rank (a tiled
+        // stage's fragments) rather than the coordinate rank the origin is at.
+        let origin_rank = origin.len();
+        let extent_rank = extent.len();
+        comptime!(assert!(
+            extent_rank == origin_rank
+                && (boundaries.is_empty() || boundaries.len() == origin_rank),
+            "Window: origin ({origin_rank}), extent ({extent_rank}) and boundaries ({}) index the \
+             same axes and must agree in rank",
+            boundaries.len()
+        ));
         Window {
             origin,
             extent,
             bound,
             signed,
-            boundary,
+            boundaries,
         }
     }
 }
@@ -2301,11 +2329,10 @@ impl Layout for Window {
             } else {
                 abs.fcast::<u32>()
             };
-            // Under `Clamp`, fold a coordinate past `bound` onto the edge cell rather than
-            // leaving it for the mask: the physical address this returns is always valid,
-            // checked or not.
-            let shifted = match comptime!(self.boundary) {
-                Boundary::Clamp => {
+            // Under `Clamp`, fold this coordinate onto its axis's edge cell rather than
+            // leaving it for the mask.
+            let shifted = match comptime!(self.boundaries.get(i).copied().flatten()) {
+                Some(Boundary::Clamp) => {
                     let bound_i = self.bound.at(i);
                     // A zero-extent axis has no edge cell to fold onto, and `bound - 1` would
                     // wrap into a wild line index; it folds to `0` like an underflow instead.
@@ -2317,7 +2344,7 @@ impl Layout for Window {
                         shifted
                     }
                 }
-                Boundary::Zero => shifted,
+                None | Some(Boundary::Zero) => shifted,
             };
             out.push(shifted);
         }
@@ -2335,28 +2362,22 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        match comptime!(self.boundary) {
-            // `to_source_pos` already folds an out-of-range coordinate onto a valid one, so
-            // there is nothing left to mask.
-            Boundary::Clamp => true,
-            Boundary::Zero => {
-                let mut valid = true;
-
-                // Check if the absolute coordinate is within [0, bound).
-                #[unroll]
-                for i in 0..self.bound.len() {
-                    let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-                    let inside = if comptime!(self.signed) {
-                        abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
-                    } else {
-                        abs.fcast::<u32>() < self.bound.at(i)
-                    };
-                    valid = valid && inside;
-                }
-
-                valid
+        let mut valid = true;
+        // `origin`, not `bound`: the two share a rank on every window a mode can reach, and this
+        // is the one `pos` and `boundaries` are indexed by.
+        #[unroll]
+        for i in 0..self.origin.len() {
+            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
+                let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
+                let inside = if comptime!(self.signed) {
+                    abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
+                } else {
+                    abs.fcast::<u32>() < self.bound.at(i)
+                };
+                valid = valid && inside;
             }
         }
+        valid
     }
 }
 

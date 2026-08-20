@@ -1,13 +1,13 @@
 //! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
 //! then one [`level`](LeveledTiling::level) per decomposition: its walk order, buffering,
 //! and the per-axis [`Cut`]. Each [`level`](LeveledTiling::level) maps 1:1 to the
-//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose. The
-//! [`leaf`](LeveledTiling::leaf) is the terminal level: it names the contraction
-//! instruction and builds, so nothing stacks after it.
+//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose.
+//! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
+//! closure, so an operand states where it lives at the level that cuts it.
 
 use crate::{Axis, ByAxis, Space};
 
-use super::{Buffering, CubeAxis, Distribution, Partitioner, WalkOrder};
+use super::{Buffering, CubeAxis, Distribution, OperandSet, Partitioner, WalkOrder};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
 /// tiles out. Constructors name the common distributions; [`Cut::new`] takes any.
@@ -67,6 +67,55 @@ impl Tiling {
             extents: extents.to_vec(),
             levels: Vec::new(),
         }
+    }
+
+    /// Build a space together with its operands, `extents` declaring every axis and its top
+    /// extent as in [`extents`](Tiling::extents). Each level closure gets the cut collector and
+    /// the operand set, so an operand's residence at a level is stated where the level is
+    /// declared ([`Operand::stage`](crate::Operand::stage)); a level that states nothing for an
+    /// operand leaves it in place. [`build`](OperandTiling::build) returns the space and the
+    /// operands, sealed.
+    pub fn over<O: OperandSet>(operands: O, extents: &[(Axis, usize)]) -> OperandTiling<O> {
+        OperandTiling {
+            tiling: Tiling::new().extents(extents),
+            operands,
+        }
+    }
+}
+
+/// [`LeveledTiling`] threading an [`OperandSet`] through its level closures.
+pub struct OperandTiling<O> {
+    tiling: LeveledTiling,
+    operands: O,
+}
+
+impl<O: OperandSet> OperandTiling<O> {
+    /// Add a decomposition level (coarse to fine): `f` hangs the per-axis [`Cut`]s off the
+    /// collector and states, per operand it materializes, where it lives here
+    /// ([`Operand::stage`](crate::Operand::stage)).
+    pub fn level(
+        mut self,
+        order: WalkOrder,
+        buffering: Buffering,
+        f: impl FnOnce(&mut LevelCuts, &mut O),
+    ) -> Self {
+        let mut cuts = LevelCuts { cuts: Vec::new() };
+        let index = self.tiling.levels.len();
+        f(&mut cuts, &mut self.operands);
+        for operand in self.operands.each() {
+            operand.close_level(index);
+        }
+        self.tiling.push(order, buffering, cuts.cuts);
+        self
+    }
+
+    /// Build the [`Space`] and hand the operands back, sealed: one residence per level, and
+    /// every later [`stage`](crate::Operand::stage) panics.
+    pub fn build(mut self) -> (Space, O) {
+        for operand in self.operands.each() {
+            operand.seal();
+        }
+        (self.tiling.build(), self.operands)
     }
 }
 
@@ -176,6 +225,26 @@ impl LevelBuilder {
 
     /// Every axis in `axes` gets the same `cut` (e.g. all batch axes pinned alike).
     pub fn axes(mut self, axes: &[Axis], cut: Cut) -> Self {
+        self.cuts.extend(axes.iter().map(|&a| (a, cut)));
+        self
+    }
+}
+
+/// [`LevelBuilder`]'s statement form for [`Tiling::over`] closures: `&mut` receivers, so the
+/// cuts and the operands' [`stage`](crate::Operand::stage) statements read as peer lines.
+pub struct LevelCuts {
+    cuts: Vec<(Axis, Cut)>,
+}
+
+impl LevelCuts {
+    /// One axis gets `cut`.
+    pub fn axis(&mut self, axis: Axis, cut: Cut) -> &mut Self {
+        self.cuts.push((axis, cut));
+        self
+    }
+
+    /// Every axis in `axes` gets the same `cut` (e.g. all batch axes pinned alike).
+    pub fn axes(&mut self, axes: &[Axis], cut: Cut) -> &mut Self {
         self.cuts.extend(axes.iter().map(|&a| (a, cut)));
         self
     }

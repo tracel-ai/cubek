@@ -8,7 +8,7 @@ use cubecl::{
 use cubek_test_utils::MEMORY_LEAF;
 use cubek_tile::{
     Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap,
-    Projection, Residence, Scale, StridedOperand, Tiling, WalkOrder,
+    Projection, Residence, Scale, StorageTiling, StridedOperand, TileSpec, Tiling, WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -120,14 +120,19 @@ fn arg_derives_check_from_subspace_overhang() {
         .subspace(&[M, K])
         .build();
     assert!(touches_k.spec.is_checked());
-    assert_eq!(touches_k.spec.boundary, Some(cubek_tile::Boundary::Zero));
+    // Only the axis that overhangs carries the mask: M divides, so its coordinate is settled and
+    // masking it would cost a comparison on every access that can never fail.
+    assert_eq!(
+        touches_k.spec.boundaries.as_slice(),
+        &[None, Some(Boundary::Zero)]
+    );
 
     let avoids_k = launch
         .arg(binding(&client, &[64, 64]), MEMORY_LEAF)
         .subspace(&[M, N])
         .build();
     assert!(!avoids_k.spec.is_checked());
-    assert_eq!(avoids_k.spec.boundary, None);
+    assert!(avoids_k.spec.boundaries.is_empty());
 
     // An explicit override still wins over the derivation.
     let forced = launch
@@ -136,7 +141,32 @@ fn arg_derives_check_from_subspace_overhang() {
         .checked(false)
         .build();
     assert!(!forced.spec.is_checked());
-    assert_eq!(forced.spec.boundary, None);
+    assert!(forced.spec.boundaries.is_empty());
+}
+
+/// A storage-tiled operand is addressed by fewer coordinates than its buffer has dims, and the
+/// boundary list follows the coordinates: sized off the physical rank it would land its per-axis
+/// modes on the grid fragments, which no [`Window`] ever reads.
+#[test]
+fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4), so K's coordinate is the one that needs the mode.
+    let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
+
+    // 2 coordinate axes (M, K), tiled into 4 physical buffer dims: 4*16 = 64 and 3*6 = 18.
+    let tiled = launch
+        .arg(binding(&client, &[4, 3, 16, 6]), MEMORY_LEAF)
+        .subspace(&[M, K])
+        .tiling(StorageTiling::uniform(2, 1))
+        .with_boundary(Some(Boundary::Clamp))
+        .build();
+
+    assert_eq!(tiled.spec.projection.physical_rank(), 4);
+    assert_eq!(tiled.spec.projection.coordinate_rank(), 2);
+    assert_eq!(
+        tiled.spec.boundaries.as_slice(),
+        &[None, Some(Boundary::Clamp)]
+    );
 }
 
 #[test]
@@ -194,7 +224,7 @@ fn arg_gathered_states_its_own_mapping() {
     assert_eq!(input.spec.projection, window(1, 1, 0));
     assert_eq!(input.spec.projection.physical_rank(), 2);
     // Nothing overhangs and the origin cannot go negative, so the gather stays unchecked.
-    assert_eq!(input.spec.boundary, None);
+    assert!(input.spec.boundaries.is_empty());
 }
 
 /// An overhanging axis arms the check through the affine map just as it does through a label: the
@@ -209,7 +239,12 @@ fn arg_gathered_derives_check_from_overhang() {
         .arg(binding(&client, &[81, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 0))
         .build();
-    assert_eq!(input.spec.boundary, Some(Boundary::Zero));
+    // The gathered coordinate takes the mask; N is its own coordinate and divides, so it is
+    // settled whatever the gather does.
+    assert_eq!(
+        input.spec.boundaries.as_slice(),
+        &[Some(Boundary::Zero), None]
+    );
 
     // An explicit override still wins over the derivation.
     let forced = launch
@@ -217,7 +252,7 @@ fn arg_gathered_derives_check_from_overhang() {
         .gathered(window(1, 1, 0))
         .checked(false)
         .build();
-    assert_eq!(forced.spec.boundary, None);
+    assert!(forced.spec.boundaries.is_empty());
 }
 
 /// A padded window reads before the buffer's start whatever the tiling divides, so the derivation
@@ -231,20 +266,26 @@ fn arg_gathered_derives_check_from_underflow() {
         .arg(binding(&client, &[64, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, -1))
         .build();
-    assert_eq!(padded.spec.boundary, Some(Boundary::Zero));
+    assert_eq!(
+        padded.spec.boundaries.as_slice(),
+        &[Some(Boundary::Zero), None]
+    );
 
     // A runtime offset's sign is unknown at launch, so it arms the guard conservatively.
     let dynamic = launch
         .arg(binding(&client, &[64, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, Offset::Dynamic))
         .build();
-    assert_eq!(dynamic.spec.boundary, Some(Boundary::Zero));
+    assert_eq!(
+        dynamic.spec.boundaries.as_slice(),
+        &[Some(Boundary::Zero), None]
+    );
 
     let shifted = launch
         .arg(binding(&client, &[96, 64]), MEMORY_LEAF)
         .gathered(window(1, 1, 1))
         .build();
-    assert_eq!(shifted.spec.boundary, None);
+    assert!(shifted.spec.boundaries.is_empty());
 }
 
 /// The stated mapping replaces the labeling whole, so a leftover `subspace` describes nothing and
@@ -496,7 +537,7 @@ fn vector_size_falls_back_to_scalar() {
 }
 
 #[test]
-#[should_panic(expected = "cannot be vectorized")]
+#[should_panic(expected = "not provably in bounds")]
 fn arg_checked_and_vectorized_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
@@ -506,6 +547,70 @@ fn arg_checked_and_vectorized_panics() {
         .subspace(&[M, K])
         .vectorize(4)
         .build();
+}
+
+#[test]
+fn arg_vectorized_with_outer_axis_overhang_succeeds() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // M = 63 overhangs its leaf (8); N = 64 divides cleanly.
+    let launch = batched_space(1, 1, 63, 64, 16).launcher(&client);
+    let arg = launch
+        .arg(binding(&client, &[63, 64]), MEMORY_LEAF)
+        .subspace(&[M, N])
+        .vectorize(4)
+        .build();
+    assert!(arg.spec.is_checked());
+    // M takes the mask, N carries the lines and needs none.
+    assert_eq!(
+        arg.spec.boundaries.as_slice(),
+        &[Some(Boundary::Zero), None]
+    );
+}
+
+/// `checked(true)` states the mode, not the axis list: the per-axis derivation still keeps it off
+/// the axes that cannot leave the buffer. Only `checked(false)` disarms outright.
+#[test]
+fn arg_explicit_check_still_narrows_to_the_unsettled_axes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4); M divides, so no override can put a mask on it.
+    let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
+
+    let forced = launch
+        .arg(binding(&client, &[64, 18]), MEMORY_LEAF)
+        .subspace(&[M, K])
+        .checked(true)
+        .build();
+    assert_eq!(
+        forced.spec.boundaries.as_slice(),
+        &[None, Some(Boundary::Zero)]
+    );
+}
+
+/// The list is shaped over coordinate axes, and the setter is where a hand-built spec should learn
+/// that: `Tile::of` would only catch it in-kernel, one comptime expansion away from the call.
+#[test]
+#[should_panic(expected = "2 coordinate axes")]
+fn tile_spec_boundaries_must_match_the_coordinate_rank() {
+    let _ = TileSpec::new(Projection::direct(&[M, N]), MEMORY_LEAF).boundaries(&[None]);
+}
+
+#[test]
+fn arg_gathered_clamp_vectorized_exemption() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
+    // 3 logical axes [M, K, N] mapped over 2 coordinate axes:
+    // Spatial (M, K) on coordinate 0 (clamped), channel N on coordinate 1 (vectorized & in-bounds).
+    let input = launch
+        .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
+        .gathered(window(1, 1, 0))
+        .vectorize(4)
+        .with_boundary(Some(Boundary::Clamp))
+        .build();
+
+    assert_eq!(
+        input.spec.boundaries.as_slice(),
+        &[Some(Boundary::Clamp), None]
+    );
 }
 
 #[test]

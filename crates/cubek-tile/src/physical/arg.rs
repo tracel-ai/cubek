@@ -24,9 +24,9 @@ use crate::*;
 pub struct TileSpec {
     /// How this operand's logical axes address its buffer's physical ones.
     pub projection: Projection,
-    /// How out-of-bounds reads/writes are handled (`None` keeps the unchecked divisible fast path;
-    /// `Some(Boundary::Zero)` returns zero on reads / skips writes; `Some(Boundary::Clamp)` clamps).
-    pub boundary: Option<Boundary>,
+    /// How each coordinate axis handles out-of-bounds access. `None` is the unchecked fast path;
+    /// an empty list means every axis is unchecked.
+    pub boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
     /// The launch's cube size (units per cube), `0` when unknown; carried into the
     /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
     pub units: usize,
@@ -48,7 +48,7 @@ pub struct TileSpec {
 impl TileSpec {
     /// An operand's spec from its mapping and its leaf; the optional halves are the safe defaults
     /// (unchecked, cube size unknown, nothing staged) and are set by
-    /// [`boundary`](Self::boundary), [`checked`](Self::checked), [`units`](Self::units),
+    /// [`with_boundary`](Self::with_boundary), [`checked`](Self::checked), [`units`](Self::units),
     /// [`storage`](Self::storage), and [`residence`](Self::residence).
     ///
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
@@ -57,7 +57,7 @@ impl TileSpec {
     pub fn new(projection: Projection, leaf: Leaf) -> Self {
         TileSpec {
             projection,
-            boundary: None,
+            boundaries: SmallVec::new(),
             units: 0,
             storage: None,
             residence: SmallVec::new(),
@@ -108,20 +108,45 @@ impl TileSpec {
     /// whatever mode was set before it, so a `with_boundary(Some(Boundary::Clamp))` before this
     /// call is silently dropped back to `Zero`. Sequence a `Clamp` override after `checked`, not
     /// before it.
-    pub fn checked(mut self, check: bool) -> Self {
-        self.boundary = if check { Some(Boundary::Zero) } else { None };
+    pub fn checked(self, check: bool) -> Self {
+        self.with_boundary(check.then_some(Boundary::Zero))
+    }
+
+    /// Set one boundary handling mode for out-of-bounds access on every coordinate axis. Flattens
+    /// whatever per-axis list [`boundaries`](Self::boundaries) may have set, so sequence the
+    /// per-axis call after this one, not before it.
+    pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
+        let coord_rank = self.projection.coordinate_rank();
+        self.boundaries = match boundary {
+            Some(b) => SmallVec::from_elem(Some(b), coord_rank),
+            None => SmallVec::new(),
+        };
         self
     }
 
-    /// Set the optional boundary handling mode for out-of-bounds access.
-    pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
-        self.boundary = boundary;
+    /// State the boundary mode for every coordinate axis. An all-`None` list collapses to the
+    /// empty one, so "nothing is checked" has a single representation whichever setter minted it.
+    /// The list is shaped over [`coordinate_rank`](Projection::coordinate_rank), not the buffer's
+    /// physical rank, which storage tiling splits into grid and tile fragments no
+    /// [`Window`](crate::Window) ever addresses.
+    pub fn boundaries(mut self, boundaries: &[Option<Boundary>]) -> Self {
+        let coord_rank = self.projection.coordinate_rank();
+        assert!(
+            boundaries.len() == coord_rank,
+            "TileSpec::boundaries: {} modes stated but the operand has {coord_rank} coordinate \
+             axes",
+            boundaries.len()
+        );
+        self.boundaries = match boundaries.iter().any(Option::is_some) {
+            true => SmallVec::from_slice(boundaries),
+            false => SmallVec::new(),
+        };
         self
     }
 
     /// Whether this operand has bounds checking enabled.
     pub fn is_checked(&self) -> bool {
-        self.boundary.is_some()
+        self.boundaries.iter().any(Option::is_some)
     }
 
     /// Set the launch's cube size (units per cube).

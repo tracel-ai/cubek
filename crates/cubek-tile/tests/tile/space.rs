@@ -1,6 +1,12 @@
 //! Unit tests for [`Space`]
 
-use cubek_tile::{Axis, Buffering, ByAxis, Distribution, Partitioner, Space};
+use cubecl::ir::{ElemType, FloatKind};
+use cubecl::prelude::*;
+use cubecl::quant::scheme::QuantScheme;
+use cubek_tile::{
+    Axis, Buffering, ByAxis, Cut, Distribution, Operand, OperandSet, Partitioner, RegisterKind,
+    Residence, Space, Stage, Tiling, WalkOrder,
+};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -206,4 +212,200 @@ fn with_partitioner_stacks_levels_and_divide_descends() {
     // `final_space()` shortcuts straight to the bottom of the stack.
     assert_eq!(space.final_space().extent(M), 4);
     assert!(space.final_space().is_final());
+}
+
+// ---- Tiling::over -----------------------------------------------------------
+
+struct MatmulOperands {
+    a: Operand,
+    b: Operand,
+    out: Operand,
+}
+
+impl OperandSet for MatmulOperands {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.a, &mut self.b, &mut self.out].into_iter()
+    }
+}
+
+fn matmul_operands() -> MatmulOperands {
+    let f32t = f32::elem_type_native();
+    MatmulOperands {
+        a: Operand::new(&[M, K], f32t),
+        b: Operand::new(&[K, N], f32t),
+        out: Operand::new(&[M, N], f32t),
+    }
+}
+
+/// The two builders cannot drift: an operand-threaded build partitions exactly as the plain
+/// chain does, so migrating a caller changes nothing about its space.
+#[test]
+fn over_builds_the_space_plain_tiling_would() {
+    let plain = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(32))
+                .axis(K, Cut::sequential(16))
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4))
+        })
+        .build();
+
+    let (space, _) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(32))
+                .axis(K, Cut::sequential(16));
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4));
+        })
+        .build();
+
+    assert_eq!(space.partitioner(), plain.partitioner());
+    assert_eq!(space.rank(), plain.rank());
+    assert_eq!(space.extent(M), plain.extent(M));
+    assert_eq!(space.extent(N), plain.extent(N));
+    assert_eq!(space.extent(K), plain.extent(K));
+}
+
+/// Omission is a statement: a level that says nothing leaves the operand in place at the type
+/// it already holds, so every ladder is total without a default anyone has to remember.
+#[test]
+fn over_seals_stages_and_omission_is_in_place() {
+    let f32t = f32::elem_type_native();
+    let (_, ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage(Residence::Smem);
+            o.b.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4));
+            o.out.stage(Residence::Register(RegisterKind::Array));
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4));
+        })
+        .build();
+
+    let stage = |residence, dtype| Stage { residence, dtype };
+    assert_eq!(
+        ops.a.stages(),
+        &[
+            stage(Residence::Smem, f32t),
+            stage(Residence::InPlace, f32t),
+            stage(Residence::InPlace, f32t),
+        ]
+    );
+    assert_eq!(
+        ops.out.stages(),
+        &[
+            stage(Residence::InPlace, f32t),
+            stage(Residence::Register(RegisterKind::Array), f32t),
+            stage(Residence::InPlace, f32t),
+        ]
+    );
+}
+
+/// The type column is the data flow: moves keep the operand's type, a conversion re-types it
+/// exactly where stated, and the padding below a conversion carries the converted type — so
+/// reading one operand's stages top to bottom is reading what its bytes are at every level.
+#[test]
+fn over_type_column_moves_then_converts() {
+    let q4 = ElemType::Float(FloatKind::E2M1x2);
+    let f32t = f32::elem_type_native();
+    let ops = MatmulOperands {
+        a: Operand::new(&[M, K], f32t),
+        b: Operand::new(&[K, N], q4).quantized(QuantScheme::default()),
+        out: Operand::new(&[M, N], f32t),
+    };
+    let (_, ops) = Tiling::over(ops, &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.b.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(8))
+                .axis(N, Cut::sequential(8))
+                .axis(K, Cut::sequential(4));
+            o.b.stage_as(Residence::Register(RegisterKind::Array), f32t);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4));
+        })
+        .build();
+
+    let stage = |residence, dtype| Stage { residence, dtype };
+    assert_eq!(
+        ops.b.stages(),
+        &[
+            stage(Residence::Smem, q4), // move: packed words
+            stage(Residence::Register(RegisterKind::Array), f32t), // the conversion, right here
+            stage(Residence::InPlace, f32t),
+        ]
+    );
+    assert_eq!(ops.b.current_dtype(), f32t);
+    assert!(ops.b.quant().is_some());
+}
+
+/// `stage_as` to the type the operand already holds would be a move claiming to be a
+/// conversion; refusing it keeps "a written type" and "work happens here" the same statement.
+#[test]
+#[should_panic(expected = "use stage")]
+fn over_stage_as_same_type_panics() {
+    let _ = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage_as(Residence::Smem, f32::elem_type_native());
+        })
+        .build();
+}
+
+/// One residence per operand per level: a second statement is a contradiction, not an update.
+#[test]
+#[should_panic(expected = "more than one stage")]
+fn over_double_statement_at_one_level_panics() {
+    let _ = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage(Residence::Smem);
+            o.a.stage(Residence::Register(RegisterKind::Array));
+        })
+        .build();
+}
+
+/// The build seals its operands: a stage stated afterwards would describe a level that does
+/// not exist, silently misaligning every stage under it.
+#[test]
+#[should_panic(expected = "after the space was built")]
+fn over_staging_after_build_panics() {
+    let (_, mut ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+        })
+        .build();
+    ops.a.stage(Residence::Smem);
 }

@@ -91,6 +91,13 @@ impl<L: LogicalLayout> Layout for Projected<L> {
 /// out-of-range tap does, so the window's own [`Boundary`](crate::Boundary) (zero or the edge cell)
 /// still governs the read.
 ///
+/// Static terms a static divisor divides exactly leave the numerator before the floor, which
+/// [`PhysicalAxisMap::static_offset_step`](crate::PhysicalAxisMap) decides. A resampling map
+/// `⌊(o·scale + r·divisor + residue) / divisor⌋` is read as `⌊(o·scale + residue) / divisor⌋ + r`:
+/// the spatial projection stays under the one necessary divide while taps advance by their static
+/// physical step. Callers keep spelling the whole affine map, and no projection form spells the
+/// split.
+///
 /// Constant offsets are handled by [`Window`](crate::Window) and omitted here, all but the part a
 /// window origin cannot absorb: under a division the offset sets the phase the floor starts at, and
 /// that phase, which the [`RuntimeMap`](crate::RuntimeMap) carries, has to be inside the numerator.
@@ -159,31 +166,43 @@ impl Layout for AxisProjection {
             let axis_map = comptime!(self.projection.physical_axis(pa));
             let n = comptime!(axis_map.terms().len());
 
-            // Per-term products, summed below (chained, so a single coefficient-1 term folds to
-            // the coordinate itself). Under a division the sum is the numerator, and it starts at
-            // the phase the window origin could not absorb.
+            // Per-term products left in the numerator, summed below (chained, so a single
+            // coefficient-1 term folds to the coordinate itself). Under a division the sum starts
+            // at the phase the window origin could not absorb.
             let mut terms = Coords::<u32>::new();
             if comptime!(axis_map.is_rational()) {
                 terms.push(self.map.residues.at(pa));
             }
+            // The exact terms, held apart so the numerator above is the same expression for every
+            // tap: a gather then computes one spatial floor and adds a step to it, where a single
+            // sum would put every tap's coordinate under the divide and defeat the reuse.
+            let mut offsets = Coords::<u32>::new();
             #[unroll]
             for t in 0..n {
                 let term = comptime!(axis_map.terms()[t]);
                 let p = comptime!(self.space.position(term.axis));
-                match comptime!(term.scale) {
-                    Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                    Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
-                        comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
-                    ))),
+                match comptime!(axis_map.static_offset_step(t)) {
+                    Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
+                    None => match comptime!(term.scale) {
+                        Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
+                        Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
+                            comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
+                        ))),
+                    },
                 }
             }
-            let sum = terms.fsum(comptime!(
-                (0..n + axis_map.is_rational() as usize).collect::<Vec<_>>()
-            ));
+            let n_kept = terms.len();
+            let n_exact = offsets.len();
+            let sum = terms.fsum(comptime!((0..n_kept).collect::<Vec<_>>()));
 
             if comptime!(axis_map.is_rational()) {
                 match comptime!(axis_map.divisor()) {
-                    Divisor::Static(d) => out.push(sum.fdiv(comptime!(d as u32))),
+                    // No offsets when the divisor is dynamic, and `fadd` folds the empty sum away,
+                    // so only the static arm spells the addition.
+                    Divisor::Static(d) => {
+                        let offset = offsets.fsum(comptime!((0..n_exact).collect::<Vec<_>>()));
+                        out.push(sum.fdiv(comptime!(d as u32)).fadd(offset));
+                    }
                     Divisor::Dynamic { .. } => {
                         let divisor = self.map.coefficients.at(comptime!(
                             self.projection.dynamic_divisor_index(pa).unwrap()

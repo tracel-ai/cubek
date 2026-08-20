@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Launcher, Leaf, Residence, Space, Strided, Tiling, Tma,
-    TmaTileArgLaunch, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Launcher, Leaf, RegisterKind, Residence, Space, Strided,
+    Tiling, Tma, TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -138,7 +138,7 @@ fn setup<R: Runtime>(
 const INPUT_RESIDENCE: [Residence; LEVELS] = [
     Residence::Smem,
     Residence::InPlace,
-    Residence::Plane,
+    Residence::Register(RegisterKind::Cmma),
     Residence::InPlace,
 ];
 
