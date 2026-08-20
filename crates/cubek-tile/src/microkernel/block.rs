@@ -123,13 +123,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[unroll(unroll)]
     for i in 0..mr {
         let lhs_line = lhs.read((i as u32, k_line));
-        let a = if comptime!(lane.is_some()) {
-            Vector::<E, V>::cast_from(lhs_line.extract(comptime!(lane.unwrap())))
-        } else if comptime!(lw == 1) {
-            Vector::<E, V>::cast_from(lhs_line.extract(0usize))
-        } else {
-            Vector::<E, V>::cast_from(lhs_line.extract_dynamic(k % lw))
-        };
+        let a = lane_component::<E, EL, L, V>(lhs_line, k, lane, lw);
         #[unroll(unroll)]
         for n in 0..nr {
             // Explicit `fma`: `+= a * b` lowers to a separate mul + dependent add (no fast-math
@@ -137,6 +131,24 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             // the accumulate. `fma` emits one fused op (`fmla`).
             c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
         }
+    }
+}
+
+/// Widen one scalar component of a source line into an accumulator line. A fixed `lane` lets GPU
+/// fan-out emit a static extract; the flat CPU walk resolves the component from `p` instead.
+#[cube]
+pub(crate) fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
+    line: Vector<EL, L>,
+    p: usize,
+    #[comptime] lane: Option<usize>,
+    #[comptime] lw: usize,
+) -> Vector<E, V> {
+    if comptime!(lane.is_some()) {
+        Vector::<E, V>::cast_from(line.extract(comptime!(lane.unwrap())))
+    } else if comptime!(lw == 1) {
+        Vector::<E, V>::cast_from(line.extract(0usize))
+    } else {
+        Vector::<E, V>::cast_from(line.extract_dynamic(p % lw))
     }
 }
 
