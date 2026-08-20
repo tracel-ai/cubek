@@ -49,9 +49,10 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
         // `kc` bodies per cell, so the limit reads the whole emitted block rather than the cell
-        // count the register block is sized against.
-        let unroll_taps =
-            comptime!(mr * nr * kc <= config.unroll_limit && !rhs_check && !acc_check);
+        // count the register block is sized against. A checked operand is no reason to keep `p`
+        // dynamic, and every filter wider than one tap reads one: folding the coordinate turns
+        // the per-tap bounds test comptime on the interior taps and leaves it only on the edges.
+        let unroll_taps = comptime!(mr * nr * kc <= config.unroll_limit);
         let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
         #[unroll(unroll)]
