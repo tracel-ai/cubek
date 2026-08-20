@@ -307,9 +307,7 @@ fn mma_register_packed_lhs_klined<E: Numeric, EL: Numeric, ER: Numeric, WPL: Siz
                 #[unroll]
                 for g in 0..comptime!(pack / vw) {
                     // The x line covering values `g·vw .. (g+1)·vw` of word `w`.
-                    let kline = (l * comptime!(lw / vw)
-                        + comptime!(w * (pack / vw) + g))
-                        as u32;
+                    let kline = (l * comptime!(lw / vw) + comptime!(w * (pack / vw) + g)) as u32;
                     let mut b = Array::<Vector<E, V>>::new(nr);
                     #[unroll(unroll)]
                     for n in 0..nr {

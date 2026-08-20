@@ -164,45 +164,204 @@ impl<T: Numeric> RegisterData<T> {
     /// block is seeded from the sink and committed back on every visit, so a `K` walk that
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(&mut self, lhs: &Tile<EL>, rhs: &Tile<ER>) {
+    ///
+    /// A packed-u32 lhs takes the chunked walk ([`mma_packed_lhs`](Self::mma_packed_lhs)); the
+    /// other quantized forms stay unwired here and are served by the memory-backed leaf.
+    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+        &mut self,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
+        #[comptime] out: Space,
+    ) {
         let pack_l = lhs.quant_pack();
         let pack_r = rhs.quant_pack();
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
         comptime!(assert!(
-            pack_l == 0 && pack_r == 0,
-            "RegisterData::mma: a quantized operand against a promoted accumulator is not wired \
+            pack_r == 0,
+            "RegisterData::mma: a quantized rhs against a promoted accumulator is not wired \
              yet — the memory-backed leaf serves those (it dequantizes per read)"
         ));
-        comptime!(assert!(
-            vw == self.vector_size,
-            "RegisterData::mma: the block's lines must match the rhs's"
-        ));
+        if comptime!(pack_l > 1) {
+            self.mma_packed_lhs(lhs, rhs, out);
+        } else {
+            comptime!(assert!(
+                pack_l == 0,
+                "RegisterData::mma: a native-i8 lhs against a promoted accumulator is not wired \
+                 yet — the memory-backed leaf serves those (it dequantizes per read)"
+            ));
+            comptime!(assert!(
+                vw == self.vector_size,
+                "RegisterData::mma: the block's lines must match the rhs's"
+            ));
 
-        let size!(L) = lw;
-        let kc = comptime!(rhs.space.extent_at(rhs.space.rank() - 2));
-        let (mr, nr) = comptime!((self.mr, self.nr));
+            let size!(L) = lw;
+            let kc = comptime!(rhs.space.extent_at(rhs.space.rank() - 2));
+            let (mr, nr) = comptime!((self.mr, self.nr));
 
-        let lhs_mat = lhs.matrix_transparent::<EL, L, L>(0usize);
-        // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
-        let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
-        // Matches the memory-backed leaf's cap: past it, hundreds of inlined cells
-        // overflow the optimizer's recursive block pass.
-        let unroll = comptime!(mr * nr <= 64);
+            let lhs_mat = lhs.matrix_transparent::<EL, L, L>(0usize);
+            // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
+            let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
+            // Matches the memory-backed leaf's cap: past it, hundreds of inlined cells
+            // overflow the optimizer's recursive block pass.
+            let unroll = comptime!(mr * nr <= 64);
 
-        for p in 0..kc {
-            let mut b = Array::<Vector<T, RA>>::new(nr);
-            #[unroll(unroll)]
-            for n in 0..nr {
-                b[n] = Vector::<T, RA>::cast_from(rhs_mat.read((p as u32, n as u32)));
-            }
-            #[unroll(unroll)]
-            for i in 0..mr {
-                let lhs_line = lhs_mat.read((i as u32, (p / lw) as u32));
-                let a = Vector::<T, RA>::cast_from(lhs_line.extract_dynamic(p % lw));
+            for p in 0..kc {
+                let mut b = Array::<Vector<T, RA>>::new(nr);
                 #[unroll(unroll)]
                 for n in 0..nr {
-                    self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);
+                    b[n] = Vector::<T, RA>::cast_from(rhs_mat.read((p as u32, n as u32)));
+                }
+                #[unroll(unroll)]
+                for i in 0..mr {
+                    let lhs_line = lhs_mat.read((i as u32, (p / lw) as u32));
+                    let a = Vector::<T, RA>::cast_from(lhs_line.extract_dynamic(p % lw));
+                    #[unroll(unroll)]
+                    for n in 0..nr {
+                        self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The chunked packed-lhs walk into the resident block — the register twin of the
+    /// memory-backed `mma_register_packed_lhs`: whole stored word lines, decoded in registers
+    /// (vectorized against a k-lined rhs, scalar otherwise), the line's one scale folded in per
+    /// line. Accumulating here instead of the memory leaf is what removes the per-chunk
+    /// fold-and-write: the partials stay in these registers across the whole `K` walk and drain
+    /// once, through [`store_cast_window`](Self::store_cast_window)'s lane-share fold.
+    fn mma_packed_lhs<EL: Numeric, ER: Numeric>(
+        &mut self,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
+        #[comptime] out: Space,
+    ) {
+        let pack = lhs.quant_pack();
+        let scheme = lhs.quant_scheme();
+        let lw = lhs.vector_size();
+        let vw = rhs.vector_size();
+        comptime!(assert!(
+            self.vector_size == 1,
+            "RegisterData::mma: the packed chunk walk drains scalar cells (a {}-wide block \
+             cannot take a k-lined rhs)",
+            self.vector_size
+        ));
+        let size!(WPL) = comptime!(lw / pack);
+        let k_axis = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &out)[0]);
+        let k_lined = comptime!(rhs.space.axis_at(rhs.space.rank() - 1) == k_axis && vw > 1);
+        let kc = comptime!(lhs.space.extent(k_axis));
+        comptime!(assert!(
+            kc.is_multiple_of(lw),
+            "RegisterData::mma: the chunked packed walk moves in whole {lw}-value stored lines, \
+             which must tile the {kc}-deep contraction"
+        ));
+        comptime!(assert!(
+            block_edges(scheme, lhs.space.rank())[lhs.space.rank() - 1].is_multiple_of(lw),
+            "RegisterData::mma: a served line may not straddle two scale blocks"
+        ));
+        let lines = comptime!(kc / lw);
+        let (mr, nr) = comptime!((self.mr, self.nr));
+        let unroll = comptime!(mr * nr <= 64);
+
+        let (words, scales) = lhs.matrix_packed::<WPL>(0usize);
+
+        if comptime!(k_lined) {
+            comptime!(assert!(
+                pack.is_multiple_of(vw),
+                "RegisterData::mma: a {vw}-wide x line must divide a word's {pack} values"
+            ));
+            let size!(XV) = vw;
+            let rhs_mat = rhs.matrix_transparent::<ER, XV, XV>(0usize);
+            for l in 0..lines {
+                let mut a_words = Array::<Vector<u32, WPL>>::new(mr);
+                let mut a_scales = Array::<T>::new(mr);
+                #[unroll(unroll)]
+                for i in 0..mr {
+                    a_words[i] = words.read((i as u32, l as u32));
+                    a_scales[i] = T::cast_from(scales.read((i as u32, l as u32)));
+                }
+                // Unscaled `XV`-wide partials for this line, one per block cell.
+                let mut q = Array::<Vector<T, XV>>::new(comptime!(mr * nr));
+                #[unroll(unroll)]
+                for i in 0..comptime!(mr * nr) {
+                    q[i] = Vector::<T, XV>::cast_from(T::from_int(0));
+                }
+                #[unroll]
+                for w in 0..comptime!(lw / pack) {
+                    #[unroll]
+                    for g in 0..comptime!(pack / vw) {
+                        let kline =
+                            (l * comptime!(lw / vw) + comptime!(w * (pack / vw) + g)) as u32;
+                        let mut b = Array::<Vector<T, XV>>::new(nr);
+                        #[unroll(unroll)]
+                        for n in 0..nr {
+                            b[n] = Vector::<T, XV>::cast_from(rhs_mat.read((n as u32, kline)));
+                        }
+                        #[unroll(unroll)]
+                        for i in 0..mr {
+                            let qv = crate::instruction::mma::register::decode_packed_group::<T, XV>(
+                                a_words[i].extract(w),
+                                g,
+                                comptime!(scheme),
+                            );
+                            #[unroll(unroll)]
+                            for n in 0..nr {
+                                q[i * nr + n] = fma(qv, b[n], q[i * nr + n]);
+                            }
+                        }
+                    }
+                }
+                // Fold the line: one horizontal sum and one scale fma per cell.
+                #[unroll(unroll)]
+                for i in 0..mr {
+                    #[unroll(unroll)]
+                    for n in 0..nr {
+                        let partial = crate::instruction::mma::register::horizontal_sum::<T, XV>(
+                            q[i * nr + n],
+                        );
+                        self.data[i * nr + n] = fma(
+                            Vector::<T, RA>::cast_from(a_scales[i]),
+                            Vector::<T, RA>::cast_from(partial),
+                            self.data[i * nr + n],
+                        );
+                    }
+                }
+            }
+        } else {
+            let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
+            for l in 0..lines {
+                let mut a_words = Array::<Vector<u32, WPL>>::new(mr);
+                let mut a_scales = Array::<T>::new(mr);
+                #[unroll(unroll)]
+                for i in 0..mr {
+                    a_words[i] = words.read((i as u32, l as u32));
+                    a_scales[i] = T::cast_from(scales.read((i as u32, l as u32)));
+                }
+                #[unroll]
+                for w in 0..comptime!(lw / pack) {
+                    #[unroll]
+                    for j in 0..pack {
+                        let p = (l * lw + comptime!(w * pack + j)) as u32;
+                        let mut b = Array::<Vector<T, RA>>::new(nr);
+                        #[unroll(unroll)]
+                        for n in 0..nr {
+                            b[n] = Vector::<T, RA>::cast_from(rhs_mat.read((p, n as u32)));
+                        }
+                        #[unroll(unroll)]
+                        for i in 0..mr {
+                            let qv = crate::instruction::mma::register::decode_packed_value::<T>(
+                                a_words[i].extract(w),
+                                j,
+                                comptime!(scheme),
+                            );
+                            let a = Vector::<T, RA>::cast_from(qv * a_scales[i]);
+                            #[unroll(unroll)]
+                            for n in 0..nr {
+                                self.data[i * nr + n] = fma(a, b[n], self.data[i * nr + n]);
+                            }
+                        }
+                    }
                 }
             }
         }

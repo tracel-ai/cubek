@@ -66,7 +66,10 @@ fn run_packed_lhs_direct(value: QuantValue, words: usize, bk: usize) {
     let pack = scheme.num_quants();
     let lw = words * pack;
     let (m, n, k) = (2usize, 4usize, 64usize);
-    assert!(k % lw == 0 && bk % lw == 0 || lw % bk == 0);
+    // The stored line has to tile the reduction, and line and scale block have
+    // to nest — the two facts the chunked walk asserts at the leaf.
+    assert!(k.is_multiple_of(lw));
+    assert!(bk.is_multiple_of(lw) || lw.is_multiple_of(bk));
 
     let seq = |edge| Cut::sequential(edge);
     let space = Tiling::new()
@@ -287,9 +290,106 @@ fn register_matmul_packed_lhs_plane_fold_klined() {
         let expected: Vec<f32> = (0..m)
             .map(|i| {
                 (0..k)
-                    .map(|p| {
-                        a.q[i * k + p] as f32 * a.scale_values[i * blocks + p / 32] * p as f32
-                    })
+                    .map(|p| a.q[i * k + p] as f32 * a.scale_values[i * blocks + p / 32] * p as f32)
+                    .sum()
+            })
+            .collect();
+        let (_, expected) = TestInput::builder(client.clone(), cubecl::zspace::shape![m, n])
+            .custom(expected)
+            .generate_with_f32_host_data();
+        assert_equals_approx(&got, &expected, 1e-3)
+            .as_test_outcome()
+            .enforce()
+    }
+}
+
+/// The plane-fold shape through the **resident** bracket: the accumulator promoted to its
+/// register block before the walk, the packed contraction accumulating into it region after
+/// region, one lane-share fold and one store at the drain — where the memory-backed walk pays a
+/// butterfly and a read-modify-write per chunk. Pins two things at once: `promote` deriving the
+/// `Group` share from the whole partitioner (the top level alone says `Whole`), and the register
+/// block's own chunked packed walk. The output is poisoned, not zeroed: the drain overwrites.
+#[test]
+fn register_matmul_packed_lhs_plane_fold_resident() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let group = 8usize;
+    if lanes == 0 || !lanes.is_multiple_of(group) {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "plane width {lanes} does not divide into {group}-lane groups"
+        )))
+        .enforce();
+        return;
+    }
+
+    for (value, words, xw) in [
+        (QuantValue::Q4S, 4usize, 4usize), // vectorized decode
+        (QuantValue::Q8S, 4, 4),
+        (QuantValue::Q4S, 4, 1), // scalar decode under the resident block
+    ] {
+        let scheme = scheme(value, 1, 32);
+        let pack = scheme.num_quants();
+        let lw = words * pack;
+        let rows_per_plane = lanes / group;
+        let (m, n, k) = (rows_per_plane, 1usize, lw * group * 2);
+
+        let seq = |edge| Cut::sequential(edge);
+        let space = Tiling::new()
+            .extents(&[(M, m), (N, n), (K, k)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(M, Cut::cube(cubek_tile::CubeAxis::X, m))
+                    .axis(N, seq(1))
+                    .axis(K, seq(k))
+            })
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(M, Cut::plane(m)).axis(N, seq(1)).axis(K, seq(k))
+            })
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(M, unit(1, Spread::Contiguous, rows_per_plane))
+                    .axis(N, seq(1))
+                    .axis(K, unit(lw, Spread::Interleaved, group))
+            })
+            .build();
+
+        let a = TileInput::builder(&client, space.project(&[M, K]))
+            .untiled()
+            .packed(&scheme, DequantAt::Read)
+            .arange();
+        let b = if xw == 1 {
+            TileInput::builder(&client, space.project(&[K, N]))
+                .untiled()
+                .arange()
+        } else {
+            TileInput::builder(&client, space.project(&[N, K]))
+                .untiled()
+                .arange()
+        };
+        // Poisoned: the resident drain must overwrite, not accumulate.
+        let c = TileInput::builder(&client, space.project(&[M, N]))
+            .untiled()
+            .uniform(4242, 10., 100.);
+
+        let (i_dtype, e_dtype) = (u32::elem_type_native(), f32::elem_type_native());
+        launch_matmul_quant_lhs_resident::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            words,
+            xw,
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            space,
+            i_dtype,
+            e_dtype,
+        );
+
+        let got = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+        let blocks = k / 32;
+        let expected: Vec<f32> = (0..m)
+            .map(|i| {
+                (0..k)
+                    .map(|p| a.q[i * k + p] as f32 * a.scale_values[i * blocks + p / 32] * p as f32)
                     .sum()
             })
             .collect();
@@ -320,3 +420,22 @@ fn launch_matmul_quant_lhs<I: Numeric, E: Numeric, V: Size, VX: Size>(
     c.mma(&a, &b);
 }
 
+/// The resident twin of [`launch_matmul_quant_lhs`]: promote, zero, contract, drain — the
+/// production col gemv's bracket.
+#[cube(launch)]
+fn launch_matmul_quant_lhs_resident<I: Numeric, E: Numeric, V: Size, VX: Size>(
+    a: &QuantTileArg<'_, I, V>,
+    b: &TileArg<'_, E, VX>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(I)] _idtype: ElemType,
+    #[define(E)] _edtype: ElemType,
+) {
+    let a = a.tile::<E>(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    let mut acc = c.promote::<E, E>(&a);
+    acc.zero();
+    acc.mma(&a, &b);
+    acc.drain_cast_into(&mut c);
+}

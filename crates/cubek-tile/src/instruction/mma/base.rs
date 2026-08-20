@@ -59,8 +59,8 @@ impl<E: Numeric> PlaneTile<E> {
                 d.mma(lhs, rhs)
             }
             PlaneTile::Register(d) => {
-                strided_2d(lhs, rhs, out);
-                d.mma(lhs, rhs)
+                strided_2d(lhs, rhs, comptime!(out.clone()));
+                d.mma(lhs, rhs, out)
             }
         }
     }

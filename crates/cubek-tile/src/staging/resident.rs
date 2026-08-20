@@ -34,7 +34,20 @@ impl<Acc: Numeric> Tile<Acc> {
         // The block's lines match the memory it drains back into; the hardware
         // encodings ignore it.
         let vector_size = self.vector_size();
-        let lane_share = self.lane_share();
+        // What the lanes will hold of the block once every level below has dealt its cuts:
+        // the join across the whole partitioner, not the current stamp — a memory tile earns
+        // its share level by level through `at`, but a promoted block lives above that whole
+        // descent and drains after it, so it must carry the share the leaf would have had. A
+        // plan with no `Unit` folds joins to `Whole` at every level, which is the old answer.
+        let lane_share = comptime!({
+            let mut share = LaneShare::Whole;
+            let mut level = self.space.clone();
+            while !level.is_final() {
+                share = join_lane_share(share, level.lane_share());
+                level = level.divide();
+            }
+            share
+        });
         PlanePartition::<EA>::mirror(
             comptime!(self.space.clone()),
             comptime!(self.leaf),
