@@ -126,14 +126,9 @@ pub fn input_projection(
 /// skip, and the cache serves an in-place read better than the fill does
 /// (see [`Compaction`]'s own account of the two regimes).
 ///
-/// The threshold is the middle of the flat optimum swept over this crate's benchmark set: `4`
-/// through `6` all cost the same 4.3 ms of regret against picking each of the sixteen problems
-/// perfectly, which is 2.2% over that oracle, against 7.1% for always staging and 112% for never
-/// staging. Reuse does not separate the set exactly, and no threshold does: the five problems it
-/// calls wrong interleave with ones it calls right (`0.93` wants a stage, `1.00` does not; `3.22`
-/// wants one, `3.82` does not). Four of those five cost under 1.3 ms and sit in the 3-5 ms band
-/// that reverses between runs; the residual signal is something other than tap overlap. Every
-/// problem where the choice costs more than 1.7x is called right.
+/// A reuse of 2.5 separates the observed regimes: bilinear downsampling is below one, while
+/// bicubic downsampling is about three and benefits materially from staging. The comparison stays
+/// integral so the choice is stable and compilation does not introduce floating-point arithmetic.
 pub fn stage_input(
     row: super::coordinate::Rational,
     col: super::coordinate::Rational,
@@ -142,7 +137,8 @@ pub fn stage_input(
     geometry: TileGeometry,
     vector_size: usize,
 ) -> Residence {
-    const STAGE_REUSE: usize = 5;
+    const STAGE_REUSE_NUMERATOR: usize = 5;
+    const STAGE_REUSE_DENOMINATOR: usize = 2;
 
     let extent_of = |axis| match axis {
         BATCH => 1,
@@ -157,11 +153,36 @@ pub fn stage_input(
         .iter()
         .product();
     let reads = extent_of(OUTPUT_H) * extent_of(OUTPUT_W) * extent_of(CHANNEL) * taps * taps;
-
-    match reads >= STAGE_REUSE * window {
+    match reads * STAGE_REUSE_DENOMINATOR >= STAGE_REUSE_NUMERATOR * window {
         true => Residence::Smem,
         false => Residence::InPlace,
     }
+}
+
+/// The number of bytes the gathered input would require if staged into shared memory.
+pub fn stage_window_bytes(
+    row: super::coordinate::Rational,
+    col: super::coordinate::Rational,
+    taps: usize,
+    radius: usize,
+    geometry: TileGeometry,
+    vector_size: usize,
+    elem_size: usize,
+) -> usize {
+    let extent_of = |axis| match axis {
+        BATCH => 1,
+        OUTPUT_H => geometry.rows_per_cube(),
+        OUTPUT_W => geometry.cols_per_cube(),
+        TAP_H | TAP_W => taps,
+        CHANNEL => geometry.channels_per_cube(),
+        other => panic!("stage_window_bytes: {other:?} is not an axis of the interpolation space"),
+    };
+    let window_vectors: usize =
+        Compaction::of(&input_projection(row, col, radius), vector_size, extent_of)
+            .extents()
+            .iter()
+            .product();
+    window_vectors * vector_size * elem_size
 }
 
 #[cfg(test)]
