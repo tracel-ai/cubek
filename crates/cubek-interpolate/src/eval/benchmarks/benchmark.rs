@@ -8,9 +8,12 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_test_utils::{RunSamples, TestInput};
+use cubek_tile::Residence;
 
-use crate::{definition::InterpolateProblem, interpolate_tile_with};
-use crate::{interpolate, interpolate_backward};
+use crate::{
+    definition::InterpolateProblem, interpolate, interpolate_backward, interpolate_tile_with,
+    launch::InterpolateStrategy,
+};
 
 use super::InterpolateBenchmarkStrategy;
 
@@ -21,6 +24,19 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
+
+    if client.properties().hardware.num_cpu_cores.is_some()
+        && (matches!(
+            strategy,
+            InterpolateBenchmarkStrategy::Standard(InterpolateStrategy::SharedMemoryStrategy(_))
+        ) || matches!(
+            strategy,
+            InterpolateBenchmarkStrategy::Tile(config) if config.input_residence() == Some(Residence::Smem)
+        ))
+    {
+        return Err("interpolation shared memory strategy is not supported on CPU".to_string());
+    }
+
     let dtype = f32::elem_type_native();
 
     let bench = InterpolateBench {

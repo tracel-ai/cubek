@@ -38,6 +38,11 @@ impl TileConfig {
             input_residence: Some(input_residence),
         }
     }
+
+    /// The forced input residence, if specified.
+    pub const fn input_residence(&self) -> Option<Residence> {
+        self.input_residence
+    }
 }
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.

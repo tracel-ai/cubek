@@ -22,8 +22,8 @@ pub trait SeparableFilter<E: Float>: TapSupport + Send + std::marker::Sync + 'st
     fn along(distance: TapDistance<E>) -> Self::Axis;
 }
 
-pub type SeparableWeights<E, F> =
-    Product<<F as SeparableFilter<E>>::Axis, <F as SeparableFilter<E>>::Axis>;
+/// One factor per resampled axis, in the order the contraction walks the tap axes.
+pub type SeparableWeights<E, F> = SeparableProduct<<F as SeparableFilter<E>>::Axis>;
 
 /// Bridges host-side mode selection to the element type selected when a kernel is launched.
 pub trait SeparableFilterFamily: TapSupport + Send + std::marker::Sync + 'static {

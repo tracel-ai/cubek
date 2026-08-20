@@ -2,7 +2,7 @@ use super::{
     filter::{SeparableFilter, SeparableFilterFamily, SeparableWeights, TapDistance},
     space::*,
 };
-use cubecl::{ir::ElemType, prelude::*};
+use cubecl::{ir::ElemType, prelude::*, std::FastDivmod};
 use cubek_tile::*;
 
 #[cube]
@@ -11,7 +11,7 @@ fn tap_distance<E: Float>(
     #[comptime] output: Axis,
     scale: u32,
     offset: i32,
-    divisor: u32,
+    divisor: FastDivmod<u32>,
     #[comptime] radius: usize,
 ) -> TapDistance<E> {
     sum_of(
@@ -32,10 +32,10 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     output: &TileArg<'_, E, V>,
     row_scale: u32,
     row_offset: i32,
-    row_divisor: u32,
+    row_divisor: FastDivmod<u32>,
     col_scale: u32,
     col_offset: i32,
-    col_divisor: u32,
+    col_divisor: FastDivmod<u32>,
     #[comptime] radius: usize,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
@@ -44,9 +44,12 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
 
     let row = tap_distance(TAP_H, OUTPUT_H, row_scale, row_offset, row_divisor, radius);
     let col = tap_distance(TAP_W, OUTPUT_W, col_scale, col_offset, col_divisor, radius);
-    let weights = Tile::<E>::procedural::<SeparableWeights<E, F::Filter<E>>>(
+    let mut factors = Sequence::new();
+    factors.push(F::Filter::<E>::along(row));
+    factors.push(F::Filter::<E>::along(col));
+    let weights = Tile::<E>::procedural_separable::<SeparableWeights<E, F::Filter<E>>>(
         comptime!(space.project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])),
-        product_of(F::Filter::<E>::along(row), F::Filter::<E>::along(col)),
+        separable_product(factors),
         comptime!(output.spec.leaf),
     );
 
