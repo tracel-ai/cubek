@@ -11,7 +11,7 @@ use crate::{
         AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
     routines::{
-        BlueprintStrategy, DeviceSettings, K, M, N, batch_axis,
+        BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis,
         cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
     },
 };
@@ -159,20 +159,20 @@ pub fn launch_ref<R: Runtime>(
 
     // One level per decomposition, coarse→fine: the cube grid (a serial loop on CPU), then the
     // plane split (the parallel worker threads). Batch axes ride one-per-cube on Z then iterate
-    // sequentially; K is contracted sequentially in both leaves.
-    let space = Tiling::new()
-        .extents(&extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    // sequentially; K is contracted sequentially in both leaves. Every operand is read where it
+    // already is, so no level states a stage.
+    let (space, ops) = Tiling::over(MatmulOperands::new(dtypes), &extents)
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, cube_m))
                 .axis(N, Cut::cube(CubeAxis::Y, cube_n))
-                .axis(K, Cut::sequential(k))
+                .axis(K, Cut::sequential(k));
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::plane(leaf.m))
                 .axis(N, Cut::plane(leaf.n))
-                .axis(K, Cut::sequential(leaf.k))
+                .axis(K, Cut::sequential(leaf.k));
         })
         .build();
 
@@ -191,26 +191,24 @@ pub fn launch_ref<R: Runtime>(
     // so promotion and direct accumulation select the identical specialization.
     let leaf = Leaf::memory(MemoryMmaConfig::new(256 / v, true, false));
 
-    // Load each operand through the tile builder over its subspace (the matrix `[row, col]` plus
-    // batches). All operands get the full output batch-axis list; the builder right-aligns it to
-    // each operand's leading dims (numpy broadcast, size-1 dims drop out).
+    // Bind each operand to its binding: the subspace comes off the operand, the batch list and
+    // storage tiling are per-binding launch facts. All operands get the full output batch-axis
+    // list; the builder right-aligns it to each operand's leading dims (numpy broadcast, size-1
+    // dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let a = launch
-        .arg(lhs.into_data(), leaf)
-        .subspace(&[M, K])
+        .bind(&ops.a, lhs.into_data(), leaf)
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, lhs_levels))
         .build();
     let b = launch
-        .arg(rhs, leaf)
-        .subspace(&[K, N])
+        .bind(&ops.b, rhs, leaf)
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, rhs_levels))
         .vectorize(v)
         .build();
     let c = launch
-        .arg(out, leaf)
-        .subspace(&[M, N])
+        .bind(&ops.out, out, leaf)
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)

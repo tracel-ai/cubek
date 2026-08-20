@@ -29,6 +29,16 @@ const CI: Axis = Axis(3);
 const OW: Axis = Axis(4);
 const RW: Axis = Axis(5);
 
+/// An `f32` operand over `axes` with `ladder` stated stage by stage, coarse to fine: the
+/// hand-built ladder for a test parameterized over its residence matrix.
+fn staged_operand(axes: &[Axis], ladder: &[Residence]) -> Operand {
+    let mut operand = Operand::new(axes, f32::elem_type_native());
+    for &residence in ladder {
+        operand.stage(residence);
+    }
+    operand
+}
+
 /// The same body matmul runs: the operands' spaces say what is contracted, their projections say
 /// how they are addressed, and `mma` does the rest.
 #[cube(launch)]
@@ -741,7 +751,7 @@ impl Conv1d {
         };
         let in_arg = launch
             .arg(in_handle.binding(), MEMORY_LEAF)
-            .residence(residence)
+            .operand(&staged_operand(&[OH, RH, CI], residence))
             .gathered(Projection::new(
                 &[OH, RH, CI],
                 &[
@@ -755,8 +765,8 @@ impl Conv1d {
             .build();
         let w_arg = launch
             .arg(w_handle.binding(), MEMORY_LEAF)
-            .residence(residence)
             .subspace(&[RH, CI, CO])
+            .operand(&staged_operand(&[RH, CI, CO], residence))
             .build();
         let out_arg = launch
             .arg(out_handle.clone().binding(), MEMORY_LEAF)

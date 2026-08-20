@@ -94,7 +94,7 @@ pub enum Residence {
 }
 
 /// The encoding of a register-resident tile: a plain register array, or a matrix fragment in
-/// one of the two hardware forms. `io` rides the manual rung because it comes from a device
+/// one of the two hardware forms. `io` rides the manual form because it comes from a device
 /// query, which cannot run in-kernel.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum RegisterKind {

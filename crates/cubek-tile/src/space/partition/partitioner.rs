@@ -53,7 +53,7 @@ pub enum Leaf {
         config: MemoryMmaConfig,
     },
     Cmma,
-    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
+    /// The manual/raw-mma form: `MmaDefinition::execute` over register fragments. `io` rides the
     /// leaf because it comes from a device query, which cannot run in-kernel.
     Mma {
         io: MmaIOConfig,

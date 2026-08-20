@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Leaf, Set, Space, StridedOperand, StridedTileSource, Unset};
+use crate::{Axis, Leaf, Operand, Set, Space, StridedOperand, StridedTileSource, Unset};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -92,6 +92,22 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
+    }
+
+    /// [`arg`](Self::arg) driven by a sealed [`Operand`]: the subspace is the operand's axes
+    /// and the per-level residences its ladder, stated once where the levels were declared, so
+    /// neither can drift from the space the way a hand-passed array can. `leaf` is what the
+    /// operand is at the instruction; a ladder stating a register stage must agree with it
+    /// ([`Operand::check_leaf`]).
+    pub fn bind<'a>(
+        &'a self,
+        operand: &'a Operand,
+        binding: TensorBinding<R>,
+        leaf: Leaf,
+    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
+        self.arg(binding, leaf)
+            .subspace(operand.axes())
+            .operand(operand)
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width

@@ -7,7 +7,7 @@ use cubecl::{
 };
 use cubek_test_utils::MEMORY_LEAF;
 use cubek_tile::{
-    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, PhysicalAxisMap,
+    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, Operand, PhysicalAxisMap,
     Projection, Residence, Scale, StridedOperand, Tiling, WalkOrder,
 };
 
@@ -73,6 +73,14 @@ fn geometry_after_dynamic_panics() {
 
 const B0: Axis = Axis(3);
 const B1: Axis = Axis(4);
+
+/// An `f32` operand over `axes` staged `Smem` at the one level: the gathered-arg tests'
+/// hand-built ladder (their spaces are assembled outside `Tiling::over`).
+fn smem_operand(axes: &[Axis]) -> Operand {
+    let mut operand = Operand::new(axes, f32::elem_type_native());
+    operand.stage(Residence::Smem);
+    operand
+}
 
 fn binding(client: &ComputeClient<TestRuntime>, shape: &[usize]) -> TensorBinding<TestRuntime> {
     let mut strides = vec![1usize; shape.len()];
@@ -342,7 +350,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
-        .residence(&[Residence::Smem])
+        .operand(&smem_operand(&[M, K, N]))
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -371,7 +379,7 @@ fn arg_gathered_rational_stages() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
-        .residence(&[Residence::Smem])
+        .operand(&smem_operand(&[M, K, N]))
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -398,7 +406,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]), MEMORY_LEAF)
-        .residence(&[Residence::Smem])
+        .operand(&smem_operand(&[M, K, N]))
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -433,7 +441,7 @@ fn arg_gathered_cancelling_divisor_stages() {
     assert!(!projection.is_rational());
     let _ = staged
         .arg(binding(&client, &[512, 64]), MEMORY_LEAF)
-        .residence(&[Residence::Smem])
+        .operand(&smem_operand(&[M, K, N]))
         .gathered(projection)
         .build();
 }

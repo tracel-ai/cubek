@@ -329,19 +329,21 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
 }
 
 impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
-    /// Load a TMA tensor-map as a tile argument. `dims` is the operand's logical runtime
+    /// Load a TMA tensor-map as a tile argument for `operand`, whose axes (3 with a leading
+    /// batch axis, 2 without) and per-level residences drive the spec; a ladder stating a
+    /// register stage must agree with `leaf`. `dims` is the operand's logical runtime
     /// `(batch, rows, cols)`; `transposed` flags a col-major operand whose descriptor
-    /// swapped its inner pair (the layout swaps coords back). `axes` are the operand's
-    /// spanned axes: 3 with a leading batch axis, 2 without. The spec's width and storage
+    /// swapped its inner pair (the layout swaps coords back). The spec's width and storage
     /// don't apply to a tensor map, so the spec is built here, not by the caller.
     pub fn tensor_map(
         tensor_map: TensorMapArg<R, Tiled>,
-        axes: &[Axis],
+        operand: &Operand,
         dims: (u32, u32, u32),
         transposed: bool,
         leaf: Leaf,
-        residence: &[Residence],
     ) -> Self {
+        operand.check_leaf(leaf);
+        let axes = operand.axes();
         let batched = match axes.len() {
             2 => false,
             3 => true,
@@ -351,7 +353,10 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes, leaf).residence(residence))
+        Self::new(
+            view,
+            TileSpec::direct(axes, leaf).residence(&operand.residences()),
+        )
     }
 }
 

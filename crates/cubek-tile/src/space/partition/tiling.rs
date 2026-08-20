@@ -125,9 +125,9 @@ impl Default for Tiling {
     }
 }
 
-/// Builds a [`Space`] one level at a time. Add levels with [`level`](LeveledTiling::level),
-/// each configured by a closure that hangs the per-axis [`Cut`]s off a [`LevelBuilder`],
-/// then end the chain with [`leaf`](LeveledTiling::leaf).
+/// Builds a [`Space`] one level at a time: add levels with [`level`](LeveledTiling::level),
+/// each configured by a closure that hangs the per-axis [`Cut`]s off a [`LevelCuts`], then
+/// end the chain with [`build`](LeveledTiling::build).
 pub struct LeveledTiling {
     extents: Vec<(Axis, usize)>,
     levels: Vec<LevelSpec>,
@@ -135,15 +135,16 @@ pub struct LeveledTiling {
 
 impl LeveledTiling {
     /// Add a decomposition level (coarse to fine) with its walk order and buffering; `cuts`
-    /// hangs the per-axis [`Cut`]s off the [`LevelBuilder`]. Where each operand *lives* at this
+    /// hangs the per-axis [`Cut`]s off the [`LevelCuts`]. Where each operand *lives* at this
     /// level is stated by the operand, not here ([`Residence`](crate::Residence)).
     pub fn level(
         mut self,
         order: WalkOrder,
         buffering: Buffering,
-        cuts: impl FnOnce(LevelBuilder) -> LevelBuilder,
+        cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
     ) -> Self {
-        let level = cuts(LevelBuilder { cuts: Vec::new() });
+        let mut level = LevelCuts { cuts: Vec::new() };
+        cuts(&mut level);
         self.push(order, buffering, level.cuts);
         self
     }
@@ -211,27 +212,9 @@ impl LeveledTiling {
 }
 
 /// Collects one level's per-axis [`Cut`]s, via [`axis`](Self::axis) for a single axis and
-/// [`axes`](Self::axes) to hand a whole group the same cut.
-pub struct LevelBuilder {
-    cuts: Vec<(Axis, Cut)>,
-}
-
-impl LevelBuilder {
-    /// One axis gets `cut`.
-    pub fn axis(mut self, axis: Axis, cut: Cut) -> Self {
-        self.cuts.push((axis, cut));
-        self
-    }
-
-    /// Every axis in `axes` gets the same `cut` (e.g. all batch axes pinned alike).
-    pub fn axes(mut self, axes: &[Axis], cut: Cut) -> Self {
-        self.cuts.extend(axes.iter().map(|&a| (a, cut)));
-        self
-    }
-}
-
-/// [`LevelBuilder`]'s statement form for [`Tiling::over`] closures: `&mut` receivers, so the
-/// cuts and the operands' [`stage`](crate::Operand::stage) statements read as peer lines.
+/// [`axes`](Self::axes) to hand a whole group the same cut. `&mut` receivers, so in a
+/// [`Tiling::over`] closure the cuts and the operands' [`stage`](crate::Operand::stage)
+/// statements read as peer lines.
 pub struct LevelCuts {
     cuts: Vec<(Axis, Cut)>,
 }

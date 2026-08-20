@@ -18,7 +18,7 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Leaf, MemoryMmaConfig, Projection, QuantTileArgLaunch, Residence, Space,
+    DequantAt, Leaf, MemoryMmaConfig, Operand, Projection, QuantTileArgLaunch, Residence, Space,
     StorageTiling, TileArgLaunch, TileSpec as CubekTileSpec,
 };
 
@@ -192,10 +192,13 @@ pub struct TileInputBuilder {
 }
 
 impl TileInputBuilder {
-    /// Where this operand lives at each level of the space, coarse to fine (default: every level
-    /// [`Residence::InPlace`], staging nothing).
-    pub fn residence(mut self, residence: &[Residence]) -> Self {
-        self.residence = residence.to_vec();
+    /// Take the per-level residences from `operand`'s ladder, stated where the levels were
+    /// declared ([`Operand::stage`](cubek_tile::Operand::stage)); the ladder's register
+    /// stage, if any, must agree with this input's leaf. Default: every level
+    /// [`Residence::InPlace`], staging nothing.
+    pub fn operand(mut self, operand: &Operand) -> Self {
+        operand.check_leaf(self.leaf);
+        self.residence = operand.residences();
         self
     }
 

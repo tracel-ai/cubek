@@ -17,9 +17,9 @@
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::QuantScheme;
 
-use crate::{Axis, Residence};
+use crate::{Axis, Leaf, RegisterKind, Residence};
 
-/// One rung of an operand's ladder: where the cells sit while the level below runs, and the
+/// One stage of an operand's ladder: where the cells sit while the level below runs, and the
 /// element type they hold there.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Stage {
@@ -114,6 +114,47 @@ impl Operand {
         self.stages.last().map_or(self.dtype, |stage| stage.dtype)
     }
 
+    /// The residence column of the ladder, one entry per level coarse to fine: what a
+    /// [`TileSpec`](crate::TileSpec) stamps as its per-level residences.
+    pub fn residences(&self) -> Vec<Residence> {
+        self.stages.iter().map(|stage| stage.residence).collect()
+    }
+
+    /// The finest [`Residence::Register`] stage on the ladder: the encoding this operand
+    /// arrives at the instruction in, when the ladder states one.
+    pub fn register_stage(&self) -> Option<RegisterKind> {
+        self.stages
+            .iter()
+            .rev()
+            .find_map(|stage| match stage.residence {
+                Residence::Register(kind) => Some(kind),
+                Residence::InPlace | Residence::Smem => None,
+            })
+    }
+
+    /// A ladder stating a register stage has already said what this operand is at the
+    /// instruction; `leaf` must be the same statement. An operand whose ladder states no
+    /// register stage (an in-place input, or an accumulator promoted by the kernel) takes
+    /// `leaf` as given.
+    pub fn check_leaf(&self, leaf: Leaf) {
+        match (self.register_stage(), leaf) {
+            (None, _) => {}
+            (Some(RegisterKind::Array), Leaf::Memory { .. }) => {}
+            (Some(RegisterKind::Cmma), Leaf::Cmma) => {}
+            (Some(RegisterKind::Mma { io }), Leaf::Mma { io: stated }) => assert_eq!(
+                io, stated,
+                "Operand::check_leaf: {:?} stages into an Mma register whose io disagrees \
+                 with the stated leaf's",
+                self.axes
+            ),
+            (Some(register), leaf) => panic!(
+                "Operand::check_leaf: {:?} stages into a {register:?} register but the launch \
+                 states it is {leaf:?} at the instruction",
+                self.axes
+            ),
+        }
+    }
+
     /// Seal level `index`: reject a double statement, pad an omission to an
     /// [`InPlace`](Residence::InPlace) move. Run by the builder as each level closure returns.
     pub(crate) fn close_level(&mut self, index: usize) {
@@ -135,6 +176,32 @@ impl Operand {
     /// stages cannot drift from the space they were stated against.
     pub(crate) fn seal(&mut self) {
         self.sealed = true;
+    }
+}
+
+// Small tuples of operands as an [`OperandSet`], for callers (tests foremost) whose set has
+// no name of its own: `Tiling::over((a, b, out), …)` with `o.0`/`o.1`/`o.2` in the closures.
+impl OperandSet for (Operand,) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0].into_iter()
+    }
+}
+
+impl OperandSet for (Operand, Operand) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0, &mut self.1].into_iter()
+    }
+}
+
+impl OperandSet for (Operand, Operand, Operand) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0, &mut self.1, &mut self.2].into_iter()
+    }
+}
+
+impl OperandSet for (Operand, Operand, Operand, Operand) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0, &mut self.1, &mut self.2, &mut self.3].into_iter()
     }
 }
 

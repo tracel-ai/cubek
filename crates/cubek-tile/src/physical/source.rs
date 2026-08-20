@@ -186,14 +186,22 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
-    /// Where this operand lives at each level of the launched [`Space`], coarse to fine: one
-    /// [`Residence`] per level, checked against the space's depth by
-    /// [`build`](Self::build). Default: every level [`InPlace`](Residence::InPlace), so an operand
-    /// that says nothing is read where it already is and the walk materializes nothing.
+    /// Take the per-level residences from `operand`'s ladder, stated where the levels were
+    /// declared ([`Operand::stage`](crate::Operand::stage)) and checked against the space's
+    /// depth by [`build`](Self::build); the ladder's register stage, if any, must agree with
+    /// this source's leaf ([`Operand::check_leaf`](crate::Operand::check_leaf)). Default:
+    /// every level [`InPlace`](Residence::InPlace), so an operand that stages nothing is read
+    /// where it already is and the walk materializes nothing.
     ///
     /// Independent of the level's [`Buffering`](crate::Buffering): one operand may take a shared
     /// stage at a double-buffered level while another streams from global memory through it.
-    pub fn residence(mut self, residence: &[Residence]) -> Self {
+    pub fn operand(self, operand: &crate::Operand) -> Self {
+        operand.check_leaf(self.data.leaf);
+        self.residence(&operand.residences())
+    }
+
+    /// [`operand`](Self::operand)'s raw form, for the bridges that already hold the column.
+    pub(crate) fn residence(mut self, residence: &[Residence]) -> Self {
         self.data.residence = residence.to_vec();
         self
     }

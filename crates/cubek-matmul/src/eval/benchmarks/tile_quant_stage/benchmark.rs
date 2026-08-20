@@ -145,17 +145,18 @@ impl Benchmark for TileQuantStageBench {
         let space = self.space();
         let launcher = space.launcher(&self.client);
         // L0 takes a shared stage, L1 reads windows of it: the staging this bench measures.
-        let staged = [Residence::Smem, Residence::InPlace];
+        let ladder = |axes: &[Axis]| {
+            let mut operand = Operand::new(axes, f32::elem_type_native());
+            operand.stage(Residence::Smem);
+            operand
+        };
+        let (a_operand, b_operand) = (ladder(&[M, K]), ladder(&[K, N]));
         let a = launcher
-            .arg(a.handle().binding(), LEAF)
-            .subspace(&[M, K])
-            .residence(&staged)
+            .bind(&a_operand, a.handle().binding(), LEAF)
             .build();
         let b = launcher
-            .arg(b.tile.handle().binding(), LEAF)
-            .subspace(&[K, N])
+            .bind(&b_operand, b.tile.handle().binding(), LEAF)
             .vectorize(self.pack)
-            .residence(&staged)
             .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
             .build();
         // The register microkernel lines the accumulator at the RHS's served width.
