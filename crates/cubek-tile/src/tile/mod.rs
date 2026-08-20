@@ -297,6 +297,18 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// This operand's quantization scheme; panics on a plain tile (ask
+    /// [`quant_pack`](Tile::quant_pack) first). The chunked microkernel decodes stored words
+    /// itself, so it needs the scheme the fused view would otherwise consume.
+    pub(crate) fn quant_scheme(&self) -> comptime_type!(QuantScheme) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_scheme(),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::quant_scheme: only a memory tile carries a quantization scheme")
+            }
+        }
+    }
+
     /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
     /// coordinate is not a physical one, so the only read surface that describes the tile is the
     /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a

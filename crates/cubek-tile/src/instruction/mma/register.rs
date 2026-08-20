@@ -1,6 +1,9 @@
 //! The register-resident leaf: a software outer-product GEMM microkernel over memory tiles.
 
-use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
+use cubecl::{
+    prelude::*, quant::scheme::QuantScheme, quant::scheme::QuantValue,
+    std::tensor::layout::CoordsDyn,
+};
 
 use crate::*;
 
@@ -28,7 +31,6 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
     #[comptime] space: Space,
 ) {
-    let size!(L) = lhs.vector_size();
     let size!(V) = rhs.vector_size();
 
     // Each operand's storage element is `i8` native / `u32` packed / the served element when plain;
@@ -49,29 +51,193 @@ pub(crate) fn mma_register_memory<E: Numeric, EL: Numeric, ER: Numeric>(
             || lhs_gathered
             || rhs_gathered
     );
-    if nd {
-        if comptime!(pack_l == 1) {
-            mma_register_gather::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
-        } else if comptime!(pack_l > 1) {
-            mma_register_gather::<E, EL, u32, L, ER, ER, V>(acc, lhs, rhs, space, pack_l, 1usize);
-        } else if comptime!(pack_r == 1) {
-            mma_register_gather::<E, EL, EL, L, ER, i8, V>(acc, lhs, rhs, space, 1usize, 1usize);
-        } else if comptime!(pack_r > 1) {
-            mma_register_gather::<E, EL, EL, L, ER, u32, V>(acc, lhs, rhs, space, 1usize, pack_r);
-        } else {
-            mma_register_gather::<E, EL, EL, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
-        }
-    } else if comptime!(pack_l == 1) {
-        mma_register_direct::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
-    } else if comptime!(pack_l > 1) {
-        mma_register_direct::<E, EL, u32, L, ER, ER, V>(acc, lhs, rhs, space, pack_l, 1usize);
-    } else if comptime!(pack_r == 1) {
-        mma_register_direct::<E, EL, EL, L, ER, i8, V>(acc, lhs, rhs, space, 1usize, 1usize);
-    } else if comptime!(pack_r > 1) {
-        mma_register_direct::<E, EL, EL, L, ER, u32, V>(acc, lhs, rhs, space, 1usize, pack_r);
+    // A packed-u32 lhs takes the chunked walk: its served width is the binding width times the
+    // packing factor, and past one stored word per line the fused view's `Vector<E, served>`
+    // register line outgrows any real vector. The chunk walk never materializes it, so it is the
+    // one packed-lhs 2-D path (the N-D nest below still serves a gathered or multi-axis reduce).
+    if comptime!(pack_l > 1 && !nd) {
+        mma_register_packed_lhs::<E, EL, ER, V>(acc, lhs, rhs, space, pack_l);
     } else {
-        mma_register_direct::<E, EL, EL, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
+        let size!(L) = lhs.vector_size();
+        if nd {
+            if comptime!(pack_l == 1) {
+                mma_register_gather::<E, EL, i8, L, ER, ER, V>(
+                    acc, lhs, rhs, space, 1usize, 1usize,
+                );
+            } else if comptime!(pack_l > 1) {
+                mma_register_gather::<E, EL, u32, L, ER, ER, V>(
+                    acc, lhs, rhs, space, pack_l, 1usize,
+                );
+            } else if comptime!(pack_r == 1) {
+                mma_register_gather::<E, EL, EL, L, ER, i8, V>(
+                    acc, lhs, rhs, space, 1usize, 1usize,
+                );
+            } else if comptime!(pack_r > 1) {
+                mma_register_gather::<E, EL, EL, L, ER, u32, V>(
+                    acc, lhs, rhs, space, 1usize, pack_r,
+                );
+            } else {
+                mma_register_gather::<E, EL, EL, L, ER, ER, V>(
+                    acc, lhs, rhs, space, 1usize, 1usize,
+                );
+            }
+        } else if comptime!(pack_l == 1) {
+            mma_register_direct::<E, EL, i8, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
+        } else if comptime!(pack_r == 1) {
+            mma_register_direct::<E, EL, EL, L, ER, i8, V>(acc, lhs, rhs, space, 1usize, 1usize);
+        } else if comptime!(pack_r > 1) {
+            mma_register_direct::<E, EL, EL, L, ER, u32, V>(acc, lhs, rhs, space, 1usize, pack_r);
+        } else {
+            mma_register_direct::<E, EL, EL, L, ER, ER, V>(acc, lhs, rhs, space, 1usize, 1usize);
+        }
     }
+}
+
+/// The chunked twin of [`mma_register_direct`] for a packed-u32 **lhs**: the `K` walk moves in
+/// whole stored word lines — one wide load per `lw / pack` words — decoded in registers by
+/// [`unpack_cast_u32`], the line's one scale folded in per word. The fused view would instead
+/// materialize a `Vector<E, lw>` register line per scalar `K` step, and `lw` is the binding width
+/// times the packing factor (32 for a four-word q4 line) — past any real vector width, which is
+/// exactly what kept multi-word packed bindings unservable.
+///
+/// One scale covers a whole line: a served line never straddles a scale block
+/// (`validate_scheme`'s `block % vector_size` rule), re-asserted here because a hand-built
+/// `QuantTileArgLaunch` reaches the leaf without passing the builder.
+#[cube]
+fn mma_register_packed_lhs<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] space: Space,
+    #[comptime] pack: usize,
+) {
+    comptime!(assert!(
+        Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
+        "register leaf: the 2-D microkernel contracts exactly one axis"
+    ));
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    comptime!(assert!(
+        !lhs_gathered && !rhs_gathered,
+        "register leaf: a gathered operand has no 2-D matrix view; it needs the N-D nest"
+    ));
+
+    let scheme = lhs.quant_scheme();
+    // Served values per stored line; `nr` is a line count over the rhs's width, `mr`/`kc` scalar.
+    let lw = lhs.vector_size();
+    let vw = rhs.vector_size();
+    let (mr, nr, kc) = comptime! {
+        (
+            space.extent_at(space.rank() - 2),
+            space.extent_at(space.rank() - 1) / vw,
+            rhs.space.extent_at(rhs.space.rank() - 2)
+        )
+    };
+    comptime!(assert!(
+        kc.is_multiple_of(lw),
+        "register leaf: the chunked packed walk moves in whole {lw}-value stored lines, which \
+         must tile the {kc}-deep contraction"
+    ));
+    comptime!(assert!(
+        block_edges(scheme, lhs.space.rank())[lhs.space.rank() - 1].is_multiple_of(lw),
+        "register leaf: a served line may not straddle two scale blocks"
+    ));
+    let lines = comptime!(kc / lw);
+    let size!(WPL) = comptime!(lw / pack);
+
+    let matrices = comptime! {
+        let mut count = 1;
+        for p in 0..space.rank() - 2 {
+            count *= space.extent_at(p);
+        }
+        count
+    };
+
+    for mat in 0..matrices {
+        let (words, scales) = lhs.matrix_packed::<WPL>(mat);
+        let rhs_mat = rhs.matrix_transparent::<ER, V, V>(mat);
+        let mut acc_view = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+
+        // Unroll only when no mask, otherwise compilation too long.
+        let lhs_check = comptime!(words.check);
+        let rhs_check = comptime!(rhs_mat.check);
+        let acc_check = acc_view.check();
+        let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
+        let mut c = load_accumulators(&mut acc_view, comptime!(mr), comptime!(nr), unroll);
+
+        for l in 0..lines {
+            // Each row's stored line and its one scale, held for the whole chunk: one wide load
+            // per line, where the fused view issues one per scalar `K` step.
+            let mut a_words = Array::<Vector<u32, WPL>>::new(mr);
+            let mut a_scales = Array::<E>::new(mr);
+            #[unroll(unroll)]
+            for i in 0..mr {
+                a_words[i] = words.read((i as u32, l as u32));
+                a_scales[i] = E::cast_from(scales.read((i as u32, l as u32)));
+            }
+            #[unroll]
+            for w in 0..comptime!(lw / pack) {
+                #[unroll]
+                for j in 0..pack {
+                    let p = (l * lw + comptime!(w * pack + j)) as u32;
+                    let mut b = Array::<Vector<E, V>>::new(nr);
+                    #[unroll(unroll)]
+                    for n in 0..nr {
+                        b[n] = Vector::<E, V>::cast_from(rhs_mat.read((p, n as u32)));
+                    }
+                    #[unroll(unroll)]
+                    for i in 0..mr {
+                        // Value `j` of word `w`, decoded scalar (no served-width vector is ever
+                        // built): the same mask + branchless two's-complement `cast_masked` runs,
+                        // then the scale, matching the fused view's `q * scale` order.
+                        let q = decode_packed_value::<E>(a_words[i].extract(w), j, scheme);
+                        let a = Vector::<E, V>::cast_from(q * a_scales[i]);
+                        #[unroll(unroll)]
+                        for n in 0..nr {
+                            c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+                        }
+                    }
+                }
+            }
+        }
+
+        store_accumulators(&mut acc_view, c, comptime!(mr), comptime!(nr), unroll);
+    }
+}
+
+/// Value `j` of a packed `u32` word, decoded to `E`: mask out the value's bits, branchless
+/// two's-complement sign conversion, cast — element-for-element what cubecl's `cast_masked`
+/// computes for the integer quant values, so the chunked walk and the fused view agree bit-exactly
+/// (integer arithmetic, no rounding). The minifloat values live in other stores
+/// (`PackedNative`/`Native`) and are refused rather than mis-decoded.
+#[cube]
+fn decode_packed_value<E: Numeric>(
+    word: u32,
+    #[comptime] j: usize,
+    #[comptime] scheme: QuantScheme,
+) -> E {
+    comptime!(assert!(
+        matches!(
+            scheme.value,
+            QuantValue::Q8F
+                | QuantValue::Q8S
+                | QuantValue::Q4F
+                | QuantValue::Q4S
+                | QuantValue::Q2F
+                | QuantValue::Q2S
+        ),
+        "register leaf: the chunked packed walk decodes integer quant values only, got {:?}",
+        scheme.value
+    ));
+    let size_bits = comptime!(scheme.size_bits_value());
+    let mask = comptime!((1u32 << size_bits) - 1);
+    let sign_bit = comptime!(1u32 << (size_bits - 1));
+    let two_pow = comptime!(1i32 << size_bits);
+
+    let raw = (word >> comptime!((j * size_bits) as u32)) & mask;
+    // Branchless two's complement: if raw >= 2^(n-1), value = raw - 2^n.
+    let is_negative = (raw >= sign_bit) as i32;
+    E::cast_from(raw as i32 - is_negative * two_pow)
 }
 
 /// The register microkernel for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch

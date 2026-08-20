@@ -972,6 +972,20 @@ impl<T: Numeric> MemData<T> {
         pack
     }
 
+    /// This store's quantization scheme; panics on a plain store. See [`Tile::quant_scheme`].
+    // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
+    #[allow(clippy::let_and_return)]
+    pub(crate) fn quant_scheme(&self) -> comptime_type!(QuantScheme) {
+        let scheme = #[comptime]
+        match &self.store.quant {
+            ComptimeOption::Some(info) => comptime!(info.scheme),
+            ComptimeOption::None => {
+                panic!("MemData::quant_scheme: a plain store has no quantization scheme")
+            }
+        };
+        scheme
+    }
+
     /// This buffer's byte length (its length is in native lines, so widened by the physical width):
     /// the transaction count a TMA fill into it lands. `T` / `vector_size` are served-typed, so a
     /// quantized buffer widens by the *storage* element and packed width instead (its line count is
@@ -1310,6 +1324,61 @@ impl<T: Numeric> MemData<T> {
         layout: L,
     ) -> MatrixView<'_, Vector<T, W>> {
         self.transparent::<I, WP, W, Coords2d, L>(layout)
+    }
+
+    /// The two halves [`transparent`](MemData::transparent) composes, handed back separately for a
+    /// packed-u32 store: the stored `u32` word lines and the scales, each addressed by the same
+    /// served-line coordinates. The chunked register microkernel reads a whole word line in one
+    /// load and decodes it in registers, so it must not go through the fused view, whose read
+    /// materializes a served-width register line (`binding width × packing factor` — 32 for a
+    /// four-word q4 line, far past any real vector width).
+    ///
+    /// Only a packed-u32 store has word lines to serve; everything else panics, like every other
+    /// door that would otherwise hand stored bytes out as served values.
+    pub(crate) fn matrix_packed_words<WP: Size, L: TileLayout<Coords2d>>(
+        &self,
+        layout: L,
+    ) -> (
+        MaskedView<'_, Vector<u32, WP>, Coords2d>,
+        MaskedView<'_, f32, Coords2d>,
+    ) {
+        #[comptime]
+        match &self.store.quant {
+            ComptimeOption::Some(info) => {
+                comptime!(assert!(
+                    matches!(info.scheme.store, QuantStore::PackedU32(_)),
+                    "MemData::matrix_packed_words: only a packed-u32 store has word lines \
+                     (got {:?})",
+                    info.scheme.store
+                ));
+                let check = comptime!(self.access.overhang.masks());
+                let words = MaskedView::new(
+                    self.lines_storage::<u32, WP>()
+                        .view(self.base())
+                        .view(self.window())
+                        .view(layout.clone()),
+                    check,
+                );
+                // The scales over the same window, resolved by the same layout as the values, so
+                // both answer the same coordinate — exactly the pairing the fused view makes.
+                let scales = MaskedView::new(
+                    info.buffer
+                        .view(ScaleLayout::new(
+                            info.strides.clone(),
+                            info.window_start,
+                            comptime!(info.block.clone()),
+                            comptime!(self.store.vector_size),
+                        ))
+                        .view(layout),
+                    check,
+                );
+                (words, scales)
+            }
+            ComptimeOption::None => panic!(
+                "MemData::matrix_packed_words: a plain store has no packed word lines; read it \
+                 through Tile::matrix"
+            ),
+        }
     }
 
     /// [`transparent`](MemData::transparent) over the tile's whole logical box, applying the

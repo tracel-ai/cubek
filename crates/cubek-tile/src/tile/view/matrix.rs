@@ -352,6 +352,41 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The `i`-th batch matrix of a packed-u32 quantized tile as its two stored halves: the `u32`
+    /// word lines (`WP` words each) and the scales, both addressed by served-line `(row, line)`
+    /// coordinates. The chunked register microkernel loads a whole word line at once and decodes
+    /// it in registers; [`matrix_transparent`](Tile::matrix_transparent) would instead materialize
+    /// a served-width register line, which for a multi-word binding is wider than any real vector.
+    pub fn matrix_packed<WP: Size>(
+        &self,
+        i: usize,
+    ) -> (
+        MaskedView<'_, Vector<u32, WP>, Coords2d>,
+        MaskedView<'_, f32, Coords2d>,
+    ) {
+        let vector_size = self.vector_size();
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                let bound = g.extent();
+                let layout = projected_batch_matrix(
+                    &bound,
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    g.map.clone(),
+                    vector_size,
+                    i,
+                );
+                g.matrix_packed_words::<WP, ProjectedBatchMatrix>(layout)
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::matrix_packed: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => {
+                panic!("Tile::matrix_packed: a tma source has no element view")
+            }
+        }
+    }
+
     /// This tile's whole logical box as the `rows x cols` matrix a fragment of that shape reads,
     /// quantization-transparent. The [`GroupedMatrix`] twin of
     /// [`matrix_transparent`](Tile::matrix_transparent): several logical axes may flatten into one
