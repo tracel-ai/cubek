@@ -7,10 +7,7 @@ pub mod routines;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    launch::{
-        InterpolateStrategy, TileConfig, interpolate_launch, interpolate_nearest_backward_launch,
-        interpolate_tile_launch, interpolate_tile_launch_configured,
-    },
+    launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -33,36 +30,6 @@ pub fn interpolate<R: Runtime>(
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
     interpolate_launch(client, input, output, options, strategy, dtype)
-}
-
-/// Experimental interpolation implemented with the `cubek-tile` DSL.
-///
-/// This path currently uses global-memory tiles and is deliberately separate from [`interpolate`]
-/// while the tile strategy is evaluated.
-pub fn interpolate_tile<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    options: InterpolateOptions,
-    dtype: ElemType,
-) -> Result<(), InterpolateError> {
-    validate_rank(input.shape.len(), output.shape.len())?;
-    validate_nhwc_consistency(&input.shape, &output.shape)?;
-    interpolate_tile_launch(client, input, output, options, dtype)
-}
-
-/// [`interpolate_tile`] with an explicit tile input staging policy.
-pub fn interpolate_tile_with<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    options: InterpolateOptions,
-    dtype: ElemType,
-    config: TileConfig,
-) -> Result<(), InterpolateError> {
-    validate_rank(input.shape.len(), output.shape.len())?;
-    validate_nhwc_consistency(&input.shape, &output.shape)?;
-    interpolate_tile_launch_configured(client, input, output, options, dtype, config)
 }
 
 /// Backward interpolate operation

@@ -4,8 +4,7 @@ use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
-    interpolate_tile, interpolate_tile_with,
-    launch::TileConfig,
+    launch::{TileConfig, interpolate_tile_launch},
 };
 use cubek_test_utils::{TestInput, assert_equals_approx};
 use cubek_tile::Residence;
@@ -14,8 +13,12 @@ use super::{build_output_tensor, make_problem, output_host_f32, validate_test};
 
 const TOLERANCE: f32 = 0.0001;
 
+/// The geometry these tests validate against: the shape the plane-derived split produced
+/// before every choice became the caller's.
+const BASELINE: TileConfig = TileConfig::new(Residence::InPlace, 4, 2, 1);
+
 fn tile_output(options: InterpolateOptions) {
-    tile_output_with(options, TileConfig::default());
+    tile_output_with(options, BASELINE);
 }
 
 fn tile_output_with(options: InterpolateOptions, config: TileConfig) {
@@ -27,7 +30,7 @@ fn tile_output_with(options: InterpolateOptions, config: TileConfig) {
     let expected =
         cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &options);
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-    let result = interpolate_tile_with(
+    let result = interpolate_tile_launch(
         &client,
         input.binding(),
         output.clone().binding(),
@@ -43,9 +46,8 @@ fn tile_output_with(options: InterpolateOptions, config: TileConfig) {
 fn test_interpolate_tile_staging_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for config in [
-        TileConfig::auto(),
-        TileConfig::forced(Residence::Smem),
-        TileConfig::forced(Residence::InPlace),
+        TileConfig::new(Residence::Smem, 4, 2, 1),
+        TileConfig::new(Residence::InPlace, 4, 2, 1),
     ] {
         tile_output_with(options, config);
     }
@@ -55,13 +57,10 @@ fn test_interpolate_tile_staging_configurations() {
 fn test_interpolate_tile_geometry_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for config in [
-        TileConfig::auto().with_cols_per_lane(2),
-        TileConfig::auto().with_rows_per_plane(4),
-        TileConfig::auto().with_planes_per_cube(2),
-        TileConfig::forced(Residence::InPlace)
-            .with_planes_per_cube(2)
-            .with_rows_per_plane(4)
-            .with_cols_per_lane(2),
+        TileConfig::new(Residence::InPlace, 4, 2, 2),
+        TileConfig::new(Residence::InPlace, 4, 4, 1),
+        TileConfig::new(Residence::InPlace, 2, 2, 1),
+        TileConfig::new(Residence::InPlace, 2, 4, 2),
     ] {
         tile_output_with(options, config);
     }
@@ -91,12 +90,13 @@ fn test_interpolate_tile_lanczos3_identity() {
     let expected =
         cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &options);
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-    let result = interpolate_tile(
+    let result = interpolate_tile_launch(
         &client,
         input.binding(),
         output.clone().binding(),
         options,
         output.dtype,
+        BASELINE,
     );
     let actual = output_host_f32(&client, output);
 

@@ -1,14 +1,14 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, TileSize},
-    interpolate_tile,
-    launch::InterpolateStrategy,
+    launch::{InterpolateStrategy, TileConfig, interpolate_tile_launch},
     routines::{
         BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
         SharedMemoryStrategy,
     },
 };
 use cubek_test_utils::TestInput;
+use cubek_tile::Residence;
 
 use super::{
     build_output_tensor, make_problem, output_host_f32, run_interpolate_global_test, validate_test,
@@ -18,6 +18,10 @@ const BILINEAR_TOLERANCE: f32 = 0.00001;
 const BILINEAR_HIGH_RESOLUTION_TOLERANCE: f32 = 0.0001;
 
 const TILE_SIZE: TileSize = TileSize::new(16, 16);
+
+/// The geometry these tests validate against: the shape the plane-derived split produced
+/// before every choice became the caller's.
+const BASELINE: TileConfig = TileConfig::new(Residence::InPlace, 4, 2, 1);
 
 #[test]
 fn test_interpolate_tile_upsample_half_pixel() {
@@ -34,12 +38,13 @@ fn test_interpolate_tile_upsample_half_pixel() {
     );
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
 
-    let result = interpolate_tile(
+    let result = interpolate_tile_launch(
         &client,
         input.clone().binding(),
         output.clone().binding(),
         options,
         input.dtype,
+        BASELINE,
     );
 
     validate_test(
@@ -51,7 +56,7 @@ fn test_interpolate_tile_upsample_half_pixel() {
 }
 
 /// A channel count that fills a plane, so the lanes divide the channels rather than the columns
-/// ([`TileGeometry::heuristic`]). That is a different space, and a different leaf shape.
+/// (the lane split). That is a different space, and a different leaf shape.
 #[test]
 fn test_interpolate_tile_wide_channels() {
     let client = TestRuntime::client(&Default::default());
@@ -67,12 +72,13 @@ fn test_interpolate_tile_wide_channels() {
     );
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
 
-    let result = interpolate_tile(
+    let result = interpolate_tile_launch(
         &client,
         input.clone().binding(),
         output.clone().binding(),
         options,
         input.dtype,
+        BASELINE,
     );
 
     validate_test(
@@ -100,12 +106,13 @@ fn test_interpolate_tile_vectorized_channels() {
     );
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
 
-    let result = interpolate_tile(
+    let result = interpolate_tile_launch(
         &client,
         input.clone().binding(),
         output.clone().binding(),
         options,
         input.dtype,
+        BASELINE,
     );
 
     validate_test(

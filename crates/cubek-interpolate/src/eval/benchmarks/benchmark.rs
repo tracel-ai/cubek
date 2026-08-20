@@ -1,18 +1,18 @@
 use cubecl::{
+    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
     client::ComputeClient,
     future,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::Shape,
-    Runtime, TestRuntime,
 };
 use cubek_test_utils::{RunSamples, TestInput};
 use cubek_tile::Residence;
 
 use crate::{
-    definition::InterpolateProblem, interpolate, interpolate_backward, interpolate_tile_with,
-    launch::InterpolateStrategy,
+    definition::InterpolateProblem, interpolate, interpolate_backward, launch::InterpolateStrategy,
+    launch::interpolate_tile_launch,
 };
 
 use super::InterpolateBenchmarkStrategy;
@@ -34,7 +34,7 @@ pub fn bench(
             InterpolateBenchmarkStrategy::Standard(InterpolateStrategy::SharedMemoryStrategy(_))
         ) || matches!(
             strategy,
-            InterpolateBenchmarkStrategy::Tile(config) if config.input_residence() == Some(Residence::Smem)
+            InterpolateBenchmarkStrategy::Tile(config) if config.input_residence == Residence::Smem
         ))
     {
         return Err("interpolation shared memory strategy is not supported on CPU".to_string());
@@ -44,7 +44,7 @@ pub fn bench(
 
     if let InterpolateBenchmarkStrategy::Tile(config) = strategy {
         let lanes = hardware.plane_size_max as usize;
-        let planes = config.planes_per_cube.unwrap_or(4);
+        let planes = config.planes_per_cube;
         let units_per_cube = planes * lanes;
         if units_per_cube > hardware.max_units_per_cube as usize {
             return Err(format!(
@@ -53,52 +53,44 @@ pub fn bench(
             ));
         }
 
-        if let InterpolateProblem::Forward(prob) = problem {
-            if config.input_residence() == Some(Residence::Smem) {
-                let geometry = config.resolve_geometry(
-                    prob.channels,
-                    lanes,
-                    prob.input_height > prob.output_height || prob.input_width > prob.output_width,
-                );
-                let (row, col) = (
-                    crate::launch::tile::coordinate::Rational::of(
-                        crate::definition::get_transform(
-                            prob.input_height,
-                            prob.output_height,
-                            prob.options,
-                        ),
-                    ),
-                    crate::launch::tile::coordinate::Rational::of(
-                        crate::definition::get_transform(
-                            prob.input_width,
-                            prob.output_width,
-                            prob.options,
-                        ),
-                    ),
-                );
-                let taps = match prob.options.mode {
-                    crate::definition::InterpolateMode::Nearest(_) => 1,
-                    crate::definition::InterpolateMode::Bilinear => 2,
-                    crate::definition::InterpolateMode::Bicubic => 4,
-                    crate::definition::InterpolateMode::Lanczos3 => 6,
-                };
-                let radius = (taps - 1) / 2;
-                let vector_size = 1;
-                let requested_smem = crate::launch::tile::space::stage_window_bytes(
-                    row,
-                    col,
-                    taps,
-                    radius,
-                    geometry,
-                    vector_size,
-                    dtype.size(),
-                );
-                if requested_smem > hardware.max_shared_memory_size {
-                    return Err(format!(
-                        "requested shared memory {requested_smem} bytes exceeds device limit of {} bytes",
-                        hardware.max_shared_memory_size
-                    ));
-                }
+        if let InterpolateProblem::Forward(prob) = problem
+            && config.input_residence == Residence::Smem
+        {
+            let geometry = config.geometry(prob.channels, lanes);
+            let (row, col) = (
+                crate::launch::tile::coordinate::Rational::of(crate::definition::get_transform(
+                    prob.input_height,
+                    prob.output_height,
+                    prob.options,
+                )),
+                crate::launch::tile::coordinate::Rational::of(crate::definition::get_transform(
+                    prob.input_width,
+                    prob.output_width,
+                    prob.options,
+                )),
+            );
+            let taps = match prob.options.mode {
+                crate::definition::InterpolateMode::Nearest(_) => 1,
+                crate::definition::InterpolateMode::Bilinear => 2,
+                crate::definition::InterpolateMode::Bicubic => 4,
+                crate::definition::InterpolateMode::Lanczos3 => 6,
+            };
+            let radius = (taps - 1) / 2;
+            let vector_size = 1;
+            let requested_smem = crate::launch::tile::space::stage_window_bytes(
+                row,
+                col,
+                taps,
+                radius,
+                geometry,
+                vector_size,
+                dtype.size(),
+            );
+            if requested_smem > hardware.max_shared_memory_size {
+                return Err(format!(
+                    "requested shared memory {requested_smem} bytes exceeds device limit of {} bytes",
+                    hardware.max_shared_memory_size
+                ));
             }
         }
     }
@@ -158,7 +150,7 @@ impl Benchmark for InterpolateBench {
                         strategy,
                         self.dtype,
                     ),
-                    InterpolateBenchmarkStrategy::Tile(config) => interpolate_tile_with(
+                    InterpolateBenchmarkStrategy::Tile(config) => interpolate_tile_launch(
                         &self.client,
                         input.binding(),
                         output.clone().binding(),
