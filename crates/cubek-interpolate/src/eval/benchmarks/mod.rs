@@ -6,7 +6,7 @@ mod strategy;
 
 pub use benchmark::bench;
 pub use correctness::InterpolateCorrectness;
-pub use problem::problems;
+pub use problem::{problems, problems_scaled};
 pub use strategy::{InterpolateBenchmarkStrategy, strategies};
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
@@ -43,6 +43,58 @@ impl cubek_test_utils::Category for Category {
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
     }
+    fn correctness(
+        &self,
+    ) -> Option<
+        &dyn cubek_test_utils::Correctness<
+            Problem = InterpolateProblem,
+            Strategy = InterpolateBenchmarkStrategy,
+        >,
+    > {
+        Some(&InterpolateCorrectness)
+    }
+}
+
+/// Every spatial extent divided by four, so one CPU sweep of the full strategy catalogue finishes
+/// in minutes rather than hours. Sixteen times fewer output elements per problem, with the batch,
+/// channel and scale-direction regimes left intact.
+const CPU_DIVISOR: usize = 4;
+
+/// The same sweep at CPU scale.
+///
+/// It is a separate category rather than a switch on the device because the two are not
+/// comparable: a median from this set says which strategy wins, not what the operation costs.
+pub struct CpuCategory;
+
+impl cubek_test_utils::Category for CpuCategory {
+    type Problem = InterpolateProblem;
+    type Strategy = InterpolateBenchmarkStrategy;
+
+    fn id(&self) -> &'static str {
+        "interpolate_cpu"
+    }
+
+    fn label(&self) -> &'static str {
+        "Interpolate (CPU scale)"
+    }
+
+    fn problems(&self) -> Vec<CatalogEntry<InterpolateProblem>> {
+        problems_scaled(CPU_DIVISOR)
+    }
+
+    fn strategies(&self) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
+        strategies()
+    }
+
+    fn bench(
+        &self,
+        strategy: &InterpolateBenchmarkStrategy,
+        problem: &InterpolateProblem,
+        num_samples: usize,
+    ) -> Result<RunSamples, String> {
+        bench(strategy, problem, num_samples)
+    }
+
     fn correctness(
         &self,
     ) -> Option<

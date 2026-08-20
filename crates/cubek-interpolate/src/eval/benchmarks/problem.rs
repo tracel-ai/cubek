@@ -5,6 +5,73 @@ use crate::definition::{
     InterpolateProblem, NearestMode,
 };
 
+/// The same problems with every spatial extent divided, for devices where the full set does not
+/// finish in a sitting.
+///
+/// Only the spatial axes shrink. Batch and channel counts carry the regimes the catalogue exists
+/// to separate (RGB against a plane-filling channel count), and the tile geometry is derived from
+/// channels and lanes rather than from height and width, so dividing those would compare a
+/// different shape rather than the same one faster.
+pub fn problems_scaled(divisor: usize) -> Vec<CatalogEntry<InterpolateProblem>> {
+    assert!(divisor > 0, "problems_scaled: the divisor is a denominator");
+    let shrink = |extent: usize| (extent / divisor).max(1);
+
+    problems()
+        .into_iter()
+        .map(|entry| {
+            let problem = match entry.value {
+                InterpolateProblem::Forward(prob) => {
+                    InterpolateProblem::Forward(InterpolateForwardProblem {
+                        input_height: shrink(prob.input_height),
+                        input_width: shrink(prob.input_width),
+                        output_height: shrink(prob.output_height),
+                        output_width: shrink(prob.output_width),
+                        ..prob
+                    })
+                }
+                InterpolateProblem::Backward(prob) => {
+                    let [b, h, w, c] = prob.out_grad_shape;
+                    InterpolateProblem::Backward(InterpolateBackwardProblem {
+                        input_size: [shrink(prob.input_size[0]), shrink(prob.input_size[1])],
+                        out_grad_shape: [b, shrink(h), shrink(w), c],
+                        ..prob
+                    })
+                }
+            };
+            CatalogEntry::new(entry.id, describe(&problem), problem)
+        })
+        .collect()
+}
+
+/// Name a problem from its shapes, so a rescaled entry never keeps the label of the size it had.
+fn describe(problem: &InterpolateProblem) -> String {
+    match problem {
+        InterpolateProblem::Forward(prob) => {
+            let direction = match prob.output_height >= prob.input_height {
+                true => "upsample",
+                false => "downsample",
+            };
+            format!(
+                "{:?} {direction} (b={} h={} w={} c={} -> {}x{})",
+                prob.options.mode,
+                prob.batch,
+                prob.input_height,
+                prob.input_width,
+                prob.channels,
+                prob.output_height,
+                prob.output_width,
+            )
+        }
+        InterpolateProblem::Backward(prob) => {
+            let [b, h, w, c] = prob.out_grad_shape;
+            format!(
+                "{:?} backward (b={b} h={} w={} c={c} -> {h}x{w})",
+                prob.options.mode, prob.input_size[0], prob.input_size[1],
+            )
+        }
+    }
+}
+
 pub fn problems() -> Vec<CatalogEntry<InterpolateProblem>> {
     vec![
         // Nearest
