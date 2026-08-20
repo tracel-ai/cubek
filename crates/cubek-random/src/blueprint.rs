@@ -40,11 +40,6 @@ pub(crate) struct PrngLaunch {
     pub vectors_per_unit: u32,
 }
 
-/// The smallest run worth a threadpool wake-up: a task dispatch costs about a
-/// microsecond, which at tens of GB/s of stores is tens of KB of output. Derive it
-/// when `HardwareProperties` reports a dispatch cost or a cache size; it has neither today.
-const MIN_BYTES_PER_UNIT: usize = 16 * 1024;
-
 impl PrngLaunch {
     pub(crate) fn new<R: Runtime>(
         client: &ComputeClient<R>,
@@ -118,7 +113,12 @@ impl PrngLaunch {
         );
 
         let vectors = output.size().div_ceil(line_size);
-        let min_vectors_per_unit = MIN_BYTES_PER_UNIT.div_ceil(line_size * dtype.size());
+
+        // The smallest run worth a threadpool wake-up: a dispatch costs about a
+        // microsecond, which at tens of GB/s of stores is tens of KB. Half the L1d,
+        // which the CPU runtime reports as its shared-memory analogue, lands there.
+        let min_bytes_per_unit = hardware.max_shared_memory_size / 2;
+        let min_vectors_per_unit = min_bytes_per_unit.div_ceil(line_size * dtype.size());
         let unit_budget = hardware
             .num_cpu_cores
             .unwrap_or(hardware.max_units_per_cube) as usize;
