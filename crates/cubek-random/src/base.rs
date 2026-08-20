@@ -111,12 +111,16 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
     fn params<N: Size>(args: &Self::Args) -> Self::Params<N>;
 
     /// Turn the `nth` draw of a unit's state into its output vectors.
+    ///
+    /// The blueprint rides along because it names the device as well as the layout, and
+    /// a distribution needing a transcendental pays a price on a CPU it does not on a GPU.
     fn draw<E: Numeric, N: Size>(
         params: &Self::Params<N>,
         state: &mut PrngState<N>,
         slots: &OutputSlots,
         nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, Coords1d>,
+        #[comptime] blueprint: PrngBlueprint,
     );
 }
 
@@ -186,7 +190,7 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
 
             #[unroll(draws <= 8)]
             for nth in 0..draws {
-                F::Runtime::draw(&params, &mut state, &slots, nth, output);
+                F::Runtime::draw(&params, &mut state, &slots, nth, output, blueprint);
             }
         }
         PrngBlueprint::Blocked => {
@@ -200,12 +204,12 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
 
             let slots = OutputSlots::new(first, 1, false);
             for nth in 0..inside {
-                F::Runtime::draw(&params, &mut state, &slots, nth, output);
+                F::Runtime::draw(&params, &mut state, &slots, nth, output, blueprint);
             }
 
             let slots = OutputSlots::new(first, 1, true);
             for nth in inside..draws {
-                F::Runtime::draw(&params, &mut state, &slots, nth, output);
+                F::Runtime::draw(&params, &mut state, &slots, nth, output, blueprint);
             }
         }
     }

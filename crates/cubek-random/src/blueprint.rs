@@ -2,12 +2,16 @@ use cubecl::{prelude::*, tensor_vector_size_parallel};
 
 use crate::N_VALUES_PER_THREAD;
 
-/// Where the vectors a unit produces land in the output.
+/// The device a launch is built for, named by where the vectors a unit produces land in
+/// the output.
 ///
 /// On a GPU the plane is the vector unit: neighbouring units already store one
 /// contiguous stretch per step, and the parallelism is the grid. On a CPU a unit is a
 /// core, the line is the only SIMD there is, and two cores must never write the same
 /// cache line.
+///
+/// A draw reads the same choice for what its device does cheaply: `Interleaved` has
+/// transcendentals in hardware and `Blocked` has none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PrngBlueprint {
     /// Neighbouring units own neighbouring vectors, and each unit writes a fixed

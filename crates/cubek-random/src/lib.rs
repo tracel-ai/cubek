@@ -2,6 +2,7 @@ mod base;
 mod bernoulli;
 mod blueprint;
 mod normal;
+pub mod polynomial;
 mod state;
 mod tests_utils;
 mod uniform;

@@ -1,6 +1,6 @@
 use cubecl::{CubeType, Runtime, prelude::*, std::tensor::ViewMut};
 
-use crate::{OutputSlots, PrngState, PrngStrategy, RandomFamily};
+use crate::{OutputSlots, PrngBlueprint, PrngState, PrngStrategy, RandomFamily};
 
 use super::{PrngArgs, PrngRuntime, random, to_unit_interval_closed_open};
 
@@ -37,6 +37,7 @@ impl PrngRuntime for Bernoulli {
         slots: &OutputSlots,
         nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
+        #[comptime] _blueprint: PrngBlueprint,
     ) {
         let uniform = to_unit_interval_closed_open(state.next());
 

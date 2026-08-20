@@ -3,7 +3,10 @@ use std::f32::consts::PI;
 
 use super::{PrngArgs, PrngRuntime, random};
 
-use crate::{OutputSlots, PrngState, PrngStrategy, RandomFamily, to_unit_interval_open};
+use crate::{
+    OutputSlots, PrngBlueprint, PrngState, PrngStrategy, RandomFamily, polynomial,
+    to_unit_interval_open,
+};
 
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct Normal {
@@ -41,16 +44,28 @@ impl PrngRuntime for Normal {
         slots: &OutputSlots,
         nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
+        #[comptime] blueprint: PrngBlueprint,
     ) {
         let unit_0 = to_unit_interval_open(state.next());
         let unit_1 = to_unit_interval_open(state.next());
 
-        // Box-Muller transform
-        let coeff = (unit_0.ln() * Vector::new(-2.0f32)).sqrt() * params.std;
-        let trigo_arg = Vector::new(2.0f32 * PI) * unit_1;
+        // A CPU has no vector `ln`, `cos`, or `sin`, only one libm call per lane.
+        let (log, cosine, sine) = match comptime!(blueprint) {
+            PrngBlueprint::Interleaved => {
+                let angle = Vector::new(2.0f32 * PI) * unit_1;
+                (unit_0.ln(), angle.cos(), angle.sin())
+            }
+            PrngBlueprint::Blocked => {
+                let (cosine, sine) = polynomial::cos_sin_turns(unit_1);
+                (polynomial::ln(unit_0), cosine, sine)
+            }
+        };
 
-        let normal_0 = trigo_arg.cos() * coeff + params.mean;
-        let normal_1 = trigo_arg.sin() * coeff + params.mean;
+        // Box-Muller transform
+        let coeff = (log * Vector::new(-2.0f32)).sqrt() * params.std;
+
+        let normal_0 = cosine * coeff + params.mean;
+        let normal_1 = sine * coeff + params.mean;
 
         slots.write(output, 2 * nth, Vector::cast_from(normal_0));
         slots.write(output, 2 * nth + 1, Vector::cast_from(normal_1));
