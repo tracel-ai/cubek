@@ -4,15 +4,21 @@ use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
-    interpolate_tile,
+    interpolate_tile, interpolate_tile_with,
+    launch::TileConfig,
 };
 use cubek_test_utils::{TestInput, assert_equals_approx};
+use cubek_tile::Residence;
 
 use super::{build_output_tensor, make_problem, output_host_f32, validate_test};
 
 const TOLERANCE: f32 = 0.0001;
 
 fn tile_output(options: InterpolateOptions) {
+    tile_output_with(options, TileConfig::default());
+}
+
+fn tile_output_with(options: InterpolateOptions, config: TileConfig) {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem([2, 8, 9, 4], [13, 15], options);
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
@@ -21,15 +27,28 @@ fn tile_output(options: InterpolateOptions) {
     let expected =
         cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &options);
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-    let result = interpolate_tile(
+    let result = interpolate_tile_with(
         &client,
         input.binding(),
         output.clone().binding(),
         options,
         output.dtype,
+        config,
     );
     let actual = output_host_f32(&client, output);
     validate_test(result, actual, expected, TOLERANCE);
+}
+
+#[test]
+fn test_interpolate_tile_staging_configurations() {
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    for config in [
+        TileConfig::auto(),
+        TileConfig::forced(Residence::Smem),
+        TileConfig::forced(Residence::InPlace),
+    ] {
+        tile_output_with(options, config);
+    }
 }
 
 #[test]

@@ -26,7 +26,7 @@ impl cubek_test_utils::Correctness for InterpolateCorrectness {
             InterpolateBenchmarkStrategy::Standard(strategy) => {
                 strategy_result(client, problem.clone(), *strategy, seeds[0])
             }
-            InterpolateBenchmarkStrategy::Tile => Err(
+            InterpolateBenchmarkStrategy::Tile(_) => Err(
                 "tile correctness is covered by focused tile tests; Lanczos3 border normalization is pending"
                     .to_string(),
             ),

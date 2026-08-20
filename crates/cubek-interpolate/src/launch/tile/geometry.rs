@@ -1,29 +1,51 @@
-/// How the output is spread over cubes and over a plane's lanes.
+use super::coordinate::gcd;
+
+/// How the output is spread over cubes, over a cube's planes, and over a plane's lanes.
+///
+/// The lane split is what keeps a cube's reads and writes contiguous. Consecutive lanes take
+/// consecutive channels of one column before stepping to the next column, so a plane covers
+/// `lane_channels * channel_block` adjacent elements at a time. Lanes ride the output columns only
+/// for whatever width the channel axis cannot absorb.
 #[derive(Clone, Copy, Debug)]
 pub struct TileGeometry {
-    pub rows_per_cube: usize,
+    /// Planes per cube, each walking `rows_per_plane` output rows.
+    pub planes_per_cube: usize,
+    pub rows_per_plane: usize,
+    /// Lanes riding the output columns; `lane_cols * lane_channels` is the plane width.
+    pub lane_cols: usize,
     pub cols_per_lane: usize,
+    /// Lanes riding the channels.
+    pub lane_channels: usize,
     pub channel_block: usize,
-    pub lanes_on_channels: bool,
 }
 
 impl TileGeometry {
     pub fn heuristic(channels: usize, lanes: usize) -> Self {
-        if channels >= lanes && channels.is_multiple_of(lanes) {
-            Self {
-                rows_per_cube: 4,
-                cols_per_lane: 1,
-                channel_block: divisor_at_most(channels / lanes, 4),
-                lanes_on_channels: true,
-            }
-        } else {
-            Self {
-                rows_per_cube: 2,
-                cols_per_lane: 1,
-                channel_block: divisor_at_most(channels, 16),
-                lanes_on_channels: false,
-            }
+        // A lane's channel run is one memory line, and past four `f32` a wider line buys nothing.
+        let channel_block = divisor_at_most(channels, 4);
+        // Lanes cover the channel axis first, then spill onto the columns. `gcd` is the widest
+        // split that both divides the plane and leaves whole channel blocks per lane.
+        let lane_channels = gcd(lanes, channels / channel_block);
+        Self {
+            planes_per_cube: 4,
+            rows_per_plane: 2,
+            lane_cols: lanes / lane_channels,
+            cols_per_lane: 1,
+            lane_channels,
+            channel_block,
         }
+    }
+
+    pub fn rows_per_cube(&self) -> usize {
+        self.planes_per_cube * self.rows_per_plane
+    }
+
+    pub fn cols_per_cube(&self) -> usize {
+        self.lane_cols * self.cols_per_lane
+    }
+
+    pub fn channels_per_cube(&self) -> usize {
+        self.lane_channels * self.channel_block
     }
 }
 

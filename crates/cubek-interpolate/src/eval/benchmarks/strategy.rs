@@ -1,16 +1,22 @@
 use cubek_test_utils::CatalogEntry;
+use cubek_tile::Residence;
 
 use crate::{
     definition::TileSize,
-    launch::InterpolateStrategy,
+    launch::{InterpolateStrategy, TileConfig},
     routines::{BlueprintStrategy, GlobalMemoryStrategy, SharedMemoryStrategy},
 };
 
 /// The established interpolation implementations and the experimental tile path.
+///
+/// The tile path is entered twice, once per input residence, because those are its only two
+/// distinct kernels: the ring is single-slot everywhere ([`interpolate_space`]), so a deeper
+/// buffering would compile the same shader and time the same noise. `TileConfig::auto` is not
+/// listed for the same reason, being whichever of the two the tap window selects.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InterpolateBenchmarkStrategy {
     Standard(InterpolateStrategy),
-    Tile,
+    Tile(TileConfig),
 }
 
 pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
@@ -34,9 +40,14 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
             )),
         ),
         CatalogEntry::new(
-            "tile",
-            "Tile gather-reduce",
-            InterpolateBenchmarkStrategy::Tile,
+            "tile_smem",
+            "Tile gather-reduce (staged input)",
+            InterpolateBenchmarkStrategy::Tile(TileConfig::forced(Residence::Smem)),
+        ),
+        CatalogEntry::new(
+            "tile_in_place",
+            "Tile gather-reduce (in-place input)",
+            InterpolateBenchmarkStrategy::Tile(TileConfig::forced(Residence::InPlace)),
         ),
     ]
 }

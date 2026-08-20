@@ -9,7 +9,7 @@ use cubecl::{
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{definition::InterpolateProblem, interpolate_tile};
+use crate::{definition::InterpolateProblem, interpolate_tile_with};
 use crate::{interpolate, interpolate_backward};
 
 use super::InterpolateBenchmarkStrategy;
@@ -78,12 +78,13 @@ impl Benchmark for InterpolateBench {
                         strategy,
                         self.dtype,
                     ),
-                    InterpolateBenchmarkStrategy::Tile => interpolate_tile(
+                    InterpolateBenchmarkStrategy::Tile(config) => interpolate_tile_with(
                         &self.client,
                         input.binding(),
                         output.clone().binding(),
                         prob.options,
                         self.dtype,
+                        config,
                     ),
                 }
                 .map_err(|err| format!("{err}"))?;
@@ -91,7 +92,7 @@ impl Benchmark for InterpolateBench {
                 Ok(output)
             }
             InterpolateProblem::Backward(prob) => {
-                if self.strategy == InterpolateBenchmarkStrategy::Tile {
+                if matches!(self.strategy, InterpolateBenchmarkStrategy::Tile(_)) {
                     return Err("tile interpolation does not support backward problems".to_string());
                 }
                 let [n, _, _, c] = prob.out_grad_shape;
