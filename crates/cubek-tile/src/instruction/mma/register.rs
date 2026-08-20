@@ -123,14 +123,26 @@ fn mma_register_packed_lhs<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
     ));
 
     let scheme = lhs.quant_scheme();
-    // Served values per stored line; `nr` is a line count over the rhs's width, `mr`/`kc` scalar.
+    // Served values per stored line.
     let lw = lhs.vector_size();
     let vw = rhs.vector_size();
+    // The one contracted axis; whether the rhs lines along it decides the walk below. An rhs
+    // lined along `N` (the plain orientation) takes the scalar decode; one lined along the
+    // contraction (`x` bound `[N, K]`, `K` innermost) takes the vectorized decode — a whole
+    // x line and a whole decoded group per fma, the difference between scalar and vector
+    // per-value cost on a kernel whose bytes are cheap and whose values are not.
+    let k_axis = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space)[0]);
+    let k_lined = comptime!(rhs.space.axis_at(rhs.space.rank() - 1) == k_axis && vw > 1);
     let (mr, nr, kc) = comptime! {
         (
             space.extent_at(space.rank() - 2),
-            space.extent_at(space.rank() - 1) / vw,
-            rhs.space.extent_at(rhs.space.rank() - 2)
+            if k_lined {
+                // The rhs rides `K`, so `N` stays scalar cells.
+                space.extent_at(space.rank() - 1)
+            } else {
+                space.extent_at(space.rank() - 1) / vw
+            },
+            lhs.space.extent(k_axis)
         )
     };
     comptime!(assert!(
@@ -153,6 +165,38 @@ fn mma_register_packed_lhs<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
         count
     };
 
+    if comptime!(k_lined) {
+        comptime!(assert!(
+            pack.is_multiple_of(vw),
+            "register leaf: a {vw}-wide x line must divide a word's {pack} values"
+        ));
+        mma_register_packed_lhs_klined::<E, EL, ER, WPL, V>(
+            acc, lhs, rhs, space, pack, mr, nr, lines, matrices,
+        );
+    } else {
+        mma_register_packed_lhs_scalar::<E, EL, ER, WPL, V>(
+            acc, lhs, rhs, space, pack, mr, nr, lines, matrices,
+        );
+    }
+}
+
+/// The scalar half of [`mma_register_packed_lhs`]: an rhs lined along `N`, one decode and one
+/// fma per scalar `K` step.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn mma_register_packed_lhs_scalar<E: Numeric, EL: Numeric, ER: Numeric, WPL: Size, V: Size>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] space: Space,
+    #[comptime] pack: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] lines: usize,
+    #[comptime] matrices: usize,
+) {
+    let scheme = lhs.quant_scheme();
+    let lw = lhs.vector_size();
     for mat in 0..matrices {
         let (words, scales) = lhs.matrix_packed::<WPL>(mat);
         let rhs_mat = rhs.matrix_transparent::<ER, V, V>(mat);
@@ -205,13 +249,155 @@ fn mma_register_packed_lhs<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
     }
 }
 
+/// The vectorized half of [`mma_register_packed_lhs`]: the rhs lines along the contraction
+/// (`x` bound `[N, K]`, `K` innermost, `V` wide), so each fma covers a whole x line against a
+/// whole decoded group of the word — the per-value cost drops from a scalar load + scalar fma
+/// to a fraction of a vector load + vector fma, which is what a kernel bound by per-value
+/// instructions (its bytes are quarter-width) needs.
+///
+/// The line's one scale folds in **once per stored line**: the group partials accumulate
+/// unscaled in a `V`-wide register, fold horizontally at the end of the line, and one fma per
+/// cell applies the scale — legal because a served line never straddles a scale block.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn mma_register_packed_lhs_klined<E: Numeric, EL: Numeric, ER: Numeric, WPL: Size, V: Size>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] space: Space,
+    #[comptime] pack: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] lines: usize,
+    #[comptime] matrices: usize,
+) {
+    let scheme = lhs.quant_scheme();
+    let lw = lhs.vector_size();
+    let vw = rhs.vector_size();
+    // The accumulator serves scalar `N` cells here — the rhs's width rides `K`, not `N`.
+    let size!(N1) = 1usize;
+
+    for mat in 0..matrices {
+        let (words, scales) = lhs.matrix_packed::<WPL>(mat);
+        let rhs_mat = rhs.matrix_transparent::<ER, V, V>(mat);
+        let mut acc_view = acc.matrix_accumulate::<N1>(mat, comptime!(space.clone()));
+
+        let lhs_check = comptime!(words.check);
+        let rhs_check = comptime!(rhs_mat.check);
+        let acc_check = acc_view.check();
+        let unroll = comptime!(mr * nr <= UNROLL_BLOCK && !lhs_check && !rhs_check && !acc_check);
+        let mut c = load_accumulators(&mut acc_view, comptime!(mr), comptime!(nr), unroll);
+
+        for l in 0..lines {
+            let mut a_words = Array::<Vector<u32, WPL>>::new(mr);
+            let mut a_scales = Array::<E>::new(mr);
+            #[unroll(unroll)]
+            for i in 0..mr {
+                a_words[i] = words.read((i as u32, l as u32));
+                a_scales[i] = E::cast_from(scales.read((i as u32, l as u32)));
+            }
+            // Unscaled `V`-wide partials for this line, one per accumulator cell.
+            let mut q = Array::<Vector<E, V>>::new(comptime!(mr * nr));
+            #[unroll(unroll)]
+            for i in 0..comptime!(mr * nr) {
+                q[i] = Vector::<E, V>::cast_from(E::from_int(0));
+            }
+            #[unroll]
+            for w in 0..comptime!(lw / pack) {
+                #[unroll]
+                for g in 0..comptime!(pack / vw) {
+                    // The x line covering values `g·vw .. (g+1)·vw` of word `w`.
+                    let kline = (l * comptime!(lw / vw)
+                        + comptime!(w * (pack / vw) + g))
+                        as u32;
+                    let mut b = Array::<Vector<E, V>>::new(nr);
+                    #[unroll(unroll)]
+                    for n in 0..nr {
+                        b[n] = Vector::<E, V>::cast_from(rhs_mat.read((n as u32, kline)));
+                    }
+                    #[unroll(unroll)]
+                    for i in 0..mr {
+                        let qv = decode_packed_group::<E, V>(a_words[i].extract(w), g, scheme);
+                        #[unroll(unroll)]
+                        for n in 0..nr {
+                            q[i * nr + n] = fma(qv, b[n], q[i * nr + n]);
+                        }
+                    }
+                }
+            }
+            // Fold the line: one horizontal sum and one scale fma per cell.
+            #[unroll(unroll)]
+            for i in 0..mr {
+                #[unroll(unroll)]
+                for n in 0..nr {
+                    let partial = horizontal_sum::<E, V>(q[i * nr + n]);
+                    c[i * nr + n] = fma(
+                        Vector::<E, N1>::cast_from(a_scales[i]),
+                        Vector::<E, N1>::cast_from(partial),
+                        c[i * nr + n],
+                    );
+                }
+            }
+        }
+
+        store_accumulators(&mut acc_view, c, comptime!(mr), comptime!(nr), unroll);
+    }
+}
+
+/// Values `g·V .. (g+1)·V` of a packed word as a `V`-wide vector, decoded by the two-shift sign
+/// extension: left-shift the value's bits to the top, arithmetic-shift back down — the same
+/// two's complement [`decode_packed_value`] computes branchlessly, in two instructions
+/// (integer arithmetic, so the two agree bit-exactly).
+#[cube]
+pub(crate) fn decode_packed_group<E: Numeric, V: Size>(
+    word: u32,
+    #[comptime] g: usize,
+    #[comptime] scheme: QuantScheme,
+) -> Vector<E, V> {
+    comptime!(assert!(
+        matches!(
+            scheme.value,
+            QuantValue::Q8F
+                | QuantValue::Q8S
+                | QuantValue::Q4F
+                | QuantValue::Q4S
+                | QuantValue::Q2F
+                | QuantValue::Q2S
+        ),
+        "register leaf: the chunked packed walk decodes integer quant values only, got {:?}",
+        scheme.value
+    ));
+    let size_bits = comptime!(scheme.size_bits_value());
+    let mut out = Vector::<E, V>::empty();
+    #[unroll]
+    for m in 0..out.vector_size() {
+        // Element `m` serves value `g·V + m` of the word, whose bits sit at
+        // `size_bits · (g·V + m)`: shift them to the top, arithmetic-shift back.
+        let up = 32 - size_bits * (g * out.vector_size() + m + 1);
+        let shifted = i32::reinterpret(word << (up as u32)) >> ((32 - size_bits) as i32);
+        out.insert(m, E::cast_from(shifted));
+    }
+    out
+}
+
+/// Horizontal sum of a `V`-wide vector into its scalar element.
+#[cube]
+pub(crate) fn horizontal_sum<E: Numeric, V: Size>(v: Vector<E, V>) -> E {
+    let mut total = v.extract(0usize);
+    #[unroll]
+    for m in 1..v.vector_size() {
+        total += v.extract(m);
+    }
+    total
+}
+
 /// Value `j` of a packed `u32` word, decoded to `E`: mask out the value's bits, branchless
 /// two's-complement sign conversion, cast — element-for-element what cubecl's `cast_masked`
 /// computes for the integer quant values, so the chunked walk and the fused view agree bit-exactly
 /// (integer arithmetic, no rounding). The minifloat values live in other stores
 /// (`PackedNative`/`Native`) and are refused rather than mis-decoded.
 #[cube]
-fn decode_packed_value<E: Numeric>(
+pub(crate) fn decode_packed_value<E: Numeric>(
     word: u32,
     #[comptime] j: usize,
     #[comptime] scheme: QuantScheme,

@@ -93,6 +93,7 @@ fn run_packed_lhs_direct(value: QuantValue, words: usize, bk: usize) {
         space.cube_count(),
         space.cube_dim(&client),
         words,
+        1,
         a.arg(),
         b.arg(),
         c.arg(),
@@ -183,6 +184,7 @@ fn register_matmul_packed_lhs_plane_fold() {
         space.cube_count(),
         space.cube_dim(&client),
         words,
+        1,
         a.arg(),
         b.arg(),
         c.arg(),
@@ -209,12 +211,104 @@ fn register_matmul_packed_lhs_plane_fold() {
         .enforce()
 }
 
+/// The plane-fold shape with the rhs bound **k-lined** — `x` as `[N, K]`, `K` innermost, four
+/// values per line — the orientation the quantized gemv's col arm launches: the chunked walk
+/// then loads whole x lines and issues vector fmas per decoded group instead of a scalar pair
+/// per value. Must agree with the `[K, N]` scalar orientation to the same reference.
+#[test]
+fn register_matmul_packed_lhs_plane_fold_klined() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let group = 8usize;
+    if lanes == 0 || !lanes.is_multiple_of(group) {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "plane width {lanes} does not divide into {group}-lane groups"
+        )))
+        .enforce();
+        return;
+    }
+
+    for (value, words) in [(QuantValue::Q4S, 4usize), (QuantValue::Q8S, 4)] {
+        let scheme = scheme(value, 1, 32);
+        let pack = scheme.num_quants();
+        let lw = words * pack;
+        let xw = 4usize; // x line width along K
+        let rows_per_plane = lanes / group;
+        let (m, n, k) = (rows_per_plane, 1usize, lw * group * 2);
+
+        let seq = |edge| Cut::sequential(edge);
+        let space = Tiling::new()
+            .extents(&[(M, m), (N, n), (K, k)])
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(M, Cut::cube(cubek_tile::CubeAxis::X, m))
+                    .axis(N, seq(1))
+                    .axis(K, seq(k))
+            })
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(M, Cut::plane(m)).axis(N, seq(1)).axis(K, seq(k))
+            })
+            .level(WalkOrder::RowMajor, Schedule::Direct, |l| {
+                l.axis(M, unit(1, Spread::Contiguous, rows_per_plane))
+                    .axis(N, seq(1))
+                    .axis(K, unit(lw, Spread::Interleaved, group))
+            })
+            .build();
+
+        let a = TileInput::builder(&client, space.project(&[M, K]))
+            .untiled()
+            .packed(&scheme, DequantAt::Read)
+            .arange();
+        // `[N, K]`: the same 1×k buffer, spanned with `K` innermost so the
+        // binding lines along the contraction.
+        let b = TileInput::builder(&client, space.project(&[N, K]))
+            .untiled()
+            .arange();
+        let c = TileInput::builder(&client, space.project(&[M, N]))
+            .untiled()
+            .zeros();
+
+        let (i_dtype, e_dtype) = (u32::elem_type_native(), f32::elem_type_native());
+        launch_matmul_quant_lhs::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            words,
+            xw,
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            space,
+            i_dtype,
+            e_dtype,
+        );
+
+        let got = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+        let blocks = k / 32;
+        let expected: Vec<f32> = (0..m)
+            .map(|i| {
+                (0..k)
+                    .map(|p| {
+                        a.q[i * k + p] as f32 * a.scale_values[i * blocks + p / 32] * p as f32
+                    })
+                    .sum()
+            })
+            .collect();
+        let (_, expected) = TestInput::builder(client.clone(), cubecl::zspace::shape![m, n])
+            .custom(expected)
+            .generate_with_f32_host_data();
+        assert_equals_approx(&got, &expected, 1e-3)
+            .as_test_outcome()
+            .enforce()
+    }
+}
+
 /// `I` names the binding's stored element (`u32` words); the arg's scheme recovers the served
-/// values, so the body is the plain matmul kernel. `V` is the binding width in words.
+/// values, so the body is the plain matmul kernel. `V` is the binding width in words; `VX` the
+/// rhs's line width (1 for the plain `[K, N]` orientation, the group width for a k-lined rhs).
 #[cube(launch)]
-fn launch_matmul_quant_lhs<I: Numeric, E: Numeric, V: Size>(
+fn launch_matmul_quant_lhs<I: Numeric, E: Numeric, V: Size, VX: Size>(
     a: &QuantTileArg<'_, I, V>,
-    b: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, VX>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(I)] _idtype: ElemType,
@@ -225,3 +319,4 @@ fn launch_matmul_quant_lhs<I: Numeric, E: Numeric, V: Size>(
     let mut c = c.tile(space);
     c.mma(&a, &b);
 }
+
