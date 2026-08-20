@@ -6,7 +6,7 @@ use super::{PrngArgs, PrngRuntime, random, to_unit_interval_closed_open};
 
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct Bernoulli {
-    pub(crate) probability: f32,
+    probability: f32,
 }
 
 #[derive(Debug)]
@@ -66,11 +66,15 @@ pub fn random_bernoulli<R: Runtime>(
     out: TensorBinding<R>,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
-    random::<BernoulliFamily, R>(
-        client,
-        Bernoulli { probability },
-        out,
-        dtype,
-        PrngStrategy::Inferred,
-    )
+    random_bernoulli_with_strategy(client, probability, out, dtype, PrngStrategy::Inferred)
+}
+
+pub(crate) fn random_bernoulli_with_strategy<R: Runtime>(
+    client: &ComputeClient<R>,
+    probability: f32,
+    out: TensorBinding<R>,
+    dtype: ElemType,
+    strategy: PrngStrategy,
+) -> Result<(), LaunchError> {
+    random::<BernoulliFamily, R>(client, Bernoulli { probability }, out, dtype, strategy)
 }

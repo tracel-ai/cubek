@@ -1,4 +1,5 @@
 use cubecl::{prelude::*, tensor_vector_size_parallel};
+use cubek_std::cube_count::cube_count_spread_with_total;
 
 use crate::N_VALUES_PER_THREAD;
 
@@ -27,12 +28,14 @@ pub(crate) enum PrngStrategy {
     Inferred,
     /// Pins the blueprint whatever the device reports, so an A/B of the two runs in
     /// one process.
-    #[cfg(any(test, feature = "benchmarks"))]
+    ///
+    /// Only tests and benchmarks pin one, so a default build sees nobody construct it.
+    #[allow(dead_code)]
     Forced(PrngBlueprint),
 }
 
 /// The blueprint a launch follows and the geometry that carries it.
-pub(crate) struct PrngLaunch {
+pub(crate) struct PrngLaunchSettings {
     pub blueprint: PrngBlueprint,
     pub cube_dim: CubeDim,
     pub cube_count: CubeCount,
@@ -40,7 +43,7 @@ pub(crate) struct PrngLaunch {
     pub vectors_per_unit: u32,
 }
 
-impl PrngLaunch {
+impl PrngLaunchSettings {
     pub(crate) fn new<R: Runtime>(
         client: &ComputeClient<R>,
         output: &TensorBinding<R>,
@@ -49,7 +52,6 @@ impl PrngLaunch {
         strategy: PrngStrategy,
     ) -> Self {
         let blueprint = match strategy {
-            #[cfg(any(test, feature = "benchmarks"))]
             PrngStrategy::Forced(blueprint) => blueprint,
             PrngStrategy::Inferred => match client.properties().hardware.num_cpu_cores {
                 Some(_) => PrngBlueprint::Blocked,
@@ -79,18 +81,17 @@ impl PrngLaunch {
             output.strides.len() - 1,
         );
 
-        let cube_dim = CubeDim::new(client, size.div_ceil(N_VALUES_PER_THREAD));
-        let units = f32::ceil(size as f32 / N_VALUES_PER_THREAD as f32);
-        let cubes = f32::ceil(units / cube_dim.num_elems() as f32);
-        let cubes_x = f32::ceil(f32::sqrt(cubes));
-        let cubes_y = f32::ceil(cubes / cubes_x);
+        let units = size.div_ceil(N_VALUES_PER_THREAD);
+        let cube_dim = CubeDim::new(client, units);
+        let cubes = units.div_ceil(cube_dim.num_elems() as usize);
+        let (cube_count, _) = cube_count_spread_with_total(client, cubes);
 
         Self {
             blueprint: PrngBlueprint::Interleaved,
             cube_dim,
-            cube_count: CubeCount::Static(cubes_x as u32, cubes_y as u32, 1),
+            cube_count,
             line_size,
-            vectors_per_unit: N_VALUES_PER_THREAD as u32,
+            vectors_per_unit: (N_VALUES_PER_THREAD / line_size) as u32,
         }
     }
 
@@ -122,9 +123,7 @@ impl PrngLaunch {
         let unit_budget = hardware
             .num_cpu_cores
             .unwrap_or(hardware.max_units_per_cube) as usize;
-        let units = unit_budget
-            .min(vectors.div_ceil(min_vectors_per_unit))
-            .max(1);
+        let units = unit_budget.min(vectors / min_vectors_per_unit).max(1);
 
         // A run covers whole draws, and the last unit's may reach past the output; the
         // write is checked, so the overshoot is dropped rather than clamped. An empty

@@ -1220,6 +1220,7 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubecl-environment",
+ "cubek-std",
  "cubek-test-utils",
  "half",
  "num-traits",

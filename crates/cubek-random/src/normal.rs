@@ -10,8 +10,8 @@ use crate::{
 
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct Normal {
-    pub(crate) mean: f32,
-    pub(crate) std: f32,
+    mean: f32,
+    std: f32,
 }
 
 #[derive(Debug)]
@@ -46,6 +46,8 @@ impl PrngRuntime for Normal {
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
         #[comptime] blueprint: PrngBlueprint,
     ) {
+        // Both arms need the open interval: `ln(0)` is `-inf` in hardware and a large
+        // finite value in the polynomial arm, so a closed draw would disagree.
         let unit_0 = to_unit_interval_open(state.next());
         let unit_1 = to_unit_interval_open(state.next());
 
@@ -90,11 +92,16 @@ pub fn random_normal<R: Runtime>(
     out: TensorBinding<R>,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
-    random::<NormalFamily, R>(
-        client,
-        Normal { mean, std },
-        out,
-        dtype,
-        PrngStrategy::Inferred,
-    )
+    random_normal_with_strategy(client, mean, std, out, dtype, PrngStrategy::Inferred)
+}
+
+pub(crate) fn random_normal_with_strategy<R: Runtime>(
+    client: &ComputeClient<R>,
+    mean: f32,
+    std: f32,
+    out: TensorBinding<R>,
+    dtype: ElemType,
+    strategy: PrngStrategy,
+) -> Result<(), LaunchError> {
+    random::<NormalFamily, R>(client, Normal { mean, std }, out, dtype, strategy)
 }

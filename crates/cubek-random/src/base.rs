@@ -6,7 +6,7 @@ use cubecl::{prelude::*, std::tensor::ViewMut};
 use cubecl_environment::{rand::get_seeded_rng, sync::Mutex};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::{PrngBlueprint, PrngLaunch, PrngState, PrngStrategy, Seeds, SeedsLaunch};
+use crate::{PrngBlueprint, PrngLaunchSettings, PrngState, PrngStrategy, Seeds, SeedsLaunch};
 
 /// Values a unit produces under [`PrngBlueprint::Interleaved`].
 pub(crate) const N_VALUES_PER_THREAD: usize = 128;
@@ -45,7 +45,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
 ) -> Result<(), LaunchError> {
     let seeds = get_seeds();
     let args = prng.args();
-    let launch = PrngLaunch::new(
+    let launch = PrngLaunchSettings::new(
         client,
         &output,
         dtype,
@@ -239,7 +239,12 @@ mod tests {
     use cubecl::{TestRuntime, std::tensor::TensorHandle};
 
     use super::*;
-    use crate::{Uniform, UniformFamily};
+    use crate::{
+        assert_normal_respects_68_95_99_rule, assert_wald_wolfowitz_runs_test,
+        random_bernoulli_with_strategy, random_normal_with_strategy, random_uniform_with_strategy,
+    };
+
+    const BLUEPRINTS: [PrngBlueprint; 2] = [PrngBlueprint::Interleaved, PrngBlueprint::Blocked];
 
     /// Both blueprints write every value of the output, on whichever device runs the
     /// suite.
@@ -249,8 +254,18 @@ mod tests {
     /// and the distribution tests would keep passing on the arm that does run.
     #[test]
     fn every_blueprint_writes_every_value() {
-        for blueprint in [PrngBlueprint::Interleaved, PrngBlueprint::Blocked] {
-            let values = uniform_over_zeros(blueprint);
+        for blueprint in BLUEPRINTS {
+            let values = draw_over_zeros(vec![64, 64], |client, output, dtype| {
+                random_uniform_with_strategy(
+                    client,
+                    5.0,
+                    17.0,
+                    output,
+                    dtype,
+                    PrngStrategy::Forced(blueprint),
+                )
+            });
+
             let unwritten = values
                 .iter()
                 .filter(|&&v| !(5.0..17.0).contains(&v))
@@ -263,11 +278,64 @@ mod tests {
         }
     }
 
-    /// Draws a uniform over a buffer of zeros, so an unwritten value is out of range.
-    fn uniform_over_zeros(blueprint: PrngBlueprint) -> Vec<f32> {
+    /// Both blueprints draw a normal distribution, and not merely values in range.
+    ///
+    /// The two evaluate the Box-Muller transcendentals differently, so a polynomial
+    /// wrong over the domain a draw hands it shows up here and nowhere else: the
+    /// integration tests only ever see the blueprint the device infers.
+    #[test]
+    fn every_blueprint_draws_a_normal_distribution() {
+        for blueprint in BLUEPRINTS {
+            let values = draw_over_zeros(vec![512, 512], |client, output, dtype| {
+                random_normal_with_strategy(
+                    client,
+                    0.0,
+                    1.0,
+                    output,
+                    dtype,
+                    PrngStrategy::Forced(blueprint),
+                )
+            });
+
+            assert_normal_respects_68_95_99_rule(&values, 0.0, 1.0);
+        }
+    }
+
+    /// Neighbouring values are independent under both blueprints.
+    ///
+    /// Each blueprint hands a unit a different stretch of the output, so a state seeded
+    /// wrongly for one layout correlates the values that end up adjacent while leaving
+    /// the distribution itself intact.
+    #[test]
+    fn every_blueprint_draws_independent_neighbours() {
+        for blueprint in BLUEPRINTS {
+            let values = draw_over_zeros(vec![512, 512], |client, output, dtype| {
+                random_bernoulli_with_strategy(
+                    client,
+                    0.5,
+                    output,
+                    dtype,
+                    PrngStrategy::Forced(blueprint),
+                )
+            });
+
+            // High bound slightly over 1 so 1.0 is included in the second bin.
+            assert_wald_wolfowitz_runs_test(&values, 0., 1.1);
+        }
+    }
+
+    /// Draws over a buffer of zeros under a fixed seed, so a value the launch skips
+    /// stays at zero rather than at whatever the allocation held.
+    fn draw_over_zeros(
+        shape: Vec<usize>,
+        launch: impl FnOnce(
+            &ComputeClient<TestRuntime>,
+            TensorBinding<TestRuntime>,
+            ElemType,
+        ) -> Result<(), LaunchError>,
+    ) -> Vec<f32> {
         let client = TestRuntime::client(&Default::default());
         let dtype = f32::elem_type_native();
-        let shape = vec![64, 64];
 
         let zeros = vec![0.0f32; shape.iter().product()];
         let output = TensorHandle::<TestRuntime>::new_contiguous(
@@ -276,17 +344,7 @@ mod tests {
             dtype,
         );
 
-        random::<UniformFamily, _>(
-            &client,
-            Uniform {
-                lower_bound: 5.0,
-                upper_bound: 17.0,
-            },
-            output.clone().binding(),
-            dtype,
-            PrngStrategy::Forced(blueprint),
-        )
-        .unwrap();
+        with_seed(0, || launch(&client, output.clone().binding(), dtype)).unwrap();
 
         let read = client.read_one_unchecked_tensor(output.into_copy_descriptor());
 

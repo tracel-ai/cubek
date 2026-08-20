@@ -8,8 +8,8 @@ use super::{PrngArgs, PrngRuntime, random};
 
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct Uniform {
-    pub(crate) lower_bound: f32,
-    pub(crate) upper_bound: f32,
+    lower_bound: f32,
+    upper_bound: f32,
 }
 
 #[derive(Debug)]
@@ -73,6 +73,24 @@ pub fn random_uniform<R: Runtime>(
     out: TensorBinding<R>,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
+    random_uniform_with_strategy(
+        client,
+        lower_bound,
+        upper_bound,
+        out,
+        dtype,
+        PrngStrategy::Inferred,
+    )
+}
+
+pub(crate) fn random_uniform_with_strategy<R: Runtime>(
+    client: &ComputeClient<R>,
+    lower_bound: f32,
+    upper_bound: f32,
+    out: TensorBinding<R>,
+    dtype: ElemType,
+    strategy: PrngStrategy,
+) -> Result<(), LaunchError> {
     random::<UniformFamily, R>(
         client,
         Uniform {
@@ -81,6 +99,6 @@ pub fn random_uniform<R: Runtime>(
         },
         out,
         dtype,
-        PrngStrategy::Inferred,
+        strategy,
     )
 }

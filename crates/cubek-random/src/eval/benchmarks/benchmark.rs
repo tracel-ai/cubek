@@ -15,7 +15,8 @@ use cubek_test_utils::RunSamples;
 use crate::eval::benchmarks::problem::{Distribution, RandomProblem};
 use crate::eval::benchmarks::strategy::RandomStrategy;
 use crate::{
-    Bernoulli, BernoulliFamily, Normal, NormalFamily, PrngStrategy, Uniform, UniformFamily, random,
+    PrngStrategy, random_bernoulli_with_strategy, random_normal_with_strategy,
+    random_uniform_with_strategy,
 };
 
 pub fn bench(
@@ -88,26 +89,15 @@ impl Benchmark for RandomBench {
         let strategy = self.strategy;
 
         match self.distribution {
-            Distribution::Uniform(lower_bound, upper_bound) => random::<UniformFamily, _>(
-                client,
-                Uniform {
-                    lower_bound,
-                    upper_bound,
-                },
-                out,
-                dtype,
-                strategy,
-            ),
-            Distribution::Normal(mean, std) => {
-                random::<NormalFamily, _>(client, Normal { mean, std }, out, dtype, strategy)
+            Distribution::Uniform(lower_bound, upper_bound) => {
+                random_uniform_with_strategy(client, lower_bound, upper_bound, out, dtype, strategy)
             }
-            Distribution::Bernoulli(probability) => random::<BernoulliFamily, _>(
-                client,
-                Bernoulli { probability },
-                out,
-                dtype,
-                strategy,
-            ),
+            Distribution::Normal(mean, std) => {
+                random_normal_with_strategy(client, mean, std, out, dtype, strategy)
+            }
+            Distribution::Bernoulli(probability) => {
+                random_bernoulli_with_strategy(client, probability, out, dtype, strategy)
+            }
         }
         .map_err(|e| format!("{e}"))
     }
