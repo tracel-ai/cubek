@@ -73,6 +73,16 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                     if let Some(tflops) = samples.tflops {
                         println!("{tflops:.3} TFLOPS");
                     }
+                    if let Some(bandwidth) = &samples.bandwidth {
+                        let achieved_gb_s = bandwidth.achieved_bytes_per_s / 1e9;
+                        match bandwidth.peak_bytes_per_s {
+                            Some(peak) if peak > 0.0 => {
+                                let pct = 100.0 * bandwidth.achieved_bytes_per_s / peak;
+                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of write peak)");
+                            }
+                            _ => println!("{achieved_gb_s:.1} GB/s (write peak unavailable)"),
+                        }
+                    }
                     let durations = BenchmarkDurations {
                         timing_method: category.timing_method(),
                         durations: samples.durations,
