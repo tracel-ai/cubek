@@ -18,29 +18,42 @@ impl RandomFamily for NormalFamily {
     type Runtime = Normal;
 }
 
+#[derive(CubeType)]
+pub(crate) struct NormalParams<N: Size> {
+    mean: Vector<f32, N>,
+    std: Vector<f32, N>,
+}
+
 #[cube]
 impl PrngRuntime for Normal {
+    type Params<N: Size> = NormalParams<N>;
+
+    fn params<N: Size>(args: &Normal) -> NormalParams<N> {
+        NormalParams::<N> {
+            mean: Vector::new(args.mean),
+            std: Vector::new(args.std),
+        }
+    }
+
     fn draw<E: Numeric, N: Size>(
-        args: &Normal,
+        params: &NormalParams<N>,
         state: &mut PrngState<N>,
         slots: &OutputSlots,
         nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
-        let mean = Vector::new(args.mean);
-
         let unit_0 = to_unit_interval_open(state.next());
         let unit_1 = to_unit_interval_open(state.next());
 
         // Box-Muller transform
-        let coeff = (unit_0.ln() * Vector::new(-2.0f32)).sqrt() * Vector::new(args.std);
+        let coeff = (unit_0.ln() * Vector::new(-2.0f32)).sqrt() * params.std;
         let trigo_arg = Vector::new(2.0f32 * PI) * unit_1;
 
-        let normal_0 = trigo_arg.cos() * coeff + mean;
-        let normal_1 = trigo_arg.sin() * coeff + mean;
+        let normal_0 = trigo_arg.cos() * coeff + params.mean;
+        let normal_1 = trigo_arg.sin() * coeff + params.mean;
 
-        output.write_checked(slots.at(2 * nth), Vector::cast_from(normal_0));
-        output.write_checked(slots.at(2 * nth + 1), Vector::cast_from(normal_1));
+        slots.write(output, 2 * nth, Vector::cast_from(normal_0));
+        slots.write(output, 2 * nth + 1, Vector::cast_from(normal_1));
     }
 }
 

@@ -16,21 +16,34 @@ impl RandomFamily for BernoulliFamily {
     type Runtime = Bernoulli;
 }
 
+#[derive(CubeType)]
+pub(crate) struct BernoulliParams<N: Size> {
+    probability: Vector<f32, N>,
+}
+
 #[cube]
 impl PrngRuntime for Bernoulli {
+    type Params<N: Size> = BernoulliParams<N>;
+
+    fn params<N: Size>(args: &Bernoulli) -> BernoulliParams<N> {
+        BernoulliParams::<N> {
+            probability: Vector::new(args.probability),
+        }
+    }
+
     fn draw<E: Numeric, N: Size>(
-        args: &Bernoulli,
+        params: &BernoulliParams<N>,
         state: &mut PrngState<N>,
         slots: &OutputSlots,
         nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
-        let probability = Vector::new(args.probability);
         let uniform = to_unit_interval_closed_open(state.next());
 
-        output.write_checked(
-            slots.at(nth),
-            Vector::cast_from(uniform.less_than(&probability)),
+        slots.write(
+            output,
+            nth,
+            Vector::cast_from(uniform.less_than(&params.probability)),
         );
     }
 }

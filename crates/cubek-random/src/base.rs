@@ -104,9 +104,15 @@ pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {
 
 #[cube]
 pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
+    /// The distribution's parameters, broadcast to the line.
+    type Params<N: Size>: CubeType;
+
+    /// Broadcast the parameters once, so a unit's draws share one set of splats.
+    fn params<N: Size>(args: &Self::Args) -> Self::Params<N>;
+
     /// Turn the `nth` draw of a unit's state into its output vectors.
     fn draw<E: Numeric, N: Size>(
-        args: &Self::Args,
+        params: &Self::Params<N>,
         state: &mut PrngState<N>,
         slots: &OutputSlots,
         nth: usize,
@@ -120,16 +126,35 @@ pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
 pub(crate) struct OutputSlots {
     first: usize,
     stride: usize,
+    /// Whether the run these slots cover can reach past the output, which only the
+    /// last draws of the last unit ever do.
+    #[cube(comptime)]
+    checked: bool,
 }
 
 #[cube]
 impl OutputSlots {
-    pub fn new(first: usize, stride: usize) -> OutputSlots {
-        OutputSlots { first, stride }
+    pub fn new(first: usize, stride: usize, #[comptime] checked: bool) -> OutputSlots {
+        OutputSlots {
+            first,
+            stride,
+            checked,
+        }
     }
 
-    pub fn at(&self, nth: usize) -> usize {
-        self.first + nth * self.stride
+    pub fn write<E: Numeric, N: Size>(
+        &self,
+        output: &mut ViewMut<'_, Vector<E, N>, Coords1d>,
+        nth: usize,
+        value: Vector<E, N>,
+    ) {
+        let pos = self.first + nth * self.stride;
+
+        if comptime!(self.checked) {
+            output.write_checked(pos, value);
+        } else {
+            output.write(pos, value);
+        }
     }
 }
 
@@ -145,6 +170,7 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
     #[define(E)] _dtype: ElemType,
 ) {
     let mut state = PrngState::<N>::seeded(ABSOLUTE_POS, seeds);
+    let params = F::Runtime::params::<N>(&args);
 
     match comptime!(blueprint) {
         PrngBlueprint::Interleaved => {
@@ -152,6 +178,7 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
             let slots = OutputSlots::new(
                 cube_offset * N_VALUES_PER_THREAD / N::value() + UNIT_POS as usize,
                 CUBE_DIM as usize,
+                true,
             );
             let draws = N_VALUES_PER_THREAD
                 / N::value()
@@ -159,16 +186,26 @@ fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
 
             #[unroll(draws <= 8)]
             for nth in 0..draws {
-                F::Runtime::draw(&args, &mut state, &slots, nth, output);
+                F::Runtime::draw(&params, &mut state, &slots, nth, output);
             }
         }
         PrngBlueprint::Blocked => {
-            let slots = OutputSlots::new(ABSOLUTE_POS * vectors_per_unit as usize, 1);
-            let draws =
-                vectors_per_unit as usize / comptime!(<F::Runtime as PrngArgs>::VECTORS_PER_DRAW);
+            let first = ABSOLUTE_POS * vectors_per_unit as usize;
+            let vectors_per_draw = comptime!(<F::Runtime as PrngArgs>::VECTORS_PER_DRAW);
+            let draws = vectors_per_unit as usize / vectors_per_draw;
+            let inside = min(
+                draws,
+                output.shape().saturating_sub(first) / vectors_per_draw,
+            );
 
-            for nth in 0..draws {
-                F::Runtime::draw(&args, &mut state, &slots, nth, output);
+            let slots = OutputSlots::new(first, 1, false);
+            for nth in 0..inside {
+                F::Runtime::draw(&params, &mut state, &slots, nth, output);
+            }
+
+            let slots = OutputSlots::new(first, 1, true);
+            for nth in inside..draws {
+                F::Runtime::draw(&params, &mut state, &slots, nth, output);
             }
         }
     }

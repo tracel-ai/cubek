@@ -17,21 +17,34 @@ impl RandomFamily for UniformFamily {
     type Runtime = Uniform;
 }
 
+/// The affine map from the unit interval onto `[lower_bound, upper_bound)`.
+#[derive(CubeType)]
+pub(crate) struct UniformParams<N: Size> {
+    scale: Vector<f32, N>,
+    offset: Vector<f32, N>,
+}
+
 #[cube]
 impl PrngRuntime for Uniform {
+    type Params<N: Size> = UniformParams<N>;
+
+    fn params<N: Size>(args: &Uniform) -> UniformParams<N> {
+        UniformParams::<N> {
+            scale: Vector::new(args.upper_bound - args.lower_bound),
+            offset: Vector::new(args.lower_bound),
+        }
+    }
+
     fn draw<E: Numeric, N: Size>(
-        args: &Uniform,
+        params: &UniformParams<N>,
         state: &mut PrngState<N>,
         slots: &OutputSlots,
         nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
-        let scale = Vector::new(args.upper_bound - args.lower_bound);
-        let offset = Vector::new(args.lower_bound);
+        let uniform = to_unit_interval_closed_open(state.next()) * params.scale + params.offset;
 
-        let uniform = to_unit_interval_closed_open(state.next()) * scale + offset;
-
-        output.write_checked(slots.at(nth), Vector::cast_from(uniform));
+        slots.write(output, nth, Vector::cast_from(uniform));
     }
 }
 
