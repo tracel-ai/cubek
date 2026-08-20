@@ -6,6 +6,7 @@ use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
+use super::SeparableRecipeExpand;
 use crate::{Axis, Coords, Space};
 
 /// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
@@ -59,6 +60,30 @@ pub(crate) trait RecipeOps<T: Numeric> {
     fn evaluate_virtual(&self, scope: &Scope, coordinates: &RecipeCoordsExpand) -> NativeExpand<T>;
 }
 
+pub(crate) trait SeparableRecipeOps<T: Numeric>: RecipeOps<T> {
+    fn factors_virtual(&self, scope: &Scope) -> usize;
+    fn evaluate_factor_virtual(
+        &self,
+        scope: &Scope,
+        coordinates: &RecipeCoordsExpand,
+        factor: usize,
+    ) -> NativeExpand<T>;
+}
+
+impl<T: Numeric, R: SeparableRecipeExpand<T> + RecipeExpand<T>> SeparableRecipeOps<T> for R {
+    fn factors_virtual(&self, scope: &Scope) -> usize {
+        self.__expand_factors_method(scope)
+    }
+    fn evaluate_factor_virtual(
+        &self,
+        scope: &Scope,
+        coordinates: &RecipeCoordsExpand,
+        factor: usize,
+    ) -> NativeExpand<T> {
+        self.__expand_evaluate_factor_method(scope, coordinates, factor)
+    }
+}
+
 impl<T: Numeric, R: RecipeExpand<T>> RecipeOps<T> for R {
     fn evaluate_virtual(&self, scope: &Scope, coordinates: &RecipeCoordsExpand) -> NativeExpand<T> {
         self.__expand_evaluate_method(scope, coordinates)
@@ -72,6 +97,7 @@ pub struct VirtualRecipe<T: Numeric>(PhantomData<T>);
 #[derive(Clone)]
 pub struct VirtualRecipeExpand<T: Numeric> {
     state: Arc<dyn RecipeOps<T>>,
+    separable: Option<Arc<dyn SeparableRecipeOps<T>>>,
 }
 
 impl<T: Numeric> VirtualRecipe<T> {
@@ -81,10 +107,32 @@ impl<T: Numeric> VirtualRecipe<T> {
     ) -> VirtualRecipeExpand<T> {
         VirtualRecipeExpand {
             state: Arc::new(recipe),
+            separable: None,
+        }
+    }
+
+    pub fn __expand_new_separable<R: super::SeparableRecipe<T> + 'static>(
+        _scope: &Scope,
+        recipe: R::ExpandType,
+    ) -> VirtualRecipeExpand<T> {
+        let recipe = Arc::new(recipe);
+        VirtualRecipeExpand {
+            state: recipe.clone(),
+            separable: Some(recipe),
         }
     }
 
     pub fn evaluate(&self, _coordinates: &RecipeCoords) -> T {
+        unexpanded!()
+    }
+
+    /// How many factors the recipe presents. A recipe with no separable structure is the product
+    /// of one factor, itself, so a consumer asks for a count rather than for a yes or no.
+    pub fn factors(&self) -> comptime_type!(usize) {
+        unexpanded!()
+    }
+
+    pub fn evaluate_factor(&self, _coordinates: &RecipeCoords, _factor: usize) -> T {
         unexpanded!()
     }
 }
@@ -96,6 +144,28 @@ impl<T: Numeric> VirtualRecipeExpand<T> {
         coordinates: &RecipeCoordsExpand,
     ) -> NativeExpand<T> {
         self.state.evaluate_virtual(scope, coordinates)
+    }
+
+    pub fn __expand_factors_method(&self, scope: &Scope) -> usize {
+        match &self.separable {
+            Some(separable) => separable.factors_virtual(scope),
+            None => 1,
+        }
+    }
+
+    pub fn __expand_evaluate_factor_method(
+        &self,
+        scope: &Scope,
+        coordinates: &RecipeCoordsExpand,
+        factor: usize,
+    ) -> NativeExpand<T> {
+        match &self.separable {
+            Some(separable) => separable.evaluate_factor_virtual(scope, coordinates, factor),
+            None => {
+                assert_eq!(factor, 0, "recipe has a single factor, itself");
+                self.state.evaluate_virtual(scope, coordinates)
+            }
+        }
     }
 }
 

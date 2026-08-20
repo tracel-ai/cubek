@@ -8,5 +8,6 @@ mod quant;
 mod recursive;
 mod reduce;
 mod references;
+mod separable;
 mod softmax;
 mod space;

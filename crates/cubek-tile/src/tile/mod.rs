@@ -26,7 +26,10 @@ use cubecl::{
     prelude::*,
     quant::scheme::QuantScheme,
     std::quant::view::{KnownScale, QuantizedView as DequantView},
-    std::tensor::{View, layout::Coordinates},
+    std::tensor::{
+        View,
+        layout::{Coordinates, CoordsDyn},
+    },
 };
 
 use crate::*;
@@ -46,6 +49,31 @@ impl<T: Numeric> Tile<T> {
         leaf: Leaf,
     ) -> TileExpand<T> {
         Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place(), leaf)
+    }
+
+    /// Create a procedural tile while preserving the recipe's factorization for contraction: the
+    /// consumer sees one factor per contracted axis instead of one opaque field.
+    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(
+        _space: Space,
+        _recipe: R,
+        _leaf: Leaf,
+    ) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_procedural_separable<R: SeparableRecipe<T> + 'static>(
+        scope: &Scope,
+        space: Space,
+        recipe: R::ExpandType,
+        leaf: Leaf,
+    ) -> TileExpand<T> {
+        Self::__expand_procedural_virtual(
+            scope,
+            space,
+            VirtualRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
+            StagePlan::in_place(),
+            leaf,
+        )
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
@@ -635,6 +663,36 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
+
+    /// How many separable factors this tile's values are the product of. One for a tile read from
+    /// a buffer, and for a recipe stating no factorization: it is its own single factor.
+    pub(crate) fn factors(&self) -> comptime_type!(usize) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => data.factors(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(1usize),
+        }
+    }
+
+    /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
+    /// that factor reads matters, which is what lets the contraction walk it in 1-D.
+    pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => {
+                data.evaluate_factor_dyn(&pos, factor, comptime!(self.space.clone()))
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => {
+                panic!("Tile::separable_factor: tile is not procedural")
+            }
         }
     }
 

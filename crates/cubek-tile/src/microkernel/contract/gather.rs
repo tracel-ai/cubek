@@ -67,56 +67,108 @@ pub(super) fn contract<
         lhs_spans_col
     ));
 
-    let lhs_view = lhs.nd::<IL, WPL, L>();
-    let rhs_view = rhs.nd::<IR, WPR, V>();
-    // Loop-invariant, and `comptime!`-bound so the `unroll` flag below stays a comptime binding:
-    // `#[unroll(flag)]` silently rolls the loop when the macro cannot see `flag` as one.
-    let lhs_check = comptime!(lhs_view.check);
-    let rhs_check = comptime!(rhs_view.check);
+    // A factor per contracted axis is what makes the cell-major walk below worth its own path; a
+    // single factor is the whole recipe, which the general walk already reads once per tap.
+    let lhs_factors = lhs.factors();
 
-    // The fan-out walk names the lane with a comptime extract. Its final physical line can be
-    // partial, just as the direct leaf's can, so retain a short tail rather than rejecting a
-    // perfectly valid checked tile.
-    let k_lines = comptime!(kc / lw);
-    let k_tail = comptime!(kc % lw);
-
-    let unroll_limit = comptime!(config.unroll_limit);
-    let lane_fanout = comptime!(config.lane_fanout);
-
-    for mat in 0..matrices {
-        let batch = unravel(
-            &const_coords(comptime!(
-                (0..rank - 2)
-                    .map(|p| space.extent_at(p))
-                    .collect::<Vec<_>>()
-            )),
-            mat.fcast::<u32>(),
+    if comptime!(lhs_factors > 1) {
+        comptime!(assert!(
+            lhs_factors == reduce.len() && lw == 1,
+            "contract gather: a separable lhs needs one factor per contracted axis and scalar \
+             weights"
+        ));
+        separable_lhs_contract::<E, EL, ER, IR, V>(
+            acc,
+            lhs,
+            rhs,
+            comptime!(space.clone()),
+            comptime!(reduce.clone()),
+            comptime!(reduce_extents.clone()),
+            mr,
+            nr,
+            vw,
+            comptime!(config),
         );
+    }
 
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+    if comptime!(lhs_factors == 1) {
+        let lhs_view = lhs.nd::<IL, WPL, L>();
+        let rhs_view = rhs.nd::<IR, WPR, V>();
+        // Loop-invariant, and `comptime!`-bound so the `unroll` flag below stays a comptime binding:
+        // `#[unroll(flag)]` silently rolls the loop when the macro cannot see `flag` as one.
+        let lhs_check = comptime!(lhs_view.check);
+        let rhs_check = comptime!(rhs_view.check);
 
-        // Unroll only when no mask, otherwise compilation too long.
-        let acc_check = acc.check();
-        let unroll = comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
-        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
+        // The fan-out walk names the lane with a comptime extract. Its final physical line can be
+        // partial, just as the direct leaf's can, so retain a short tail rather than rejecting a
+        // perfectly valid checked tile.
+        let k_lines = comptime!(kc / lw);
+        let k_tail = comptime!(kc % lw);
 
-        // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
-        // across the whole K walk rather than re-declared per step, so the trace allocates it once
-        // however many lane bodies the fan-out below emits. An rhs varying down the rows has no
-        // such per-column value, and leaves this unwritten for the trace to fold away.
-        let mut b = Array::<Vector<E, V>>::new(nr);
+        let unroll_limit = comptime!(config.unroll_limit);
+        let lane_fanout = comptime!(config.lane_fanout);
 
-        if comptime!(lane_fanout && lw > 1) {
-            for line in 0..k_lines {
+        for mat in 0..matrices {
+            let batch = unravel(
+                &const_coords(comptime!(
+                    (0..rank - 2)
+                        .map(|p| space.extent_at(p))
+                        .collect::<Vec<_>>()
+                )),
+                mat.fcast::<u32>(),
+            );
+
+            let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+
+            // Unroll only when no mask, otherwise compilation too long.
+            let acc_check = acc.check();
+            let unroll =
+                comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
+            let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
+
+            // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
+            // across the whole K walk rather than re-declared per step, so the trace allocates it once
+            // however many lane bodies the fan-out below emits. An rhs varying down the rows has no
+            // such per-column value, and leaves this unwritten for the trace to fold away.
+            let mut b = Array::<Vector<E, V>>::new(nr);
+
+            if comptime!(lane_fanout && lw > 1) {
+                for line in 0..k_lines {
+                    #[unroll]
+                    for lane in 0..lw {
+                        rank1_update::<E, EL, L, ER, V>(
+                            &lhs_view,
+                            &rhs_view,
+                            &mut c,
+                            &mut b,
+                            &batch,
+                            line * lw + lane,
+                            comptime!(Some(lane)),
+                            mr,
+                            nr,
+                            unroll,
+                            comptime!(space.clone()),
+                            comptime!(reduce.clone()),
+                            comptime!(reduce_extents.clone()),
+                            comptime!(lhs.space.clone()),
+                            comptime!(rhs.space.clone()),
+                            lw,
+                            vw,
+                            lhs_spans_col,
+                            rhs_spans_row,
+                            rhs_spans_col,
+                        );
+                    }
+                }
                 #[unroll]
-                for lane in 0..lw {
+                for lane in 0..k_tail {
                     rank1_update::<E, EL, L, ER, V>(
                         &lhs_view,
                         &rhs_view,
                         &mut c,
                         &mut b,
                         &batch,
-                        line * lw + lane,
+                        comptime!(k_lines * lw + lane),
                         comptime!(Some(lane)),
                         mr,
                         nr,
@@ -133,64 +185,201 @@ pub(super) fn contract<
                         rhs_spans_col,
                     );
                 }
+            } else {
+                // CPU and scalar lines keep the compact flat walk. Besides respecting the selected
+                // configuration, this avoids cloning a wide fan-out body into LLVM IR when its fixed
+                // extracts provide no benefit.
+                for p in 0..kc {
+                    rank1_update::<E, EL, L, ER, V>(
+                        &lhs_view,
+                        &rhs_view,
+                        &mut c,
+                        &mut b,
+                        &batch,
+                        p,
+                        comptime!(None),
+                        mr,
+                        nr,
+                        unroll,
+                        comptime!(space.clone()),
+                        comptime!(reduce.clone()),
+                        comptime!(reduce_extents.clone()),
+                        comptime!(lhs.space.clone()),
+                        comptime!(rhs.space.clone()),
+                        lw,
+                        vw,
+                        lhs_spans_col,
+                        rhs_spans_row,
+                        rhs_spans_col,
+                    );
+                }
             }
-            #[unroll]
-            for lane in 0..k_tail {
-                rank1_update::<E, EL, L, ER, V>(
-                    &lhs_view,
-                    &rhs_view,
-                    &mut c,
-                    &mut b,
-                    &batch,
-                    comptime!(k_lines * lw + lane),
-                    comptime!(Some(lane)),
-                    mr,
-                    nr,
-                    unroll,
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    comptime!(reduce_extents.clone()),
-                    comptime!(lhs.space.clone()),
-                    comptime!(rhs.space.clone()),
-                    lw,
-                    vw,
-                    lhs_spans_col,
-                    rhs_spans_row,
-                    rhs_spans_col,
-                );
-            }
-        } else {
-            // CPU and scalar lines keep the compact flat walk. Besides respecting the selected
-            // configuration, this avoids cloning a wide fan-out body into LLVM IR when its fixed
-            // extracts provide no benefit.
-            for p in 0..kc {
-                rank1_update::<E, EL, L, ER, V>(
-                    &lhs_view,
-                    &rhs_view,
-                    &mut c,
-                    &mut b,
-                    &batch,
-                    p,
-                    comptime!(None),
-                    mr,
-                    nr,
-                    unroll,
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    comptime!(reduce_extents.clone()),
-                    comptime!(lhs.space.clone()),
-                    comptime!(rhs.space.clone()),
-                    lw,
-                    vw,
-                    lhs_spans_col,
-                    rhs_spans_row,
-                    rhs_spans_col,
-                );
+
+            block::commit(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
+        }
+    }
+}
+
+/// Cell-major contraction for a separable procedural lhs. Each factor's taps are walked once in
+/// 1-D and cached before their Cartesian product is walked, so an `h × w` filter performs `h + w`
+/// recipe evaluations per output cell instead of `h * w`, and a rank-`n` one `Σ taps` instead of
+/// `Π taps`.
+///
+/// Factor `f` is the one varying along the contracted axis `reduce[f]`: the recipe's factor order
+/// is the contraction's axis order, which is what lets a tap coordinate index the weights.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn separable_lhs_contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, V: Size>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] space: Space,
+    #[comptime] reduce: Vec<Axis>,
+    #[comptime] reduce_extents: Vec<usize>,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] vw: usize,
+    #[comptime] config: MemoryMmaConfig,
+) {
+    let rank = comptime!(space.rank());
+    let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
+    let rhs_view = rhs.nd::<IR, Const<1>, V>();
+    let rhs_check = comptime!(rhs_view.check);
+    let factors = comptime!(reduce_extents.len());
+    let kc = comptime!(reduce_extents.iter().product::<usize>());
+    // Every factor's taps share one array, since a per-factor array would need a length varying
+    // with a comptime index and so a binding per factor, which a rank stated at comptime cannot
+    // spell. `offsets` is where each factor's run starts.
+    let offsets = comptime!(tap_offsets(&reduce_extents));
+    let taps = comptime!(reduce_extents.iter().sum::<usize>());
+
+    for mat in 0..matrices {
+        let batch = unravel(
+            &const_coords(comptime!(
+                (0..rank - 2)
+                    .map(|p| space.extent_at(p))
+                    .collect::<Vec<_>>()
+            )),
+            mat.fcast::<u32>(),
+        );
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+        let acc_check = acc.check();
+        let unroll = comptime!(mr * nr <= config.unroll_limit && !rhs_check && !acc_check);
+        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
+
+        #[unroll(unroll)]
+        for i in 0..mr {
+            #[unroll(unroll)]
+            for n in 0..nr {
+                let mut weights = Array::<EL>::new(taps);
+
+                #[unroll]
+                for f in 0..factors {
+                    #[unroll]
+                    for k in 0..comptime!(reduce_extents[f]) {
+                        let pos = cell_position(
+                            &batch,
+                            i as u32,
+                            n as u32,
+                            &factor_coords(comptime!(factors), f, k),
+                            comptime!(lhs.space.clone()),
+                            comptime!(space.clone()),
+                            comptime!(reduce.clone()),
+                            1usize,
+                        );
+                        weights[comptime!(offsets[f] + k)] = lhs.separable_factor(pos, f);
+                    }
+                }
+
+                for p in 0..kc {
+                    let reduce_coords =
+                        tap_coords(p.fcast::<u32>(), comptime!(reduce_extents.clone()));
+                    let mut weight =
+                        weights[factor_tap(&reduce_coords, 0usize, comptime!(offsets[0]))];
+                    #[unroll]
+                    for f in 1..factors {
+                        weight *= weights[factor_tap(&reduce_coords, f, comptime!(offsets[f]))];
+                    }
+                    let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
+                        &rhs_view,
+                        &batch,
+                        i as u32,
+                        n as u32,
+                        &reduce_coords,
+                        comptime!(rhs.space.clone()),
+                        comptime!(space.clone()),
+                        comptime!(reduce.clone()),
+                        vw,
+                    ));
+                    c[i * nr + n] = fma(Vector::<E, V>::cast_from(weight), value, c[i * nr + n]);
+                }
             }
         }
-
         block::commit(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
     }
+}
+
+/// Where each factor's taps start in the flat weight array [`separable_lhs_contract`] fills.
+fn tap_offsets(extents: &[usize]) -> Vec<usize> {
+    extents
+        .iter()
+        .scan(0, |start, taps| {
+            let at = *start;
+            *start += taps;
+            Some(at)
+        })
+        .collect()
+}
+
+/// Where the weight of factor `f` at these tap coordinates sits in that array.
+#[cube]
+fn factor_tap(
+    reduce_coords: &Coords<u32>,
+    #[comptime] factor: usize,
+    #[comptime] offset: usize,
+) -> usize {
+    reduce_coords
+        .at(factor)
+        .fadd(comptime!(offset as u32))
+        .fcast::<usize>()
+}
+
+/// The tap coordinate a 1-D walk of factor `factor` reads at: `tap` along its own contracted axis,
+/// and zero along the others, which that factor does not read.
+#[cube]
+fn factor_coords(
+    #[comptime] factors: usize,
+    #[comptime] factor: usize,
+    #[comptime] tap: usize,
+) -> Coords<u32> {
+    let mut out = Coords::<u32>::new();
+
+    #[unroll]
+    for f in 0..factors {
+        out.push(comptime!(if f == factor { tap as u32 } else { 0u32 }));
+    }
+
+    out
+}
+
+/// The per-factor tap coordinates `p` names. Unlike [`unravel`], the extents are comptime, so each
+/// digit divides by a constant, and the innermost one folds away entirely.
+#[cube]
+fn tap_coords(p: u32, #[comptime] extents: Vec<usize>) -> Coords<u32> {
+    let n = comptime!(extents.len());
+    let mut out = Coords::<u32>::new();
+
+    #[unroll]
+    for f in 0..n {
+        let digit = p.fdiv(comptime!(extents[f + 1..].iter().product::<usize>() as u32));
+        if comptime!(f == 0) {
+            out.push(digit);
+        } else {
+            out.push(digit.frem(comptime!(extents[f] as u32)));
+        }
+    }
+
+    out
 }
 
 /// One gathered rank-1 update. `lane` names the component to take when the caller walks `K` as
@@ -334,8 +523,23 @@ fn cell_read<T: Numeric, W: Size>(
     #[comptime] reduce: Vec<Axis>,
     #[comptime] width: usize,
 ) -> Vector<T, W> {
+    let pos = cell_position(batch, row, col, reduce_coords, operand, acc, reduce, width);
+    view.read(pos)
+}
+
+#[cube]
+fn cell_position(
+    batch: &Coords<u32>,
+    row: u32,
+    col: u32,
+    reduce_coords: &Coords<u32>,
+    #[comptime] operand: Space,
+    #[comptime] acc: Space,
+    #[comptime] reduce: Vec<Axis>,
+    #[comptime] width: usize,
+) -> CoordsDyn {
     let acc_coords = acc_cell_coords(batch, row, col);
-    let pos = resolve_nd_coords(
+    resolve_nd_coords(
         operand,
         acc,
         reduce,
@@ -343,8 +547,7 @@ fn cell_read<T: Numeric, W: Size>(
         reduce_coords,
         width,
         false,
-    );
-    view.read(pos)
+    )
 }
 
 /// The `K` component of one lhs line, widened into the accumulate element. Fixed when the caller
