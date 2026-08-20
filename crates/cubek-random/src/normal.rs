@@ -64,8 +64,8 @@ impl PrngRuntime for Normal {
         // Box-Muller transform
         let coeff = (log * Vector::new(-2.0f32)).sqrt() * params.std;
 
-        let normal_0 = cosine * coeff + params.mean;
-        let normal_1 = sine * coeff + params.mean;
+        let normal_0 = fma(cosine, coeff, params.mean);
+        let normal_1 = fma(sine, coeff, params.mean);
 
         slots.write(output, 2 * nth, Vector::cast_from(normal_0));
         slots.write(output, 2 * nth + 1, Vector::cast_from(normal_1));

@@ -45,7 +45,11 @@ impl PrngRuntime for Uniform {
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
         #[comptime] _blueprint: PrngBlueprint,
     ) {
-        let uniform = to_unit_interval_closed_open(state.next()) * params.scale + params.offset;
+        let uniform = fma(
+            to_unit_interval_closed_open(state.next()),
+            params.scale,
+            params.offset,
+        );
 
         slots.write(output, nth, Vector::cast_from(uniform));
     }

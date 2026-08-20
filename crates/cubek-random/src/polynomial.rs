@@ -74,18 +74,28 @@ pub fn cos_sin_turns<N: Size>(turns: Vector<f32, N>) -> (Vector<f32, N>, Vector<
     let offset = quarters - Vector::<f32, N>::cast_from(quadrant);
     let square = offset * offset;
 
-    let sine = ((((Vector::new(SIN_9) * square + Vector::new(SIN_7)) * square
-        + Vector::new(SIN_5))
-        * square
-        + Vector::new(SIN_3))
-        * square
-        + Vector::new(SIN_1))
-        * offset;
-    let cosine = (((Vector::new(COS_8) * square + Vector::new(COS_6)) * square
-        + Vector::new(COS_4))
-        * square
-        + Vector::new(COS_2))
-        * square
+    let sine = fma(
+        fma(
+            fma(
+                fma(Vector::new(SIN_9), square, Vector::new(SIN_7)),
+                square,
+                Vector::new(SIN_5),
+            ),
+            square,
+            Vector::new(SIN_3),
+        ),
+        square,
+        Vector::new(SIN_1),
+    ) * offset;
+    let cosine = fma(
+        fma(
+            fma(Vector::new(COS_8), square, Vector::new(COS_6)),
+            square,
+            Vector::new(COS_4),
+        ),
+        square,
+        Vector::new(COS_2),
+    ) * square
         + Vector::new(1.0f32);
 
     let quadrant = quadrant & Vector::new(3i32);
@@ -124,12 +134,21 @@ pub fn ln<N: Size>(x: Vector<f32, N>) -> Vector<f32, N> {
 
     let ratio = (mantissa - Vector::new(1.0f32)) / (mantissa + Vector::new(1.0f32));
     let square = ratio * ratio;
-    let series = ((Vector::new(ATANH_7) * square + Vector::new(ATANH_5)) * square
-        + Vector::new(ATANH_3))
-        * square
-        + Vector::new(ATANH_1);
+    let series = fma(
+        fma(
+            fma(Vector::new(ATANH_7), square, Vector::new(ATANH_5)),
+            square,
+            Vector::new(ATANH_3),
+        ),
+        square,
+        Vector::new(ATANH_1),
+    );
 
-    Vector::<f32, N>::cast_from(exponent) * Vector::new(LN_2) + ratio * series
+    fma(
+        Vector::<f32, N>::cast_from(exponent),
+        Vector::new(LN_2),
+        ratio * series,
+    )
 }
 
 #[cfg(test)]
