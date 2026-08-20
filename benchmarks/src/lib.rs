@@ -13,6 +13,7 @@ pub use cubek_matmul::eval::benchmarks::quantized_matmul;
 pub use cubek_matmul::eval::benchmarks::split_k;
 pub use cubek_matmul::eval::benchmarks::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
+pub use cubek_random::eval::benchmarks as random;
 pub use cubek_reduce::eval::benchmarks as reduce;
 pub use cubek_std::eval::benchmarks::contiguous;
 pub use cubek_std::eval::benchmarks::memcpy_async;
@@ -39,6 +40,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::memcpy_async::Category,
         &crate::pool::Category,
         &crate::quantized_matmul::Category,
+        &crate::random::Category,
         &crate::reduce::Category,
         &crate::split_k::Category,
         &crate::tile_quant_stage::Category,
