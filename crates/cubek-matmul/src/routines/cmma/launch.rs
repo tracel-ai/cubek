@@ -5,8 +5,8 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Launcher, Leaf, Operand, RegisterKind, Residence, Space,
-    Strided, Tiling, Tma, TmaTileArgLaunch, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Launcher, Operand, RegisterKind, Residence, Space, Strided,
+    Tiling, Tma, TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -209,8 +209,6 @@ pub fn launch_ref<R: Runtime>(
         .map(|p| (batch_axis(p), out_batches[p]))
         .collect();
     let (space, ops) = tile_space(&blueprint, (m, n, k), &batch, dtypes);
-    // What every operand of this routine is at the instruction; the plan says only how it is cut.
-    let leaf = Leaf::Cmma;
 
     let launch = space.launcher(client);
     let lhs = lhs.into_data();
@@ -233,7 +231,6 @@ pub fn launch_ref<R: Runtime>(
             out,
             &out_batch_axes,
             dtypes,
-            leaf,
         ),
         CmmaDelivery::Tma => launch_tma::<R>(
             client,
@@ -248,7 +245,6 @@ pub fn launch_ref<R: Runtime>(
             &blueprint,
             dtypes,
             (m, n, k),
-            leaf,
         ),
     }
 
@@ -270,20 +266,25 @@ fn launch_strided<R: Runtime>(
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
     dtypes: &MatmulElems,
-    leaf: Leaf,
 ) {
-    let operand = |op: &Operand, binding: TensorBinding<R>| {
-        let inner = *op.axes().last().unwrap();
-        let v = launch.vector_size(inner, &[(&binding, op.axes())], op.dtype().size());
-        launch
-            .bind(op, binding, leaf)
-            .batches(out_batch_axes)
-            .vectorize(v)
-            .build()
-    };
-    let a = operand(&ops.a, lhs);
-    let b = operand(&ops.b, rhs);
-    let c = operand(&ops.out, out);
+    let v_a = launch.vector_size(K, &[(&lhs, ops.a.axes())], ops.a.dtype().size());
+    let a = launch
+        .bind(&ops.a, lhs)
+        .batches(out_batch_axes)
+        .vectorize(v_a)
+        .build();
+    let v_b = launch.vector_size(N, &[(&rhs, ops.b.axes())], ops.b.dtype().size());
+    let b = launch
+        .bind(&ops.b, rhs)
+        .batches(out_batch_axes)
+        .vectorize(v_b)
+        .build();
+    let v_c = launch.vector_size(N, &[(&out, ops.out.axes())], ops.out.dtype().size());
+    let c = launch
+        .bind(&ops.out, out)
+        .batches(out_batch_axes)
+        .vectorize(v_c)
+        .build();
     cmma_kernel::launch::<Strided, R>(
         client,
         cube_count,
@@ -319,13 +320,11 @@ fn launch_tma<R: Runtime>(
     blueprint: &CmmaBlueprint,
     dtypes: &MatmulElems,
     (m, n, k): (usize, usize, usize),
-    leaf: Leaf,
 ) {
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
     fn operand<E: Numeric, R: Runtime>(
-        leaf: Leaf,
         op: &Operand,
         binding: TensorBinding<R>,
         box_dims: (usize, usize),
@@ -339,13 +338,13 @@ fn launch_tma<R: Runtime>(
             op.dtype(),
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(map, op, (1, rows, cols), transposed, leaf)
+        TmaTileArgLaunch::tensor_map(map, op, (1, rows, cols), transposed)
     }
-    let a = operand(leaf, &ops.a, lhs, (stage_m, stage_k), (m as u32, k as u32));
-    let b = operand(leaf, &ops.b, rhs, (stage_k, stage_n), (k as u32, n as u32));
+    let a = operand(&ops.a, lhs, (stage_m, stage_k), (m as u32, k as u32));
+    let b = operand(&ops.b, rhs, (stage_k, stage_n), (k as u32, n as u32));
     let v_out = launch.vector_size(N, &[(&out, ops.out.axes())], ops.out.dtype().size());
     let c = launch
-        .bind(&ops.out, out, leaf)
+        .bind(&ops.out, out)
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();

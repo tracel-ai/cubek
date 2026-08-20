@@ -72,13 +72,23 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs, space)
         }
-        // A memory accumulator runs the software microkernel. A plane-form accumulator that was
-        // never promoted lands in the arms above and meets their kind-pairing panics; there is no
-        // second declaration left to check this one against.
+        // A memory accumulator runs the software microkernel, under the config the kernel bound
+        // on it. A plane-form accumulator that was never promoted lands in the arms above and
+        // meets their kind-pairing panics; there is no second declaration left to check this one
+        // against.
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            let config = comptime!(match acc.leaf {
-                Leaf::Memory { config } => config,
-                _ => panic!("mma_leaf: unpromoted Gmem/Smem accumulator must carry Leaf::Memory"),
+            let config = comptime!(match acc.instruction {
+                Some(RegisterKind::Array { config }) => config,
+                Some(other) => panic!(
+                    "mma_leaf: a Gmem/Smem accumulator contracts in place through the software \
+                     microkernel, but the kernel states {other:?}; promote the accumulator for \
+                     a hardware instruction"
+                ),
+                None => panic!(
+                    "mma_leaf: a Gmem/Smem accumulator contracts through the software \
+                     microkernel; bind it at the kernel top with \
+                     `.instruction(RegisterKind::Array {{ config }})` on the output tile"
+                ),
             });
             contract::memory::<E, EL, ER>(g, lhs, rhs, space, config)
         }

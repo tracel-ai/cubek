@@ -9,7 +9,7 @@
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     Axis, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
 };
@@ -38,13 +38,11 @@ fn softmax_walk_kernel(
     let mask_tile = mask.tile(space);
     let mut score = MemData::<f32>::smem(
         block_space.clone(),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         block_space.clone(),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
@@ -177,11 +175,11 @@ fn run(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S], MEMORY_LEAF),
+            TileSpec::direct(&[Q, S]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S], MEMORY_LEAF),
+            TileSpec::direct(&[Q, S]),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),
@@ -294,13 +292,11 @@ fn softmax_smem_acc_kernel(
     let mask_tile = mask.tile(space);
     let mut score = MemData::<f32>::smem(
         block_space.clone(),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
     let mut p = MemData::<f32>::smem(
         block_space.clone(),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
@@ -311,19 +307,9 @@ fn softmax_smem_acc_kernel(
     let mut state = RowState::<f32>::new(kept_space.clone(), units);
     let rpu = comptime!(state.rows_per_unit);
 
-    let mut factors = MemData::<f32>::smem(
-        kept_space,
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut factors = MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::in_place()));
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(
-        acc_space,
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
 
     for blk in 0..num_blocks {
@@ -469,11 +455,11 @@ fn run_smem_acc(
         CubeDim::new_2d(units as u32, 1),
         TileArgLaunch::new(
             score_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S], MEMORY_LEAF),
+            TileSpec::direct(&[Q, S]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[Q, S], MEMORY_LEAF),
+            TileSpec::direct(&[Q, S]),
         ),
         values_handle.clone().binding().into_tensor_arg(),
         out_handle.clone().binding().into_tensor_arg(),

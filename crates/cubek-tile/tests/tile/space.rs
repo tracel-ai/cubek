@@ -4,9 +4,12 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_tile::{
-    Axis, Buffering, ByAxis, Cut, Distribution, Leaf, MemoryMmaConfig, Operand, OperandSet,
-    Partitioner, RegisterKind, Residence, Space, Stage, Tiling, WalkOrder,
+    Axis, Buffering, ByAxis, Cut, Distribution, MemoryMmaConfig, Operand, OperandSet, Partitioner,
+    RegisterKind, Residence, Space, Stage, Tiling, WalkOrder,
 };
+
+/// The register-array stage the ladder tests state; its config is inert bookkeeping here.
+const ARRAY: MemoryMmaConfig = MemoryMmaConfig::new(16, false, false);
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -292,7 +295,8 @@ fn over_seals_stages_and_omission_is_in_place() {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.out.stage(Residence::Register(RegisterKind::Array));
+            o.out
+                .stage(Residence::Register(RegisterKind::Array { config: ARRAY }));
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(4))
@@ -314,7 +318,10 @@ fn over_seals_stages_and_omission_is_in_place() {
         ops.out.stages(),
         &[
             stage(Residence::InPlace, f32t),
-            stage(Residence::Register(RegisterKind::Array), f32t),
+            stage(
+                Residence::Register(RegisterKind::Array { config: ARRAY }),
+                f32t
+            ),
             stage(Residence::InPlace, f32t),
         ]
     );
@@ -343,7 +350,10 @@ fn over_type_column_moves_then_converts() {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.b.stage_as(Residence::Register(RegisterKind::Array), f32t);
+            o.b.stage_as(
+                Residence::Register(RegisterKind::Array { config: ARRAY }),
+                f32t,
+            );
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(4))
@@ -357,7 +367,10 @@ fn over_type_column_moves_then_converts() {
         ops.b.stages(),
         &[
             stage(Residence::Smem, q4), // move: packed words
-            stage(Residence::Register(RegisterKind::Array), f32t), // the conversion, right here
+            stage(
+                Residence::Register(RegisterKind::Array { config: ARRAY }),
+                f32t
+            ), // the conversion, right here
             stage(Residence::InPlace, f32t),
         ]
     );
@@ -390,14 +403,15 @@ fn over_double_statement_at_one_level_panics() {
                 .axis(N, Cut::sequential(16))
                 .axis(K, Cut::sequential(16));
             o.a.stage(Residence::Smem);
-            o.a.stage(Residence::Register(RegisterKind::Array));
+            o.a.stage(Residence::Register(RegisterKind::Array { config: ARRAY }));
         })
         .build();
 }
 
-/// The ladder is what a launch stamps and checks: the residence column feeds the
-/// [`TileSpec`](cubek_tile::TileSpec), the finest register stage is the encoding the operand
-/// arrives at the instruction in, and a stated leaf must agree with it.
+/// The ladder is the format statement a launch stamps: the residence column feeds the
+/// [`TileSpec`](cubek_tile::TileSpec), and the finest register stage is what the operand is at
+/// the instruction; one stating none is a memory window, read where it lies by whichever
+/// instruction consumes it.
 #[test]
 fn over_ladder_derives_residences_and_register_stage() {
     let (_, ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
@@ -419,29 +433,11 @@ fn over_ladder_derives_residences_and_register_stage() {
         ops.a.residences(),
         &[Residence::Smem, Residence::Register(RegisterKind::Cmma),]
     );
-    assert_eq!(ops.a.register_stage(), Some(RegisterKind::Cmma));
-    assert_eq!(ops.b.register_stage(), None);
-
-    // A ladder with no register stage takes any stated leaf; a stated one must agree.
-    ops.b.check_leaf(Leaf::Cmma);
-    ops.a.check_leaf(Leaf::Cmma);
-}
-
-/// A ladder staging into a cmma register contradicts a launch stating a memory leaf: the two
-/// describe different instructions, and the bind is where the contradiction surfaces.
-#[test]
-#[should_panic(expected = "check_leaf")]
-fn over_register_stage_disagreeing_with_leaf_panics() {
-    let (_, ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
-            o.a.stage(Residence::Register(RegisterKind::Cmma));
-        })
-        .build();
-    ops.a
-        .check_leaf(Leaf::memory(MemoryMmaConfig::new(0, false, false)));
+    assert_eq!(
+        RegisterKind::register_stage(&ops.a.residences()),
+        Some(RegisterKind::Cmma)
+    );
+    assert_eq!(RegisterKind::register_stage(&ops.b.residences()), None);
 }
 
 /// The build seals its operands: a stage stated afterwards would describe a level that does

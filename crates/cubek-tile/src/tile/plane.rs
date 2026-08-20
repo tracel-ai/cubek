@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::*;
 
-/// One plane-level tile, by encoding. The [`Leaf`] picks which.
+/// One plane-level tile, by encoding. The [`RegisterKind`] picks which.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum PlaneTile<T: Numeric> {
@@ -27,25 +27,26 @@ pub enum PlaneTile<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> PlaneTile<T> {
-    /// An accumulator tile over the whole `m × n` MMA tile, uninitialized.
+    /// An accumulator tile over the whole `m × n` MMA tile, uninitialized, in the `form` the
+    /// instruction contracts through.
     pub(crate) fn acc(
-        #[comptime] leaf: Leaf,
+        #[comptime] form: RegisterKind,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
     ) -> PlaneTile<T> {
-        match comptime!(leaf) {
-            Leaf::Cmma => {
+        match comptime!(form) {
+            RegisterKind::Cmma => {
                 PlaneTile::new_Cmma(CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k))
             }
-            Leaf::Mma { io } => {
+            RegisterKind::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             // `vector_size` is the promoting tile's, so the block's lines match the memory it
             // will drain into; the hardware encodings above have no say in their layout.
-            Leaf::Memory { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
+            RegisterKind::Array { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
                 vector_size,
@@ -56,17 +57,17 @@ impl<T: Numeric> PlaneTile<T> {
     }
 
     /// An operand tile in role `ident`, uninitialized. `k` is the operand's own contraction
-    /// depth, not the leaf's.
+    /// depth, not the instruction's.
     pub(crate) fn operand(
-        #[comptime] leaf: Leaf,
+        #[comptime] form: RegisterKind,
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
     ) -> PlaneTile<T> {
-        match comptime!(leaf) {
-            Leaf::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
-            Leaf::Mma { io } => match comptime!(ident) {
+        match comptime!(form) {
+            RegisterKind::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
+            RegisterKind::Mma { io } => match comptime!(ident) {
                 MatrixIdent::A => {
                     PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, MatrixLayout::RowMajor, io))
                 }
@@ -77,8 +78,8 @@ impl<T: Numeric> PlaneTile<T> {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
             },
-            Leaf::Memory { .. } => {
-                panic!("PlaneTile::operand: the memory leaf has no plane tile")
+            RegisterKind::Array { .. } => {
+                panic!("PlaneTile::operand: the software form stages no operand plane tile")
             }
         }
     }
@@ -191,7 +192,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// tiles uninitialized. `promote` is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
+        #[comptime] form: RegisterKind,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
@@ -206,7 +207,7 @@ impl<T: Numeric> PlanePartition<T> {
         for _mi in 0..m_tiles {
             #[unroll]
             for _ni in 0..n_tiles {
-                frags.push(PlaneTile::<T>::acc(leaf, m, n, k, vector_size, lane_share));
+                frags.push(PlaneTile::<T>::acc(form, m, n, k, vector_size, lane_share));
             }
         }
         Tile::<T> {
@@ -215,7 +216,7 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
             }),
-            leaf: comptime!(leaf),
+            instruction: comptime!(Some(form)),
             // The fragments above were sized from the partitioner alone (`partition_shape`
             // and `final_space` read edges, never extents), so the tile carries the space it
             // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
@@ -226,10 +227,11 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// The staging store for one region of an operand under `out`'s contraction: a partition
-    /// mirroring the region's grid, tiles uninitialized; [`copy_from`](Tile::copy_from) fills it.
+    /// mirroring the region's grid, tiles uninitialized in the `form` the operand's ladder
+    /// stated; [`copy_from`](Tile::copy_from) fills it.
     pub(crate) fn store(
         #[comptime] window: Space,
-        #[comptime] leaf: Leaf,
+        #[comptime] form: RegisterKind,
         #[comptime] out: Space,
     ) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
@@ -258,7 +260,7 @@ impl<T: Numeric> PlanePartition<T> {
         for _i in 0..t0 {
             #[unroll]
             for _j in 0..t1 {
-                frags.push(PlaneTile::<T>::operand(leaf, ident, m, n, k));
+                frags.push(PlaneTile::<T>::operand(form, ident, m, n, k));
             }
         }
         Tile::<T> {
@@ -268,7 +270,7 @@ impl<T: Numeric> PlanePartition<T> {
                 n_tiles: t1,
             }),
             space: comptime!(window),
-            leaf: comptime!(leaf),
+            instruction: comptime!(None),
         }
     }
 

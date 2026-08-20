@@ -3,9 +3,7 @@
 
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{TestRuntime, prelude::*, zspace::shape};
-use cubek_test_utils::{
-    HostData, HostDataType, MEMORY_LEAF, TestInput, TileInput, assert_equals_approx,
-};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
 use cubek_tile::{Axis, Space, TileArg};
 
 use super::references;
@@ -20,15 +18,13 @@ fn recursive_two_level_tiled_view() {
     let (m, n) = (8usize, 8usize);
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let input = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
+    let input = TileInput::builder(&client, space.clone())
         .split(&[2, 2])
         .split(&[2, 2])
         .arange();
     // Untiled output: its buffer is the logical shape itself, so `output[i * n + j]`
     // is the value read at logical `(i, j)`.
-    let output = TileInput::builder(&client, space.clone(), MEMORY_LEAF)
-        .untiled()
-        .zeros();
+    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     // The copy kernel only reads/writes through the views — no partitioning, so the
     // spaces carry no partitioner.

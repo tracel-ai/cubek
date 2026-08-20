@@ -190,7 +190,10 @@ impl<T: Numeric> Tile<T> {
     ) -> Tile<T> {
         // The engine's own backstop: the builder checks this too, but a hand-built
         // `QuantTileArgLaunch` reaches here without passing through it.
-        comptime!(validate_dequant_at(dequant_at, spec.leaf));
+        comptime!(validate_dequant_at(
+            dequant_at,
+            RegisterKind::register_stage(&spec.residence)
+        ));
         comptime!(cubecl::std::quant::check_table_bindings(
             &scheme,
             table.is_some()
@@ -242,7 +245,6 @@ impl<T: Numeric> Tile<T> {
     ) -> Tile<T> {
         // The one projection: the kernel's space narrowed to this operand's axes.
         let space = comptime!(space.project(spec.axes()));
-        let leaf = comptime!(spec.leaf);
         let projection = comptime!(spec.projection.clone());
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
@@ -372,7 +374,7 @@ impl<T: Numeric> Tile<T> {
                 lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(space),
-            leaf: comptime!(leaf),
+            instruction: comptime!(None),
         }
     }
 }
@@ -381,7 +383,6 @@ impl<T: Numeric> Tile<T> {
 #[derive(Clone)]
 pub(crate) struct StageMeta {
     pub space: Space,
-    pub leaf: Leaf,
     pub vector_size: usize,
     pub stage: StagePlan,
 }
@@ -432,7 +433,6 @@ impl<T: Numeric> MemData<T> {
             DequantAt::Load => {
                 let space = comptime!(operand.space.divide());
                 let projection = operand.projection();
-                let leaf = comptime!(operand.leaf);
                 let vector_size = operand.vector_size();
                 // The stage is one level down, so it takes the operand's plan from the next level
                 // on: its own residence was consumed by the decision to build it.
@@ -440,11 +440,10 @@ impl<T: Numeric> MemData<T> {
                 let stage = comptime!(source_plan.descend());
 
                 if comptime!(projection.is_direct()) {
-                    MemData::smem(space, leaf, vector_size, stage)
+                    MemData::smem(space, vector_size, stage)
                 } else {
                     MemData::smem_gathered(
                         space,
-                        leaf,
                         vector_size,
                         stage,
                         projection,
@@ -464,7 +463,6 @@ impl<T: Numeric> MemData<T> {
     /// runs [`DequantAt::Read`].
     fn smem_stored(operand: &Tile<T>) -> Tile<T> {
         let space = comptime!(operand.space.divide());
-        let leaf = comptime!(operand.leaf);
         let vector_size = operand.vector_size();
         let source_plan = operand.stage_plan();
         let stage = comptime!(source_plan.descend());
@@ -473,12 +471,11 @@ impl<T: Numeric> MemData<T> {
                 #[comptime]
                 match &g.store.quant {
                     // Served == stored, so this is `smem_like`.
-                    ComptimeOption::None => MemData::smem(space, leaf, vector_size, stage),
+                    ComptimeOption::None => MemData::smem(space, vector_size, stage),
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
                             QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
                                 space,
-                                leaf,
                                 vector_size,
                                 stage,
                                 info.table.clone(),
@@ -491,7 +488,6 @@ impl<T: Numeric> MemData<T> {
                         },
                         QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
                             space,
-                            leaf,
                             vector_size,
                             stage,
                             info.table.clone(),
@@ -507,7 +503,7 @@ impl<T: Numeric> MemData<T> {
             // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
             // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
             // one must not reuse this arm; see `Staging::new`, which refuses that combination.
-            TileKind::TmaGmem(_) => MemData::smem(space, leaf, vector_size, stage),
+            TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("MemData::smem_stored: a fragment is not a stage source")
             }
@@ -524,7 +520,6 @@ impl<T: Numeric> MemData<T> {
     /// grid to tile, so it is always plain. `units` is the launch's cube size, `0` when unknown.
     pub fn smem(
         #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
@@ -532,7 +527,6 @@ impl<T: Numeric> MemData<T> {
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
-            leaf,
             vector_size,
             stage,
         });
@@ -550,7 +544,6 @@ impl<T: Numeric> MemData<T> {
     /// they address gmem through, and the fill stays a plain box copy.
     pub fn smem_gathered(
         #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         #[comptime] projection: Projection,
@@ -574,7 +567,6 @@ impl<T: Numeric> MemData<T> {
             };
         let meta = comptime!(StageMeta {
             space,
-            leaf,
             vector_size,
             stage,
         });
@@ -600,7 +592,6 @@ impl<T: Numeric> MemData<T> {
     /// [`fill_from`](MemData::fill_from)).
     pub fn smem_quant<I: Numeric>(
         #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
         table: ComptimeOption<Box<[f32]>>,
@@ -615,7 +606,6 @@ impl<T: Numeric> MemData<T> {
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
-            leaf,
             vector_size,
             stage,
         });
@@ -670,7 +660,7 @@ impl<T: Numeric> MemData<T> {
                 lane_share: comptime!(LaneShare::Whole),
             }),
             space: comptime!(meta.space),
-            leaf: comptime!(meta.leaf),
+            instruction: comptime!(None),
         }
     }
 }

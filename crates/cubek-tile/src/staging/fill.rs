@@ -442,7 +442,7 @@ fn stage_operand<T: Numeric>(
                 panic!("Staging: a TMA source cannot be read in place; give it Residence::Smem")
             }
         },
-        Residence::Register(_) => {
+        Residence::Register(kind) => {
             let delivery = input.delivery();
             comptime!(assert!(
                 !delivery.is_tma(),
@@ -451,11 +451,11 @@ fn stage_operand<T: Numeric>(
             comptime!(assert!(
                 !gathered,
                 "Staging: a gathered operand cannot stage into plane tiles (Residence::Register); \
-                 only Residence::Smem stages one, as the compacted window its leaf reads"
+                 only Residence::Smem stages one, as the compacted window its reader takes"
             ));
             PlanePartition::store(
                 comptime!(input.space.divide()),
-                comptime!(input.leaf),
+                comptime!(kind),
                 comptime!(out.clone()),
             )
         }

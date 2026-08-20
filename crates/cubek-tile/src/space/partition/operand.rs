@@ -17,7 +17,7 @@
 use cubecl::ir::ElemType;
 use cubecl::quant::scheme::QuantScheme;
 
-use crate::{Axis, Leaf, RegisterKind, Residence};
+use crate::{Axis, Residence};
 
 /// One stage of an operand's ladder: where the cells sit while the level below runs, and the
 /// element type they hold there.
@@ -118,41 +118,6 @@ impl Operand {
     /// [`TileSpec`](crate::TileSpec) stamps as its per-level residences.
     pub fn residences(&self) -> Vec<Residence> {
         self.stages.iter().map(|stage| stage.residence).collect()
-    }
-
-    /// The finest [`Residence::Register`] stage on the ladder: the encoding this operand
-    /// arrives at the instruction in, when the ladder states one.
-    pub fn register_stage(&self) -> Option<RegisterKind> {
-        self.stages
-            .iter()
-            .rev()
-            .find_map(|stage| match stage.residence {
-                Residence::Register(kind) => Some(kind),
-                Residence::InPlace | Residence::Smem => None,
-            })
-    }
-
-    /// A ladder stating a register stage has already said what this operand is at the
-    /// instruction; `leaf` must be the same statement. An operand whose ladder states no
-    /// register stage (an in-place input, or an accumulator promoted by the kernel) takes
-    /// `leaf` as given.
-    pub fn check_leaf(&self, leaf: Leaf) {
-        match (self.register_stage(), leaf) {
-            (None, _) => {}
-            (Some(RegisterKind::Array), Leaf::Memory { .. }) => {}
-            (Some(RegisterKind::Cmma), Leaf::Cmma) => {}
-            (Some(RegisterKind::Mma { io }), Leaf::Mma { io: stated }) => assert_eq!(
-                io, stated,
-                "Operand::check_leaf: {:?} stages into an Mma register whose io disagrees \
-                 with the stated leaf's",
-                self.axes
-            ),
-            (Some(register), leaf) => panic!(
-                "Operand::check_leaf: {:?} stages into a {register:?} register but the launch \
-                 states it is {leaf:?} at the instruction",
-                self.axes
-            ),
-        }
     }
 
     /// Seal level `index`: reject a double statement, pad an omission to an

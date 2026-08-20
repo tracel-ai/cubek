@@ -234,7 +234,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
         LoadMethod::LoadMatrix => {
             comptime!(panic!(
                 "MmaData::load: the ldmatrix fast path is not yet wired for MemData windows; \
-                 build the Leaf with MmaIOConfig::manual()"
+                 state the register stage with MmaIOConfig::manual()"
             ))
         }
     }
@@ -330,7 +330,7 @@ fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>
         StoreMethod::StoreMatrix => {
             comptime!(panic!(
                 "MmaData::store: the stmatrix fast path is not yet wired for MemData windows; \
-                 build the Leaf with MmaIOConfig::manual()"
+                 state the register stage with MmaIOConfig::manual()"
             ))
         }
     }

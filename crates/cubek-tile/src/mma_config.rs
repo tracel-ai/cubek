@@ -1,10 +1,11 @@
-//! Host-side load/store method selection for the manual-mma leaf ([`Leaf::Mma`](crate::Leaf))
-//! and execution configuration for the software mma leaf ([`Leaf::Memory`](crate::Leaf)).
+//! Host-side load/store method selection for the manual-mma form
+//! ([`RegisterKind::Mma`](crate::RegisterKind)) and execution configuration for the software
+//! mma microkernel ([`Tile::microkernel`](crate::Tile::microkernel)).
 //!
 //! Ported from cubek-std's `MmaIOConfig`: which fragment transport each role uses is a
 //! `(device, storage-type)` decision that queries [`DeviceProperties`], so it is built host-side
-//! and carried into the kernel as a comptime value on the [`Leaf`](crate::Leaf) (exactly as the
-//! contraction depth `k` is). Both [`space::Leaf`](crate::Leaf) and the instruction leaf
+//! and carried into the kernel as a comptime value on the ladder's register stage (exactly as
+//! the contraction depth `k` is). Both the stage statement and the instruction
 //! ([`MmaData::mma`](crate::MmaData)) read it, so it lives at the crate root rather than beside
 //! either.
 
@@ -14,8 +15,8 @@ use cubecl::{
 };
 
 /// Hardware-capability-driven choice of load/store methods for a manual-mma tile, fixed once per
-/// `(device, operand storage types)` and carried by [`Leaf::Mma`](crate::Leaf) because the
-/// fragment readers/writers branch on it.
+/// `(device, operand storage types)` and carried by [`RegisterKind::Mma`](crate::RegisterKind)
+/// because the fragment readers/writers branch on it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIOConfig {
     pub lhs_load_method: LoadMethod,
