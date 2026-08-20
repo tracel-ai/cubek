@@ -33,6 +33,27 @@ fn runs_test() {
     assert_wald_wolfowitz_runs_test(&output_data, 0., 1.);
 }
 
+/// Every lane of a vector draws its own stream.
+///
+/// A state seeded per unit rather than per lane leaves the lanes of one vector
+/// repeating a single value, which the distribution tests still accept: the values are
+/// uniform, there are just `line_size` times fewer of them. The row length is a
+/// multiple of every line size a device can pick, so the whole output is written by
+/// full vectors.
+#[test]
+fn neighbouring_values_are_drawn_apart() {
+    let shape = &[512, 512];
+
+    let output_data = get_random_uniform_data(shape, 0., 1.);
+    let repeats = output_data.windows(2).filter(|w| w[0] == w[1]).count();
+
+    assert!(
+        repeats < output_data.len() / 1000,
+        "{repeats} of {} neighbours are equal",
+        output_data.len()
+    );
+}
+
 #[test]
 fn at_least_one_value_per_bin_int_uniform() {
     let shape = &[64, 64];

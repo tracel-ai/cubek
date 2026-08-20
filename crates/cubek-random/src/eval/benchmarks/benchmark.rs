@@ -10,10 +10,12 @@ use cubek_test_utils::RunSamples;
 
 use crate::eval::benchmarks::problem::{Distribution, RandomProblem};
 use crate::eval::benchmarks::strategy::RandomStrategy;
-use crate::{random_bernoulli, random_normal, random_uniform};
+use crate::{
+    Bernoulli, BernoulliFamily, Normal, NormalFamily, PrngStrategy, Uniform, UniformFamily, random,
+};
 
 pub fn bench(
-    _strategy: &RandomStrategy,
+    strategy: &RandomStrategy,
     problem: &RandomProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -23,6 +25,7 @@ pub fn bench(
     let bench = RandomBench {
         shape: problem.shape.clone(),
         distribution: problem.distribution,
+        strategy: strategy.prng,
         client,
         device,
         samples: num_samples,
@@ -39,6 +42,7 @@ pub fn bench(
 struct RandomBench {
     shape: Vec<usize>,
     distribution: Distribution,
+    strategy: PrngStrategy,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     samples: usize,
@@ -55,15 +59,30 @@ impl Benchmark for RandomBench {
     fn execute(&self, out: Self::Input) -> Result<(), String> {
         let dtype = f32::elem_type_native();
         let out = out.binding();
+        let client = &self.client;
+        let strategy = self.strategy;
 
         match self.distribution {
-            Distribution::Uniform(lower_bound, upper_bound) => {
-                random_uniform(&self.client, lower_bound, upper_bound, out, dtype)
+            Distribution::Uniform(lower_bound, upper_bound) => random::<UniformFamily, _>(
+                client,
+                Uniform {
+                    lower_bound,
+                    upper_bound,
+                },
+                out,
+                dtype,
+                strategy,
+            ),
+            Distribution::Normal(mean, std) => {
+                random::<NormalFamily, _>(client, Normal { mean, std }, out, dtype, strategy)
             }
-            Distribution::Normal(mean, std) => random_normal(&self.client, mean, std, out, dtype),
-            Distribution::Bernoulli(probability) => {
-                random_bernoulli(&self.client, probability, out, dtype)
-            }
+            Distribution::Bernoulli(probability) => random::<BernoulliFamily, _>(
+                client,
+                Bernoulli { probability },
+                out,
+                dtype,
+                strategy,
+            ),
         }
         .map_err(|e| format!("{e}"))
     }

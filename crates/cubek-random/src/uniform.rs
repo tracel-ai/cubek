@@ -1,19 +1,17 @@
 use cubecl::{prelude::*, std::tensor::ViewMut};
 
-use crate::{
-    RandomFamily, lcg_step, taus_step_0, taus_step_1, taus_step_2, to_unit_interval_closed_open,
-};
+use crate::{OutputSlots, PrngState, PrngStrategy, RandomFamily, to_unit_interval_closed_open};
 
 use super::{PrngArgs, PrngRuntime, random};
 
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct Uniform {
-    lower_bound: f32,
-    upper_bound: f32,
+    pub(crate) lower_bound: f32,
+    pub(crate) upper_bound: f32,
 }
 
 #[derive(Debug)]
-struct UniformFamily;
+pub(crate) struct UniformFamily;
 
 impl RandomFamily for UniformFamily {
     type Runtime = Uniform;
@@ -21,54 +19,26 @@ impl RandomFamily for UniformFamily {
 
 #[cube]
 impl PrngRuntime for Uniform {
-    fn inner_loop<E: Numeric, N: Size>(
-        args: Uniform,
-        write_index_base: usize,
-        n_invocations: u32,
-        #[comptime] n_values_per_thread: usize,
-        state_0: &mut u32,
-        state_1: &mut u32,
-        state_2: &mut u32,
-        state_3: &mut u32,
+    fn draw<E: Numeric, N: Size>(
+        args: &Uniform,
+        state: &mut PrngState<N>,
+        slots: &OutputSlots,
+        nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, usize>,
     ) {
-        let lower_bound = args.lower_bound;
-        let upper_bound = args.upper_bound;
+        let scale = Vector::new(args.upper_bound - args.lower_bound);
+        let offset = Vector::new(args.lower_bound);
 
-        let scale = upper_bound - lower_bound;
+        let uniform = to_unit_interval_closed_open(state.next()) * scale + offset;
 
-        let mut output_vector = Vector::empty();
-
-        let num_iterations = n_values_per_thread / N::value();
-        #[unroll(num_iterations <= 8)]
-        for vector_index in 0..num_iterations {
-            // vectorization
-            #[unroll]
-            for i in 0..N::value() {
-                *state_0 = taus_step_0(*state_0);
-                *state_1 = taus_step_1(*state_1);
-                *state_2 = taus_step_2(*state_2);
-                *state_3 = lcg_step(*state_3);
-
-                let int_random = *state_0 ^ *state_1 ^ *state_2 ^ *state_3;
-                let f32_random = to_unit_interval_closed_open(int_random);
-
-                let f32_uniform = f32_random * f32::cast_from(scale) + f32::cast_from(lower_bound);
-
-                let uniform = E::cast_from(f32_uniform);
-
-                output_vector.insert(i, uniform);
-            }
-
-            let write_index = vector_index * n_invocations as usize + write_index_base;
-
-            output.write_checked(write_index, output_vector);
-        }
+        output.write_checked(slots.at(nth), Vector::cast_from(uniform));
     }
 }
 
 impl PrngArgs for Uniform {
     type Args = Self;
+
+    const VECTORS_PER_DRAW: usize = 1;
 
     fn args<R: Runtime>(self) -> UniformLaunch<R> {
         UniformLaunch::new(self.lower_bound, self.upper_bound)
@@ -91,5 +61,6 @@ pub fn random_uniform<R: Runtime>(
         },
         out,
         dtype,
+        PrngStrategy::Inferred,
     )
 }

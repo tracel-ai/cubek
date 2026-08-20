@@ -6,6 +6,9 @@ use cubecl::{prelude::*, std::tensor::ViewMut};
 use cubecl_environment::{rand::get_seeded_rng, sync::Mutex};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
+use crate::{PrngBlueprint, PrngLaunch, PrngState, PrngStrategy, Seeds, SeedsLaunch};
+
+/// Values a unit produces under [`PrngBlueprint::Interleaved`].
 pub(crate) const N_VALUES_PER_THREAD: usize = 128;
 
 static SEED: Mutex<Option<StdRng>> = Mutex::new(None);
@@ -23,7 +26,7 @@ pub fn seed(seed: u64) {
 
 /// Install `seed` as the active RNG state and run `f` while holding a
 /// process-wide guard. Use this whenever `f` calls one of the `random_*`
-/// launchers — it keeps the seed-set and the kernel launch as a single
+/// launchers: it keeps the seed-set and the kernel launch as a single
 /// critical section, so parallel callers don't stomp on each other's seeds
 /// between the two steps.
 pub fn with_seed<R>(seed_value: u64, f: impl FnOnce() -> R) -> R {
@@ -38,52 +41,36 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     prng: F::Runtime,
     output: TensorBinding<R>,
     dtype: ElemType,
+    strategy: PrngStrategy,
 ) -> Result<(), LaunchError> {
     let seeds = get_seeds();
     let args = prng.args();
-
-    let cube_dim = CubeDim::new(client, output.size().div_ceil(N_VALUES_PER_THREAD));
-    let cube_count = prng_cube_count(output.size(), cube_dim, N_VALUES_PER_THREAD);
-
-    let output_vector_size = 1;
-    // TODO: Higher vectorization can add some correlation locally.
-    //
-    // let output_line_size = tensor_vector_size_parallel(
-    //     R::line_size_elem(&E::as_elem_native_unchecked()),
-    //     output.shape,
-    //     output.strides,
-    //     output.strides.len() - 1,
-    // );
+    let launch = PrngLaunch::new(
+        client,
+        &output,
+        dtype,
+        <F::Runtime as PrngArgs>::VECTORS_PER_DRAW,
+        strategy,
+    );
 
     let address_type = output.required_address_type(dtype.size());
     let output = linear_view(output);
 
     prng_kernel::launch::<F, R>(
         client,
-        cube_count,
-        cube_dim,
+        launch.cube_count,
+        launch.cube_dim,
         address_type,
-        output_vector_size,
+        launch.line_size,
         output,
-        seeds[0],
-        seeds[1],
-        seeds[2],
-        seeds[3],
+        SeedsLaunch::new(seeds[0], seeds[1], seeds[2], seeds[3]),
         args,
-        N_VALUES_PER_THREAD,
+        launch.vectors_per_unit,
+        launch.blueprint,
         dtype,
     );
 
     Ok(())
-}
-
-fn prng_cube_count(num_elems: usize, cube_dim: CubeDim, n_values_per_thread: usize) -> CubeCount {
-    let num_threads = f32::ceil(num_elems as f32 / n_values_per_thread as f32);
-    let num_invocations = f32::ceil(num_threads / cube_dim.num_elems() as f32);
-    let cubes_x = f32::ceil(f32::sqrt(num_invocations));
-    let cubes_y = f32::ceil(num_invocations / cubes_x);
-
-    CubeCount::Static(cubes_x as u32, cubes_y as u32, 1)
 }
 
 pub(crate) fn get_seeds() -> [u32; 4] {
@@ -104,6 +91,10 @@ pub(crate) fn get_seeds() -> [u32; 4] {
 pub(crate) trait PrngArgs: Send + Sync + 'static {
     type Args: LaunchArg;
 
+    /// Output vectors one draw writes: the Box-Muller transform emits a pair, the
+    /// other distributions one each.
+    const VECTORS_PER_DRAW: usize;
+
     fn args<R: Runtime>(self) -> <Self::Args as LaunchArg>::RuntimeArg<R>;
 }
 
@@ -113,18 +104,33 @@ pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {
 
 #[cube]
 pub(crate) trait PrngRuntime: Send + Sync + 'static + PrngArgs {
-    #[allow(clippy::too_many_arguments)]
-    fn inner_loop<E: Numeric, N: Size>(
-        args: Self::Args,
-        write_index_base: usize,
-        n_invocations: u32,
-        #[comptime] n_values_per_thread: usize,
-        state_0: &mut u32,
-        state_1: &mut u32,
-        state_2: &mut u32,
-        state_3: &mut u32,
+    /// Turn the `nth` draw of a unit's state into its output vectors.
+    fn draw<E: Numeric, N: Size>(
+        args: &Self::Args,
+        state: &mut PrngState<N>,
+        slots: &OutputSlots,
+        nth: usize,
         output: &mut ViewMut<'_, Vector<E, N>, Coords1d>,
     );
+}
+
+/// The positions of the output a unit writes, as a first one and the distance to the
+/// next.
+#[derive(CubeType)]
+pub(crate) struct OutputSlots {
+    first: usize,
+    stride: usize,
+}
+
+#[cube]
+impl OutputSlots {
+    pub fn new(first: usize, stride: usize) -> OutputSlots {
+        OutputSlots { first, stride }
+    }
+
+    pub fn at(&self, nth: usize) -> usize {
+        self.first + nth * self.stride
+    }
 }
 
 type Args<F> = <<F as RandomFamily>::Runtime as PrngArgs>::Args;
@@ -132,88 +138,117 @@ type Args<F> = <<F as RandomFamily>::Runtime as PrngArgs>::Args;
 #[cube(launch, address_type = "dynamic")]
 fn prng_kernel<F: RandomFamily, E: Numeric, N: Size>(
     output: &mut LinearViewMut<'_, Vector<E, N>>,
-    seed_0: u32,
-    seed_1: u32,
-    seed_2: u32,
-    seed_3: u32,
+    seeds: Seeds,
     args: Args<F>,
-    #[comptime] n_values_per_thread: usize,
+    vectors_per_unit: u32,
+    #[comptime] blueprint: PrngBlueprint,
     #[define(E)] _dtype: ElemType,
 ) {
-    let cube_offset = CUBE_POS * CUBE_DIM as usize;
+    let mut state = PrngState::<N>::seeded(ABSOLUTE_POS, seeds);
 
-    let write_index_base = cube_offset * n_values_per_thread / N::value() + UNIT_POS as usize;
+    match comptime!(blueprint) {
+        PrngBlueprint::Interleaved => {
+            let cube_offset = CUBE_POS * CUBE_DIM as usize;
+            let slots = OutputSlots::new(
+                cube_offset * N_VALUES_PER_THREAD / N::value() + UNIT_POS as usize,
+                CUBE_DIM as usize,
+            );
+            let draws = N_VALUES_PER_THREAD
+                / N::value()
+                / comptime!(<F::Runtime as PrngArgs>::VECTORS_PER_DRAW);
 
-    // Truncating position should be fine here, it's no issue if the seed repeats
-    #[allow(arithmetic_overflow)]
-    let thread_seed = 1000000007u32 * ABSOLUTE_POS as u32;
+            #[unroll(draws <= 8)]
+            for nth in 0..draws {
+                F::Runtime::draw(&args, &mut state, &slots, nth, output);
+            }
+        }
+        PrngBlueprint::Blocked => {
+            let slots = OutputSlots::new(ABSOLUTE_POS * vectors_per_unit as usize, 1);
+            let draws =
+                vectors_per_unit as usize / comptime!(<F::Runtime as PrngArgs>::VECTORS_PER_DRAW);
 
-    let mut state_0 = thread_seed + seed_0;
-    let mut state_1 = thread_seed + seed_1;
-    let mut state_2 = thread_seed + seed_2;
-    let mut state_3 = thread_seed + seed_3;
-
-    // Creation of n_values_per_thread values, specific to the distribution
-    F::Runtime::inner_loop(
-        args,
-        write_index_base,
-        CUBE_DIM,
-        n_values_per_thread,
-        &mut state_0,
-        &mut state_1,
-        &mut state_2,
-        &mut state_3,
-        output,
-    );
-}
-
-#[cube]
-pub(crate) fn taus_step_0(z: u32) -> u32 {
-    taus_step(z, 13u32, 19u32, 12u32, 4294967294u32)
-}
-
-#[cube]
-pub(crate) fn taus_step_1(z: u32) -> u32 {
-    taus_step(z, 2u32, 25u32, 4u32, 4294967288u32)
-}
-
-#[cube]
-pub(crate) fn taus_step_2(z: u32) -> u32 {
-    taus_step(z, 3u32, 11u32, 17u32, 4294967280u32)
-}
-
-#[cube]
-fn taus_step(z: u32, s1: u32, s2: u32, s3: u32, m: u32) -> u32 {
-    let b = z << s1;
-    let b = b ^ z;
-    let b = b >> s2;
-    let z = (z & m) << s3;
-    z ^ b
-}
-
-#[cube]
-pub(crate) fn lcg_step(z: u32) -> u32 {
-    let a = 1664525u32;
-    let b = 1013904223u32;
-
-    z * a + b
+            for nth in 0..draws {
+                F::Runtime::draw(&args, &mut state, &slots, nth, output);
+            }
+        }
+    }
 }
 
 /// Converts a `u32` into a `f32` in the unit interval `[0.0, 1.0)`.
 /// Used for generating random floats.
 #[cube]
-pub fn to_unit_interval_closed_open(int_random: u32) -> f32 {
+pub fn to_unit_interval_closed_open<N: Size>(int_random: Vector<u32, N>) -> Vector<f32, N> {
     // Use upper 24 bits for f32 precision
     // https://lemire.me/blog/2017/02/28/how-many-floating-point-numbers-are-in-the-interval-01/
-    let shifted = int_random >> 8;
-    f32::cast_from(shifted) / 16777216.0 // 2^24
+    let shifted = int_random >> Vector::new(8u32);
+    Vector::cast_from(shifted) / Vector::new(16777216.0f32) // 2^24
 }
 
 /// Converts a `u32` into a `f32` in the unit interval `(0.0, 1.0)`.
 /// Used for generating random floats.
 #[cube]
-pub fn to_unit_interval_open(int_random: u32) -> f32 {
+pub fn to_unit_interval_open<N: Size>(int_random: Vector<u32, N>) -> Vector<f32, N> {
     // Use upper 23 bits to leave room for the offset
-    let shifted = int_random >> 9;
-    (f32::cast_from(shifted) + 1.0) / 8388609.0 // 2^23 + 1
+    let shifted = int_random >> Vector::new(9u32);
+    (Vector::cast_from(shifted) + Vector::new(1.0f32)) / Vector::new(8388609.0f32) // 2^23 + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use cubecl::{TestRuntime, std::tensor::TensorHandle};
+
+    use super::*;
+    use crate::{Uniform, UniformFamily};
+
+    /// Both blueprints write every value of the output, on whichever device runs the
+    /// suite.
+    ///
+    /// A device only ever infers one of the two, so the other arm of the kernel is
+    /// expanded nowhere: a launch that cannot even be built looks like a green suite,
+    /// and the distribution tests would keep passing on the arm that does run.
+    #[test]
+    fn every_blueprint_writes_every_value() {
+        for blueprint in [PrngBlueprint::Interleaved, PrngBlueprint::Blocked] {
+            let values = uniform_over_zeros(blueprint);
+            let unwritten = values
+                .iter()
+                .filter(|&&v| !(5.0..17.0).contains(&v))
+                .count();
+
+            assert_eq!(
+                unwritten, 0,
+                "{blueprint:?} left {unwritten} values unwritten"
+            );
+        }
+    }
+
+    /// Draws a uniform over a buffer of zeros, so an unwritten value is out of range.
+    fn uniform_over_zeros(blueprint: PrngBlueprint) -> Vec<f32> {
+        let client = TestRuntime::client(&Default::default());
+        let dtype = f32::elem_type_native();
+        let shape = vec![64, 64];
+
+        let zeros = vec![0.0f32; shape.iter().product()];
+        let output = TensorHandle::<TestRuntime>::new_contiguous(
+            shape,
+            client.create_from_slice(f32::as_bytes(&zeros)),
+            dtype,
+        );
+
+        random::<UniformFamily, _>(
+            &client,
+            Uniform {
+                lower_bound: 5.0,
+                upper_bound: 17.0,
+            },
+            output.clone().binding(),
+            dtype,
+            PrngStrategy::Forced(blueprint),
+        )
+        .unwrap();
+
+        let read = client.read_one_unchecked_tensor(output.into_copy_descriptor());
+
+        f32::from_bytes(&read).to_vec()
+    }
 }
