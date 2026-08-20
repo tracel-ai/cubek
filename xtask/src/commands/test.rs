@@ -18,7 +18,7 @@ pub(crate) fn handle_command(
         &["cubecl/wgpu", "cubecl/cpu"]
     };
     for backend in backends {
-        helpers::custom_crates_tests(
+        build_helpers::custom_crates_tests(
             vec![
                 "cubek-attention",
                 "cubek-convolution",
