@@ -309,6 +309,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether a read of this tile masks the partial-tile overhang, which is the comptime
+    /// `check` every view of it carries ([`MemData::masks`]). A fragment and a tma source have no
+    /// overhang to mask. Asked before a view exists, by a leaf sizing its register block: a
+    /// masked block stays rolled whatever its size, each guarded access being its own CFG branch.
+    pub(crate) fn masks(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.masks(),
+            TileKind::TmaGmem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(false)
+            }
+        }
+    }
+
     /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
     /// coordinate is not a physical one, so the only read surface that describes the tile is the
     /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a

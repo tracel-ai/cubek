@@ -972,6 +972,13 @@ impl<T: Numeric> MemData<T> {
         pack
     }
 
+    /// Whether a read view of this store masks the partial-tile overhang: the comptime `check`
+    /// every view it hands out carries ([`MaskedView`]). Asked before a view exists, by a leaf
+    /// sizing its register block.
+    pub(crate) fn masks(&self) -> comptime_type!(bool) {
+        comptime!(self.access.overhang.masks())
+    }
+
     /// This store's quantization scheme; panics on a plain store. See [`Tile::quant_scheme`].
     // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
     #[allow(clippy::let_and_return)]

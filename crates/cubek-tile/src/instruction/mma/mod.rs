@@ -3,6 +3,7 @@
 mod base;
 mod cmma;
 mod manual;
+pub(crate) mod packed;
 pub(crate) mod register;
 
 pub use base::*;
