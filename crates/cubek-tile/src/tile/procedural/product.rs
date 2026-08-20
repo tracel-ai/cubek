@@ -60,12 +60,29 @@ pub fn separable_product<R: CubeType>(factors: Sequence<R>) -> SeparableProduct<
 }
 
 #[cube]
+impl<R: CubeType> SeparableProduct<R> {
+    /// The sequence's length, refused when empty. An empty product names no axis and contributes
+    /// no value, and both readings below start at factor zero, so it is caught where the rank is
+    /// stated rather than at the index that would trip over it or, worse, in a consumer that
+    /// walks a rank of zero and leaves its accumulator untouched.
+    pub(crate) fn rank(&self) -> comptime_type!(usize) {
+        let rank = self.factors.len();
+        comptime!(assert!(
+            rank > 0,
+            "SeparableProduct: a separable recipe needs at least one factor"
+        ));
+        rank
+    }
+}
+
+#[cube]
 impl<T: Numeric, R: Recipe<T>> Recipe<T> for SeparableProduct<R> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
+        let rank = self.rank();
         let mut value = self.factors.index(0usize).evaluate(coordinates);
 
         #[unroll]
-        for f in 1..self.factors.len() {
+        for f in 1..rank {
             value *= self.factors.index(f).evaluate(coordinates);
         }
 
@@ -76,7 +93,7 @@ impl<T: Numeric, R: Recipe<T>> Recipe<T> for SeparableProduct<R> {
 #[cube]
 impl<T: Numeric, R: Recipe<T>> SeparableRecipe<T> for SeparableProduct<R> {
     fn factors(&self) -> comptime_type!(usize) {
-        self.factors.len()
+        self.rank()
     }
 
     fn evaluate_factor(&self, coordinates: &RecipeCoords, #[comptime] factor: usize) -> T {

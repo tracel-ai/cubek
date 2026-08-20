@@ -77,7 +77,7 @@ pub(super) fn contract<
             "contract gather: a separable lhs needs one factor per contracted axis and scalar \
              weights"
         ));
-        separable_lhs_contract::<E, EL, ER, IR, V>(
+        separable_lhs_contract::<E, EL, ER, IR, WPR, V>(
             acc,
             lhs,
             rhs,
@@ -89,9 +89,7 @@ pub(super) fn contract<
             vw,
             comptime!(config),
         );
-    }
-
-    if comptime!(lhs_factors == 1) {
+    } else {
         let lhs_view = lhs.nd::<IL, WPL, L>();
         let rhs_view = rhs.nd::<IR, WPR, V>();
         // Loop-invariant, and `comptime!`-bound so the `unroll` flag below stays a comptime binding:
@@ -229,7 +227,7 @@ pub(super) fn contract<
 /// is the contraction's axis order, which is what lets a tap coordinate index the weights.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn separable_lhs_contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, V: Size>(
+fn separable_lhs_contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: Size, V: Size>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
@@ -243,7 +241,7 @@ fn separable_lhs_contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, V: 
 ) {
     let rank = comptime!(space.rank());
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
-    let rhs_view = rhs.nd::<IR, Const<1>, V>();
+    let rhs_view = rhs.nd::<IR, WPR, V>();
     let rhs_check = comptime!(rhs_view.check);
     let factors = comptime!(reduce_extents.len());
     let kc = comptime!(reduce_extents.iter().product::<usize>());
