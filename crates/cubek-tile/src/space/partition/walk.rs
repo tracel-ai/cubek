@@ -98,7 +98,36 @@ impl Walk {
                         })
                         .collect::<Vec<_>>()
                 );
-                let inner_weight = instances.fproduct(picks);
+                // An axis the level distributes but this space omits (a broadcast) still
+                // occupies its digits of the hardware index, so its instance count still
+                // weighs the decode — an operand walked without it would otherwise read a
+                // *different* lane's position. Its count must be a comptime constant: the
+                // space has no extent to derive one from at runtime.
+                let absent = comptime!(
+                    space
+                        .partitioner()
+                        .axes()
+                        .into_iter()
+                        .skip_while(|&a| a != axis)
+                        .skip(1)
+                        .filter(|&a| {
+                            !space.contains(a)
+                                && space.partitioner().distribution(a).scope() == dist.scope()
+                        })
+                        .map(|a| {
+                            space
+                                .partitioner()
+                                .distribution(a)
+                                .coverage()
+                                .instances_const()
+                                .expect(
+                                    "Walk: an axis this space omits but the level distributes \
+                                     on the same hardware dim must carry a const instance count",
+                                )
+                        })
+                        .product::<usize>()
+                );
+                let inner_weight = instances.fproduct(picks).fmul(comptime!(absent).runtime());
                 positions.push(
                     hardware_pos(comptime!(dist.scope_unchecked()))
                         .fdiv(inner_weight)
