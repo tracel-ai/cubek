@@ -63,12 +63,27 @@ impl PrngLaunch {
         };
 
         match blueprint {
-            PrngBlueprint::Interleaved => Self::interleaved(client, output.size()),
+            PrngBlueprint::Interleaved => Self::interleaved(client, output, dtype),
             PrngBlueprint::Blocked => Self::blocked(client, output, dtype, vectors_per_draw),
         }
     }
 
-    fn interleaved<R: Runtime>(client: &ComputeClient<R>, size: usize) -> Self {
+    fn interleaved<R: Runtime>(
+        client: &ComputeClient<R>,
+        output: &TensorBinding<R>,
+        dtype: ElemType,
+    ) -> Self {
+        let size = output.size();
+
+        // Every lane already draws its own decorrelated stream (see `PrngState::seeded`),
+        // so nothing but the output layout bounds the line.
+        let line_size = tensor_vector_size_parallel(
+            client.io_optimized_vector_sizes(dtype.size()),
+            &output.shape,
+            &output.strides,
+            output.strides.len() - 1,
+        );
+
         let cube_dim = CubeDim::new(client, size.div_ceil(N_VALUES_PER_THREAD));
         let units = f32::ceil(size as f32 / N_VALUES_PER_THREAD as f32);
         let cubes = f32::ceil(units / cube_dim.num_elems() as f32);
@@ -79,7 +94,7 @@ impl PrngLaunch {
             blueprint: PrngBlueprint::Interleaved,
             cube_dim,
             cube_count: CubeCount::Static(cubes_x as u32, cubes_y as u32, 1),
-            line_size: 1,
+            line_size,
             vectors_per_unit: N_VALUES_PER_THREAD as u32,
         }
     }
