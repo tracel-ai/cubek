@@ -81,6 +81,7 @@ pub(super) fn contract<
             mr,
             nr,
             vw,
+            lhs_spans_col,
             comptime!(config),
         );
     } else {

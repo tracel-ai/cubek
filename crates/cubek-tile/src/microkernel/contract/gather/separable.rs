@@ -8,6 +8,10 @@ use crate::*;
 use super::coords::{cell_position, cell_read};
 
 /// Cache each factor's 1-D tap walk before consuming their Cartesian product for one cell.
+///
+/// The walk is cached per accumulator row unless `lhs_spans_col`: with no factor reading the
+/// accumulator's innermost axis the weights cannot vary along it, so evaluating them per cell
+/// repeats one identical walk `nr` times.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: Size, V: Size>(
@@ -20,6 +24,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] vw: usize,
+    #[comptime] lhs_spans_col: bool,
     #[comptime] config: MemoryMmaConfig,
 ) {
     let rank = comptime!(space.rank());
@@ -41,32 +46,48 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= config.unroll_limit && !rhs_check && !acc_check);
+        // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
+        // weight indices, which is what lets the walk stay in registers and vectorize. It costs
+        // `kc` bodies per cell, so the limit reads the whole emitted block rather than the cell
+        // count the register block is sized against.
+        let unroll_taps =
+            comptime!(mr * nr * kc <= config.unroll_limit && !rhs_check && !acc_check);
         let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
         #[unroll(unroll)]
         for i in 0..mr {
+            let mut weights = Array::<EL>::new(taps);
+            if comptime!(!lhs_spans_col) {
+                tap_walk::<EL>(
+                    &mut weights,
+                    lhs,
+                    &batch,
+                    i as u32,
+                    0u32,
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    comptime!(reduce_extents.clone()),
+                    comptime!(offsets.clone()),
+                );
+            }
+
             #[unroll(unroll)]
             for n in 0..nr {
-                let mut weights = Array::<EL>::new(taps);
-
-                #[unroll]
-                for f in 0..factors {
-                    #[unroll]
-                    for k in 0..comptime!(reduce_extents[f]) {
-                        let pos = cell_position(
-                            &batch,
-                            i as u32,
-                            n as u32,
-                            &factor_coords(comptime!(factors), f, k),
-                            comptime!(lhs.space.clone()),
-                            comptime!(space.clone()),
-                            comptime!(reduce.clone()),
-                            1usize,
-                        );
-                        weights[comptime!(offsets[f] + k)] = lhs.separable_factor(pos, f);
-                    }
+                if comptime!(lhs_spans_col) {
+                    tap_walk::<EL>(
+                        &mut weights,
+                        lhs,
+                        &batch,
+                        i as u32,
+                        n as u32,
+                        comptime!(space.clone()),
+                        comptime!(reduce.clone()),
+                        comptime!(reduce_extents.clone()),
+                        comptime!(offsets.clone()),
+                    );
                 }
 
+                #[unroll(unroll_taps)]
                 for p in 0..kc {
                     let reduce_coords =
                         tap_coords(p.fcast::<u32>(), comptime!(reduce_extents.clone()));
@@ -92,6 +113,41 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
             }
         }
         block::commit(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
+    }
+}
+
+/// Evaluate every factor's 1-D tap walk at one accumulator cell.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn tap_walk<EL: Numeric>(
+    weights: &mut Array<EL>,
+    lhs: &Tile<EL>,
+    batch: &Coords<u32>,
+    row: u32,
+    col: u32,
+    #[comptime] space: Space,
+    #[comptime] reduce: Vec<Axis>,
+    #[comptime] reduce_extents: Vec<usize>,
+    #[comptime] offsets: Vec<usize>,
+) {
+    let factors = comptime!(reduce_extents.len());
+
+    #[unroll]
+    for f in 0..factors {
+        #[unroll]
+        for k in 0..comptime!(reduce_extents[f]) {
+            let pos = cell_position(
+                batch,
+                row,
+                col,
+                &factor_coords(comptime!(factors), f, k),
+                comptime!(lhs.space.clone()),
+                comptime!(space.clone()),
+                comptime!(reduce.clone()),
+                1usize,
+            );
+            weights[comptime!(offsets[f] + k)] = lhs.separable_factor(pos, f);
+        }
     }
 }
 
