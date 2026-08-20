@@ -7,25 +7,59 @@
 use cubecl::prelude::*;
 use std::f32::consts::{LN_2, SQRT_2};
 
+const fn factorial(n: u32) -> f64 {
+    let mut result = 1.0;
+    let mut i = 2u32;
+    while i <= n {
+        result *= i as f64;
+        i += 1;
+    }
+    result
+}
+
+const fn powi(base: f64, exponent: u32) -> f64 {
+    let mut result = 1.0;
+    let mut i = 0u32;
+    while i < exponent {
+        result *= base;
+        i += 1;
+    }
+    result
+}
+
+/// The `power`-th Taylor coefficient of `sin(pi * offset / 2)` for odd `power`, `cos` for even.
+const fn taylor_half_pi(power: u32) -> f32 {
+    let sign = if (power / 2).is_multiple_of(2) {
+        1.0
+    } else {
+        -1.0
+    };
+    (sign * powi(std::f64::consts::PI / 2.0, power) / factorial(power)) as f32
+}
+
 // Taylor coefficients of `sin(pi * offset / 2)`, named by the power of `offset` each
 // multiplies.
-const SIN_1: f32 = 1.5707964;
-const SIN_3: f32 = -0.6459641;
-const SIN_5: f32 = 0.079692625;
-const SIN_7: f32 = -0.004681754;
-const SIN_9: f32 = 0.00016044118;
+const SIN_1: f32 = taylor_half_pi(1);
+const SIN_3: f32 = taylor_half_pi(3);
+const SIN_5: f32 = taylor_half_pi(5);
+const SIN_7: f32 = taylor_half_pi(7);
+const SIN_9: f32 = taylor_half_pi(9);
 
 // Taylor coefficients of `cos(pi * offset / 2)`; the zeroth power is one.
-const COS_2: f32 = -1.2337005;
-const COS_4: f32 = 0.2536695;
-const COS_6: f32 = -0.02086348;
-const COS_8: f32 = 0.00091926026;
+const COS_2: f32 = taylor_half_pi(2);
+const COS_4: f32 = taylor_half_pi(4);
+const COS_6: f32 = taylor_half_pi(6);
+const COS_8: f32 = taylor_half_pi(8);
+
+const fn atanh_term(power: u32) -> f32 {
+    (2.0 / power as f64) as f32
+}
 
 // Coefficients of `2 atanh(ratio) = 2 (ratio + ratio^3/3 + ratio^5/5 + ratio^7/7)`.
-const ATANH_1: f32 = 2.0;
-const ATANH_3: f32 = 0.6666667;
-const ATANH_5: f32 = 0.4;
-const ATANH_7: f32 = 0.2857143;
+const ATANH_1: f32 = atanh_term(1);
+const ATANH_3: f32 = atanh_term(3);
+const ATANH_5: f32 = atanh_term(5);
+const ATANH_7: f32 = atanh_term(7);
 
 /// Cosine and sine of `turns` of a full turn, for `turns` in `[0, 1)`.
 ///
@@ -96,4 +130,31 @@ pub fn ln<N: Size>(x: Vector<f32, N>) -> Vector<f32, N> {
         + Vector::new(ATANH_1);
 
     Vector::<f32, N>::cast_from(exponent) * Vector::new(LN_2) + ratio * series
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each derived constant matches the f64 formula it computes (kernel accuracy is in `tests/random/polynomial.rs`).
+    #[test]
+    fn derived_constants_match_f64_formula() {
+        let pi_half = std::f64::consts::PI / 2.0;
+
+        assert_eq!(SIN_1, (pi_half.powi(1) / 1.0) as f32);
+        assert_eq!(SIN_3, (-pi_half.powi(3) / 6.0) as f32);
+        assert_eq!(SIN_5, (pi_half.powi(5) / 120.0) as f32);
+        assert_eq!(SIN_7, (-pi_half.powi(7) / 5040.0) as f32);
+        assert_eq!(SIN_9, (pi_half.powi(9) / 362880.0) as f32);
+
+        assert_eq!(COS_2, (-pi_half.powi(2) / 2.0) as f32);
+        assert_eq!(COS_4, (pi_half.powi(4) / 24.0) as f32);
+        assert_eq!(COS_6, (-pi_half.powi(6) / 720.0) as f32);
+        assert_eq!(COS_8, (pi_half.powi(8) / 40320.0) as f32);
+
+        assert_eq!(ATANH_1, (2.0 / 1.0) as f32);
+        assert_eq!(ATANH_3, (2.0 / 3.0) as f32);
+        assert_eq!(ATANH_5, (2.0 / 5.0) as f32);
+        assert_eq!(ATANH_7, (2.0 / 7.0) as f32);
+    }
 }
