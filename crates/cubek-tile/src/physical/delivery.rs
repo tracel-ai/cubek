@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Leaf, MAX_LEVELS, Space, Sync, Tile, TileArg, TmaTileArg};
+use crate::{Leaf, MAX_LEVELS, MmaIOConfig, Space, Sync, Tile, TileArg, TmaTileArg};
 
 /// How an operand reaches a stage: a buffered cooperative copy, coordinate-backed cooperative
 /// materialization, or a TMA hardware bulk copy. Read off a tile via
@@ -88,9 +88,19 @@ pub enum Residence {
     /// its window, one for the whole ring once the walk leaves it fixed (see
     /// [`WindowMode`](crate::WindowMode)).
     Smem,
-    /// Plane-private register fragments, selected by comptime coordinate (so the level's walk
-    /// unrolls).
-    Plane,
+    /// Plane-private register tiles in the stated encoding, selected by comptime coordinate (so
+    /// the level's walk unrolls).
+    Register(RegisterKind),
+}
+
+/// The encoding of a register-resident tile: a plain register array, or a matrix fragment in
+/// one of the two hardware forms. `io` rides the manual rung because it comes from a device
+/// query, which cannot run in-kernel.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum RegisterKind {
+    Array,
+    Cmma,
+    Mma { io: MmaIOConfig },
 }
 
 impl StageStorage {
@@ -227,13 +237,20 @@ mod tests {
     #[test]
     fn a_plan_hands_out_one_residence_per_level() {
         let plan = StagePlan::new(
-            &[Residence::Smem, Residence::InPlace, Residence::Plane],
+            &[
+                Residence::Smem,
+                Residence::InPlace,
+                Residence::Register(RegisterKind::Cmma),
+            ],
             StageStorage::Strided,
             0,
         );
         assert_eq!(plan.head(), Residence::Smem);
         assert_eq!(plan.descend().head(), Residence::InPlace);
-        assert_eq!(plan.descend().descend().head(), Residence::Plane);
+        assert_eq!(
+            plan.descend().descend().head(),
+            Residence::Register(RegisterKind::Cmma)
+        );
     }
 
     /// Below the last level there is only the leaf, which reads its operands where they are, so an

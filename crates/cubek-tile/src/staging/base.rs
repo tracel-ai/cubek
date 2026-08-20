@@ -79,7 +79,7 @@ impl SlotPayload {
         match self {
             SlotPayload::Windowed(WindowMode::Fixed) => match residence {
                 Residence::Smem => SlotPayload::Windowed(WindowMode::Reused),
-                Residence::Plane => self,
+                Residence::Register(_) => self,
                 Residence::InPlace => unreachable!("an in-place operand is never windowed"),
             },
             // Nothing was allocated for the first slot either: every slot names the same operand.
@@ -137,7 +137,7 @@ impl OperandPlan {
     pub(crate) fn reads_fragments(self) -> bool {
         match self.source {
             StageSource::ResidentFragment => true,
-            StageSource::Transport(_) => self.residence == Residence::Plane,
+            StageSource::Transport(_) => matches!(self.residence, Residence::Register(_)),
         }
     }
 }

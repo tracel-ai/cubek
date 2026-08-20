@@ -956,7 +956,7 @@ fn cmma_matmul_staged_n_walk_partition() {
             Residence::Smem,
             Residence::InPlace,
             Residence::InPlace,
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
             Residence::InPlace,
         ])
         .untiled()
@@ -966,7 +966,7 @@ fn cmma_matmul_staged_n_walk_partition() {
             Residence::Smem,
             Residence::InPlace,
             Residence::InPlace,
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
             Residence::InPlace,
         ])
         .untiled()
@@ -1004,7 +1004,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         .enforce()
 }
 
-/// Double-buffered walk over a plane-partition stage (Residence::Plane) under a CMMA leaf.
+/// Double-buffered walk over a plane-partition stage (Residence::Register) under a CMMA leaf.
 /// Exercises the unrolled pipelined walk (unroll == true) with register partition selection.
 #[test]
 fn cmma_matmul_double_buffered_plane_stage() {
@@ -1049,7 +1049,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
             Residence::Smem,
             Residence::InPlace,
             Residence::InPlace,
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
             Residence::InPlace,
         ])
         .untiled()
@@ -1059,7 +1059,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
             Residence::Smem,
             Residence::InPlace,
             Residence::InPlace,
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
             Residence::InPlace,
         ])
         .untiled()
@@ -3076,7 +3076,7 @@ fn matmul_triple_buffered_vectorized() {
 /// the macro sees `flag` as a comptime binding, and rolls the loop without complaint otherwise;
 /// the lap arithmetic then has to fold, or the coordinates come out runtime even unrolled. Either
 /// slip lands on `Tile::at`'s "must be walked with compile-time coordinates" panic. The other
-/// unrolled shape, a `Residence::Plane` stage, needs a fragment leaf and so only runs on tensor-core
+/// unrolled shape, a `Residence::Register` stage, needs a fragment leaf and so only runs on tensor-core
 /// hardware ([`cmma_matmul_staged_n_walk_partition`]); this one runs everywhere.
 #[test]
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {

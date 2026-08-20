@@ -1,5 +1,5 @@
 //! The output half of [`Residence`]: an accumulator moved to
-//! [`Plane`](Residence::Plane) for the whole operation, rather than an input refilled per region
+//! [`Register`](Residence::Register) for the whole operation, rather than an input refilled per region
 //! by [`Staging`]. The two directions share the vocabulary and differ in which way values travel:
 //! an input is *filled* from its source into its residence, an output *drains* from its residence
 //! into its sink. Where an input states its residences per level and the walk acts on them, an
@@ -19,7 +19,7 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// Promote this accumulator to its register form ([`Residence::Plane`]): pure change of
+    /// Promote this accumulator to its register form ([`Residence::Register`]): pure change of
     /// residence, the fragments uninitialized. The caller states the init ([`zero`](Tile::zero) for
     /// `c = a·b`, or [`copy_from`](Tile::copy_from) to accumulate) and writes it back with
     /// [`drain_cast_into`](Tile::drain_cast_into) after. `EA` is the register accumulate

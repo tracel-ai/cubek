@@ -149,10 +149,12 @@ fn compatible_residence_pair(a: Residence, b: Residence) -> bool {
     match (a, b) {
         // A plane partition is private to its unit and assumes a solo fill; a shared-memory stage
         // selects a slot-wide Cube or Barrier pipeline. One slot cannot rendezvous both ways.
-        (Residence::Plane, Residence::Smem) | (Residence::Smem, Residence::Plane) => false,
-        (Residence::Plane, Residence::Plane | Residence::InPlace) => true,
+        (Residence::Register(_), Residence::Smem) | (Residence::Smem, Residence::Register(_)) => {
+            false
+        }
+        (Residence::Register(_), Residence::Register(_) | Residence::InPlace) => true,
         (Residence::Smem, Residence::Smem | Residence::InPlace) => true,
-        (Residence::InPlace, Residence::Plane | Residence::Smem | Residence::InPlace) => true,
+        (Residence::InPlace, Residence::Register(_) | Residence::Smem | Residence::InPlace) => true,
     }
 }
 
@@ -180,7 +182,7 @@ fn slot_admits_operands(operands: &[SlotOperand]) -> bool {
 
 #[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
-    /// Build the `depth` slots staging the operands `lhs`/`rhs`. An [`Residence::Plane`] operand
+    /// Build the `depth` slots staging the operands `lhs`/`rhs`. A [`Residence::Register`] operand
     /// stages into plane-private tile partitions ([`Solo`](Sync::Solo)); [`Smem`](Residence::Smem)
     /// takes fresh shared memory, with [`Sync`] deduced from the operands' delivery; an
     /// [`InPlace`](Residence::InPlace) one takes no buffer at all.
@@ -440,7 +442,7 @@ fn stage_operand<T: Numeric>(
                 panic!("Staging: a TMA source cannot be read in place; give it Residence::Smem")
             }
         },
-        Residence::Plane => {
+        Residence::Register(_) => {
             let delivery = input.delivery();
             comptime!(assert!(
                 !delivery.is_tma(),
@@ -448,7 +450,7 @@ fn stage_operand<T: Numeric>(
             ));
             comptime!(assert!(
                 !gathered,
-                "Staging: a gathered operand cannot stage into plane tiles (Residence::Plane); \
+                "Staging: a gathered operand cannot stage into plane tiles (Residence::Register); \
                  only Residence::Smem stages one, as the compacted window its leaf reads"
             ));
             PlanePartition::store(
@@ -509,15 +511,15 @@ mod tests {
     #[test]
     fn a_plane_stage_cannot_share_a_slot_with_smem() {
         assert!(!compatible_slot_residences(&[
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
             Residence::Smem,
         ]));
         assert!(!compatible_slot_residences(&[
             Residence::Smem,
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
         ]));
         assert!(compatible_slot_residences(&[
-            Residence::Plane,
+            Residence::Register(RegisterKind::Cmma),
             Residence::InPlace,
         ]));
     }
@@ -531,7 +533,11 @@ mod tests {
         SlotPlan::new(
             &[
                 operand(Residence::Smem, Delivery::Procedural, &lhs),
-                operand(Residence::Plane, Delivery::Copy, &rhs),
+                operand(
+                    Residence::Register(RegisterKind::Cmma),
+                    Delivery::Copy,
+                    &rhs,
+                ),
             ],
             &space,
         );
@@ -544,7 +550,11 @@ mod tests {
         SlotPlan::new(
             &[
                 operand(Residence::Smem, Delivery::Copy, &lhs),
-                operand(Residence::Plane, Delivery::Copy, &rhs),
+                operand(
+                    Residence::Register(RegisterKind::Cmma),
+                    Delivery::Copy,
+                    &rhs,
+                ),
             ],
             &space,
         );
@@ -560,7 +570,10 @@ mod tests {
             operand(Residence::Smem, Delivery::Copy, &rhs),
         ]));
         assert!(!slot_admits_operands(&[fragment(Residence::Smem, &lhs)]));
-        assert!(!slot_admits_operands(&[fragment(Residence::Plane, &lhs)]));
+        assert!(!slot_admits_operands(&[fragment(
+            Residence::Register(RegisterKind::Cmma),
+            &lhs
+        )]));
     }
 
     /// Registers hold it already, so nothing fills it: every slot of the ring names the same
@@ -618,7 +631,14 @@ mod tests {
         let resident = SlotPlan::new(&[fragment(Residence::InPlace, &lhs)], &space);
         assert!(resident.operand_plan(LHS, FIRST_SLOT).reads_fragments());
 
-        let staged = SlotPlan::new(&[operand(Residence::Plane, Delivery::Copy, &lhs)], &space);
+        let staged = SlotPlan::new(
+            &[operand(
+                Residence::Register(RegisterKind::Cmma),
+                Delivery::Copy,
+                &lhs,
+            )],
+            &space,
+        );
         assert!(staged.operand_plan(LHS, FIRST_SLOT).reads_fragments());
 
         // A window is a window wherever it lives: nothing here is selected by coordinate.

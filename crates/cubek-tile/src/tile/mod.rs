@@ -543,13 +543,15 @@ impl<T: Numeric> Tile<T> {
             comptime!(Residence::InPlace)
         } else {
             let procedural = self.is_procedural();
-            comptime!(if procedural && requested == Residence::Plane {
-                panic!(
-                    "Tile::residence: a procedural source has no plane-fragment transport; state \
+            comptime!(
+                if procedural && matches!(requested, Residence::Register(_)) {
+                    panic!(
+                        "Tile::residence: a procedural source has no plane-fragment transport; state \
                      Residence::Smem to materialize it into shared memory, or Residence::InPlace \
                      to evaluate it at the leaf"
-                );
-            });
+                    );
+                }
+            );
             comptime!(requested)
         }
     }
