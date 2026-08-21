@@ -9,14 +9,14 @@
 
 use cubecl::prelude::*;
 
-use crate::microkernel::block;
+use crate::instruction::registers::block;
 use crate::*;
 
 #[cube]
 impl<T: Numeric> RegisterData<T> {
     /// `self += lhs · rhs` over the block, one rank-1 update per scalar `K` step.
     ///
-    /// The same contraction the memory-backed microkernel runs, minus the round trip: there the
+    /// The same contraction the memory-backed instruction runs, minus the round trip: there the
     /// block is seeded from the sink and committed back on every visit, so a `K` walk that
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
@@ -44,7 +44,7 @@ impl<T: Numeric> RegisterData<T> {
         let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
 
         let config = comptime!(self.config);
-        let unroll = comptime!(mr * nr <= config.unroll_limit);
+        let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
 
         block::contract::<T, EL, L, ER, RA>(

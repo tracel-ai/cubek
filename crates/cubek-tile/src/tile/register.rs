@@ -14,11 +14,11 @@ use crate::{instruction::plane, *};
 // CPU backend refuses a vectorized operand — allocate at the vector element instead.)
 define_size!(pub(crate) RA);
 
-/// An `mr × nr` block of `RA`-wide accumulators living in registers, the software microkernel's
+/// An `mr × nr` block of `RA`-wide accumulators living in registers, the software instruction's
 /// encoding of a [`PlaneTile`].
 ///
 /// The block exists so the software leaf can accumulate the way the hardware ones do. It used
-/// to allocate its own inside the microkernel, which meant the accumulator could not outlive a
+/// to allocate its own inside the instruction, which meant the accumulator could not outlive a
 /// single call: a `K` walk that visits the leaf repeatedly round-tripped its partials through
 /// the output's element between visits, so a deep contraction into `f16` lost precision it did
 /// not have to. Created by [`promote`](Tile::promote) and passed in, it survives the whole walk
@@ -44,7 +44,7 @@ pub struct RegisterData<T: Numeric> {
     pub(crate) lane_share: LaneShare,
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
-    pub(crate) config: MemoryMmaConfig,
+    pub(crate) config: RegisterBlock,
 }
 
 /// Bind the block width `RA` for the rest of the kernel's scope.
@@ -64,7 +64,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] n: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
-        #[comptime] config: MemoryMmaConfig,
+        #[comptime] config: RegisterBlock,
     ) -> RegisterData<T> {
         comptime!(assert!(
             vector_size > 0 && n.is_multiple_of(vector_size),

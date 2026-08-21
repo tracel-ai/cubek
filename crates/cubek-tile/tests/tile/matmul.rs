@@ -11,7 +11,7 @@ use cubecl::{
 };
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
-    HostData, HostDataType, MICROKERNEL, TestInput, TestOutcome, TileInput, ValidationResult,
+    HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
     assert_equals_approx,
 };
 
@@ -263,7 +263,9 @@ fn matmul_cpu_dynamic_k() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space.with_dynamic(&[K]),
+        space
+            .with_dynamic(&[K])
+            .with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -506,7 +508,7 @@ fn check_matmul_batched(
         a.arg(),
         rhs.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -588,7 +590,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
         lhs.arg(),
         rhs.arg(),
         acc.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -631,7 +633,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -808,25 +810,23 @@ fn matmul_staged_invariant_lhs() {
     let (m, n, k) = (8usize, 8usize, 8usize);
     let seq = |edge| Cut::sequential(edge);
     let dtype = f32::elem_type_native();
-    let (space, ops) = Tiling::over(
-        (
-            Operand::new(&[M, K], dtype),
-            Operand::new(&[K, N], dtype),
-            Operand::new(&[M, N], dtype),
-        ),
-        &[(M, m), (N, n), (K, k)],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-        l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
-        o.0.stage(Residence::Smem);
-        o.1.stage(Residence::Smem);
-    })
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-        l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4));
-        o.0.stage(Residence::Smem);
-        o.1.stage(Residence::Smem);
-    })
-    .build();
+    let mut ops = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .build();
 
     let a = TileInput::builder(&client, space.project(ops.0.axes()))
         .operand(&ops.0)
@@ -848,7 +848,7 @@ fn matmul_staged_invariant_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -911,7 +911,7 @@ fn register_matmul_unit_spread_n() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -946,44 +946,42 @@ fn cmma_matmul_staged_n_walk_partition() {
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let seq = |edge| Cut::sequential(edge);
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let dtype = f32::elem_type_native();
-    let (space, ops) = Tiling::over(
-        (
-            Operand::new(&[M, K], dtype),
-            Operand::new(&[K, N], dtype),
-            Operand::new(&[M, N], dtype),
-        ),
-        &[(M, m), (N, n), (K, k)],
-    )
-    // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; both
-    // inputs take a shared stage there.
-    .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-        l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
-        o.0.stage(Residence::Smem);
-        o.1.stage(Residence::Smem);
-    })
-    // L1: the stage split one `part×part` partition per plane (2×2 planes).
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::plane(part))
-            .axis(N, Cut::plane(part))
-            .axis(K, seq(stage_k));
-    })
-    // L2: the contraction-step walk, windowing only.
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i));
-    })
-    // L3: the N-walk: one B fragment per step, the A column filled once above it.
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-        l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
-        o.0.stage(Residence::Register(RegisterKind::Cmma));
-        o.1.stage(Residence::Register(RegisterKind::Cmma));
-    })
-    // L4: the M-only fragment walk.
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i));
-    })
-    .build();
+    let mut ops = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; both
+        // inputs take a shared stage there.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        // L1: the stage split one `part×part` partition per plane (2×2 planes).
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::plane(part))
+                .axis(N, Cut::plane(part))
+                .axis(K, seq(stage_k));
+        })
+        // L2: the contraction-step walk, windowing only.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i));
+        })
+        // L3: the N-walk: one B fragment per step, the A column filled once above it.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
+            o.0.stage(Residence::Register(Instruction::Cmma));
+            o.1.stage(Residence::Register(Instruction::Cmma));
+        })
+        // L4: the M-only fragment walk.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i));
+        })
+        .build();
 
     let a = TileInput::builder(&client, space.project(ops.0.axes()))
         .operand(&ops.0)
@@ -1006,8 +1004,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         dtype,
     );
 
@@ -1039,44 +1036,42 @@ fn cmma_matmul_double_buffered_plane_stage() {
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let seq = |edge| Cut::sequential(edge);
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let dtype = f32::elem_type_native();
-    let (space, ops) = Tiling::over(
-        (
-            Operand::new(&[M, K], dtype),
-            Operand::new(&[K, N], dtype),
-            Operand::new(&[M, N], dtype),
-        ),
-        &[(M, m), (N, n), (K, k)],
-    )
-    // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; both
-    // inputs take a shared stage there.
-    .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-        l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
-        o.0.stage(Residence::Smem);
-        o.1.stage(Residence::Smem);
-    })
-    // L1: the stage split one `part×part` partition per plane (2×2 planes).
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::plane(part))
-            .axis(N, Cut::plane(part))
-            .axis(K, seq(stage_k));
-    })
-    // L2: the contraction-step walk, windowing only.
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i));
-    })
-    // L3: the N-walk with DOUBLE buffering over a plane stage.
-    .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-        l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
-        o.0.stage(Residence::Register(RegisterKind::Cmma));
-        o.1.stage(Residence::Register(RegisterKind::Cmma));
-    })
-    // L4: the M-only fragment walk.
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i));
-    })
-    .build();
+    let mut ops = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; both
+        // inputs take a shared stage there.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        // L1: the stage split one `part×part` partition per plane (2×2 planes).
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::plane(part))
+                .axis(N, Cut::plane(part))
+                .axis(K, seq(stage_k));
+        })
+        // L2: the contraction-step walk, windowing only.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i));
+        })
+        // L3: the N-walk with DOUBLE buffering over a plane stage.
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
+            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
+            o.0.stage(Residence::Register(Instruction::Cmma));
+            o.1.stage(Residence::Register(Instruction::Cmma));
+        })
+        // L4: the M-only fragment walk.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i));
+        })
+        .build();
 
     let a = TileInput::builder(&client, space.project(ops.0.axes()))
         .operand(&ops.0)
@@ -1098,8 +1093,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         dtype,
     );
 
@@ -1180,7 +1174,7 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -1248,7 +1242,7 @@ fn check_matmul_multilevel(
         TileArgLaunch::new(a.tensor_arg(1), a.spec().storage(stage)),
         TileArgLaunch::new(b.tensor_arg(1), b.spec().storage(stage)),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -1299,7 +1293,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -1330,7 +1324,7 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -1343,12 +1337,11 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
-    #[comptime] instruction: RegisterKind,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(instruction)));
+    let mut c = c.tile(space);
     let mut acc = c.promote(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1365,13 +1358,12 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] instruction: RegisterKind,
     #[define(I)] _idtype: ElemType,
     #[define(E)] _edtype: ElemType,
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(instruction)));
+    let mut c = c.tile(space);
     let mut acc = c.promote(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1392,7 +1384,7 @@ fn launch_cpu_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.zero();
     c.mma(&a, &b);
 }
@@ -1410,7 +1402,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     let mut acc = c.promote::<EA, _>(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1457,7 +1449,7 @@ fn register_matmul_promoted_accumulator() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
         dtype,
     );
@@ -1524,7 +1516,7 @@ fn register_matmul_promoted_cube_plane() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
         dtype,
     );
@@ -1560,7 +1552,7 @@ fn launch_cpu_matmul_lined<E: Numeric, LV: Size, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.zero();
     c.mma(&a, &b);
 }
@@ -1577,7 +1569,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     let mut acc = c.promote::<EA, _>(&a);
     acc.zero();
     acc.mma(&a, &b);
@@ -1637,7 +1629,7 @@ fn register_matmul_lined_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -1680,7 +1672,7 @@ fn register_matmul_promoted_lined_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
         dtype,
     );
@@ -1929,7 +1921,7 @@ fn cmma_matmul_staged_k_walk_strided_stage() {
 }
 
 /// The leaf is the operands' statement and nothing else's: the partitioning says nothing about
-/// it, so the memory microkernel runs because all three operands declared it.
+/// it, so the memory instruction runs because all three operands declared it.
 ///
 /// `mma_leaf` refuses a memory accumulator under a cmma leaf ("promote it first"), reading the
 /// accumulator's own projected space, so this test fails loudly if an operand's declaration is
@@ -1940,20 +1932,18 @@ fn matmul_leaf_stated_by_operands() {
     let (m, n, k) = (8usize, 8usize, 8usize);
     let seq = |edge| Cut::sequential(edge);
     let dtype = f32::elem_type_native();
-    let (space, ops) = Tiling::over(
-        (
-            Operand::new(&[M, K], dtype),
-            Operand::new(&[K, N], dtype),
-            Operand::new(&[M, N], dtype),
-        ),
-        &[(M, m), (N, n), (K, k)],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-        l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
-        o.0.stage(Residence::Smem);
-        o.1.stage(Residence::Smem);
-    })
-    .build();
+    let mut ops = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .build();
 
     let a = TileInput::builder(&client, space.project(ops.0.axes()))
         .operand(&ops.0)
@@ -1976,7 +1966,7 @@ fn matmul_leaf_stated_by_operands() {
         TileArgLaunch::new(a.tensor_arg(1), a.spec()),
         TileArgLaunch::new(b.tensor_arg(1), b.spec()),
         TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -2008,7 +1998,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, buffering, |l| {
@@ -2044,8 +2034,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         TileArgLaunch::new(a.tensor_arg(1), a.spec().storage(stage)),
         TileArgLaunch::new(b.tensor_arg(1), b.spec().storage(stage)),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         dtype,
     );
 
@@ -2065,7 +2054,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         .enforce()
 }
 
-/// The manual/raw-mma instruction (`RegisterKind::Mma`): the raw-mma twin of `cmma_matmul_staged_k_walk` — the
+/// The manual/raw-mma instruction (`Instruction::Mma`): the raw-mma twin of `cmma_matmul_staged_k_walk` — the
 /// same resident promote → zero → mma → drain kernel, but the contraction runs through
 /// `MmaDefinition::execute` over register fragments rather than the cooperative `cmma::execute`.
 /// Gated on the backend exposing the manual-mma feature (`features.matmul.mma`); uses the universal
@@ -2083,7 +2072,7 @@ fn mma_matmul_8x8x8() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
-    let instruction = RegisterKind::Mma {
+    let instruction = Instruction::Mma {
         io: MmaIOConfig::manual(),
     };
     let space = Tiling::new()
@@ -2121,8 +2110,7 @@ fn mma_matmul_8x8x8() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         dtype,
     );
 
@@ -2154,7 +2142,7 @@ fn cmma_matmul_plane_partitioned_stage() {
     }
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
@@ -2199,8 +2187,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         dtype,
     );
 
@@ -2234,7 +2221,7 @@ fn cmma_matmul_multi_fragment_partition() {
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let seq = |edge| Cut::sequential(edge);
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
@@ -2281,8 +2268,7 @@ fn cmma_matmul_multi_fragment_partition() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         dtype,
     );
 
@@ -2656,7 +2642,7 @@ fn mma_matmul_quant_until_read() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
-    let instruction = RegisterKind::Mma {
+    let instruction = Instruction::Mma {
         io: MmaIOConfig::manual(),
     };
     let space = Tiling::new()
@@ -2711,8 +2697,7 @@ fn mma_matmul_quant_until_read() {
         ),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         a_dtype,
         e_dtype,
     );
@@ -2750,7 +2735,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize); // K walked in `edge`-deep stages
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, buffering, |l| {
@@ -2804,8 +2789,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         ),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         a_dtype,
         e_dtype,
     );
@@ -2847,7 +2831,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
     }
 
     let (m, n, k, edge, bm) = (8usize, 8usize, 16usize, 8usize, 4usize); // 2 M-blocks
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
@@ -2901,8 +2885,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         ),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         a_dtype,
         e_dtype,
     );
@@ -2944,7 +2927,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
     }
 
     let (m, n, k, edge, bk) = (8usize, 8usize, 16usize, 8usize, 4usize); // 4 K-blocks, 2 per stage
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
@@ -2998,8 +2981,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         ),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         a_dtype,
         e_dtype,
     );
@@ -3041,7 +3023,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     }
 
     let (m, n, k, edge, bk, v) = (8usize, 8usize, 16usize, 8usize, 4usize, 2usize);
-    let instruction = RegisterKind::Cmma;
+    let instruction = Instruction::Cmma;
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
@@ -3095,8 +3077,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         ),
         b.arg(),
         c.arg(),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         a_dtype,
         e_dtype,
     );
@@ -3209,8 +3190,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
-        MICROKERNEL,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -3347,7 +3327,7 @@ fn check_matmul_dims_vectorized(
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         dtype,
     );
 
@@ -3379,7 +3359,7 @@ fn cmma_matmul_staged_k_walk_vectorized() {
 // Every other quant matmul above runs `acc.mma()` on tensor cores and skips where cmma is
 // absent — which is everywhere the memory-bound GEMV actually lives. These pin the other
 // leaf: the staged walk stages `A`'s *packed storage words* into smem (`Tile::copy_from`), and
-// the software microkernel dequantizes each read out of smem through `matrix_transparent` — no
+// the software instruction dequantizes each read out of smem through `matrix_transparent` — no
 // f32 inflation of the stage, no promotion, no cmma, no i8 needed for the packed cases (the
 // binding is a `u32`).
 
@@ -3396,7 +3376,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -3625,7 +3605,7 @@ fn run_register_matmul_quant(
         ),
         b.arg(),
         c.arg(),
-        space,
+        space.with_instruction(Instruction::registers(16)),
         a_dtype,
         e_dtype,
     );
@@ -3652,7 +3632,7 @@ fn run_register_matmul_quant(
 // The gemv production shape: the *weight* is the streamed RHS — `(K, N) = (d_in, d_out)`,
 // packed along `d_out` (the innermost axis) with one scale per `(k, N-group)` block
 // (`[1, bn]`). A stays float. The RHS's served width drives the accumulator's line width
-// in the register microkernel, so `C` is launched at the same width.
+// in the register instruction, so `C` is launched at the same width.
 
 /// [`launch_staged_matmul_quant`]'s mirror: `B` arrives storage-typed.
 #[cube(launch)]
@@ -3666,7 +3646,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -3918,7 +3898,7 @@ fn quant_until_read_refused_by_a_cmma_register_stage() {
         .clone();
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]).with_partitioner(plan);
     let mut b_operand = Operand::new(&[K, N], u32::elem_type_native());
-    b_operand.stage(Residence::Register(RegisterKind::Cmma));
+    b_operand.stage(Residence::Register(Instruction::Cmma));
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .operand(&b_operand)
         .untiled()
@@ -4008,7 +3988,7 @@ fn run_register_matmul_quant_rhs(
     let mut scales = vec![b.scales_binding()];
     scales.extend(global_scale.map(|g| g.binding()));
     let b_op = b_src.quantized(&scales, scheme, dequant_at).build();
-    // The register microkernel lines the accumulator at the RHS's served width.
+    // The register instruction lines the accumulator at the RHS's served width.
     let c_op = launcher
         .arg(c.handle().binding())
         .subspace(&[M, N])
@@ -4023,7 +4003,10 @@ fn run_register_matmul_quant_rhs(
         a_op.arg(),
         b_arg,
         c_op.arg(),
-        launcher.space().clone(),
+        launcher
+            .space()
+            .clone()
+            .with_instruction(Instruction::registers(16)),
         b_dtype,
         e_dtype,
     );

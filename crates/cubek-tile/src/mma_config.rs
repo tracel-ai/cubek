@@ -1,6 +1,6 @@
 //! Host-side load/store method selection for the manual-mma form
-//! ([`RegisterKind::Mma`](crate::RegisterKind)) and execution configuration for the software
-//! mma microkernel ([`Tile::microkernel`](crate::Tile::microkernel)).
+//! ([`Instruction::Mma`](crate::Instruction)) and execution configuration for the software
+//! mma instruction ([`Space::instruction`](crate::Space::instruction)).
 //!
 //! Ported from cubek-std's `MmaIOConfig`: which fragment transport each role uses is a
 //! `(device, storage-type)` decision that queries [`DeviceProperties`], so it is built host-side
@@ -15,7 +15,7 @@ use cubecl::{
 };
 
 /// Hardware-capability-driven choice of load/store methods for a manual-mma tile, fixed once per
-/// `(device, operand storage types)` and carried by [`RegisterKind::Mma`](crate::RegisterKind)
+/// `(device, operand storage types)` and carried by [`Instruction::Mma`](crate::Instruction)
 /// because the fragment readers/writers branch on it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIOConfig {
@@ -94,14 +94,15 @@ fn store_method(device_props: &DeviceProperties, dtype: ElemType) -> StoreMethod
     }
 }
 
-/// Execution and unrolling configuration for the software (memory/register) MMA leaf. Every
+/// Execution and unrolling configuration for the software instruction. Every
 /// field is stated by the caller: nothing here reads the device, so the same config compiles the
 /// same kernel everywhere.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct MemoryMmaConfig {
-    /// Maximum number of vector accumulator cells (mr × nr) to fully inline into registers.
-    /// Blocks larger than this remain rolled in loops to avoid register spilling.
-    pub unroll_limit: usize,
+pub struct RegisterBlock {
+    /// Scalar register budget for the accumulator block. The leaf inlines `mr × nr` vector
+    /// cells only while they fit in it; wider lines therefore buy fewer cells, not more
+    /// registers. Blocks over budget stay rolled, to avoid spilling.
+    pub budget: usize,
     /// Whether to generate a dual-path specialization for masked/edge tiles (fast in-bounds path
     /// plus checked fallback).
     pub split_edge: bool,
@@ -110,11 +111,11 @@ pub struct MemoryMmaConfig {
     pub lane_fanout: bool,
 }
 
-impl MemoryMmaConfig {
+impl RegisterBlock {
     /// The only way to build one: every knob stated, none inferred.
-    pub const fn new(unroll_limit: usize, split_edge: bool, lane_fanout: bool) -> Self {
+    pub const fn new(budget: usize, split_edge: bool, lane_fanout: bool) -> Self {
         Self {
-            unroll_limit,
+            budget,
             split_edge,
             lane_fanout,
         }

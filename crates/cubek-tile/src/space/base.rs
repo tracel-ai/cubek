@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ComputeScope, Distribution, LaneShare, LevelRole, MAX_AXES, Partitioner, RegisterKind,
+    Axis, ComputeScope, Distribution, Instruction, LaneShare, LevelRole, MAX_AXES, Partitioner,
 };
 
 use super::ByAxis;
@@ -95,12 +95,12 @@ pub struct Space {
     pub(crate) extents: Extents,
     #[cube(comptime)]
     partitioner: Partitioner,
-    /// What runs at the floor, once the levels are exhausted. Stated by the space's terminal
+    /// What runs at the last level, once the levels are exhausted. Stated by the space's terminal
     /// level and read by [`mma_leaf`](crate::mma_leaf); `None` for a space nothing contracts
     /// in (a plain copy), and for one whose accumulator is promoted to a hardware form that
     /// answers for itself.
     #[cube(comptime)]
-    instruction: Option<RegisterKind>,
+    instruction: Option<Instruction>,
 }
 
 // Identity is the comptime tiling spec only; the `Extents` sizes are runtime, never a key.
@@ -188,16 +188,16 @@ impl Space {
         }
     }
 
-    /// State what runs at the floor. Said once, by the routine that owns the contraction;
+    /// State what runs at the last level. Said once, by the routine that owns the contraction;
     /// every space derived from this one ([`divide`](Space::divide),
     /// [`project`](Space::project)) carries it down to the leaf.
-    pub fn with_instruction(mut self, instruction: RegisterKind) -> Self {
+    pub fn with_instruction(mut self, instruction: Instruction) -> Self {
         self.instruction = Some(instruction);
         self
     }
 
-    /// What runs at the floor, if this space states it.
-    pub fn instruction(&self) -> Option<RegisterKind> {
+    /// What runs at the last level, if this space states it.
+    pub fn instruction(&self) -> Option<Instruction> {
         self.instruction
     }
 
@@ -477,7 +477,7 @@ impl Space {
 
     /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
     /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
-    /// there are is what picks a leaf's microkernel, so every site that deduces a 2-D single-`K`
+    /// there are is what picks a leaf's instruction, so every site that deduces a 2-D single-`K`
     /// shape asks here rather than reading an operand's rank.
     pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         Space::merge(operands).contracting(output)

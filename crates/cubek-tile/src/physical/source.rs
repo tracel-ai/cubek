@@ -10,9 +10,9 @@ use cubecl::quant::scheme::QuantScheme;
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, LoadMethod, PhysicalAxis, Projection,
-    QuantTileArgLaunch, RegisterKind, Residence, Space, StageStorage, StorageTiling, TileArgLaunch,
-    TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Instruction, LoadMethod, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
+    validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -328,7 +328,7 @@ impl<R: Runtime> Quantization<R> {
         &self,
         space: &Space,
         vector_size: usize,
-        register_stage: Option<RegisterKind>,
+        register_stage: Option<Instruction>,
     ) {
         cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
         validate_scheme(space, vector_size, self.scheme);
@@ -489,7 +489,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             quant.validate(
                 &space.project(spec.axes()),
                 v,
-                RegisterKind::register_stage(&residence),
+                Instruction::register_stage(&residence),
             );
         }
         Realized {
@@ -649,20 +649,20 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
 /// — a bulk copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the
 /// only site it can honour — but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)),
 /// so a quantized TMA operand is not expressible and the rule has no site to fire at yet.
-pub(crate) fn validate_dequant_at(dequant_at: DequantAt, register_stage: Option<RegisterKind>) {
+pub(crate) fn validate_dequant_at(dequant_at: DequantAt, register_stage: Option<Instruction>) {
     match (dequant_at, register_stage) {
         (DequantAt::Load, _) => {}
         // A memory window is read through the quant-transparent matrix view; so is the
         // manual-mma fragment load, which addresses one element at a time. Only the intrinsic
         // transports are opaque.
-        (DequantAt::Read, None | Some(RegisterKind::Array { .. })) => {}
-        (DequantAt::Read, Some(RegisterKind::Mma { io })) => assert!(
+        (DequantAt::Read, None | Some(Instruction::Registers { .. })) => {}
+        (DequantAt::Read, Some(Instruction::Mma { io })) => assert!(
             matches!(io.lhs_load_method, LoadMethod::Manual)
                 && matches!(io.rhs_load_method, LoadMethod::Manual),
             "DequantAt::Read: the ldmatrix transport copies raw lanes, so it cannot decode as it \
              reads; such an operand must be served by its load (DequantAt::Load)"
         ),
-        (DequantAt::Read, Some(RegisterKind::Cmma)) => panic!(
+        (DequantAt::Read, Some(Instruction::Cmma)) => panic!(
             "DequantAt::Read: a cmma fragment loads at one element type, so it cannot decode as \
              it reads; such an operand must be served by its load (DequantAt::Load)"
         ),

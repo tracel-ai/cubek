@@ -36,7 +36,7 @@ pub struct TileSpec {
     /// Where this operand lives at each level of the kernel's space, coarse to fine. Empty (the
     /// default) is every level [`InPlace`](Residence::InPlace): read where it already is, staging
     /// nothing. Also the operand's format statement: its finest register stage is what it is at
-    /// the instruction ([`RegisterKind::at_instruction`]), and operands that disagree meet the
+    /// the instruction ([`Instruction::at_instruction`]), and operands that disagree meet the
     /// kind-pairing panics there.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
 }

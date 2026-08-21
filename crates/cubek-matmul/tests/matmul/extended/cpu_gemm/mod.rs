@@ -7,7 +7,7 @@ use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     routines::{
         BlueprintStrategy,
-        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy, Instruction, PlaneGrid},
+        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy, InstructionShape, PlaneGrid},
     },
     strategy::Strategy,
 };
@@ -75,7 +75,7 @@ fn mixed_precision_f16_inputs_f32_acc() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -124,7 +124,7 @@ fn very_small_square() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -173,7 +173,7 @@ fn small_square() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -222,7 +222,7 @@ fn rectangular() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -271,7 +271,7 @@ fn single_tile() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -369,7 +369,7 @@ fn transposed_lhs_batched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -418,7 +418,7 @@ fn batched_small() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -467,7 +467,7 @@ fn batched_rectangular() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -504,7 +504,7 @@ fn indivisible_all_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -541,7 +541,7 @@ fn indivisible_rectangular_batched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -670,7 +670,7 @@ fn broadcast_rhs_unbatched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -707,7 +707,7 @@ fn broadcast_lhs_unbatched() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -746,7 +746,7 @@ fn broadcast_two_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -784,7 +784,7 @@ fn batched_two_axes() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
@@ -821,7 +821,7 @@ fn broadcast_indivisible() {
         client,
         problem,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,

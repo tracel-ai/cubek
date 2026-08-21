@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use crate::microkernel::block;
+use crate::instruction::registers::block;
 use crate::*;
 
 /// The contraction nest for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
@@ -32,7 +32,7 @@ pub(super) fn contract<
     #[comptime] space: Space,
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
-    #[comptime] config: MemoryMmaConfig,
+    #[comptime] config: RegisterBlock,
 ) {
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
@@ -70,7 +70,7 @@ pub(super) fn contract<
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
 
-    let unroll_limit = comptime!(config.unroll_limit);
+    // The budget is scalars; `nr` counts `vw`-wide lines, so compare in scalars.
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
@@ -85,7 +85,7 @@ pub(super) fn contract<
         let lhs_check = comptime!(lhs.check);
         let rhs_check = comptime!(rhs.check);
         let acc_check = acc.check();
-        let eligible = comptime!(mr * nr <= unroll_limit);
+        let eligible = comptime!(mr * nr * vw <= config.budget);
         let split_edge =
             comptime!(eligible && config.split_edge && (lhs_check || rhs_check || acc_check));
         if comptime!(split_edge) {

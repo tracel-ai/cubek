@@ -9,7 +9,7 @@ use cubek_tile::{Space, TileArg};
 /// launch-chosen line size along their contiguous `N` axis. Each keeps its own element
 /// type, `EL`/`ER` for the inputs, `E` for the accumulator/output, and the leaf
 /// casts the inputs into `E`, so mixed-precision GEMM falls out of one kernel (same
-/// dtype is the `EL = ER = E` case, where the casts fold away). What runs at the floor is
+/// dtype is the `EL = ER = E` case, where the casts fold away). What runs at the last level is
 /// the space's own statement, so nothing about it is spelled here.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]

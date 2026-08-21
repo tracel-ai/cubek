@@ -8,7 +8,7 @@ use crate::routines::{
         simple_unit::SimpleUnitSelectionArgs,
     },
     cmma::CmmaStrategy,
-    cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid},
+    cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid},
     gemm::GemmStrategy,
 };
 use crate::strategy::Strategy;
@@ -39,7 +39,7 @@ fn cpu_gemm_leaf(
         tag,
         label,
         Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction { m, n, k },
+            instruction: InstructionShape { m, n, k },
             planes: PlaneGrid {
                 m: plane_m,
                 n: plane_n,

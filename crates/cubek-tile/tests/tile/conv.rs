@@ -14,9 +14,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{
-    HostData, HostDataType, MICROKERNEL, TestInput, TestOutcome, ValidationResult,
-};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use cubek_tile::*;
 
@@ -37,12 +35,11 @@ fn conv_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] instruction: RegisterKind,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(instruction)));
+    let mut out = out.tile(space);
     out.zero();
     out.mma(&input, &weight);
 }
@@ -56,12 +53,11 @@ fn conv_kernel_lined<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] instruction: RegisterKind,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(instruction)));
+    let mut out = out.tile(space);
     out.zero();
     out.mma(&input, &weight);
 }
@@ -82,7 +78,7 @@ fn run(
     out_spec: TileSpec,
     space: Space,
     in_v: usize,
-    instruction: RegisterKind,
+    instruction: Instruction,
 ) -> (HostData, Vec<f32>, Vec<f32>) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
@@ -121,8 +117,7 @@ fn run(
             TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
-            space,
-            instruction,
+            space.with_instruction(instruction),
             f32_ty,
         ),
         2 => conv_kernel_lined::launch::<TestRuntime>(
@@ -132,8 +127,7 @@ fn run(
             TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
-            space,
-            instruction,
+            space.with_instruction(instruction),
             f32_ty,
         ),
         other => panic!("conv: no kernel at input width {other}"),
@@ -208,7 +202,7 @@ impl Conv1d {
             checked,
             buffering,
             residence,
-            MICROKERNEL,
+            Instruction::registers(16),
         )
     }
 
@@ -223,7 +217,7 @@ impl Conv1d {
         checked: bool,
         buffering: Buffering,
         residence: &[Residence],
-        instruction: RegisterKind,
+        instruction: Instruction,
     ) {
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
@@ -402,7 +396,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
         TileSpec::direct(&[OH, CO]).checked(true),
         space,
         1,
-        MICROKERNEL,
+        Instruction::registers(16),
     );
 
     // Reference with zero padding:
@@ -481,7 +475,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         TileSpec::direct(&[OH, CO]).checked(true),
         space,
         1,
-        MICROKERNEL,
+        Instruction::registers(16),
     );
 
     // Reference clamping the tap to the input's edge row instead of masking to zero:
@@ -557,7 +551,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         TileSpec::direct(&[OH, CO]).checked(true),
         space,
         1,
-        MICROKERNEL,
+        Instruction::registers(16),
     );
 
     let mut want = vec![0.0f32; oh * co];
@@ -626,8 +620,8 @@ fn conv1d_vectorized_input_fanout() {
         false,
         Buffering::SINGLE,
         &[],
-        RegisterKind::Array {
-            config: MemoryMmaConfig::new(16, false, true),
+        Instruction::Registers {
+            config: RegisterBlock::new(16, false, true),
         },
     );
 }
@@ -774,8 +768,10 @@ impl Conv1d {
             in_arg.arg(),
             w_arg.arg(),
             out_arg.arg(),
-            launch.space().clone(),
-            MICROKERNEL,
+            launch
+                .space()
+                .clone()
+                .with_instruction(Instruction::registers(16)),
             f32_ty,
         );
 
@@ -920,7 +916,7 @@ fn conv_kernel_dynamic<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut out = out.tile(space);
     out.zero();
     out.mma(&input, &weight);
 }
@@ -987,7 +983,7 @@ impl Conv1d {
             ),
             self.stride as u32,
             self.dilation as u32,
-            space,
+            space.with_instruction(Instruction::registers(16)),
             f32_ty,
         );
 
@@ -1053,7 +1049,7 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut out = out.tile(space);
     out.zero();
     out.mma(&input, &weight);
 }
@@ -1079,7 +1075,7 @@ fn conv_kernel_all_dynamic<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut out = out.tile(space);
     out.zero();
     out.mma(&input, &weight);
 }
@@ -1200,7 +1196,7 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                space,
+                space.with_instruction(Instruction::registers(16)),
                 f32_ty,
             );
         } else {
@@ -1215,7 +1211,7 @@ impl Conv1d {
                     TileSpec::direct(&[OH, CO]).checked(true),
                 ),
                 offset,
-                space,
+                space.with_instruction(Instruction::registers(16)),
                 f32_ty,
             );
         }
@@ -1396,7 +1392,7 @@ impl Conv2d {
             TileSpec::direct(&[OH, OW, CO]),
             space,
             1,
-            MICROKERNEL,
+            Instruction::registers(16),
         );
 
         let want = self.reference(&input, &weight);
@@ -1931,12 +1927,11 @@ fn conv_mma_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] instruction: RegisterKind,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(instruction)));
+    let mut out = out.tile(space);
     let mut acc = out.promote(&input);
     acc.zero();
     acc.mma(&input, &weight);
@@ -1970,7 +1965,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (oh, co, rh, ci) = (8usize, 8usize, 2usize, 4usize);
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
-    let instruction = RegisterKind::Mma { io };
+    let instruction = Instruction::Mma { io };
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
@@ -2021,8 +2016,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[OH, CO]),
         ),
-        space,
-        instruction,
+        space.with_instruction(instruction),
         f32_ty,
     );
 
@@ -2144,7 +2138,7 @@ impl Resize1d {
             TileSpec::direct(&[OH, CO]).checked(true),
             self.space_with_buffering(oh_edges, buffering),
             vector_size,
-            MICROKERNEL,
+            Instruction::registers(16),
         );
 
         let want = self.reference(&input, &weight);
@@ -2293,7 +2287,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut out = out.tile(space);
     out.zero();
     out.mma(&input, &weight);
 }
@@ -2362,7 +2356,7 @@ fn resize1d_rational_dynamic() {
         ),
         resize.divisor as u32,
         resize.offset as i32,
-        space,
+        space.with_instruction(Instruction::registers(16)),
         f32_ty,
     );
 

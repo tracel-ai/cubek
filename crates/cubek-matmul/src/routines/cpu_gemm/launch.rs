@@ -3,7 +3,7 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, MemoryMmaConfig, RegisterKind, StorageTiling, Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, StorageTiling, Tiling, WalkOrder,
 };
 
 use crate::{
@@ -161,19 +161,27 @@ pub fn launch_ref<R: Runtime>(
     // plane split (the parallel worker threads). Batch axes ride one-per-cube on Z then iterate
     // sequentially; K is contracted sequentially in both leaves. Every operand is read where it
     // already is, so no level states a stage.
-    let (space, ops) = Tiling::over(MatmulOperands::new(dtypes), &extents)
+    let mut ops = MatmulOperands::new(dtypes);
+    let space = Tiling::over(&mut ops, &extents)
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, cube_m))
                 .axis(N, Cut::cube(CubeAxis::Y, cube_n))
                 .axis(K, Cut::sequential(k));
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axes(&batch_axes, Cut::sequential(1))
-                .axis(M, Cut::plane(leaf.m))
-                .axis(N, Cut::plane(leaf.n))
-                .axis(K, Cut::sequential(leaf.k));
-        })
+        // A CPU backend: a wide scalar register budget to unroll against, the dual-path edge
+        // specialization, and a flat scalar K-walk (no lanes to fan out over).
+        .instruction(
+            Instruction::Registers {
+                config: RegisterBlock::new(256, true, false),
+            },
+            |l, _| {
+                l.axes(&batch_axes, Cut::sequential(1))
+                    .axis(M, Cut::plane(leaf.m))
+                    .axis(N, Cut::plane(leaf.n))
+                    .axis(K, Cut::sequential(leaf.k));
+            },
+        )
         .build();
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
@@ -186,13 +194,6 @@ pub fn launch_ref<R: Runtime>(
     // inner extents and the `N` leaf edge.
     let rhs = rhs.into_data();
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], sz);
-    // A CPU backend: a wide scalar budget to unroll against, the dual-path edge specialization,
-    // and a flat scalar K-walk (no lanes to fan out over). Stated on the space's floor, where
-    // `mma_leaf` reads it. It waits until here because the unroll budget is sized from the line
-    // width, which the launcher only settles once the space exists.
-    let instruction = RegisterKind::Array {
-        config: MemoryMmaConfig::new(256 / v, true, false),
-    };
 
     // Bind each operand to its binding: the subspace comes off the operand, the batch list and
     // storage tiling are per-binding launch facts. All operands get the full output batch-axis
@@ -226,7 +227,7 @@ pub fn launch_ref<R: Runtime>(
         a.arg(),
         b.arg(),
         c.arg(),
-        launch.space().clone().with_instruction(instruction),
+        launch.space().clone(),
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,

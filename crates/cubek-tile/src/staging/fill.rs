@@ -511,15 +511,15 @@ mod tests {
     #[test]
     fn a_plane_stage_cannot_share_a_slot_with_smem() {
         assert!(!compatible_slot_residences(&[
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register(Instruction::Cmma),
             Residence::Smem,
         ]));
         assert!(!compatible_slot_residences(&[
             Residence::Smem,
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register(Instruction::Cmma),
         ]));
         assert!(compatible_slot_residences(&[
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register(Instruction::Cmma),
             Residence::InPlace,
         ]));
     }
@@ -533,11 +533,7 @@ mod tests {
         SlotPlan::new(
             &[
                 operand(Residence::Smem, Delivery::Procedural, &lhs),
-                operand(
-                    Residence::Register(RegisterKind::Cmma),
-                    Delivery::Copy,
-                    &rhs,
-                ),
+                operand(Residence::Register(Instruction::Cmma), Delivery::Copy, &rhs),
             ],
             &space,
         );
@@ -550,11 +546,7 @@ mod tests {
         SlotPlan::new(
             &[
                 operand(Residence::Smem, Delivery::Copy, &lhs),
-                operand(
-                    Residence::Register(RegisterKind::Cmma),
-                    Delivery::Copy,
-                    &rhs,
-                ),
+                operand(Residence::Register(Instruction::Cmma), Delivery::Copy, &rhs),
             ],
             &space,
         );
@@ -571,7 +563,7 @@ mod tests {
         ]));
         assert!(!slot_admits_operands(&[fragment(Residence::Smem, &lhs)]));
         assert!(!slot_admits_operands(&[fragment(
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register(Instruction::Cmma),
             &lhs
         )]));
     }
@@ -633,7 +625,7 @@ mod tests {
 
         let staged = SlotPlan::new(
             &[operand(
-                Residence::Register(RegisterKind::Cmma),
+                Residence::Register(Instruction::Cmma),
                 Delivery::Copy,
                 &lhs,
             )],

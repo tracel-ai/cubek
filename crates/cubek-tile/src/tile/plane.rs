@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::*;
 
-/// One plane-level tile, by encoding. The [`RegisterKind`] picks which.
+/// One plane-level tile, by encoding. The [`Instruction`] picks which.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum PlaneTile<T: Numeric> {
@@ -30,7 +30,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// An accumulator tile over the whole `m × n` MMA tile, uninitialized, in the `form` the
     /// instruction contracts through.
     pub(crate) fn acc(
-        #[comptime] form: RegisterKind,
+        #[comptime] form: Instruction,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
@@ -38,15 +38,15 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] lane_share: LaneShare,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            RegisterKind::Cmma => {
+            Instruction::Cmma => {
                 PlaneTile::new_Cmma(CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k))
             }
-            RegisterKind::Mma { io } => {
+            Instruction::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             // `vector_size` is the promoting tile's, so the block's lines match the memory it
             // will drain into; the hardware encodings above have no say in their layout.
-            RegisterKind::Array { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
+            Instruction::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
                 vector_size,
@@ -59,15 +59,15 @@ impl<T: Numeric> PlaneTile<T> {
     /// An operand tile in role `ident`, uninitialized. `k` is the operand's own contraction
     /// depth, not the instruction's.
     pub(crate) fn operand(
-        #[comptime] form: RegisterKind,
+        #[comptime] form: Instruction,
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            RegisterKind::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
-            RegisterKind::Mma { io } => match comptime!(ident) {
+            Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
+            Instruction::Mma { io } => match comptime!(ident) {
                 MatrixIdent::A => {
                     PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, MatrixLayout::RowMajor, io))
                 }
@@ -78,7 +78,7 @@ impl<T: Numeric> PlaneTile<T> {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
             },
-            RegisterKind::Array { .. } => {
+            Instruction::Registers { .. } => {
                 panic!("PlaneTile::operand: the software form stages no operand plane tile")
             }
         }
@@ -192,7 +192,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// tiles uninitialized. `promote` is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
-        #[comptime] form: RegisterKind,
+        #[comptime] form: Instruction,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
@@ -230,7 +230,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// stated; [`copy_from`](Tile::copy_from) fills it.
     pub(crate) fn store(
         #[comptime] window: Space,
-        #[comptime] form: RegisterKind,
+        #[comptime] form: Instruction,
         #[comptime] out: Space,
     ) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));

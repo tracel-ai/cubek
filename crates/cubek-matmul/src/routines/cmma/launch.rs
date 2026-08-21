@@ -5,7 +5,7 @@ use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Launcher, Operand, RegisterKind, Residence, Space, Strided,
+    Axis, Buffering, CubeAxis, Cut, Instruction, Launcher, Operand, Residence, Space, Strided,
     Tiling, Tma, TmaTileArgLaunch, WalkOrder,
 };
 
@@ -154,7 +154,8 @@ fn tile_space(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    Tiling::over(MatmulOperands::new(dtypes), &extents)
+    let mut ops = MatmulOperands::new(dtypes);
+    let space = Tiling::over(&mut ops, &extents)
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, stage_m))
@@ -174,16 +175,17 @@ fn tile_space(
                 .axis(M, Cut::sequential(c.m * i.m))
                 .axis(N, Cut::sequential(c.n * i.n))
                 .axis(K, Cut::sequential(i.k));
-            o.a.stage(Residence::Register(RegisterKind::Cmma));
-            o.b.stage(Residence::Register(RegisterKind::Cmma));
+            o.a.stage(Residence::Register(Instruction::Cmma));
+            o.b.stage(Residence::Register(Instruction::Cmma));
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .instruction(Instruction::Cmma, |l, _| {
             l.axes(&batch_axes, Cut::sequential(1))
                 .axis(M, Cut::sequential(i.m))
                 .axis(N, Cut::sequential(i.n))
                 .axis(K, Cut::sequential(i.k));
         })
-        .build()
+        .build();
+    (space, ops)
 }
 
 /// The one entry for both deliveries: the shared geometry (space, launcher, out arg) is

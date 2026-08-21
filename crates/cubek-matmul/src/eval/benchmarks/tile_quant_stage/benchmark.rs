@@ -15,9 +15,9 @@ use super::problem::TileQuantStageProblem;
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
 /// fan-out. Bound on the accumulator at the kernel top so the numbers measure the staging, not
-/// the microkernel.
-const MICROKERNEL: RegisterKind = RegisterKind::Array {
-    config: MemoryMmaConfig::new(64, false, false),
+/// the instruction.
+const INSTRUCTION: Instruction = Instruction::Registers {
+    config: RegisterBlock::new(64, false, false),
 };
 use super::strategy::StageDepth;
 
@@ -38,7 +38,7 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -110,12 +110,12 @@ impl TileQuantStageBench {
         let un = self.pack;
         let tn = lanes * un;
         let f32t = f32::elem_type_native();
-        let operands = (
+        let mut operands = (
             Operand::new(&[M, K], f32t),
             Operand::new(&[K, N], f32t),
             Operand::new(&[M, N], f32t),
         );
-        Tiling::over(operands, &[(M, self.m), (N, self.n), (K, self.k)])
+        let space = Tiling::over(&mut operands, &[(M, self.m), (N, self.n), (K, self.k)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::cube(CubeAxis::X, tn))
@@ -128,7 +128,8 @@ impl TileQuantStageBench {
                     .axis(N, Cut::unit(un))
                     .axis(K, Cut::sequential(self.tk));
             })
-            .build()
+            .build();
+        (space, operands)
     }
 }
 
@@ -162,7 +163,7 @@ impl Benchmark for TileQuantStageBench {
             .vectorize(self.pack)
             .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
             .build();
-        // The register microkernel lines the accumulator at the RHS's served width.
+        // The register instruction lines the accumulator at the RHS's served width.
         let c = launcher
             .bind(&ops.2, c.handle().binding())
             .vectorize(self.pack)
@@ -178,7 +179,7 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.arg(),
             c.arg(),
-            launcher.space().clone(),
+            launcher.space().clone().with_instruction(INSTRUCTION),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

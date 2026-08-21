@@ -7,14 +7,14 @@ use super::direct;
 use super::gather;
 use crate::*;
 
-/// Run the register microkernel over each batch matrix, reading operands through the
+/// Run the register instruction over each batch matrix, reading operands through the
 /// quant-transparent [`matrix_transparent`](Tile::matrix_transparent): a plain operand is a bare
 /// matrix read, a quantized one dequantizes per read (no dequantize-into-`f32` fill). Either
 /// operand may be the quantized one (the gemv weight is the RHS, an activation-times-weight the
 /// LHS), so this dispatches each operand's storage element/packing (`0` plain, `1` native i8, `>1`
 /// packed u32). Both quantized at once is not a real workload and is refused.
 ///
-/// The 2-D microkernel reads each operand as a batch matrix, which is only a description of it
+/// The 2-D instruction reads each operand as a batch matrix, which is only a description of it
 /// when one axis is contracted *and* a logical coordinate is a physical one. Either condition
 /// failing takes the N-D nest ([`gather::contract`](super::gather::contract)); they are independent, so a stencil
 /// contracting a single axis is a gather just as much as a two-axis reduce is.
@@ -24,13 +24,13 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] config: MemoryMmaConfig,
+    #[comptime] config: RegisterBlock,
 ) {
     let size!(L) = lhs.vector_size();
     let size!(V) = rhs.vector_size();
 
     // Each operand's storage element is `i8` native / `u32` packed / the served element when plain;
-    // its pack factor narrows the physical line, derived in the microkernel. `quant_pack` is `0`
+    // its pack factor narrows the physical line, derived in the instruction. `quant_pack` is `0`
     // plain / `1` native / `>1` the packed-u32 factor. At most one operand is quantized (the gemv
     // weight is the RHS, an activation·weight the LHS); both at once is refused.
     let pack_l = lhs.quant_pack();

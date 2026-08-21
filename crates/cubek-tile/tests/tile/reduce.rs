@@ -11,7 +11,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{HostData, HostDataType, MICROKERNEL, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 use cubek_tile::*;
 
@@ -166,12 +166,11 @@ fn run(
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K, Cut::sequential(k))
         })
-        .instruction(MICROKERNEL)
         .build();
     run(
         shape![m, k],
@@ -188,13 +187,12 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
     let space = Tiling::new()
         .extents(&[(B, b), (M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(B, Cut::sequential(1))
                 .axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K, Cut::sequential(k))
         })
-        .instruction(MICROKERNEL)
         .build();
     run(
         shape![b, m, k],
@@ -232,13 +230,12 @@ fn split_k_whole_reduce_at_leaf() {
 
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K1, k1), (K2, k2)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K1, Cut::sequential(k1))
                 .axis(K2, Cut::sequential(k2))
         })
-        .instruction(MICROKERNEL)
         .build();
 
     let got = run(
@@ -262,13 +259,12 @@ fn split_k_major_half_walked() {
 
     let space = Tiling::new()
         .extents(&[(M, m), (N, n), (K1, k1), (K2, k2)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K1, Cut::sequential(1))
                 .axis(K2, Cut::sequential(k2))
         })
-        .instruction(MICROKERNEL)
         .build();
 
     let got = run(
@@ -292,14 +288,13 @@ fn split_k_with_a_batch_axis() {
 
     let space = Tiling::new()
         .extents(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(B, Cut::sequential(1))
                 .axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K1, Cut::sequential(k1))
                 .axis(K2, Cut::sequential(k2))
         })
-        .instruction(MICROKERNEL)
         .build();
 
     let got = run(

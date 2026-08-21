@@ -8,7 +8,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{microkernel::horizontal, *};
+use crate::{instruction::registers::horizontal, *};
 
 #[cube]
 impl<EA: Float> Tile<EA> {

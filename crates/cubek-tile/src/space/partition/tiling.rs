@@ -5,7 +5,7 @@
 //! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
 //! closure, so an operand states where it lives at the level that cuts it.
 
-use crate::{Axis, ByAxis, RegisterKind, Space};
+use crate::{Axis, ByAxis, Instruction, Space};
 
 use super::{Buffering, CubeAxis, Distribution, OperandSet, Partitioner, WalkOrder};
 
@@ -76,7 +76,10 @@ impl Tiling {
     /// declared ([`Operand::stage`](crate::Operand::stage)); a level that states nothing for an
     /// operand leaves it in place. [`build`](OperandTiling::build) returns the space and the
     /// operands, sealed.
-    pub fn over<O: OperandSet>(operands: O, extents: &[(Axis, usize)]) -> OperandTiling<O> {
+    pub fn over<'o, O: OperandSet>(
+        operands: &'o mut O,
+        extents: &[(Axis, usize)],
+    ) -> OperandTiling<'o, O> {
         OperandTiling {
             tiling: Tiling::new().extents(extents),
             operands,
@@ -85,12 +88,12 @@ impl Tiling {
 }
 
 /// [`LeveledTiling`] threading an [`OperandSet`] through its level closures.
-pub struct OperandTiling<O> {
+pub struct OperandTiling<'o, O> {
     tiling: LeveledTiling,
-    operands: O,
+    operands: &'o mut O,
 }
 
-impl<O: OperandSet> OperandTiling<O> {
+impl<O: OperandSet> OperandTiling<'_, O> {
     /// Add a decomposition level (coarse to fine): `f` hangs the per-axis [`Cut`]s off the
     /// collector and states, per operand it materializes, where it lives here
     /// ([`Operand::stage`](crate::Operand::stage)).
@@ -102,7 +105,7 @@ impl<O: OperandSet> OperandTiling<O> {
     ) -> Self {
         let mut cuts = LevelCuts { cuts: Vec::new() };
         let index = self.tiling.levels.len();
-        f(&mut cuts, &mut self.operands);
+        f(&mut cuts, self.operands);
         for operand in self.operands.each() {
             operand.close_level(index);
         }
@@ -110,21 +113,25 @@ impl<O: OperandSet> OperandTiling<O> {
         self
     }
 
-    /// State what runs at the floor, once the levels are exhausted. Said after the last
-    /// level because that is where it acts: it consumes whatever staging left and moves
-    /// nothing itself. A space nothing contracts in leaves it unsaid.
-    pub fn instruction(mut self, instruction: RegisterKind) -> Self {
-        self.tiling = self.tiling.instruction(instruction);
-        self
+    /// The last level, and what runs on the cells it cuts out. Walk order and buffering are
+    /// fixed: one cell has nothing below it to double-buffer and no siblings to order. A space
+    /// nothing contracts in ends with [`level`](Self::level) instead and states no instruction.
+    pub fn instruction(
+        mut self,
+        instruction: Instruction,
+        f: impl FnOnce(&mut LevelCuts, &mut O),
+    ) -> Self {
+        self.tiling = self.tiling.state_instruction(instruction);
+        self.level(WalkOrder::RowMajor, Buffering::SINGLE, f)
     }
 
-    /// Build the [`Space`] and hand the operands back, sealed: one residence per level, and
-    /// every later [`stage`](crate::Operand::stage) panics.
-    pub fn build(mut self) -> (Space, O) {
+    /// Build the [`Space`]. The operands are the caller's own and stay theirs; this seals them,
+    /// so one residence per level stands and every later [`stage`](crate::Operand::stage) panics.
+    pub fn build(self) -> Space {
         for operand in self.operands.each() {
             operand.seal();
         }
-        (self.tiling.build(), self.operands)
+        self.tiling.build()
     }
 }
 
@@ -140,7 +147,7 @@ impl Default for Tiling {
 pub struct LeveledTiling {
     extents: Vec<(Axis, usize)>,
     levels: Vec<LevelSpec>,
-    instruction: Option<RegisterKind>,
+    instruction: Option<Instruction>,
 }
 
 impl LeveledTiling {
@@ -182,11 +189,22 @@ impl LeveledTiling {
         });
     }
 
-    /// State what runs at the floor. See [`OperandTiling::instruction`].
-    pub fn instruction(mut self, instruction: RegisterKind) -> Self {
+    /// The last level, and what runs on the cells it cuts out. See
+    /// [`OperandTiling::instruction`].
+    pub fn instruction(
+        self,
+        instruction: Instruction,
+        cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
+    ) -> Self {
+        self.state_instruction(instruction)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, cuts)
+    }
+
+    /// Record what runs at the last level, without adding one.
+    fn state_instruction(mut self, instruction: Instruction) -> Self {
         assert!(
             self.instruction.is_none(),
-            "LeveledTiling::instruction: the floor is stated once, already {:?}",
+            "Tiling::instruction: stated once, already {:?}",
             self.instruction
         );
         self.instruction = Some(instruction);

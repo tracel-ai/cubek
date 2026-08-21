@@ -29,7 +29,7 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `lhs` is the operand this accumulator will contract against, and its ladder states the
     /// register form the accumulator takes: a staged cmma or manual-mma operand meets a
     /// matching fragment. A ladder staging no register form leaves the instruction open (memory
-    /// windows serve the software microkernel and both hardware mmas alike), so the space's
+    /// windows serve the software instruction and both hardware mmas alike), so the space's
     /// floor decides ([`Space::instruction`]). `lhs` also sizes the
     /// fragment: a hardware fragment is the whole `m × n × k` instruction, and an accumulator
     /// spans only `m × n`, so the contraction depth has to come from a side that has it. The

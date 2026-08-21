@@ -192,7 +192,7 @@ impl<T: Numeric> Tile<T> {
         // `QuantTileArgLaunch` reaches here without passing through it.
         comptime!(validate_dequant_at(
             dequant_at,
-            RegisterKind::register_stage(&spec.residence)
+            Instruction::register_stage(&spec.residence)
         ));
         comptime!(cubecl::std::quant::check_table_bindings(
             &scheme,

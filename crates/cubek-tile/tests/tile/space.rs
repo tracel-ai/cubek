@@ -4,12 +4,12 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_tile::{
-    Axis, Buffering, ByAxis, Cut, Distribution, MemoryMmaConfig, Operand, OperandSet, Partitioner,
-    RegisterKind, Residence, Space, Stage, Tiling, WalkOrder,
+    Axis, Buffering, ByAxis, Cut, Distribution, Instruction, Operand, OperandSet, Partitioner,
+    RegisterBlock, Residence, Space, Stage, Tiling, WalkOrder,
 };
 
 /// The register-array stage the ladder tests state; its config is inert bookkeeping here.
-const ARRAY: MemoryMmaConfig = MemoryMmaConfig::new(16, false, false);
+const ARRAY: RegisterBlock = RegisterBlock::new(16, false, false);
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -258,7 +258,8 @@ fn over_builds_the_space_plain_tiling_would() {
         })
         .build();
 
-    let (space, _) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = matmul_operands();
+    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(32))
@@ -283,7 +284,8 @@ fn over_builds_the_space_plain_tiling_would() {
 #[test]
 fn over_seals_stages_and_omission_is_in_place() {
     let f32t = f32::elem_type_native();
-    let (_, ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = matmul_operands();
+    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
@@ -295,8 +297,9 @@ fn over_seals_stages_and_omission_is_in_place() {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.out
-                .stage(Residence::Register(RegisterKind::Array { config: ARRAY }));
+            o.out.stage(Residence::Register(Instruction::Registers {
+                config: ARRAY,
+            }));
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(4))
@@ -319,7 +322,7 @@ fn over_seals_stages_and_omission_is_in_place() {
         &[
             stage(Residence::InPlace, f32t),
             stage(
-                Residence::Register(RegisterKind::Array { config: ARRAY }),
+                Residence::Register(Instruction::Registers { config: ARRAY }),
                 f32t
             ),
             stage(Residence::InPlace, f32t),
@@ -339,7 +342,8 @@ fn over_type_column_moves_then_converts() {
         b: Operand::new(&[K, N], q4).quantized(QuantScheme::default()),
         out: Operand::new(&[M, N], f32t),
     };
-    let (_, ops) = Tiling::over(ops, &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = ops;
+    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
@@ -351,7 +355,7 @@ fn over_type_column_moves_then_converts() {
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
             o.b.stage_as(
-                Residence::Register(RegisterKind::Array { config: ARRAY }),
+                Residence::Register(Instruction::Registers { config: ARRAY }),
                 f32t,
             );
         })
@@ -368,7 +372,7 @@ fn over_type_column_moves_then_converts() {
         &[
             stage(Residence::Smem, q4), // move: packed words
             stage(
-                Residence::Register(RegisterKind::Array { config: ARRAY }),
+                Residence::Register(Instruction::Registers { config: ARRAY }),
                 f32t
             ), // the conversion, right here
             stage(Residence::InPlace, f32t),
@@ -383,7 +387,8 @@ fn over_type_column_moves_then_converts() {
 #[test]
 #[should_panic(expected = "use stage")]
 fn over_stage_as_same_type_panics() {
-    let _ = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = matmul_operands();
+    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
@@ -397,13 +402,16 @@ fn over_stage_as_same_type_panics() {
 #[test]
 #[should_panic(expected = "more than one stage")]
 fn over_double_statement_at_one_level_panics() {
-    let _ = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = matmul_operands();
+    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
                 .axis(K, Cut::sequential(16));
             o.a.stage(Residence::Smem);
-            o.a.stage(Residence::Register(RegisterKind::Array { config: ARRAY }));
+            o.a.stage(Residence::Register(Instruction::Registers {
+                config: ARRAY,
+            }));
         })
         .build();
 }
@@ -414,7 +422,8 @@ fn over_double_statement_at_one_level_panics() {
 /// instruction consumes it.
 #[test]
 fn over_ladder_derives_residences_and_register_stage() {
-    let (_, ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = matmul_operands();
+    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
@@ -425,19 +434,19 @@ fn over_ladder_derives_residences_and_register_stage() {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.a.stage(Residence::Register(RegisterKind::Cmma));
+            o.a.stage(Residence::Register(Instruction::Cmma));
         })
         .build();
 
     assert_eq!(
         ops.a.residences(),
-        &[Residence::Smem, Residence::Register(RegisterKind::Cmma),]
+        &[Residence::Smem, Residence::Register(Instruction::Cmma),]
     );
     assert_eq!(
-        RegisterKind::register_stage(&ops.a.residences()),
-        Some(RegisterKind::Cmma)
+        Instruction::register_stage(&ops.a.residences()),
+        Some(Instruction::Cmma)
     );
-    assert_eq!(RegisterKind::register_stage(&ops.b.residences()), None);
+    assert_eq!(Instruction::register_stage(&ops.b.residences()), None);
 }
 
 /// The build seals its operands: a stage stated afterwards would describe a level that does
@@ -445,7 +454,8 @@ fn over_ladder_derives_residences_and_register_stage() {
 #[test]
 #[should_panic(expected = "after the space was built")]
 fn over_staging_after_build_panics() {
-    let (_, mut ops) = Tiling::over(matmul_operands(), &[(M, 64), (N, 64), (K, 16)])
+    let mut ops = matmul_operands();
+    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))

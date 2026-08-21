@@ -27,11 +27,13 @@ use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 
 use crate::definition::MatmulElems;
 use crate::routines::BlueprintStrategy;
-use crate::routines::cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref};
+use crate::routines::cpu_gemm::{
+    CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
+};
 
-/// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` microkernel (no
+/// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` instruction (no
 /// spill), so the only variable across a `strided_pN`/`tiled_pN` pair is the storage packing.
-const LEAF: Instruction = Instruction { m: 2, n: 32, k: 64 };
+const LEAF: InstructionShape = InstructionShape { m: 2, n: 32, k: 64 };
 
 /// Storage-tile edge for the packed variants: square `64 × 64` blocks (16 KiB in f32, L1-resident)
 /// that divide every benchmarked shape. A sweep of 16²→256² was flat, so one representative edge is

@@ -306,11 +306,11 @@ fn cmma_partition_1x1_f32() {
     use cubek_matmul::routines::cmma::CmmaDelivery;
     use cubek_matmul::routines::{
         cmma::{CmmaBlueprint, Partition},
-        cpu_gemm::{Instruction, PlaneGrid},
+        cpu_gemm::{InstructionShape, PlaneGrid},
     };
 
     let blueprint = CmmaBlueprint {
-        instruction: Instruction { m: 8, n: 8, k: 8 },
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 1 },
         planes: PlaneGrid { m: 2, n: 1 },
         stage_k: 48,
@@ -356,13 +356,13 @@ fn cmma_tma_rejects_oversized_box() {
     use cubek_matmul::routines::{
         DeviceSettings,
         cmma::{CmmaBlueprint, CmmaRoutine, Partition},
-        cpu_gemm::{Instruction, PlaneGrid},
+        cpu_gemm::{InstructionShape, PlaneGrid},
     };
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.
     let blueprint = CmmaBlueprint {
-        instruction: Instruction {
+        instruction: InstructionShape {
             m: 16,
             n: 16,
             k: 16,

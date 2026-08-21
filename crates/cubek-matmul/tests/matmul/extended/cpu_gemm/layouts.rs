@@ -9,7 +9,7 @@ use cubecl::{
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
 use cubek_matmul::routines::BlueprintStrategy;
 use cubek_matmul::routines::cpu_gemm::{
-    CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref,
+    CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
@@ -244,7 +244,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
             levels: out.layout.levels(),
         },
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
-            instruction: Instruction {
+            instruction: InstructionShape {
                 m: tile,
                 n: tile,
                 k: tile,

@@ -130,12 +130,12 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
     use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, problems};
     use cubek_matmul::routines::BlueprintStrategy;
     use cubek_matmul::routines::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::routines::cpu_gemm::{Instruction, PlaneGrid};
+    use cubek_matmul::routines::cpu_gemm::{InstructionShape, PlaneGrid};
     use cubek_test_utils::Correctness;
 
     let problem: GemmProblem = lookup(problems(), "rect_1x512x512x512_rr_f16");
     let forced = Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-        instruction: Instruction { m: 8, n: 8, k: 8 },
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
@@ -165,7 +165,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     use cubek_matmul::eval::benchmarks::gemm::{bench, problems};
     use cubek_matmul::routines::BlueprintStrategy;
     use cubek_matmul::routines::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::routines::cpu_gemm::{Instruction, PlaneGrid};
+    use cubek_matmul::routines::cpu_gemm::{InstructionShape, PlaneGrid};
     use cubek_std::MatrixLayout;
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
@@ -173,7 +173,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     // The tile DSL forced to the legacy selector's point: 8x8x8 instruction, each plane
     // 1x4 tiles, 4x1 planes (128 units), stage 32x32, stage_k 32.
     let dsl_at_legacy_point = Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-        instruction: Instruction { m: 8, n: 8, k: 8 },
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
@@ -241,7 +241,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     // byte-bound, so fewer/deeper stages should shrink it at unchanged compute.
     let thin_deep = |stage_k: usize| {
         Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-            instruction: Instruction { m: 8, n: 8, k: 8 },
+            instruction: InstructionShape { m: 8, n: 8, k: 8 },
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,

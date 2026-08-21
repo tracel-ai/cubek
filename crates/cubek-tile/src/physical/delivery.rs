@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{MAX_LEVELS, MemoryMmaConfig, MmaIOConfig, Space, Sync, Tile, TileArg, TmaTileArg};
+use crate::{MAX_LEVELS, MmaIOConfig, RegisterBlock, Space, Sync, Tile, TileArg, TmaTileArg};
 
 /// How an operand reaches a stage: a buffered cooperative copy, coordinate-backed cooperative
 /// materialization, or a TMA hardware bulk copy. Read off a tile via
@@ -90,10 +90,10 @@ pub enum Residence {
     Smem,
     /// Plane-private register tiles in the stated encoding, selected by comptime coordinate (so
     /// the level's walk unrolls).
-    Register(RegisterKind),
+    Register(Instruction),
 }
 
-/// The encoding of a register-resident tile: the software microkernel's register array (whose
+/// The encoding of a register-resident tile: the software instruction's register array (whose
 /// execution `config` rides along, being the one instruction fact no stage placement implies),
 /// or a matrix fragment in one of the two hardware forms. `io` rides the manual form because it
 /// comes from a device query, which cannot run in-kernel.
@@ -103,16 +103,25 @@ pub enum Residence {
 /// for takes the blueprint's statement at the kernel top
 /// ([`Tile::instruction`](crate::Tile::instruction)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum RegisterKind {
-    Array { config: MemoryMmaConfig },
+pub enum Instruction {
+    Registers { config: RegisterBlock },
     Cmma,
     Mma { io: MmaIOConfig },
 }
 
-impl RegisterKind {
+impl Instruction {
+    /// The compiler-emitted contraction under a scalar register budget, with neither edge
+    /// specialization nor lane fan-out. The shape most callers want; state a
+    /// [`RegisterBlock`] directly to turn either on.
+    pub const fn registers(budget: usize) -> Self {
+        Instruction::Registers {
+            config: RegisterBlock::new(budget, false, false),
+        }
+    }
+
     /// The finest register stage a ladder states: what such an operand is at the instruction.
     /// `None` is a memory window, read where it lies by whichever instruction consumes it.
-    pub fn register_stage(stages: &[Residence]) -> Option<RegisterKind> {
+    pub fn register_stage(stages: &[Residence]) -> Option<Instruction> {
         stages.iter().rev().find_map(|residence| match residence {
             Residence::Register(kind) => Some(*kind),
             Residence::InPlace | Residence::Smem => None,
@@ -125,9 +134,9 @@ impl StageStorage {
     /// transaction, so tile its stages. Anything else keeps plain strided rows, the manual-mma
     /// form included: it addresses each element by computed offset, so contiguity buys it nothing.
     pub fn for_stages(stages: &[Residence]) -> Self {
-        match RegisterKind::register_stage(stages) {
-            Some(RegisterKind::Cmma) => StageStorage::Tiled,
-            Some(RegisterKind::Array { .. }) | Some(RegisterKind::Mma { .. }) | None => {
+        match Instruction::register_stage(stages) {
+            Some(Instruction::Cmma) => StageStorage::Tiled,
+            Some(Instruction::Registers { .. }) | Some(Instruction::Mma { .. }) | None => {
                 StageStorage::Strided
             }
         }
@@ -174,9 +183,9 @@ impl StagePlan {
     }
 
     /// The finest register stage still ahead of this operand: what it is at the instruction
-    /// ([`RegisterKind::register_stage`]); `None` is a memory window.
-    pub fn register_stage(&self) -> Option<RegisterKind> {
-        RegisterKind::register_stage(&self.residence)
+    /// ([`Instruction::register_stage`]); `None` is a memory window.
+    pub fn register_stage(&self) -> Option<Instruction> {
+        Instruction::register_stage(&self.residence)
     }
 
     /// This level's residence. An exhausted plan answers [`InPlace`](Residence::InPlace).
@@ -258,7 +267,7 @@ mod tests {
             &[
                 Residence::Smem,
                 Residence::InPlace,
-                Residence::Register(RegisterKind::Cmma),
+                Residence::Register(Instruction::Cmma),
             ],
             StageStorage::Strided,
             0,
@@ -267,7 +276,7 @@ mod tests {
         assert_eq!(plan.descend().head(), Residence::InPlace);
         assert_eq!(
             plan.descend().descend().head(),
-            Residence::Register(RegisterKind::Cmma)
+            Residence::Register(Instruction::Cmma)
         );
     }
 

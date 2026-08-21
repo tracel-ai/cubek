@@ -3,7 +3,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::microkernel::block;
+use crate::instruction::registers::block;
 use crate::*;
 
 /// N-D variant of [`direct::contract`](super::direct::contract) for operations with
@@ -32,7 +32,7 @@ pub(super) fn contract<
     #[comptime] space: Space,
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
-    #[comptime] config: MemoryMmaConfig,
+    #[comptime] config: RegisterBlock,
 ) {
     let lw = lhs.vector_size();
     let vw = rhs.vector_size();
@@ -80,7 +80,6 @@ pub(super) fn contract<
     let k_lines = comptime!(kc / lw);
     let k_tail = comptime!(kc % lw);
 
-    let unroll_limit = comptime!(config.unroll_limit);
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
@@ -97,7 +96,8 @@ pub(super) fn contract<
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
-        let unroll = comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
+        let unroll =
+            comptime!(mr * nr * vw <= config.budget && !lhs_check && !rhs_check && !acc_check);
         let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held

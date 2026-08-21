@@ -18,19 +18,11 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, MemoryMmaConfig, Operand, Projection, QuantTileArgLaunch, RegisterKind, Residence,
-    Space, StorageTiling, TileArgLaunch, TileSpec as CubekTileSpec,
+    DequantAt, Operand, Projection, QuantTileArgLaunch, Residence, Space, StorageTiling,
+    TileArgLaunch, TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
-
-/// The software instruction tests contract through, bound on the accumulator at the kernel
-/// top: a modest unroll budget, no edge specialization, no lane fan-out. Named once here so a
-/// test that does not exercise the microkernel's shape has something to state without
-/// inventing one.
-pub const MICROKERNEL: RegisterKind = RegisterKind::Array {
-    config: MemoryMmaConfig::new(16, false, false),
-};
 
 /// A tile-shaped test input: the device buffer plus the logical [`Space`] it's
 /// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view

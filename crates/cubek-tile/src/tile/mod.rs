@@ -112,7 +112,7 @@ pub enum TileKind<T: Numeric> {
     Gmem(MemData<T>),
     Smem(MemData<T>),
     /// One plane-level tile: owned by a plane and sliced across its lanes, so never addressable
-    /// (no memory view). The [`RegisterKind`] picks the encoding; the contraction is its own.
+    /// (no memory view). The [`Instruction`] picks the encoding; the contraction is its own.
     PlaneTile(PlaneTile<T>),
     /// The grid of plane tiles one plane owns, `m_tiles × n_tiles`, comptime-indexed; only a
     /// static walk's regions (constant coordinates) can select through it.
@@ -408,12 +408,12 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
                 let plan = self.stage_plan();
                 comptime!(match plan.register_stage() {
-                    None | Some(RegisterKind::Array { .. }) => true,
-                    Some(RegisterKind::Mma { io }) => {
+                    None | Some(Instruction::Registers { .. }) => true,
+                    Some(Instruction::Mma { io }) => {
                         matches!(io.lhs_load_method, LoadMethod::Manual)
                             && matches!(io.rhs_load_method, LoadMethod::Manual)
                     }
-                    Some(RegisterKind::Cmma) => false,
+                    Some(Instruction::Cmma) => false,
                 })
             }
         }

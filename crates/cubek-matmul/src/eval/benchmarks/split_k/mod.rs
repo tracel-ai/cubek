@@ -47,15 +47,15 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, MemoryMmaConfig, RegisterKind, Space, TileArg, TileArgLaunch,
+    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Space, TileArg, TileArgLaunch,
     Tiling, WalkOrder,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
-/// microkernel; bound on the accumulator at the kernel top.
-const MICROKERNEL: RegisterKind = RegisterKind::Array {
-    config: MemoryMmaConfig::new(64, false, false),
+/// instruction; bound on the accumulator at the kernel top.
+const INSTRUCTION: Instruction = Instruction::Registers {
+    config: RegisterBlock::new(64, false, false),
 };
 
 const M: Axis = Axis(0);
@@ -74,7 +74,7 @@ fn launch_split_k_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.with_instruction(MICROKERNEL)));
+    let mut c = c.tile(space);
     c.mma(&a, &b);
 }
 
@@ -260,7 +260,7 @@ fn run(
         TileArgLaunch::new(a.tensor_arg(1), a.spec()),
         TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
         TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-        space,
+        space.with_instruction(INSTRUCTION),
         dtype,
     );
     c
