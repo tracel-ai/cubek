@@ -3,7 +3,7 @@ use cubek_test_utils::{HostData, Progress};
 
 use crate::{
     definition::InterpolateProblem,
-    eval::cpu_reference::{cpu_reference_result, strategy_result},
+    eval::cpu_reference::{cpu_reference_result, strategy_result, tile_result},
 };
 
 use super::InterpolateBenchmarkStrategy;
@@ -26,10 +26,9 @@ impl cubek_test_utils::Correctness for InterpolateCorrectness {
             InterpolateBenchmarkStrategy::Standard(strategy) => {
                 strategy_result(client, problem.clone(), *strategy, seeds[0])
             }
-            InterpolateBenchmarkStrategy::Tile(_) => Err(
-                "tile correctness is covered by focused tile tests; Lanczos3 border normalization is pending"
-                    .to_string(),
-            ),
+            InterpolateBenchmarkStrategy::Tile(config) => {
+                tile_result(client, problem.clone(), *config, seeds[0])
+            }
         }
     }
 

@@ -54,6 +54,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     );
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    // Every tap is present at the leaf, so each output cell is contracted once: the sink never
+    // has to be read back, and the zero that would have made that read meaningful goes with it.
+    output.mma_replace(&weights, &input);
 }

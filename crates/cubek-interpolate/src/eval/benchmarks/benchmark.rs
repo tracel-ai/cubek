@@ -53,6 +53,10 @@ pub fn bench(
             ));
         }
 
+        if !is_cpu && config.cols_per_lane > 1 {
+            return Err("tile interpolation with c > 1 is inefficient on GPU devices".to_string());
+        }
+
         if let InterpolateProblem::Forward(prob) = problem
             && config.input_residence == Residence::Smem
         {

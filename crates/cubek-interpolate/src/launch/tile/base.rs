@@ -18,6 +18,12 @@ use cubek_tile::*;
 /// geometry and the gathered input's residence, and gets exactly that. Only the lane split is
 /// solved, by [`TileGeometry::from_config`], because the space asserts an exact plane cover.
 ///
+/// [`channel_block`](Self::channel_block) is the one choice inside that split a caller may still
+/// pin. It is the lane's channel run, so it is the accumulator's innermost extent and sets `nr`
+/// in the contraction: the separable schedule's cost is per tap, and `nr` multiplies it. Solving
+/// it only ever reaches the widest divisor one line holds, which leaves the other splits of a
+/// deep channel axis unreachable.
+///
 /// The output is always written directly to global memory. Only the gathered input can be staged,
 /// so `InPlace` makes the whole tile operation in-place while `Smem` stages that input. Which one
 /// a problem wants swings both ways by up to 4x, which is why it is stated rather than guessed.
@@ -27,6 +33,8 @@ pub struct TileConfig {
     pub planes_per_cube: usize,
     pub rows_per_plane: usize,
     pub cols_per_lane: usize,
+    /// The lane's channel run, `None` to solve it with the rest of the lane split.
+    pub channel_block: Option<usize>,
 }
 
 impl TileConfig {
@@ -41,6 +49,15 @@ impl TileConfig {
             planes_per_cube,
             rows_per_plane,
             cols_per_lane,
+            channel_block: None,
+        }
+    }
+
+    /// Pin the lane's channel run rather than solving it. Must divide the channel count.
+    pub const fn with_channel_block(self, block: usize) -> Self {
+        Self {
+            channel_block: Some(block),
+            ..self
         }
     }
 
@@ -52,6 +69,7 @@ impl TileConfig {
             self.planes_per_cube,
             self.rows_per_plane,
             self.cols_per_lane,
+            self.channel_block,
         )
     }
 }

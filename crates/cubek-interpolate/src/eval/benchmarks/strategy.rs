@@ -14,17 +14,73 @@ pub enum InterpolateBenchmarkStrategy {
     Tile(TileConfig),
 }
 
-/// The tile choices the catalogue sweeps, as the full product of the four.
+/// The tile geometries the catalogue evaluates.
 ///
-/// Nothing here is filtered on expected merit: a shape that loses everywhere still says where the
-/// cliff is, and the derivation these replaced was tuned against a set too small to separate the
-/// regimes. What the device cannot serve is refused at launch instead ([`bench`](super::bench)),
-/// so an entry that overruns shared memory or a cube's unit budget reports that rather than
-/// silently falling back to something else.
+/// Instead of a full Cartesian product that explores dead combinations (such as high p × high r × high c
+/// that immediately exceed hardware limits or register files), the catalogue evaluates:
+/// - A balanced core sweep across standard dimensions (p, r in 1..8, c=1)
+/// - Extreme row-unrolling (high `r`: 16, 32, 64) with low `c` and modest `p`
+/// - High cube parallelism (high `p`: 16, 32) with low `r` and `c=1`
+/// - Wide column runs (high `c`: 2..16) with small `p` and `r` (primarily for CPU evaluation)
 const RESIDENCES: [Residence; 2] = [Residence::Smem, Residence::InPlace];
-const PLANES_PER_CUBE: [usize; 4] = [1, 2, 4, 8];
-const ROWS_PER_PLANE: [usize; 4] = [1, 2, 4, 8];
-const COLS_PER_LANE: [usize; 4] = [1, 2, 4, 8];
+const TILE_GEOMETRIES: &[(usize, usize, usize)] = &[
+    // Standard baseline sweep (p, r in 1..8, c=1)
+    (1, 1, 1),
+    (1, 2, 1),
+    (1, 4, 1),
+    (1, 8, 1),
+    (2, 1, 1),
+    (2, 2, 1),
+    (2, 4, 1),
+    (2, 8, 1),
+    (4, 1, 1),
+    (4, 2, 1),
+    (4, 4, 1),
+    (4, 8, 1),
+    (8, 1, 1),
+    (8, 2, 1),
+    (8, 4, 1),
+    (8, 8, 1),
+    // Extreme row-unrolling (high r: 16, 32, 64) with low c and modest p
+    (1, 16, 1),
+    (1, 32, 1),
+    (1, 64, 1),
+    (2, 16, 1),
+    (2, 32, 1),
+    (2, 64, 1),
+    (4, 16, 1),
+    (4, 32, 1),
+    (8, 16, 1),
+    (8, 32, 1),
+    // High cube parallelism / plane count (high p: 16, 32) with low r and c=1
+    (16, 1, 1),
+    (16, 2, 1),
+    (16, 4, 1),
+    (32, 1, 1),
+    (32, 2, 1),
+    // Column unrolling / multi-column sweeps (c in 2..16, especially for CPU / vectorization)
+    (1, 1, 2),
+    (1, 2, 2),
+    (1, 4, 2),
+    (1, 8, 2),
+    (1, 16, 2),
+    (2, 2, 2),
+    (4, 2, 2),
+    (1, 1, 4),
+    (1, 2, 4),
+    (1, 4, 4),
+    (1, 8, 4),
+    (2, 2, 4),
+    (4, 2, 4),
+    (1, 1, 8),
+    (1, 2, 8),
+    (1, 4, 8),
+    (2, 2, 8),
+    (1, 1, 16),
+    (1, 2, 16),
+    (1, 4, 16),
+    (2, 1, 16),
+];
 
 pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
     let mut entries = vec![
@@ -49,22 +105,16 @@ pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
     ];
 
     for residence in RESIDENCES {
-        for planes in PLANES_PER_CUBE {
-            for rows in ROWS_PER_PLANE {
-                for cols in COLS_PER_LANE {
-                    let (tag, label) = match residence {
-                        Residence::Smem => ("smem", "staged"),
-                        _ => ("in_place", "in-place"),
-                    };
-                    entries.push(CatalogEntry::new(
-                        format!("tile_{tag}_p{planes}_r{rows}_c{cols}"),
-                        format!("Tile {label} (p={planes}, r={rows}, c={cols})"),
-                        InterpolateBenchmarkStrategy::Tile(TileConfig::new(
-                            residence, planes, rows, cols,
-                        )),
-                    ));
-                }
-            }
+        for &(planes, rows, cols) in TILE_GEOMETRIES {
+            let (tag, label) = match residence {
+                Residence::Smem => ("smem", "staged"),
+                _ => ("in_place", "in-place"),
+            };
+            entries.push(CatalogEntry::new(
+                format!("tile_{tag}_p{planes}_r{rows}_c{cols}"),
+                format!("Tile {label} (p={planes}, r={rows}, c={cols})"),
+                InterpolateBenchmarkStrategy::Tile(TileConfig::new(residence, planes, rows, cols)),
+            ));
         }
     }
 
@@ -83,10 +133,7 @@ mod tests {
             .iter()
             .filter(|entry| matches!(entry.value, InterpolateBenchmarkStrategy::Tile(_)))
             .count();
-        assert_eq!(
-            tiles,
-            RESIDENCES.len() * PLANES_PER_CUBE.len() * ROWS_PER_PLANE.len() * COLS_PER_LANE.len()
-        );
+        assert_eq!(tiles, RESIDENCES.len() * TILE_GEOMETRIES.len());
         assert_eq!(entries.len(), tiles + 2, "plus the two baselines");
     }
 

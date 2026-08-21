@@ -66,6 +66,22 @@ fn test_interpolate_tile_geometry_configurations() {
     }
 }
 
+/// The channel run the lane takes. The problem's four channels solve to a block of four, so the
+/// narrower splits are reachable only by stating them, and each one moves the accumulator's
+/// innermost extent under the same contraction.
+#[test]
+fn test_interpolate_tile_channel_block_configurations() {
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    for residence in [Residence::InPlace, Residence::Smem] {
+        for block in [1, 2, 4] {
+            tile_output_with(
+                options,
+                TileConfig::new(residence, 4, 2, 1).with_channel_block(block),
+            );
+        }
+    }
+}
+
 #[test]
 fn test_interpolate_tile_nearest_exact() {
     tile_output(
