@@ -9,6 +9,12 @@
 use std::time::Duration;
 
 use cubecl::benchmark::TimingMethod;
+use cubecl::prelude::*;
+use cubecl::std::throughput::measure_peak_throughput;
+use cubecl::throughput::{
+    self, MemoryAccess, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
+};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient};
 
 use crate::{HostData, Progress};
 
@@ -54,89 +60,46 @@ impl<T> CatalogEntry<T> {
     }
 }
 
-/// Achieved bandwidth for a bench row, alongside the device's measured memory
-/// peak it is judged against. `peak_bytes_per_s` is `None` when the category
-/// couldn't get a peak measurement for this access.
-#[derive(Debug, Clone, Copy)]
-pub struct Bandwidth {
-    pub achieved_bytes_per_s: f64,
-    pub peak_bytes_per_s: Option<f64>,
+/// Which resource a bench row's binding measurement is judged against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceKind {
+    Compute,
+    Read,
+    Write,
 }
 
-/// Achieved compute throughput for a bench row, alongside the device's measured
-/// arithmetic peak it is judged against. `peak_ops_per_s` is `None` when the
-/// category couldn't get a peak measurement for this operation mix.
-///
-/// Reported next to [`Bandwidth`] rather than alone: one number says how fast a
-/// kernel ran, the pair says which of the two ceilings it ran into.
+/// The resource that bound a run's duration, the slowest of the declared
+/// resources even running flat out at its own peak, alongside how fast the
+/// run actually achieved it. Mirrors the selection rule in
+/// [`throughput::binding_achieved`].
 #[derive(Debug, Clone, Copy)]
-pub struct Compute {
-    pub achieved_ops_per_s: f64,
-    pub peak_ops_per_s: Option<f64>,
+pub struct Binding {
+    pub resource: ResourceKind,
+    pub achieved_per_s: f64,
+    pub peak_per_s: f64,
+    pub fraction_of_peak: f64,
 }
 
 #[derive(Debug, Clone)]
 pub struct RunSamples {
     pub durations: Vec<Duration>,
-    /// Optional compute throughput, e.g. FLOPS for matmul/attention. `None` when
-    /// the category doesn't have a meaningful operation count (memcpy, ...).
-    pub compute: Option<Compute>,
-    /// Optional achieved bandwidth, e.g. for store-bound kernels like random.
-    /// `None` when the category doesn't have a meaningful byte count.
-    pub bandwidth: Option<Bandwidth>,
+    /// TFLOPS achieved against the measured compute peak. `None` when the
+    /// category's [`CategoryWork`] declares no compute (memcpy, contiguous,
+    /// random, ...).
+    pub tflops: Option<f64>,
+    /// The resource that bound this run's duration. `None` when the category
+    /// declares no [`CategoryWork`] for this problem, or none of the declared
+    /// resources had a usable peak measurement.
+    pub binding: Option<Binding>,
 }
 
 impl RunSamples {
     pub fn new(durations: Vec<Duration>) -> Self {
         Self {
             durations,
-            compute: None,
-            bandwidth: None,
+            tflops: None,
+            binding: None,
         }
-    }
-
-    pub fn with_compute(mut self, compute: Compute) -> Self {
-        self.compute = Some(compute);
-        self
-    }
-
-    pub fn with_bandwidth(mut self, bandwidth: Bandwidth) -> Self {
-        self.bandwidth = Some(bandwidth);
-        self
-    }
-
-    /// Convenience for compute-bound benches: turn an operation count into an
-    /// achieved ops/s using the median sample duration, alongside the device's
-    /// measured peak for the same arithmetic. Returns `self` unchanged if there
-    /// are no samples or the median is zero (avoiding NaN/inf in the dashboard).
-    pub fn with_flops(self, flops: f64, peak_ops_per_s: Option<f64>) -> Self {
-        let Some(median_secs) = self.median_secs() else {
-            return self;
-        };
-        self.with_compute(Compute {
-            achieved_ops_per_s: flops / median_secs,
-            peak_ops_per_s,
-        })
-    }
-
-    /// Convenience for store/load-bound benches: turn a byte count into an
-    /// achieved bytes/s using the median sample duration, alongside the
-    /// device's measured peak for the same access. Returns `self` unchanged
-    /// if there are no samples or the median is zero (avoiding NaN/inf in the
-    /// dashboard).
-    pub fn with_bytes(self, bytes: usize, peak_bytes_per_s: Option<f64>) -> Self {
-        let Some(median_secs) = self.median_secs() else {
-            return self;
-        };
-        self.with_bandwidth(Bandwidth {
-            achieved_bytes_per_s: bytes as f64 / median_secs,
-            peak_bytes_per_s,
-        })
-    }
-
-    /// Achieved compute throughput in TFLOPS, for callers reporting that unit.
-    pub fn tflops(&self) -> Option<f64> {
-        self.compute.map(|it| it.achieved_ops_per_s / 1e12)
     }
 
     /// Median sample duration in seconds, or `None` when there are no samples
@@ -152,6 +115,123 @@ impl RunSamples {
     }
 }
 
+/// What a category's `(strategy, problem)` run honestly moves and computes:
+/// bytes per direction and, where meaningful, a compute op count. The blanket
+/// [`BenchmarkCategory`] adapter turns this into [`ResourceBound`]s against
+/// measured device peaks. A category builds this from `problem` alone
+/// (shapes and dtypes), never from a measurement of its own run.
+#[derive(Debug, Clone, Copy)]
+pub struct CategoryWork {
+    /// Compute operations the run performs, counted the way
+    /// [`ThroughputMode::ComputeDirect`] counts them (a multiply-add is 2).
+    /// `0` when the category has no honest count (an elementwise
+    /// transcendental, an FFT). The adapter then skips the compute bound.
+    pub compute_ops: usize,
+    /// The dtype the compute runs in. Ignored when `compute_ops` is `0`.
+    pub dtype: ElemType,
+    /// Bytes read from global memory.
+    pub bytes_read: usize,
+    /// Bytes written to global memory.
+    pub bytes_written: usize,
+}
+
+impl CategoryWork {
+    /// The declared resources as `(kind, bound)` pairs, peaks measured fresh
+    /// on `client`. `measure_peak_throughput` caches per `(device, key)`, so
+    /// repeated calls for the same working-set size cost nothing after the
+    /// first.
+    fn resources(&self, client: &ComputeClient<TestRuntime>) -> Vec<(ResourceKind, ResourceBound)> {
+        let mut out = Vec::with_capacity(3);
+
+        if self.compute_ops > 0 {
+            let key = ThroughputKey {
+                mode: ThroughputMode::ComputeDirect { dtype: self.dtype },
+            };
+            let peak = measure_peak_throughput(client, key).ops_per_s();
+            out.push((
+                ResourceKind::Compute,
+                ResourceBound {
+                    amount: self.compute_ops,
+                    peak_per_s: peak,
+                },
+            ));
+        }
+        if self.bytes_read > 0 {
+            let key = ThroughputKey {
+                mode: ThroughputMode::MemoryWorkingSet {
+                    access: MemoryAccess::Read,
+                    bytes: self.bytes_read as u64,
+                },
+            };
+            let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
+            out.push((
+                ResourceKind::Read,
+                ResourceBound {
+                    amount: self.bytes_read,
+                    peak_per_s: peak,
+                },
+            ));
+        }
+        if self.bytes_written > 0 {
+            let key = ThroughputKey {
+                mode: ThroughputMode::MemoryWorkingSet {
+                    access: MemoryAccess::Write,
+                    bytes: self.bytes_written as u64,
+                },
+            };
+            let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
+            out.push((
+                ResourceKind::Write,
+                ResourceBound {
+                    amount: self.bytes_written,
+                    peak_per_s: peak,
+                },
+            ));
+        }
+
+        out
+    }
+}
+
+/// Scores `work` against measured device peaks and fills `samples`'s
+/// `tflops`/`binding` from the median sample duration. Left unfilled (and
+/// `samples` returned as is) when there are no samples or the median duration
+/// is zero.
+fn score(mut samples: RunSamples, work: &CategoryWork) -> RunSamples {
+    let Some(median_secs) = samples.median_secs() else {
+        return samples;
+    };
+
+    let device = <TestRuntime as Runtime>::Device::default();
+    let client = <TestRuntime as Runtime>::client(&device);
+    let resources = work.resources(&client);
+    let bounds: Vec<ResourceBound> = resources.iter().map(|(_, bound)| *bound).collect();
+    let scores = score_resources(Duration::from_secs_f64(median_secs), &bounds);
+
+    if let Some(idx) = resources
+        .iter()
+        .position(|(kind, _)| *kind == ResourceKind::Compute)
+    {
+        samples.tflops = Some(scores[idx].achieved_per_s / 1e12);
+    }
+
+    if let Some(best) = throughput::binding_achieved(&scores) {
+        let idx = scores
+            .iter()
+            .position(|candidate| candidate == best)
+            .expect("binding_achieved returns an element of scores");
+        let (resource, bound) = resources[idx];
+        samples.binding = Some(Binding {
+            resource,
+            achieved_per_s: best.achieved_per_s,
+            peak_per_s: bound.peak_per_s,
+            fraction_of_peak: best.fraction_of_peak,
+        });
+    }
+
+    samples
+}
+
 /// Typed per-category definition. Implementors expose their problem and
 /// strategy catalogues with the actual payloads attached, plus a typed
 /// `bench` closure. The blanket impl below adapts to the string-keyed
@@ -161,7 +241,7 @@ pub trait Category: Sync {
     type Problem;
     type Strategy;
 
-    /// Stable identifier: persisted in tuner-results history. Don't rename.
+    /// Stable identifier — persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn problems(&self) -> Vec<CatalogEntry<Self::Problem>>;
@@ -173,7 +253,16 @@ pub trait Category: Sync {
         num_samples: usize,
     ) -> Result<RunSamples, String>;
 
-    /// Which timing method [`Self::bench`] uses internally: used by the bench
+    /// The work `problem` honestly represents, for the blanket adapter to score
+    /// against measured device peaks. Built from the problem's shapes and
+    /// dtypes alone, the same for every strategy that runs it. `None` (the
+    /// default) when no honest count exists for this problem; its run then
+    /// reports plain durations, unscored.
+    fn work(&self, _problem: &Self::Problem) -> Option<CategoryWork> {
+        None
+    }
+
+    /// Which timing method [`Self::bench`] uses internally — used by the bench
     /// runner to label its printed stats. Defaults to `System`; categories
     /// running on the device timing method (unary/contiguous/memcpy_async)
     /// override this.
@@ -230,7 +319,7 @@ pub trait Correctness: Sync {
 /// type that implements [`Category`]; categories should implement `Category`
 /// rather than this trait directly.
 pub trait BenchmarkCategory: Sync {
-    /// Stable identifier: persisted in tuner-results history. Don't rename.
+    /// Stable identifier — persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn strategies(&self) -> Vec<ItemDescriptor>;
@@ -246,7 +335,7 @@ pub trait BenchmarkCategory: Sync {
     ) -> Result<RunSamples, String>;
 
     /// `None` means the category doesn't expose a kernel result (e.g.
-    /// memcpy_async: no semantic-level output).
+    /// memcpy_async — no semantic-level output).
     fn kernel_result(
         &self,
         _strategy_id: &str,
@@ -313,7 +402,11 @@ impl<C: Category> BenchmarkCategory for C {
             .iter()
             .find(|e| e.id == strategy_id)
             .ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
-        Category::bench(self, &strategy.value, &problem.value, num_samples)
+        let samples = Category::bench(self, &strategy.value, &problem.value, num_samples)?;
+        Ok(match Category::work(self, &problem.value) {
+            Some(work) => score(samples, &work),
+            None => samples,
+        })
     }
 
     fn kernel_result(

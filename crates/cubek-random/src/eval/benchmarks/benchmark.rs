@@ -5,8 +5,6 @@ use cubecl::{
     future,
     prelude::*,
     std::tensor::TensorHandle,
-    std::throughput::measure_peak_throughput,
-    throughput::{ThroughputKey, ThroughputMode},
 };
 use cubek_test_utils::RunSamples;
 
@@ -25,9 +23,6 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
 
-    let dtype = f32::elem_type_native();
-    let bytes: usize = problem.shape.iter().product::<usize>() * dtype.size();
-
     let bench = RandomBench {
         shape: problem.shape.clone(),
         distribution: problem.distribution,
@@ -41,23 +36,7 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_bytes(bytes, write_peak_bytes_per_s(&client)))
-}
-
-/// The device's measured write peak, in bytes/s, for a random kernel to be
-/// judged against.
-///
-/// The throughput facility has no write-only probe, so this uses
-/// [`ThroughputMode::Memory`], a copy: the mode that issues stores, though half
-/// its traffic is a read `random` never does. `measure_peak_throughput` already
-/// caches its result per device, so this does not need to as well.
-fn write_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
-    let key = ThroughputKey {
-        mode: ThroughputMode::Memory,
-    };
-    let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
-
-    (peak > 0.0).then_some(peak)
+    Ok(RunSamples::new(durations))
 }
 
 struct RandomBench {
