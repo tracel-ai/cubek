@@ -154,6 +154,15 @@ impl AxisProjection {
 }
 
 #[cube]
+impl AxisProjection {
+    /// [`to_source_pos`](Layout::to_source_pos) as an inherent call, for a caller outside this
+    /// module that folds the map by hand instead of reading through it.
+    pub fn source(&self, pos: CoordsDyn) -> CoordsDyn {
+        self.to_source_pos(pos)
+    }
+}
+
+#[cube]
 impl Layout for AxisProjection {
     type Coordinates = CoordsDyn;
     type SourceCoordinates = CoordsDyn;
@@ -328,6 +337,62 @@ impl<T: Numeric> Tile<T> {
                     ),
                     comptime!(data.bounds_check),
                 )
+            }
+        }
+    }
+}
+
+#[cube]
+impl<T: Numeric> Tile<T> {
+    /// The map [`nd`](Tile::nd) folds on every read, and the physical box beneath it, so a caller
+    /// reading a run of adjacent innermost cells folds the map once and steps the result.
+    ///
+    /// The innermost physical axis is one logical axis at coefficient `1`
+    /// ([`Projection::validate`](crate::Projection::validate)), so a run along it lands on source
+    /// coordinates that differ only in that axis and by one cell each. Folding the map per cell
+    /// instead re-runs every term, and under a rational axis a divide with them.
+    pub fn nd_map(&self) -> AxisProjection {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => axis_projection(
+                comptime!(self.space.clone()),
+                comptime!(g.projection.clone()),
+                g.map.clone(),
+                self.vector_size(),
+            ),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::nd_map: only a memory operand carries a projection to fold")
+            }
+        }
+    }
+
+    /// The read surface [`nd_map`](Tile::nd_map)'s output addresses: [`nd`](Tile::nd) without the
+    /// map, masking identically.
+    pub fn nd_physical<I: Numeric, WP: Size, W: Size>(
+        &self,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.nd_physical::<I, WP, W>(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::nd_physical: only a memory operand has a physical box")
+            }
+        }
+    }
+
+    /// How many axes [`nd_map`](Tile::nd_map) resolves a coordinate onto.
+    pub fn physical_rank(&self) -> comptime_type!(usize) {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(g.projection.physical_rank()),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::physical_rank: only a memory operand has physical axes")
             }
         }
     }

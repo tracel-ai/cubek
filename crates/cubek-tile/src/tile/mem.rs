@@ -1477,6 +1477,21 @@ impl<T: Numeric> MemData<T> {
         self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout)
     }
 
+    /// [`nd_transparent`](MemData::nd_transparent) over the *physical* box instead of the logical
+    /// one, for a caller that folds the map itself.
+    ///
+    /// The map is the only layer dropped: the [`Window`] that owns the boundary sits below it
+    /// either way, so a coordinate past the operand's data masks exactly as it does through
+    /// [`nd_transparent`](MemData::nd_transparent). The identity step keeps the box's own bound,
+    /// which is the part a caller cannot fold away.
+    pub(crate) fn nd_physical<I: Numeric, WP: Size, W: Size>(
+        &self,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        let rank = comptime!(self.projection.physical_rank());
+        let identity = StepUp::new(self.window.extent.clone(), comptime!(vec![1; rank]));
+        self.transparent::<I, WP, W, CoordsDyn, StepUp>(identity)
+    }
+
     /// The mutable twin of [`flat`](MemData::flat).
     pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         if comptime!(self.store.quant.is_some()) {

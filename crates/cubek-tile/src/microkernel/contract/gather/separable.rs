@@ -5,6 +5,8 @@ use cubecl::prelude::*;
 use crate::microkernel::block;
 use crate::*;
 
+use cubecl::std::tensor::layout::CoordsDyn;
+
 use super::coords::{cell_position, cell_read};
 
 /// Cache each factor's 1-D tap walk before consuming their Cartesian product for one cell.
@@ -18,6 +20,12 @@ use super::coords::{cell_position, cell_read};
 /// each is resolved once per tap rather than `nr` times. The schedule's cost is per tap, so that
 /// factor is the whole gap against a walk that hoists them by hand. A spanning lhs needs its walk
 /// per line, which has to stay outside the taps, so it nests the other way.
+///
+/// The lines of one such run are adjacent on the operand's innermost physical axis, which is one
+/// logical axis at coefficient `1` ([`Projection::validate`](crate::Projection::validate)). Their
+/// source coordinates therefore differ in that axis alone, one cell apart, so the run folds the
+/// map once ([`Tile::nd_map`]) and steps the result rather than re-running every term, and under a
+/// rational axis a divide with them, per line.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: Size, V: Size>(
@@ -37,6 +45,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
     let rank = comptime!(space.rank());
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
     let rhs_view = rhs.nd::<IR, WPR, V>();
+    let rhs_map = rhs.nd_map();
+    let rhs_box = rhs.nd_physical::<IR, WPR, V>();
+    let phys_rank = rhs.physical_rank();
     let factors = comptime!(reduce_extents.len());
     let kc = comptime!(reduce_extents.iter().product::<usize>());
     let offsets = comptime!(tap_offsets(&reduce_extents));
@@ -128,19 +139,24 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
                         comptime!(offsets.clone()),
                     ));
 
+                    let base = rhs_map.source(cell_position(
+                        &batch,
+                        i as u32,
+                        0u32,
+                        &reduce_coords,
+                        comptime!(rhs.space.clone()),
+                        comptime!(space.clone()),
+                        comptime!(reduce.clone()),
+                        vw,
+                    ));
+
                     #[unroll(unroll)]
                     for n in 0..nr {
-                        let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
-                            &rhs_view,
-                            &batch,
-                            i as u32,
+                        let value = Vector::<E, V>::cast_from(rhs_box.read(step_line(
+                            &base,
+                            comptime!(phys_rank),
                             n as u32,
-                            &reduce_coords,
-                            comptime!(rhs.space.clone()),
-                            comptime!(space.clone()),
-                            comptime!(reduce.clone()),
-                            vw,
-                        ));
+                        )));
                         c[i * nr + n] = fma(weight, value, c[i * nr + n]);
                     }
                 }
@@ -183,6 +199,24 @@ fn tap_walk<EL: Numeric>(
             weights[comptime!(offsets[f] + k)] = lhs.separable_factor(pos, f);
         }
     }
+}
+
+/// `base` advanced by `step` cells along the innermost physical axis, the only one a run of
+/// adjacent lines moves.
+#[cube]
+fn step_line(base: &CoordsDyn, #[comptime] rank: usize, step: u32) -> CoordsDyn {
+    let mut out = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..rank {
+        if comptime!(p == rank - 1) {
+            out.push(base[p].fadd(step));
+        } else {
+            out.push(base[p]);
+        }
+    }
+
+    out
 }
 
 fn tap_offsets(extents: &[usize]) -> Vec<usize> {
