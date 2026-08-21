@@ -12,6 +12,12 @@ use super::coords::{cell_position, cell_read};
 /// The walk is cached per accumulator row unless `lhs_spans_col`: with no factor reading the
 /// accumulator's innermost axis the weights cannot vary along it, so evaluating them per cell
 /// repeats one identical walk `nr` times.
+///
+/// That same condition decides the nesting. Where no factor reads the innermost axis, a tap's
+/// coordinate and its factor product are invariant along it, so the taps go outside the lines and
+/// each is resolved once per tap rather than `nr` times. The schedule's cost is per tap, so that
+/// factor is the whole gap against a walk that hoists them by hand. A spanning lhs needs its walk
+/// per line, which has to stay outside the taps, so it nests the other way.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: Size, V: Size>(
@@ -26,11 +32,11 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
     #[comptime] vw: usize,
     #[comptime] lhs_spans_col: bool,
     #[comptime] config: MemoryMmaConfig,
+    #[comptime] replace: bool,
 ) {
     let rank = comptime!(space.rank());
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
     let rhs_view = rhs.nd::<IR, WPR, V>();
-    let rhs_check = comptime!(rhs_view.check);
     let factors = comptime!(reduce_extents.len());
     let kc = comptime!(reduce_extents.iter().product::<usize>());
     let offsets = comptime!(tap_offsets(&reduce_extents));
@@ -44,8 +50,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
     for mat in 0..matrices {
         let batch = unravel(&batch_extents, mat.fcast::<u32>());
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
-        let acc_check = acc.check();
-        let unroll = comptime!(mr * nr <= config.unroll_limit && !rhs_check && !acc_check);
+        let unroll = comptime!(mr * nr <= config.unroll_limit);
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
         // `kc` bodies per cell, so the limit reads the whole emitted block rather than the cell
@@ -53,28 +58,14 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
         // dynamic, and every filter wider than one tap reads one: folding the coordinate turns
         // the per-tap bounds test comptime on the interior taps and leaves it only on the edges.
         let unroll_taps = comptime!(mr * nr * kc <= config.unroll_limit);
-        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
+        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll, replace);
 
         #[unroll(unroll)]
         for i in 0..mr {
-            let mut weights = Array::<EL>::new(taps);
-            if comptime!(!lhs_spans_col) {
-                tap_walk::<EL>(
-                    &mut weights,
-                    lhs,
-                    &batch,
-                    i as u32,
-                    0u32,
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    comptime!(reduce_extents.clone()),
-                    comptime!(offsets.clone()),
-                );
-            }
-
-            #[unroll(unroll)]
-            for n in 0..nr {
-                if comptime!(lhs_spans_col) {
+            if comptime!(lhs_spans_col) {
+                #[unroll(unroll)]
+                for n in 0..nr {
+                    let mut weights = Array::<EL>::new(taps);
                     tap_walk::<EL>(
                         &mut weights,
                         lhs,
@@ -86,30 +77,72 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
                         comptime!(reduce_extents.clone()),
                         comptime!(offsets.clone()),
                     );
+
+                    #[unroll(unroll_taps)]
+                    for p in 0..kc {
+                        let reduce_coords =
+                            tap_coords(p.fcast::<u32>(), comptime!(reduce_extents.clone()));
+                        let weight = tap_weight::<EL>(
+                            &weights,
+                            &reduce_coords,
+                            comptime!(factors),
+                            comptime!(offsets.clone()),
+                        );
+                        let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
+                            &rhs_view,
+                            &batch,
+                            i as u32,
+                            n as u32,
+                            &reduce_coords,
+                            comptime!(rhs.space.clone()),
+                            comptime!(space.clone()),
+                            comptime!(reduce.clone()),
+                            vw,
+                        ));
+                        c[i * nr + n] =
+                            fma(Vector::<E, V>::cast_from(weight), value, c[i * nr + n]);
+                    }
                 }
+            } else {
+                let mut weights = Array::<EL>::new(taps);
+                tap_walk::<EL>(
+                    &mut weights,
+                    lhs,
+                    &batch,
+                    i as u32,
+                    0u32,
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    comptime!(reduce_extents.clone()),
+                    comptime!(offsets.clone()),
+                );
 
                 #[unroll(unroll_taps)]
                 for p in 0..kc {
                     let reduce_coords =
                         tap_coords(p.fcast::<u32>(), comptime!(reduce_extents.clone()));
-                    let mut weight =
-                        weights[factor_tap(&reduce_coords, 0usize, comptime!(offsets[0]))];
-                    #[unroll]
-                    for f in 1..factors {
-                        weight *= weights[factor_tap(&reduce_coords, f, comptime!(offsets[f]))];
-                    }
-                    let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
-                        &rhs_view,
-                        &batch,
-                        i as u32,
-                        n as u32,
+                    let weight = Vector::<E, V>::cast_from(tap_weight::<EL>(
+                        &weights,
                         &reduce_coords,
-                        comptime!(rhs.space.clone()),
-                        comptime!(space.clone()),
-                        comptime!(reduce.clone()),
-                        vw,
+                        comptime!(factors),
+                        comptime!(offsets.clone()),
                     ));
-                    c[i * nr + n] = fma(Vector::<E, V>::cast_from(weight), value, c[i * nr + n]);
+
+                    #[unroll(unroll)]
+                    for n in 0..nr {
+                        let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
+                            &rhs_view,
+                            &batch,
+                            i as u32,
+                            n as u32,
+                            &reduce_coords,
+                            comptime!(rhs.space.clone()),
+                            comptime!(space.clone()),
+                            comptime!(reduce.clone()),
+                            vw,
+                        ));
+                        c[i * nr + n] = fma(weight, value, c[i * nr + n]);
+                    }
                 }
             }
         }
@@ -161,6 +194,22 @@ fn tap_offsets(extents: &[usize]) -> Vec<usize> {
             Some(at)
         })
         .collect()
+}
+
+/// Fold one tap's per-factor weights into the product its cell accumulates.
+#[cube]
+fn tap_weight<EL: Numeric>(
+    weights: &Array<EL>,
+    reduce_coords: &Coords<u32>,
+    #[comptime] factors: usize,
+    #[comptime] offsets: Vec<usize>,
+) -> EL {
+    let mut weight = weights[factor_tap(reduce_coords, 0usize, comptime!(offsets[0]))];
+    #[unroll]
+    for f in 1..factors {
+        weight *= weights[factor_tap(reduce_coords, f, comptime!(offsets[f]))];
+    }
+    weight
 }
 
 #[cube]

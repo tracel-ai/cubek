@@ -131,7 +131,7 @@ fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
     let in_view = input.nd::<I, WP, V>();
 
     for line_idx in 0..total_lines {
-        let seed_vec = acc_view.seed(line_idx, inst);
+        let seed_vec = acc_view.seed(line_idx, inst, comptime!(false));
         let mut result = seed_vec;
 
         #[unroll]

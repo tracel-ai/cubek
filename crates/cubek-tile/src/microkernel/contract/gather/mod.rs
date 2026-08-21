@@ -30,6 +30,7 @@ pub(super) fn contract<
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
     #[comptime] config: MemoryMmaConfig,
+    #[comptime] replace: bool,
 ) {
     let lw = lhs.vector_size();
     let vw = rhs.vector_size();
@@ -83,6 +84,7 @@ pub(super) fn contract<
             vw,
             lhs_spans_col,
             comptime!(config),
+            replace,
         );
     } else {
         nd::contract::<E, EL, IL, L, ER, IR, WPL, WPR, V>(
@@ -102,6 +104,7 @@ pub(super) fn contract<
             rhs_spans_row,
             rhs_spans_col,
             comptime!(config),
+            replace,
         );
     }
 }

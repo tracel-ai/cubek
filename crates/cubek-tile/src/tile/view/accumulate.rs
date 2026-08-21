@@ -39,12 +39,19 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// A block's starting value for an `inst` fold. A partial starts at `inst`'s identity: the
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
     /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.
-    pub fn seed(&self, pos: C, #[comptime] inst: LeafOp) -> Vector<E, V> {
-        match comptime!(self.lane_share) {
-            LaneShare::Plane | LaneShare::Group { .. } => {
-                Vector::<E, V>::cast_from(LeafOp::identity::<E>(inst))
-            }
-            LaneShare::Whole => self.values.read(pos),
+    pub fn seed(
+        &self,
+        pos: C,
+        #[comptime] inst: LeafOp,
+        #[comptime] replace: bool,
+    ) -> Vector<E, V> {
+        // A folded share holds no whole cell to carry forward, and a replacing contraction is
+        // discarding whatever is there anyway: both start from the identity and skip the read.
+        let carries = comptime!(matches!(self.lane_share, LaneShare::Whole) && !replace);
+        if comptime!(carries) {
+            self.values.read(pos)
+        } else {
+            Vector::<E, V>::cast_from(LeafOp::identity::<E>(inst))
         }
     }
 

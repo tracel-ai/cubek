@@ -163,13 +163,14 @@ pub(crate) fn seed<E: Numeric, V: Size>(
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
+    #[comptime] replace: bool,
 ) -> Array<Vector<E, V>> {
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
     #[unroll(unroll)]
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            c[i * nr + n] = acc.seed((i as u32, n as u32), LeafOp::Sum);
+            c[i * nr + n] = acc.seed((i as u32, n as u32), LeafOp::Sum, replace);
         }
     }
     c

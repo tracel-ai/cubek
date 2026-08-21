@@ -33,6 +33,7 @@ pub(super) fn contract<
     #[comptime] pack_l: usize,
     #[comptime] pack_r: usize,
     #[comptime] config: MemoryMmaConfig,
+    #[comptime] replace: bool,
 ) {
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
@@ -116,6 +117,7 @@ pub(super) fn contract<
                     kc,
                     true,
                     lane_fanout,
+                    replace,
                 );
             } else {
                 contract_body::<E, EL, L, ER, V>(
@@ -128,6 +130,7 @@ pub(super) fn contract<
                     kc,
                     false,
                     lane_fanout,
+                    replace,
                 );
             }
         } else {
@@ -142,6 +145,7 @@ pub(super) fn contract<
                 kc,
                 unroll,
                 lane_fanout,
+                replace,
             );
         }
     }
@@ -160,8 +164,9 @@ fn contract_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
+    #[comptime] replace: bool,
 ) {
-    let mut c = block::seed(acc, mr, nr, unroll);
+    let mut c = block::seed(acc, mr, nr, unroll, replace);
     block::contract::<E, EL, L, ER, V>(lhs, rhs, &mut c, lw, mr, nr, kc, unroll, lane_fanout);
     block::commit(acc, c, mr, nr, unroll);
 }

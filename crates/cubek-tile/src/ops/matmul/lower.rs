@@ -13,12 +13,49 @@ use crate::*;
 impl<Acc: Numeric> Tile<Acc> {
     /// `c.mma(a, b)`: contract at a final tile, else walk this level.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        self.mma_with(lhs, rhs, comptime!(false));
+    }
+
+    /// `c.mma_replace(a, b)`: [`mma`](Tile::mma) seeding each accumulator cell from the
+    /// contraction's identity instead of reading the sink back, so the caller does not zero it
+    /// first.
+    ///
+    /// A memory accumulator round-trips every cell through its store: the leaf seeds a register
+    /// block from it ([`AccumulateView::seed`](crate::AccumulateView)) and commits back, and the
+    /// zero that made the seed meaningful is a third touch. Replacing drops one load and one store
+    /// per cell, which is the whole difference on a contraction with too few taps to amortize
+    /// them. A promoted accumulator already states its own init and has nothing to replace.
+    ///
+    /// Sound only where each cell is contracted once, so the final tile has to span every
+    /// contracted axis whole: an axis a level above splits sends the walk back to a cell it has
+    /// already written, and the second visit would discard the first. Checked, not trusted.
+    pub fn mma_replace<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        comptime!(assert_contracted_at_leaf(
+            &self.space,
+            &lhs.space,
+            &rhs.space
+        ));
+        self.mma_with(lhs, rhs, comptime!(true));
+    }
+
+    pub(crate) fn mma_with<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] replace: bool,
+    ) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
-            Partitioner::Final => mma_leaf(self, lhs, rhs),
+            Partitioner::Final => mma_leaf(self, lhs, rhs, replace),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
+                self.mma_buffered(
+                    lhs,
+                    rhs,
+                    op_space,
+                    comptime!(level.buffering().depth()),
+                    replace,
+                );
             }
         }
     }
@@ -57,14 +94,27 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
+    #[comptime] replace: bool,
 ) {
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
+        TileKind::PlaneTile(t) => {
+            comptime!(assert!(
+                !replace,
+                "mma_leaf: a promoted accumulator states its own init (`zero` for `c = a·b`, \
+                 `copy_from` to accumulate), so it has no sink read to replace"
+            ));
+            t.mma(lhs, rhs, space)
+        }
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.
         TileKind::PlanePartition(p) => {
+            comptime!(assert!(
+                !replace,
+                "mma_leaf: a promoted accumulator states its own init (`zero` for `c = a·b`, \
+                 `copy_from` to accumulate), so it has no sink read to replace"
+            ));
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,
                 "mma_leaf: a multi-tile partition must be contracted at its partition level"
@@ -80,7 +130,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 Leaf::Memory { config } => config,
                 _ => panic!("mma_leaf: unpromoted Gmem/Smem accumulator must carry Leaf::Memory"),
             });
-            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config)
+            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config, replace)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
@@ -110,6 +160,23 @@ impl<E: Numeric> PlaneTile<E> {
                 d.mma(lhs, rhs)
             }
         }
+    }
+}
+
+/// Asserts that the final tile spans every contracted axis whole, which is what makes a replacing
+/// seed sound: the walk above the leaf then steps only axes the accumulator spans, so it never
+/// returns to a cell it has already written.
+fn assert_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) {
+    let merged = Space::merge(&[lhs, rhs]);
+    let leaf = merged.final_space();
+    for axis in Space::contracted(&[lhs, rhs], out).iter() {
+        let (whole, at_leaf) = (merged.extent(*axis), leaf.extent(*axis));
+        assert!(
+            whole == at_leaf,
+            "Tile::mma_replace: {axis:?} is contracted over {whole} but the final tile spans \
+             {at_leaf} of it, so the walk revisits every accumulator cell and a replacing seed \
+             would discard what the previous visit left; use `mma` over a zeroed sink"
+        );
     }
 }
 

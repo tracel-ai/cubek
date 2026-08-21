@@ -37,6 +37,7 @@ pub(super) fn contract<
     #[comptime] rhs_spans_row: bool,
     #[comptime] rhs_spans_col: bool,
     #[comptime] config: MemoryMmaConfig,
+    #[comptime] replace: bool,
 ) {
     let rank = comptime!(space.rank());
     let lhs_view = lhs.nd::<IL, WPL, L>();
@@ -58,7 +59,7 @@ pub(super) fn contract<
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
-        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
+        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll, replace);
         let mut b = Array::<Vector<E, V>>::new(nr);
 
         if comptime!(lane_fanout && lw > 1) {
