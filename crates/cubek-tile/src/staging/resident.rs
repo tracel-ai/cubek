@@ -53,7 +53,9 @@ impl<Acc: Numeric> Tile<Acc> {
         // The block's lines match the memory it drains back into; the hardware
         // encodings ignore it.
         let vector_size = self.vector_size();
-        let lane_share = self.lane_share();
+        // Not `self.lane_share()`: that is the stamped value, and stamping happens on the way
+        // down, after this runs. The space already knows every level, so ask it.
+        let lane_share = comptime!(self.space.leaf_lane_share());
         PlanePartition::<EA>::mirror(
             comptime!(self.space.clone()),
             comptime!(form),

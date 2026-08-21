@@ -18,19 +18,6 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
     #[comptime] acc_space: Space,
     #[comptime] fold: LeafOp,
 ) {
-    // A register accumulator reads its `LaneShare` at `Tile::accumulate`, which runs before the
-    // walk descends, while the share is only stamped on the way down (`MemData::at`). So a
-    // promoted block always sees `Whole` and each lane would write its own partial over the last.
-    // The memory leaf has no such gap: it stamps during descent and combines in
-    // `AccumulateView::commit`. Until the share reaches a promoted block, only a fold that needs
-    // no combining is safe here.
-    comptime!(assert!(
-        acc.lane_share == LaneShare::Whole,
-        "reduce: a promoted register accumulator cannot fold partials across lanes yet — its \
-         LaneShare is read at `Tile::accumulate`, before the walk stamps one. Reduce into a \
-         memory accumulator instead, which combines in `AccumulateView::commit`."
-    ));
-
     // The block was built to fold one way and is drained that way; folding it another here would
     // combine the lanes under an operator the partials were never built for.
     comptime!(assert!(

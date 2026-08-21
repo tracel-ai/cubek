@@ -6,6 +6,7 @@ use cubecl::zspace::SmallVec;
 
 use crate::{
     Axis, ComputeScope, Distribution, Instruction, LaneShare, LevelRole, MAX_AXES, Partitioner,
+    join_lane_share,
 };
 
 use super::ByAxis;
@@ -428,6 +429,20 @@ impl Space {
     /// of bits; the folded axes' runs are exactly the bits a cell's partials differ in. Fold
     /// everything and that mask is the whole plane ([`LaneShare::Plane`]); fold under a carry and
     /// it is a [`LaneShare::Group`], whatever order the axes sit in.
+    /// The share a tile ends up with at the leaf: every level's own share joined, the way
+    /// [`MemData::at`](crate::MemData) joins them one at a time on the way down. A block built
+    /// before the walk descends cannot read the stamped value, but it can compute the value that
+    /// stamping would arrive at, because every level is already known here.
+    pub(crate) fn leaf_lane_share(&self) -> LaneShare {
+        let mut share = LaneShare::Whole;
+        let mut level = self.clone();
+        while !level.is_final() {
+            share = join_lane_share(share, level.lane_share());
+            level = level.divide();
+        }
+        share
+    }
+
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
