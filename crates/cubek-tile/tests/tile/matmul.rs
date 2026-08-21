@@ -1342,7 +1342,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote(&a);
+    let mut acc = c.accumulate(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
     c.copy_from(&acc);
@@ -1364,7 +1364,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote(&a);
+    let mut acc = c.accumulate(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
     c.copy_from(&acc);
@@ -1403,7 +1403,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote::<EA, _>(&a);
+    let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
     acc.drain_cast_into(&mut c);
@@ -1570,7 +1570,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote::<EA, _>(&a);
+    let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
     acc.drain_cast_into(&mut c);

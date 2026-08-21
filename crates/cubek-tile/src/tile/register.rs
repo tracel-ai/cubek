@@ -45,6 +45,12 @@ pub struct RegisterData<T: Numeric> {
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
     pub(crate) config: RegisterBlock,
+    /// How this block's partials merge — the `⊕` it accumulates under. Stated where the block is
+    /// built ([`Tile::accumulate`]), because comptime state cannot be set afterwards, and read on
+    /// drain next to [`lane_share`](Self::lane_share): that one says partials exist, this one says
+    /// what combining them means. A matmul's is [`Sum`](LeafOp::Sum).
+    #[cube(comptime)]
+    pub(crate) fold: LeafOp,
 }
 
 /// Bind the block width `RA` for the rest of the kernel's scope.
@@ -65,6 +71,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
         #[comptime] config: RegisterBlock,
+        #[comptime] fold: LeafOp,
     ) -> RegisterData<T> {
         comptime!(assert!(
             vector_size > 0 && n.is_multiple_of(vector_size),
@@ -79,6 +86,7 @@ impl<T: Numeric> RegisterData<T> {
             nr,
             lane_share,
             config,
+            fold,
         }
     }
 
@@ -136,7 +144,10 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = plane_sum(self.data[comptime!(i * self.nr + n)]);
+                        let combined = plane::broadcast::<Vector<T, RA>>(
+                            self.data[comptime!(i * self.nr + n)],
+                            comptime!(self.fold),
+                        );
                         if UNIT_POS_X == 0 {
                             let offset = (i as u32) * line_stride + comptime!(n as u32);
                             out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
@@ -153,7 +164,7 @@ impl<T: Numeric> RegisterData<T> {
                         let combined = plane::group::<T, RA>(
                             self.data[comptime!(i * self.nr + n)],
                             comptime!(fold_mask),
-                            LeafOp::Sum,
+                            comptime!(self.fold),
                         );
                         let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                         if lane_in_group == 0 {

@@ -36,6 +36,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
+        #[comptime] fold: LeafOp,
     ) -> PlaneTile<T> {
         match comptime!(form) {
             Instruction::Cmma => {
@@ -52,6 +53,7 @@ impl<T: Numeric> PlaneTile<T> {
                 vector_size,
                 lane_share,
                 config,
+                fold,
             )),
         }
     }
@@ -196,6 +198,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
+        #[comptime] fold: LeafOp,
     ) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
@@ -207,7 +210,15 @@ impl<T: Numeric> PlanePartition<T> {
         for _mi in 0..m_tiles {
             #[unroll]
             for _ni in 0..n_tiles {
-                frags.push(PlaneTile::<T>::acc(form, m, n, k, vector_size, lane_share));
+                frags.push(PlaneTile::<T>::acc(
+                    form,
+                    m,
+                    n,
+                    k,
+                    vector_size,
+                    lane_share,
+                    fold,
+                ));
             }
         }
         Tile::<T> {

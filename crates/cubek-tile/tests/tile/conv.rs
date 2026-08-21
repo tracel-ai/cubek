@@ -1932,7 +1932,7 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
-    let mut acc = out.promote(&input);
+    let mut acc = out.accumulate(&input, LeafOp::Sum);
     acc.zero();
     acc.mma(&input, &weight);
     out.copy_from(&acc);

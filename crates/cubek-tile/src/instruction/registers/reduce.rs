@@ -16,13 +16,28 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
     acc: &mut RegisterData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] inst: LeafOp,
+    #[comptime] fold: LeafOp,
 ) {
+    // A register accumulator reads its `LaneShare` at `Tile::accumulate`, which runs before the
+    // walk descends, while the share is only stamped on the way down (`MemData::at`). So a
+    // promoted block always sees `Whole` and each lane would write its own partial over the last.
+    // The memory leaf has no such gap: it stamps during descent and combines in
+    // `AccumulateView::commit`. Until the share reaches a promoted block, only a fold that needs
+    // no combining is safe here.
     comptime!(assert!(
-        inst == LeafOp::Sum || acc.lane_share == LaneShare::Whole,
-        "reduce: a promoted register accumulator only folds partials across lanes with Sum \
-         (store_cast_window hardcodes the plane/group fold to sum); a Max or Min reduce under \
-         LaneShare::Plane or LaneShare::Group would silently sum the per-lane partials instead"
+        acc.lane_share == LaneShare::Whole,
+        "reduce: a promoted register accumulator cannot fold partials across lanes yet — its \
+         LaneShare is read at `Tile::accumulate`, before the walk stamps one. Reduce into a \
+         memory accumulator instead, which combines in `AccumulateView::commit`."
+    ));
+
+    // The block was built to fold one way and is drained that way; folding it another here would
+    // combine the lanes under an operator the partials were never built for.
+    comptime!(assert!(
+        acc.fold == fold,
+        "reduce: this accumulator folds under {:?} (stated at `Tile::accumulate`) but is being \
+         reduced under {fold:?}",
+        acc.fold
     ));
 
     let vw = input.vector_size();
@@ -31,11 +46,11 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
     let size!(WP) = comptime!(vw / if pack > 0 { pack } else { 1 });
 
     if comptime!(pack == 1) {
-        register_data_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, inst);
+        register_data_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, fold);
     } else if comptime!(pack > 1) {
-        register_data_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, inst);
+        register_data_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, fold);
     } else {
-        register_data_typed::<Acc, In, In, WP, V>(acc, input, acc_space, inst);
+        register_data_typed::<Acc, In, In, WP, V>(acc, input, acc_space, fold);
     }
 }
 
@@ -44,7 +59,7 @@ fn register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
     acc: &mut RegisterData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] inst: LeafOp,
+    #[comptime] fold: LeafOp,
 ) {
     let in_space = comptime!(input.space.clone());
     let vw = input.vector_size();
@@ -77,7 +92,7 @@ fn register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
             &acc_coords,
             vw,
             seed,
-            inst,
+            fold,
         );
 
         let mut vec_line = acc.data[line_idx];
@@ -91,7 +106,7 @@ pub(crate) fn memory<Acc: Numeric, In: Numeric>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] inst: LeafOp,
+    #[comptime] fold: LeafOp,
 ) {
     let vw = input.vector_size();
     let size!(V) = vw;
@@ -99,11 +114,11 @@ pub(crate) fn memory<Acc: Numeric, In: Numeric>(
     let size!(WP) = comptime!(vw / if pack > 0 { pack } else { 1 });
 
     if comptime!(pack == 1) {
-        memory_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, inst);
+        memory_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, fold);
     } else if comptime!(pack > 1) {
-        memory_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, inst);
+        memory_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, fold);
     } else {
-        memory_typed::<Acc, In, In, WP, V>(acc, input, acc_space, inst);
+        memory_typed::<Acc, In, In, WP, V>(acc, input, acc_space, fold);
     }
 }
 
@@ -112,7 +127,7 @@ fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] inst: LeafOp,
+    #[comptime] fold: LeafOp,
 ) {
     let in_space = comptime!(input.space.clone());
     let vw = input.vector_size();
@@ -131,7 +146,7 @@ fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
     let in_view = input.nd::<I, WP, V>();
 
     for line_idx in 0..total_lines {
-        let seed_vec = acc_view.seed(line_idx, inst);
+        let seed_vec = acc_view.seed(line_idx, fold);
         let mut result = seed_vec;
 
         #[unroll]
@@ -151,13 +166,13 @@ fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
                 &acc_coords,
                 vw,
                 seed,
-                inst,
+                fold,
             );
 
             result.insert(comptime!(lane_idx), curr_val);
         }
 
-        acc_view.commit(line_idx, result, inst);
+        acc_view.commit(line_idx, result, fold);
     }
 }
 
@@ -174,7 +189,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
     acc_coords: &Coords<u32>,
     #[comptime] vw: usize,
     seed: Acc,
-    #[comptime] inst: LeafOp,
+    #[comptime] fold: LeafOp,
 ) -> Acc {
     let mut curr_val = seed;
     let kc = comptime!(layout.kc);
@@ -196,14 +211,14 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
 
         // Memory reads already return Sum's zero identity out of bounds; procedural reads are
         // always valid. Max and Min retain their explicit operation-specific fallback.
-        let in_vec = match comptime!(inst) {
+        let in_vec = match comptime!(fold) {
             LeafOp::Sum => in_view.read(in_coords),
             LeafOp::Max | LeafOp::Min => {
                 let valid = in_view.is_in_bounds(in_coords.clone());
                 select(
                     valid,
                     in_view.read(in_coords),
-                    Vector::<In, V>::cast_from(LeafOp::identity::<In>(inst)),
+                    Vector::<In, V>::cast_from(LeafOp::identity::<In>(fold)),
                 )
             }
         };
@@ -222,7 +237,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
         };
         let in_cast = Acc::cast_from(in_val);
 
-        curr_val = LeafOp::combine::<Acc>(curr_val, in_cast, inst);
+        curr_val = LeafOp::combine::<Acc>(curr_val, in_cast, fold);
     }
 
     curr_val
