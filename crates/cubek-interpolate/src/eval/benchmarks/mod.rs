@@ -10,7 +10,8 @@ pub use problem::{problems, problems_scaled};
 pub use strategy::{BenchTarget, BenchTier, every_strategy, strategies, strategies_at};
 
 use cubecl::benchmark::TimingMethod;
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 use crate::{InterpolateStrategy, definition::InterpolateProblem};
 
@@ -113,5 +114,31 @@ impl cubek_test_utils::Category for CpuCategory {
         >,
     > {
         Some(&InterpolateCorrectness)
+    }
+
+    /// No honest compute count: taps per output pixel range from 1 (nearest) to 36
+    /// (lanczos3), and the backward pass' scatter has no fixed per-pixel cost either.
+    /// Reads and writes are the tensor element counts.
+    fn work(&self, problem: &InterpolateProblem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let elem_size = dtype.size();
+
+        let (read_elems, written_elems) = match problem {
+            InterpolateProblem::Forward(prob) => {
+                (prob.input_shape().num_elements(), prob.output_shape().num_elements())
+            }
+            InterpolateProblem::Backward(prob) => {
+                let [n, _, _, c] = prob.out_grad_shape;
+                let input_grad_elems = n * prob.input_size[0] * prob.input_size[1] * c;
+                (prob.out_grad_shape.iter().product(), input_grad_elems)
+            }
+        };
+
+        Some(CategoryWork {
+            compute_ops: 0,
+            dtype,
+            bytes_read: read_elems * elem_size,
+            bytes_written: written_elems * elem_size,
+        })
     }
 }

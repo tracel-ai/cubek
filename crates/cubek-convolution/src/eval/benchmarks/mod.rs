@@ -15,7 +15,8 @@ pub use correctness::Conv2dCorrectness;
 pub use problem::{Conv2dProblem, problems};
 pub use strategy::strategies;
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 use crate::Strategy;
 
@@ -54,5 +55,32 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<&dyn cubek_test_utils::Correctness<Problem = Conv2dProblem, Strategy = Strategy>>
     {
         Some(&Conv2dCorrectness)
+    }
+
+    /// Standard conv flop count: one multiply-add per (output element, kernel tap,
+    /// input channel). Runs in `half::f16`, the precision `bench` fixes.
+    fn work(&self, problem: &Conv2dProblem) -> Option<CategoryWork> {
+        let dtype = half::f16::elem_type_native();
+        let elem_size = dtype.size();
+
+        let [n, c_in, h_in, w_in] = problem.input_shape;
+        let [c_out, _, k_h, k_w] = problem.weight_shape;
+        let [s_h, s_w] = problem.args.stride;
+        let [p_h, p_w] = problem.args.padding;
+        let [d_h, d_w] = problem.args.dilation;
+
+        let h_out = (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1;
+        let w_out = (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1;
+
+        let input_elems = n * c_in * h_in * w_in;
+        let weight_elems = c_out * c_in * k_h * k_w;
+        let output_elems = n * c_out * h_out * w_out;
+
+        Some(CategoryWork {
+            compute_ops: 2 * output_elems * c_in * k_h * k_w,
+            dtype,
+            bytes_read: (input_elems + weight_elems + problem.bias_shape) * elem_size,
+            bytes_written: output_elems * elem_size,
+        })
     }
 }
