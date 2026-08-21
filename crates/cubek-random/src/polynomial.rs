@@ -89,14 +89,17 @@ pub fn cos_sin_turns<N: Size>(turns: Vector<f32, N>) -> (Vector<f32, N>, Vector<
     ) * offset;
     let cosine = fma(
         fma(
-            fma(Vector::new(COS_8), square, Vector::new(COS_6)),
+            fma(
+                fma(Vector::new(COS_8), square, Vector::new(COS_6)),
+                square,
+                Vector::new(COS_4),
+            ),
             square,
-            Vector::new(COS_4),
+            Vector::new(COS_2),
         ),
         square,
-        Vector::new(COS_2),
-    ) * square
-        + Vector::new(1.0f32);
+        Vector::new(1.0f32),
+    );
 
     let quadrant = quadrant & Vector::new(3i32);
     let swapped = (quadrant & Vector::new(1i32)).equal(&Vector::new(1i32));
