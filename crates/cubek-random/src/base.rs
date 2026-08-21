@@ -240,7 +240,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        assert_normal_respects_68_95_99_rule, assert_wald_wolfowitz_runs_test,
+        Uniform, assert_normal_respects_68_95_99_rule, assert_wald_wolfowitz_runs_test,
         random_bernoulli_with_strategy, random_normal_with_strategy, random_uniform_with_strategy,
     };
 
@@ -322,6 +322,69 @@ mod tests {
             // High bound slightly over 1 so 1.0 is included in the second bin.
             assert_wald_wolfowitz_runs_test(&values, 0., 1.1);
         }
+    }
+
+    /// `Blocked`'s checked tail only runs for the last unit's draws that reach past the
+    /// output, and every shape above divides evenly under this suite's hardware.
+    ///
+    /// The precondition assert fails loudly if this shape ever stops overshooting, so a
+    /// change to the geometry cannot turn this into a test that silently covers nothing.
+    #[test]
+    fn every_blueprint_covers_the_checked_tail() {
+        let shape = vec![100_003];
+        let elements: usize = shape.iter().product();
+
+        let client = TestRuntime::client(&Default::default());
+        let dtype = f32::elem_type_native();
+        let zeros = vec![0.0f32; elements];
+        let output = TensorHandle::<TestRuntime>::new_contiguous(
+            shape.clone(),
+            client.create_from_slice(f32::as_bytes(&zeros)),
+            dtype,
+        );
+
+        let settings = PrngLaunchSettings::new(
+            &client,
+            &output.clone().binding(),
+            dtype,
+            <Uniform as PrngArgs>::VECTORS_PER_DRAW,
+            PrngStrategy::Forced(PrngBlueprint::Blocked),
+        );
+
+        let vectors = elements.div_ceil(settings.line_size);
+        let units = vectors.div_ceil(settings.vectors_per_unit as usize);
+        let last_unit_first = (units - 1) * settings.vectors_per_unit as usize;
+        assert!(
+            last_unit_first + settings.vectors_per_unit as usize > vectors,
+            "{elements} elements split evenly into {units} units of {} vectors on this \
+             machine; pick a shape that overshoots so the checked tail actually runs",
+            settings.vectors_per_unit,
+        );
+
+        with_seed(0, || {
+            random_uniform_with_strategy(
+                &client,
+                5.0,
+                17.0,
+                output.clone().binding(),
+                dtype,
+                PrngStrategy::Forced(PrngBlueprint::Blocked),
+            )
+        })
+        .unwrap();
+
+        let read = client.read_one_unchecked_tensor(output.into_copy_descriptor());
+        let values = f32::from_bytes(&read).to_vec();
+
+        let unwritten = values
+            .iter()
+            .filter(|&&v| !(5.0..17.0).contains(&v))
+            .count();
+
+        assert_eq!(
+            unwritten, 0,
+            "Blocked left {unwritten} values unwritten on the checked tail"
+        );
     }
 
     /// Draws over a buffer of zeros under a fixed seed, so a value the launch skips

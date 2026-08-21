@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -35,7 +33,6 @@ pub fn bench(
         distribution: problem.distribution,
         strategy: strategy.prng,
         client: client.clone(),
-        device,
         samples: num_samples,
     };
 
@@ -52,15 +49,13 @@ pub fn bench(
 ///
 /// The throughput facility has no write-only probe, so this uses
 /// [`ThroughputMode::Memory`], a copy: the mode that issues stores, though half
-/// its traffic is a read `random` never does. Cached process-wide because
-/// re-measuring re-allocates the probe's buffers.
+/// its traffic is a read `random` never does. `measure_peak_throughput` already
+/// caches its result per device, so this does not need to as well.
 fn write_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
-    static PEAK: OnceLock<f64> = OnceLock::new();
-
     let key = ThroughputKey {
         mode: ThroughputMode::Memory,
     };
-    let peak = *PEAK.get_or_init(|| measure_peak_throughput(client, key).bytes_per_s(&key));
+    let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
 
     (peak > 0.0).then_some(peak)
 }
@@ -69,7 +64,6 @@ struct RandomBench {
     shape: Vec<usize>,
     distribution: Distribution,
     strategy: PrngStrategy,
-    device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     samples: usize,
 }
@@ -107,11 +101,9 @@ impl Benchmark for RandomBench {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
-
         format!(
             "random-{}-{}-{:?}",
-            <TestRuntime as Runtime>::name(&client),
+            <TestRuntime as Runtime>::name(&self.client),
             self.distribution.name(),
             self.shape,
         )

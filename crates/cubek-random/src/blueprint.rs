@@ -119,7 +119,7 @@ impl PrngLaunchSettings {
         // microsecond, which at tens of GB/s of stores is tens of KB. Half the L1d,
         // which the CPU runtime reports as its shared-memory analogue, lands there.
         let min_bytes_per_unit = hardware.max_shared_memory_size / 2;
-        let min_vectors_per_unit = min_bytes_per_unit.div_ceil(line_size * dtype.size());
+        let min_vectors_per_unit = min_bytes_per_unit.div_ceil(line_size * dtype.size()).max(1);
         let unit_budget = hardware
             .num_cpu_cores
             .unwrap_or(hardware.max_units_per_cube) as usize;
@@ -140,7 +140,35 @@ impl PrngLaunchSettings {
             cube_dim: CubeDim::new_1d(units_per_cube as u32),
             cube_count: CubeCount::Static(units.div_ceil(units_per_cube) as u32, 1, 1),
             line_size,
-            vectors_per_unit: vectors_per_unit as u32,
+            vectors_per_unit: u32::try_from(vectors_per_unit)
+                .unwrap_or_else(|_| panic!("vectors_per_unit {vectors_per_unit} overflows u32")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cubecl::{TestRuntime, std::tensor::TensorHandle};
+
+    use super::*;
+
+    /// `PrngStrategy::Inferred` reads the hardware's core count to pick a blueprint, and
+    /// nothing else checks that the two branches of the mapping stay in sync with it.
+    #[test]
+    fn inferred_maps_num_cpu_cores_to_blocked() {
+        let client = TestRuntime::client(&Default::default());
+        let dtype = f32::elem_type_native();
+
+        let expected = if client.properties().hardware.num_cpu_cores.is_some() {
+            PrngBlueprint::Blocked
+        } else {
+            PrngBlueprint::Interleaved
+        };
+
+        let output = TensorHandle::<TestRuntime>::empty(&client, vec![64, 64], dtype);
+        let settings =
+            PrngLaunchSettings::new(&client, &output.binding(), dtype, 1, PrngStrategy::Inferred);
+
+        assert_eq!(settings.blueprint, expected);
     }
 }
