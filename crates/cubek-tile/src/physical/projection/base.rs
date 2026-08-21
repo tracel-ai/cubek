@@ -83,6 +83,15 @@ impl Projection {
         Projection::new(&self.axes, &physical)
     }
 
+    /// How many coordinates address this operand: its physical axes with each storage-tiled
+    /// axis's fragments folded back into the one coordinate they are digits of. This is the rank
+    /// every [`Window`](crate::Window) is shaped over, and so the rank of a
+    /// [`TileSpec`](crate::TileSpec)'s boundary list; [`physical_rank`](Self::physical_rank) is
+    /// the buffer's own, which is larger under storage tiling.
+    pub fn coordinate_rank(&self) -> usize {
+        self.carried_groups().len()
+    }
+
     /// The same buffer addressed by physical position instead of by this operand's own axes: each
     /// physical axis relabeled with the synthetic [`Axis`] of the coordinate that addresses it, at
     /// coefficient `1`. Storage tiling survives (a tiled axis's fragments share one label, which is

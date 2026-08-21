@@ -139,8 +139,8 @@ pub fn read_host_data(path: &Path) -> io::Result<HostData> {
             // Guaranteed-aligned re-cast: build the Vec<f32> from the byte
             // chunks rather than transmuting the buffer in place.
             let mut v = Vec::with_capacity(elem_count);
-            for chunk in buf.chunks_exact(4) {
-                v.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+            for chunk in buf.as_chunks::<4>().0 {
+                v.push(f32::from_le_bytes(*chunk));
             }
             HostDataVec::F32(v)
         }
@@ -148,8 +148,8 @@ pub fn read_host_data(path: &Path) -> io::Result<HostData> {
             let mut buf = vec![0u8; elem_count * std::mem::size_of::<f64>()];
             r.read_exact(&mut buf)?;
             let mut v = Vec::with_capacity(elem_count);
-            for chunk in buf.chunks_exact(8) {
-                v.push(f64::from_le_bytes(chunk.try_into().unwrap()));
+            for chunk in buf.as_chunks::<8>().0 {
+                v.push(f64::from_le_bytes(*chunk));
             }
             HostDataVec::F64(v)
         }
@@ -157,8 +157,8 @@ pub fn read_host_data(path: &Path) -> io::Result<HostData> {
             let mut buf = vec![0u8; elem_count * std::mem::size_of::<i32>()];
             r.read_exact(&mut buf)?;
             let mut v = Vec::with_capacity(elem_count);
-            for chunk in buf.chunks_exact(4) {
-                v.push(i32::from_le_bytes(chunk.try_into().unwrap()));
+            for chunk in buf.as_chunks::<4>().0 {
+                v.push(i32::from_le_bytes(*chunk));
             }
             HostDataVec::I32(v)
         }
