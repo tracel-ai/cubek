@@ -8,7 +8,8 @@ pub use correctness::GemmCorrectness;
 pub use problem::{GemmProblem, Precision, problems};
 pub use strategy::strategies;
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 use crate::strategy::Strategy;
 
@@ -47,5 +48,21 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<&dyn cubek_test_utils::Correctness<Problem = GemmProblem, Strategy = Strategy>>
     {
         Some(&GemmCorrectness)
+    }
+
+    fn work(&self, problem: &GemmProblem) -> Option<CategoryWork> {
+        let dtype = match problem.precision {
+            Precision::F32 => f32::elem_type_native(),
+            Precision::F16 => half::f16::elem_type_native(),
+        };
+        let elem_size = dtype.size();
+        let (b, m, n, k) = (problem.b, problem.m, problem.n, problem.k);
+
+        Some(CategoryWork {
+            compute_ops: 2 * b * m * n * k,
+            dtype,
+            bytes_read: (b * m * k + b * k * n) * elem_size,
+            bytes_written: b * m * n * elem_size,
+        })
     }
 }

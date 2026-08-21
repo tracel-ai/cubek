@@ -10,12 +10,9 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{
-    definition::{MatmulElems, MatmulPrecision, compute_peak_ops_per_s},
-    eval::benchmarks::gemm::problem::{GemmProblem, Precision},
-    launch::launch_ref,
-    strategy::Strategy,
-};
+use crate::definition::{MatmulElems, MatmulPrecision};
+use crate::eval::benchmarks::gemm::problem::{GemmProblem, Precision};
+use crate::{launch::launch_ref, strategy::Strategy};
 
 pub fn bench(
     strategy: &Strategy,
@@ -35,8 +32,6 @@ fn bench_with<MP: MatmulPrecision>(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
-    let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
-    let elems = MatmulElems::new_deprecated::<MP>();
 
     let bench = GemmBench {
         b: problem.b,
@@ -46,9 +41,9 @@ fn bench_with<MP: MatmulPrecision>(
         lhs_layout: problem.lhs_layout,
         rhs_layout: problem.rhs_layout,
         strategy: strategy.clone(),
-        client: client.clone(),
+        client,
         device,
-        dtypes: elems.clone(),
+        dtypes: MatmulElems::new_deprecated::<MP>(),
         samples: num_samples,
     };
 
@@ -57,7 +52,7 @@ fn bench_with<MP: MatmulPrecision>(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
+    Ok(RunSamples::new(durations))
 }
 
 struct GemmBench {

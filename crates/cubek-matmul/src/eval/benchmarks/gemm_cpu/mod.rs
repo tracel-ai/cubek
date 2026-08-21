@@ -1,6 +1,6 @@
 //! Focused CPU GEMM comparison: CpuGemm
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 use crate::eval::benchmarks::gemm::{self, GemmProblem};
 use crate::strategy::Strategy;
@@ -72,5 +72,9 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<&dyn cubek_test_utils::Correctness<Problem = GemmProblem, Strategy = Strategy>>
     {
         Some(&gemm::GemmCorrectness)
+    }
+
+    fn work(&self, problem: &GemmProblem) -> Option<CategoryWork> {
+        cubek_test_utils::Category::work(&gemm::Category, problem)
     }
 }

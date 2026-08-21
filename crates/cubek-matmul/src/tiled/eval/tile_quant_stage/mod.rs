@@ -14,7 +14,8 @@ pub use benchmark::bench;
 pub use problem::{TileQuantStageProblem, problems};
 pub use strategy::{StageDepth, strategies};
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 pub struct Category;
 
@@ -49,5 +50,24 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
+    }
+
+    fn work(&self, problem: &TileQuantStageProblem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let f32_size = dtype.size();
+        let scheme = benchmark::quant_scheme(problem.bn);
+
+        let a_bytes = problem.m * problem.k * f32_size;
+        let b_data_bytes =
+            (problem.k * problem.n).div_ceil(scheme.num_quants()) * u32::elem_type_native().size();
+        let b_scale_bytes = problem.k * (problem.n / problem.bn) * f32_size;
+        let c_bytes = problem.m * problem.n * f32_size;
+
+        Some(CategoryWork {
+            compute_ops: 2 * problem.m * problem.n * problem.k,
+            dtype,
+            bytes_read: a_bytes + b_data_bytes + b_scale_bytes,
+            bytes_written: c_bytes,
+        })
     }
 }
