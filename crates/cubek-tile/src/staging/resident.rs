@@ -26,9 +26,9 @@ impl<Acc: Numeric> Tile<Acc> {
     /// type, distinct from the served/stored `Acc` (e.g. `f32` accumulate under an `f16`
     /// output).
     ///
-    /// `lhs` is the operand this accumulator will contract against, and its ladder states the
+    /// `lhs` is the operand this accumulator will contract against, and it states the
     /// register form the accumulator takes: a staged cmma or manual-mma operand meets a
-    /// matching fragment. A ladder staging no register form leaves the instruction open (memory
+    /// matching fragment. An operand staging no register form leaves the instruction open (memory
     /// windows serve the software instruction and both hardware mmas alike), so the space's
     /// floor decides ([`Space::instruction`]). `lhs` also sizes the
     /// fragment: a hardware fragment is the whole `m × n × k` instruction, and an accumulator
@@ -40,14 +40,10 @@ impl<Acc: Numeric> Tile<Acc> {
         // fragment's own reader (`Tile::fragment_matrix`) is handed the leaf tile directly, and the
         // two edges have to be the same number.
         let k = comptime!(lhs.space.final_space().contracted_extent(&self.space));
-        let plan = lhs.stage_plan();
-        let form = comptime!(match plan.register_stage() {
-            Some(kind) => kind,
-            None => self.space.instruction().expect(
-                "Tile::promote: no operand ladder stages a register form, so the floor is the \
-                 space's to state; add `.instruction(...)` to its tiling"
-            ),
-        });
+        let form = comptime!(self.space.instruction().expect(
+            "Tile::promote: the register form is the space's statement; add `.instruction(...)` \
+             to its tiling"
+        ));
         // The block's lines match the memory it drains back into; the hardware
         // encodings ignore it.
         let vector_size = self.vector_size();

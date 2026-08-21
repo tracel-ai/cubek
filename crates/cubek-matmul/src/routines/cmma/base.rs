@@ -184,7 +184,7 @@ impl CmmaRoutine {
             }
         };
         // Pure plan validation first (backend-independent), the availability gate after.
-        // The gate covers forced plans too: they skip `select`'s hardware ladder, and an
+        // The gate covers forced plans too: they skip `select`'s hardware stages, and an
         // unsupported instruction must be `Unavailable`, not garbage.
         blueprint.validate(problem)?;
         let plane_dim = device_settings.client.properties().hardware.plane_size_max;
@@ -229,7 +229,7 @@ impl CmmaRoutine {
     }
 
     /// Pick the instruction from the hardware's cmma configs (aspect-aware, mirroring the
-    /// classic `find_instruction_size` ladder), then tile the stage with as many planes as
+    /// classic `find_instruction_size` stages), then tile the stage with as many planes as
     /// the cube dim affords, snapped to divisors of the tile grid.
     #[allow(clippy::result_large_err)]
     fn select<R: Runtime>(

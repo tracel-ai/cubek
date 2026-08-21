@@ -286,7 +286,7 @@ fn select_size(
 
 /// The instruction shape for this problem — [`cubek_std::find_instruction_size`]
 /// with matmul's own error on the empty case, and the client and element triple
-/// bound into its capability closures. The ladder itself is shape-only and takes
+/// bound into its capability closures. The stages itself is shape-only and takes
 /// neither, so a selector without a runtime in hand can call it.
 ///
 /// The heuristic itself is not matmul's: convolution and attention pick an

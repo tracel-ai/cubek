@@ -180,7 +180,7 @@ pub struct TileInputBuilder {
 }
 
 impl TileInputBuilder {
-    /// Take the per-level residences from `operand`'s ladder, stated where the levels were
+    /// Take the per-level residences from `operand`'s stages, stated where the levels were
     /// declared ([`Operand::stage`](cubek_tile::Operand::stage)). Default: every level
     /// [`Residence::InPlace`], staging nothing.
     pub fn operand(mut self, operand: &Operand) -> Self {

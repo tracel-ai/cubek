@@ -222,8 +222,8 @@ const SHAPES: &[(&str, &str, usize, usize, usize, usize)] = &[
     ("square_1x1536", "1536³", 1, 1536, 1536, 1536),
 ];
 
-/// Worker-thread grids, 1 → 16, mirroring the `gemm_cpu` fast-core ladder.
-const PLANE_LADDER: &[(&str, PlaneGrid)] = &[
+/// Worker-thread grids, 1 → 16, mirroring the `gemm_cpu` fast-core stages.
+const PLANE_GRIDS: &[(&str, PlaneGrid)] = &[
     ("p1", PlaneGrid { m: 1, n: 1 }),
     ("p4", PlaneGrid { m: 2, n: 2 }),
     ("p8", PlaneGrid { m: 4, n: 2 }),
@@ -241,7 +241,7 @@ pub fn problems() -> Vec<CatalogEntry<TiledProblem>> {
 /// same leaf/planes, so `strided_pN` vs `tiled_pN` isolates the storage packing.
 pub fn strategies() -> Vec<CatalogEntry<TiledStrategy>> {
     let mut out = Vec::new();
-    for &(tag, planes) in PLANE_LADDER {
+    for &(tag, planes) in PLANE_GRIDS {
         out.push(CatalogEntry::new(
             format!("strided_{tag}"),
             format!("Strided (row-major, {tag})"),

@@ -226,7 +226,7 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// The staging store for one region of an operand under `out`'s contraction: a partition
-    /// mirroring the region's grid, tiles uninitialized in the `form` the operand's ladder
+    /// mirroring the region's grid, tiles uninitialized in the `form` the operand's stages
     /// stated; [`copy_from`](Tile::copy_from) fills it.
     pub(crate) fn store(
         #[comptime] window: Space,

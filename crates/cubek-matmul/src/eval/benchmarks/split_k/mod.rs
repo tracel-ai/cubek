@@ -468,7 +468,7 @@ const SHAPES: &[(&str, &str, usize, usize, usize)] = &[
     ),
 ];
 
-/// The width ladder: `c1` is each mapping's naive form, the wider entries buy cache-line
+/// The width stages: `c1` is each mapping's naive form, the wider entries buy cache-line
 /// utilization with register-block width (all stay within the leaf's 64-cell unroll budget).
 /// `n_spread` also gets a widened form so the comparison stays honest if widening helps everyone.
 const MAPPINGS: &[Mapping] = &[

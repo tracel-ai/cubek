@@ -557,9 +557,9 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
     // axis broadcasts along all of it (the kernel's `Space::merge` fills it back).
     let out = space.project(&[B0, B1, M, N]);
     // Every level of this helper stages, whatever the caller stacked.
-    let ladder = vec![Residence::Smem; partitioners.len()];
+    let stages = vec![Residence::Smem; partitioners.len()];
     let mut lhs_operand = Operand::new(&[B0, M, K], f32::elem_type_native());
-    for &residence in &ladder {
+    for &residence in &stages {
         lhs_operand.stage(residence);
     }
     let lhs = TileInput::builder(&client, space.project(&[B0, M, K]))
@@ -567,7 +567,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
         .tile(&[1, t, t])
         .arange();
     let mut rhs_operand = Operand::new(&[B1, K, N], f32::elem_type_native());
-    for &residence in &ladder {
+    for &residence in &stages {
         rhs_operand.stage(residence);
     }
     let rhs = TileInput::builder(&client, space.project(&[B1, K, N]))
@@ -974,8 +974,8 @@ fn cmma_matmul_staged_n_walk_partition() {
         // L3: the N-walk: one B fragment per step, the A column filled once above it.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
-            o.0.stage(Residence::Register(Instruction::Cmma));
-            o.1.stage(Residence::Register(Instruction::Cmma));
+            o.0.stage(Residence::Register);
+            o.1.stage(Residence::Register);
         })
         // L4: the M-only fragment walk.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
@@ -1064,8 +1064,8 @@ fn cmma_matmul_double_buffered_plane_stage() {
         // L3: the N-walk with DOUBLE buffering over a plane stage.
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
             l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
-            o.0.stage(Residence::Register(Instruction::Cmma));
-            o.1.stage(Residence::Register(Instruction::Cmma));
+            o.0.stage(Residence::Register);
+            o.1.stage(Residence::Register);
         })
         // L4: the M-only fragment walk.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
@@ -3874,10 +3874,10 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
     );
 }
 
-/// A cmma fragment loads at one element type, so it cannot decode as it reads: an operand whose
-/// ladder stages into a cmma register while asking to stay quantized that far is refused where it
-/// says so, before any kernel is built. Both facts are the operand's own, so nothing else is
-/// consulted. Host-side, so it runs on every backend.
+/// A cmma fragment loads at one element type, so it cannot decode as it reads: an operand staged
+/// into registers, under a space whose instruction is cmma, while asking to stay quantized that
+/// far, is refused before any kernel is built. The operand says where it lives and the space says
+/// what consumes it there. Host-side, so it runs on every backend.
 #[test]
 #[should_panic(expected = "cannot decode as it reads")]
 fn quant_until_read_refused_by_a_cmma_register_stage() {
@@ -3896,9 +3896,11 @@ fn quant_until_read_refused_by_a_cmma_register_stage() {
         .build()
         .partitioner()
         .clone();
-    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]).with_partitioner(plan);
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)])
+        .with_partitioner(plan)
+        .with_instruction(Instruction::Cmma);
     let mut b_operand = Operand::new(&[K, N], u32::elem_type_native());
-    b_operand.stage(Residence::Register(Instruction::Cmma));
+    b_operand.stage(Residence::Register);
     let b = TileInput::builder(&client, space.project(&[K, N]))
         .operand(&b_operand)
         .untiled()

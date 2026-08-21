@@ -131,7 +131,7 @@ fn setup<R: Runtime>(
     Ok((problem, blueprint, out_batches.to_vec()))
 }
 
-/// The routine's 4-level space with its operands' ladders stated in place: the cube grid
+/// The routine's 4-level space with its operands' operands stated in place: the cube grid
 /// (double-buffered along `K`) stages both inputs into shared memory; one partition per
 /// plane; the contraction-step walk moves them into cmma fragments; the fragment grid the
 /// step contracts is walked statically. The accumulator stages nothing: it is promoted by
@@ -175,8 +175,8 @@ fn tile_space(
                 .axis(M, Cut::sequential(c.m * i.m))
                 .axis(N, Cut::sequential(c.n * i.n))
                 .axis(K, Cut::sequential(i.k));
-            o.a.stage(Residence::Register(Instruction::Cmma));
-            o.b.stage(Residence::Register(Instruction::Cmma));
+            o.a.stage(Residence::Register);
+            o.b.stage(Residence::Register);
         })
         .instruction(Instruction::Cmma, |l, _| {
             l.axes(&batch_axes, Cut::sequential(1))

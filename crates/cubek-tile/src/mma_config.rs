@@ -4,7 +4,7 @@
 //!
 //! Ported from cubek-std's `MmaIOConfig`: which fragment transport each role uses is a
 //! `(device, storage-type)` decision that queries [`DeviceProperties`], so it is built host-side
-//! and carried into the kernel as a comptime value on the ladder's register stage (exactly as
+//! and carried into the kernel as a comptime value on the operand.s register stage (exactly as
 //! the contraction depth `k` is). Both the stage statement and the instruction
 //! ([`MmaData::mma`](crate::MmaData)) read it, so it lives at the crate root rather than beside
 //! either.

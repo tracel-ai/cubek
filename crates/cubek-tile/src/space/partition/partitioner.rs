@@ -46,7 +46,7 @@ impl Default for Buffering {
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
 /// hands [`next`](Partitioner::next) down. A `Level` carries how deeply its walk buffers
 /// ([`Buffering`]); `Final` carries nothing, since what the terminal tile contracts through
-/// ([`Instruction`](crate::Instruction)) is each operand's own ladder's statement.
+/// ([`Instruction`](crate::Instruction)) is each operand's own operand.s statement.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
     Final,

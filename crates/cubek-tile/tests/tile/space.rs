@@ -5,11 +5,8 @@ use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_tile::{
     Axis, Buffering, ByAxis, Cut, Distribution, Instruction, Operand, OperandSet, Partitioner,
-    RegisterBlock, Residence, Space, Stage, Tiling, WalkOrder,
+    Residence, Space, Stage, Tiling, WalkOrder,
 };
-
-/// The register-array stage the ladder tests state; its config is inert bookkeeping here.
-const ARRAY: RegisterBlock = RegisterBlock::new(16, false, false);
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -280,7 +277,7 @@ fn over_builds_the_space_plain_tiling_would() {
 }
 
 /// Omission is a statement: a level that says nothing leaves the operand in place at the type
-/// it already holds, so every ladder is total without a default anyone has to remember.
+/// it already holds, so every stages is total without a default anyone has to remember.
 #[test]
 fn over_seals_stages_and_omission_is_in_place() {
     let f32t = f32::elem_type_native();
@@ -297,9 +294,7 @@ fn over_seals_stages_and_omission_is_in_place() {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.out.stage(Residence::Register(Instruction::Registers {
-                config: ARRAY,
-            }));
+            o.out.stage(Residence::Register);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(4))
@@ -321,10 +316,7 @@ fn over_seals_stages_and_omission_is_in_place() {
         ops.out.stages(),
         &[
             stage(Residence::InPlace, f32t),
-            stage(
-                Residence::Register(Instruction::Registers { config: ARRAY }),
-                f32t
-            ),
+            stage(Residence::Register, f32t),
             stage(Residence::InPlace, f32t),
         ]
     );
@@ -354,10 +346,7 @@ fn over_type_column_moves_then_converts() {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.b.stage_as(
-                Residence::Register(Instruction::Registers { config: ARRAY }),
-                f32t,
-            );
+            o.b.stage_as(Residence::Register, f32t);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(4))
@@ -370,11 +359,8 @@ fn over_type_column_moves_then_converts() {
     assert_eq!(
         ops.b.stages(),
         &[
-            stage(Residence::Smem, q4), // move: packed words
-            stage(
-                Residence::Register(Instruction::Registers { config: ARRAY }),
-                f32t
-            ), // the conversion, right here
+            stage(Residence::Smem, q4),       // move: packed words
+            stage(Residence::Register, f32t), // the conversion, right here
             stage(Residence::InPlace, f32t),
         ]
     );
@@ -409,44 +395,40 @@ fn over_double_statement_at_one_level_panics() {
                 .axis(N, Cut::sequential(16))
                 .axis(K, Cut::sequential(16));
             o.a.stage(Residence::Smem);
-            o.a.stage(Residence::Register(Instruction::Registers {
-                config: ARRAY,
-            }));
+            o.a.stage(Residence::Register);
         })
         .build();
 }
 
-/// The ladder is the format statement a launch stamps: the residence column feeds the
+/// The stages is the format statement a launch stamps: the residence column feeds the
 /// [`TileSpec`](cubek_tile::TileSpec), and the finest register stage is what the operand is at
 /// the instruction; one stating none is a memory window, read where it lies by whichever
 /// instruction consumes it.
 #[test]
-fn over_ladder_derives_residences_and_register_stage() {
+fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
     let mut ops = matmul_operands();
-    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
+    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
                 .axis(K, Cut::sequential(16));
             o.a.stage(Residence::Smem);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+        .instruction(Instruction::Cmma, |l, o| {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
                 .axis(K, Cut::sequential(4));
-            o.a.stage(Residence::Register(Instruction::Cmma));
+            o.a.stage(Residence::Register);
         })
         .build();
 
-    assert_eq!(
-        ops.a.residences(),
-        &[Residence::Smem, Residence::Register(Instruction::Cmma),]
-    );
-    assert_eq!(
-        Instruction::register_stage(&ops.a.residences()),
-        Some(Instruction::Cmma)
-    );
-    assert_eq!(Instruction::register_stage(&ops.b.residences()), None);
+    // An operand says where it lives, and nothing about what consumes it there.
+    assert_eq!(ops.a.residences(), &[Residence::Smem, Residence::Register]);
+    assert!(Instruction::stages_to_registers(&ops.a.residences()));
+    assert!(!Instruction::stages_to_registers(&ops.b.residences()));
+
+    // Which instruction those registers are for is said once, by the space.
+    assert_eq!(space.instruction(), Some(Instruction::Cmma));
 }
 
 /// The build seals its operands: a stage stated afterwards would describe a level that does

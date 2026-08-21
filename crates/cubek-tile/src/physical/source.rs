@@ -183,7 +183,7 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
-    /// Take the per-level residences from `operand`'s ladder, stated where the levels were
+    /// Take the per-level residences from `operand`'s stages, stated where the levels were
     /// declared ([`Operand::stage`](crate::Operand::stage)) and checked against the space's
     /// depth by [`build`](Self::build). Default: every level [`InPlace`](Residence::InPlace),
     /// so an operand that stages nothing is read where it already is and the walk
@@ -486,11 +486,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
                 "StridedTileSource::quantized: a gathered operand cannot be quantized; its scale \
                  grid is shaped over its logical axes, which its buffer's dims no longer match"
             );
-            quant.validate(
-                &space.project(spec.axes()),
-                v,
-                Instruction::register_stage(&residence),
-            );
+            quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
         Realized {
             tensor: binding.into_tensor_arg(),

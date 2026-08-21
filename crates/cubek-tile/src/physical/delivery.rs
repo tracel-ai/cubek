@@ -90,7 +90,7 @@ pub enum Residence {
     Smem,
     /// Plane-private register tiles in the stated encoding, selected by comptime coordinate (so
     /// the level's walk unrolls).
-    Register(Instruction),
+    Register,
 }
 
 /// The encoding of a register-resident tile: the software instruction's register array (whose
@@ -98,8 +98,8 @@ pub enum Residence {
 /// or a matrix fragment in one of the two hardware forms. `io` rides the manual form because it
 /// comes from a device query, which cannot run in-kernel.
 ///
-/// Also the instruction vocabulary: an operand *is* its ladder's finest register stage at the
-/// instruction ([`register_stage`](Self::register_stage)), and an accumulator no ladder answers
+/// Also the instruction vocabulary: an operand *is* its operand.s finest register stage at the
+/// instruction ([`register_stage`](Self::register_stage)), and an accumulator no stages answers
 /// for takes the blueprint's statement at the kernel top
 /// ([`Tile::instruction`](crate::Tile::instruction)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -119,12 +119,12 @@ impl Instruction {
         }
     }
 
-    /// The finest register stage a ladder states: what such an operand is at the instruction.
-    /// `None` is a memory window, read where it lies by whichever instruction consumes it.
-    pub fn register_stage(stages: &[Residence]) -> Option<Instruction> {
-        stages.iter().rev().find_map(|residence| match residence {
-            Residence::Register(kind) => Some(*kind),
-            Residence::InPlace | Residence::Smem => None,
+    /// Whether any level stages this operand into registers. Which instruction those registers
+    /// are for is the space's statement, never the operand's, so this answers presence only.
+    pub fn stages_to_registers(stages: &[Residence]) -> bool {
+        stages.iter().any(|residence| match residence {
+            Residence::Register => true,
+            Residence::InPlace | Residence::Smem => false,
         })
     }
 }
@@ -133,8 +133,8 @@ impl StageStorage {
     /// The safe default for an operand with these stages: a cmma fragment load reads a whole
     /// transaction, so tile its stages. Anything else keeps plain strided rows, the manual-mma
     /// form included: it addresses each element by computed offset, so contiguity buys it nothing.
-    pub fn for_stages(stages: &[Residence]) -> Self {
-        match Instruction::register_stage(stages) {
+    pub fn for_stages(stages: &[Residence], instruction: Option<Instruction>) -> Self {
+        match instruction.filter(|_| Instruction::stages_to_registers(stages)) {
             Some(Instruction::Cmma) => StageStorage::Tiled,
             Some(Instruction::Registers { .. }) | Some(Instruction::Mma { .. }) | None => {
                 StageStorage::Strided
@@ -183,9 +183,9 @@ impl StagePlan {
     }
 
     /// The finest register stage still ahead of this operand: what it is at the instruction
-    /// ([`Instruction::register_stage`]); `None` is a memory window.
-    pub fn register_stage(&self) -> Option<Instruction> {
-        Instruction::register_stage(&self.residence)
+    /// ([`Instruction::stages_to_registers`]).
+    pub fn stages_to_registers(&self) -> bool {
+        Instruction::stages_to_registers(&self.residence)
     }
 
     /// This level's residence. An exhausted plan answers [`InPlace`](Residence::InPlace).
@@ -264,20 +264,13 @@ mod tests {
     #[test]
     fn a_plan_hands_out_one_residence_per_level() {
         let plan = StagePlan::new(
-            &[
-                Residence::Smem,
-                Residence::InPlace,
-                Residence::Register(Instruction::Cmma),
-            ],
+            &[Residence::Smem, Residence::InPlace, Residence::Register],
             StageStorage::Strided,
             0,
         );
         assert_eq!(plan.head(), Residence::Smem);
         assert_eq!(plan.descend().head(), Residence::InPlace);
-        assert_eq!(
-            plan.descend().descend().head(),
-            Residence::Register(Instruction::Cmma)
-        );
+        assert_eq!(plan.descend().descend().head(), Residence::Register);
     }
 
     /// Below the last level there is only the leaf, which reads its operands where they are, so an

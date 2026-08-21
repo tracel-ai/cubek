@@ -91,7 +91,7 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     }
 
     /// [`arg`](Self::arg) driven by a sealed [`Operand`]: the subspace is the operand's axes
-    /// and the per-level residences its ladder, stated once where the levels were declared, so
+    /// and the per-level residences its stages, stated once where the levels were declared, so
     /// neither can drift from the space the way a hand-passed array can.
     pub fn bind<'a>(
         &'a self,

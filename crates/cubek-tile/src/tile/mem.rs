@@ -190,10 +190,7 @@ impl<T: Numeric> Tile<T> {
     ) -> Tile<T> {
         // The engine's own backstop: the builder checks this too, but a hand-built
         // `QuantTileArgLaunch` reaches here without passing through it.
-        comptime!(validate_dequant_at(
-            dequant_at,
-            Instruction::register_stage(&spec.residence)
-        ));
+        comptime!(validate_dequant_at(dequant_at, space.instruction()));
         comptime!(cubecl::std::quant::check_table_bindings(
             &scheme,
             table.is_some()
@@ -270,7 +267,7 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
-        let stage = comptime!(spec.stage_plan());
+        let stage = comptime!(spec.stage_plan(space.instruction()));
         // The binding type's own width, comptime; a packed store serves `pack` values per
         // stored element.
         let bound_width = tensor.vector_size();

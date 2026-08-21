@@ -74,7 +74,7 @@ const B0: Axis = Axis(3);
 const B1: Axis = Axis(4);
 
 /// An `f32` operand over `axes` staged `Smem` at the one level: the gathered-arg tests'
-/// hand-built ladder (their spaces are assembled outside `Tiling::over`).
+/// hand-built stages (their spaces are assembled outside `Tiling::over`).
 fn smem_operand(axes: &[Axis]) -> Operand {
     let mut operand = Operand::new(axes, f32::elem_type_native());
     operand.stage(Residence::Smem);

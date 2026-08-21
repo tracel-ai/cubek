@@ -19,7 +19,7 @@ use cubecl::quant::scheme::QuantScheme;
 
 use crate::{Axis, Residence};
 
-/// One stage of an operand's ladder: where the cells sit while the level below runs, and the
+/// One stage of an operand: where the cells sit while the level below runs, and the
 /// element type they hold there.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Stage {
@@ -114,7 +114,7 @@ impl Operand {
         self.stages.last().map_or(self.dtype, |stage| stage.dtype)
     }
 
-    /// The residence column of the ladder, one entry per level coarse to fine: what a
+    /// The residence column of the operand, one entry per level coarse to fine: what a
     /// [`TileSpec`](crate::TileSpec) stamps as its per-level residences.
     pub fn residences(&self) -> Vec<Residence> {
         self.stages.iter().map(|stage| stage.residence).collect()

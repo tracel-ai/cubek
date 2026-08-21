@@ -30,7 +30,7 @@ pub struct TileSpec {
     /// The launch's cube size (units per cube), `0` when unknown; carried into the
     /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
     pub units: usize,
-    /// Explicit stage-layout override; `None` derives from this operand's ladder
+    /// Explicit stage-layout override; `None` derives from this operand's stages
     /// ([`StageStorage::for_stages`]).
     pub storage: Option<StageStorage>,
     /// Where this operand lives at each level of the kernel's space, coarse to fine. Empty (the
@@ -88,12 +88,14 @@ impl TileSpec {
     }
 
     /// This operand's [`StagePlan`]: its per-level residences, plus the stage layout its
-    /// materialized levels take (the explicit override, else derived from its ladder).
-    pub fn stage_plan(&self) -> StagePlan {
+    /// materialized levels take (the explicit override, else derived from its stages).
+    /// `instruction` is the space's statement of what runs at the last level: it decides the
+    /// stage layout when this operand is staged into registers, and is unread otherwise.
+    pub fn stage_plan(&self, instruction: Option<Instruction>) -> StagePlan {
         StagePlan::new(
             &self.residence,
             self.storage
-                .unwrap_or_else(|| StageStorage::for_stages(&self.residence)),
+                .unwrap_or_else(|| StageStorage::for_stages(&self.residence, instruction)),
             self.units,
         )
     }
@@ -241,7 +243,7 @@ impl<E: Numeric> TmaTileArg<E> {
         TmaData::from_tensor_map(
             self.view.clone(),
             comptime!(space.project(self.spec.axes())),
-            comptime!(self.spec.stage_plan()),
+            comptime!(self.spec.stage_plan(space.instruction())),
         )
     }
 }

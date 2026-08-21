@@ -359,7 +359,7 @@ impl QuantInfo {
 /// projects. `T` is the element the tile serves and computes in; its physical vector width is a
 /// storage detail inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
 ///
-/// What an operand is at the instruction is its ladder's own statement (the finest
+/// What an operand is at the instruction is its operand.s own statement (the finest
 /// [`Residence::Register`] stage); no tile carries a second copy of it, and operands that
 /// disagree meet the kind-pairing panics at the instruction, which is the same way every other
 /// mismatched pair is caught.
@@ -407,7 +407,8 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::Gmem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
                 let plan = self.stage_plan();
-                comptime!(match plan.register_stage() {
+                let staged = comptime!(plan.stages_to_registers());
+                comptime!(match self.space.instruction().filter(|_| staged) {
                     None | Some(Instruction::Registers { .. }) => true,
                     Some(Instruction::Mma { io }) => {
                         matches!(io.lhs_load_method, LoadMethod::Manual)
@@ -523,21 +524,19 @@ impl<T: Numeric> Tile<T> {
                     "Tile::residence: a {:?} register stage cannot read this operand's current \
                      physical form in place; materialize it with Residence::Smem at \
                      some level above the instruction",
-                    plan.register_stage()
+                    self.space.instruction()
                 );
             });
             comptime!(Residence::InPlace)
         } else {
             let procedural = self.is_procedural();
-            comptime!(
-                if procedural && matches!(requested, Residence::Register(_)) {
-                    panic!(
-                        "Tile::residence: a procedural source has no plane-fragment transport; state \
+            comptime!(if procedural && matches!(requested, Residence::Register) {
+                panic!(
+                    "Tile::residence: a procedural source has no plane-fragment transport; state \
                      Residence::Smem to materialize it into shared memory, or Residence::InPlace \
                      to evaluate it at the leaf"
-                    );
-                }
-            );
+                );
+            });
             comptime!(requested)
         }
     }
