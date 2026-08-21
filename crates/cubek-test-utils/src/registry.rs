@@ -205,31 +205,44 @@ fn score(mut samples: RunSamples, work: &CategoryWork) -> RunSamples {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let resources = work.resources(&client);
+    let (tflops, binding) = score_bounds(median_secs, &resources);
+    samples.tflops = tflops;
+    samples.binding = binding;
+
+    samples
+}
+
+/// The pure half of [`score`]: given already-measured resource bounds, scores
+/// them at `median_secs` and picks the binding one. Split out so the selection
+/// logic (which resource binds, what `tflops` reads) is testable against
+/// fabricated bounds instead of a device's actual measured peaks.
+fn score_bounds(
+    median_secs: f64,
+    resources: &[(ResourceKind, ResourceBound)],
+) -> (Option<f64>, Option<Binding>) {
     let bounds: Vec<ResourceBound> = resources.iter().map(|(_, bound)| *bound).collect();
     let scores = score_resources(Duration::from_secs_f64(median_secs), &bounds);
 
-    if let Some(idx) = resources
+    let tflops = resources
         .iter()
         .position(|(kind, _)| *kind == ResourceKind::Compute)
-    {
-        samples.tflops = Some(scores[idx].achieved_per_s / 1e12);
-    }
+        .map(|idx| scores[idx].achieved_per_s / 1e12);
 
-    if let Some(best) = throughput::binding_achieved(&scores) {
+    let binding = throughput::binding_achieved(&scores).map(|best| {
         let idx = scores
             .iter()
             .position(|candidate| candidate == best)
             .expect("binding_achieved returns an element of scores");
         let (resource, bound) = resources[idx];
-        samples.binding = Some(Binding {
+        Binding {
             resource,
             achieved_per_s: best.achieved_per_s,
             peak_per_s: bound.peak_per_s,
             fraction_of_peak: best.fraction_of_peak,
-        });
-    }
+        }
+    });
 
-    samples
+    (tflops, binding)
 }
 
 /// Typed per-category definition. Implementors expose their problem and
@@ -444,5 +457,147 @@ impl<C: Category> BenchmarkCategory for C {
             None => return Some(Err(format!("unknown problem: {problem_id}"))),
         };
         Some(correctness.reference_result(&problem.value, &[seed_lhs, seed_rhs], progress))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn work(compute_ops: usize, bytes_read: usize, bytes_written: usize) -> CategoryWork {
+        CategoryWork {
+            compute_ops,
+            dtype: f32::elem_type_native(),
+            bytes_read,
+            bytes_written,
+        }
+    }
+
+    fn client() -> ComputeClient<TestRuntime> {
+        let device = <TestRuntime as Runtime>::Device::default();
+        <TestRuntime as Runtime>::client(&device)
+    }
+
+    /// Zero-ops, zero-bytes work declares no resource: nothing to score, so the
+    /// adapter's row falls back to plain durations.
+    #[test]
+    fn zero_work_declares_no_resources() {
+        let resources = work(0, 0, 0).resources(&client());
+        assert!(resources.is_empty());
+
+        let (tflops, binding) = score_bounds(1.0, &resources);
+        assert_eq!(tflops, None);
+        assert!(binding.is_none());
+    }
+
+    /// A read-only declaration produces exactly one `Read` bound, carrying the
+    /// declared byte count as its `amount`; no `Write` or `Compute` entry.
+    #[test]
+    fn read_only_work_declares_a_single_read_resource() {
+        let resources = work(0, 4096, 0).resources(&client());
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].0, ResourceKind::Read);
+        assert_eq!(resources[0].1.amount, 4096);
+    }
+
+    /// A write-only declaration produces exactly one `Write` bound, mirroring
+    /// the read-only case.
+    #[test]
+    fn write_only_work_declares_a_single_write_resource() {
+        let resources = work(0, 0, 2048).resources(&client());
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].0, ResourceKind::Write);
+        assert_eq!(resources[0].1.amount, 2048);
+    }
+
+    /// A mixed declaration produces all three bounds, each carrying its own
+    /// field's amount, compute first.
+    #[test]
+    fn mixed_work_declares_compute_read_and_write_resources() {
+        let resources = work(1_000_000, 4096, 1024).resources(&client());
+        assert_eq!(resources.len(), 3);
+        assert_eq!(
+            resources.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            vec![ResourceKind::Compute, ResourceKind::Read, ResourceKind::Write]
+        );
+        assert_eq!(resources[0].1.amount, 1_000_000);
+        assert_eq!(resources[1].1.amount, 4096);
+        assert_eq!(resources[2].1.amount, 1024);
+    }
+
+    /// No resources to score: `score_bounds` leaves both `tflops` and `binding`
+    /// unset rather than dividing by an empty bound set.
+    #[test]
+    fn score_bounds_with_no_resources_is_unscored() {
+        let (tflops, binding) = score_bounds(1.0, &[]);
+        assert_eq!(tflops, None);
+        assert!(binding.is_none());
+    }
+
+    /// A single `Read` resource at a known peak scores its own achieved rate
+    /// and becomes the binding one, with no `tflops` (no `Compute` entry).
+    #[test]
+    fn score_bounds_read_only_binds_on_read() {
+        let bound = ResourceBound {
+            amount: 1000,
+            peak_per_s: 500.0,
+        };
+        let (tflops, binding) = score_bounds(2.0, &[(ResourceKind::Read, bound)]);
+
+        assert_eq!(tflops, None);
+        let binding = binding.expect("a usable peak binds");
+        assert_eq!(binding.resource, ResourceKind::Read);
+        assert_eq!(binding.achieved_per_s, 500.0);
+        assert_eq!(binding.peak_per_s, 500.0);
+        assert_eq!(binding.fraction_of_peak, 1.0);
+    }
+
+    /// Same shape as the read-only case, on `Write`.
+    #[test]
+    fn score_bounds_write_only_binds_on_write() {
+        let bound = ResourceBound {
+            amount: 300,
+            peak_per_s: 100.0,
+        };
+        let (_, binding) = score_bounds(1.0, &[(ResourceKind::Write, bound)]);
+
+        let binding = binding.expect("a usable peak binds");
+        assert_eq!(binding.resource, ResourceKind::Write);
+        assert_eq!(binding.fraction_of_peak, 3.0);
+    }
+
+    /// Mirrors the upstream roofline test this adapter builds on: a compute
+    /// bound that would finish quickly at its own peak, alongside a read bound
+    /// that would still take longer even running flat out. The slower-at-peak
+    /// resource binds even though it moves far more amount, and `tflops` still
+    /// reads the compute entry's own achieved rate regardless of which one
+    /// bound the run.
+    #[test]
+    fn score_bounds_mixed_picks_the_slower_at_peak_resource() {
+        let duration = 1.0;
+        let compute = ResourceBound {
+            amount: 200,
+            peak_per_s: 1000.0,
+        }; // 0.2s at peak
+        let read = ResourceBound {
+            amount: 900_000,
+            peak_per_s: 1_000_000.0,
+        }; // 0.9s at peak, the binding one
+        let write = ResourceBound {
+            amount: 100_000,
+            peak_per_s: 200_000.0,
+        }; // 0.5s at peak
+
+        let resources = vec![
+            (ResourceKind::Compute, compute),
+            (ResourceKind::Read, read),
+            (ResourceKind::Write, write),
+        ];
+        let (tflops, binding) = score_bounds(duration, &resources);
+
+        assert_eq!(tflops, Some(200.0 / 1e12));
+        let binding = binding.expect("a usable peak binds");
+        assert_eq!(binding.resource, ResourceKind::Read);
+        assert_eq!(binding.fraction_of_peak, 0.9);
     }
 }
