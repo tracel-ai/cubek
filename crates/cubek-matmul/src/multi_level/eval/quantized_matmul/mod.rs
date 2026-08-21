@@ -63,7 +63,8 @@ impl cubek_test_utils::Category for Category {
         Some(CategoryWork {
             compute_ops: 2 * problem.b * problem.m * problem.n * problem.k,
             dtype,
-            bytes_read: operand_bytes(&lhs_shape, lhs_scheme) + operand_bytes(&rhs_shape, rhs_scheme),
+            bytes_read: operand_bytes(&lhs_shape, lhs_scheme)
+                + operand_bytes(&rhs_shape, rhs_scheme),
             bytes_written: problem.b * problem.m * problem.n * dtype.size(),
         })
     }

@@ -518,7 +518,11 @@ mod tests {
         assert_eq!(resources.len(), 3);
         assert_eq!(
             resources.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
-            vec![ResourceKind::Compute, ResourceKind::Read, ResourceKind::Write]
+            vec![
+                ResourceKind::Compute,
+                ResourceKind::Read,
+                ResourceKind::Write
+            ]
         );
         assert_eq!(resources[0].1.amount, 1_000_000);
         assert_eq!(resources[1].1.amount, 4096);

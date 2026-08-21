@@ -124,9 +124,10 @@ impl cubek_test_utils::Category for CpuCategory {
         let elem_size = dtype.size();
 
         let (read_elems, written_elems) = match problem {
-            InterpolateProblem::Forward(prob) => {
-                (prob.input_shape().num_elements(), prob.output_shape().num_elements())
-            }
+            InterpolateProblem::Forward(prob) => (
+                prob.input_shape().num_elements(),
+                prob.output_shape().num_elements(),
+            ),
             InterpolateProblem::Backward(prob) => {
                 let [n, _, _, c] = prob.out_grad_shape;
                 let input_grad_elems = n * prob.input_size[0] * prob.input_size[1] * c;

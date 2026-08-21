@@ -20,9 +20,8 @@ pub use cubek_std::eval::benchmarks::memcpy_async;
 pub use cubek_std::eval::benchmarks::unary;
 
 pub use cubek_test_utils::{
-    BenchmarkCategory, CatalogEntry, Category, Correctness, HostData, ItemDescriptor,
-    ResourceKind, RunSamples, ValidationResult, compare_host_data_files, read_host_data,
-    write_host_data,
+    BenchmarkCategory, CatalogEntry, Category, Correctness, HostData, ItemDescriptor, ResourceKind,
+    RunSamples, ValidationResult, compare_host_data_files, read_host_data, write_host_data,
 };
 
 /// Every benchmark category compiled into this build of the registry.
