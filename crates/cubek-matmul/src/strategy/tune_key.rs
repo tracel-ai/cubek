@@ -137,7 +137,7 @@ impl MatmulAutotuneKey {
             k: k as u32,
         });
 
-        // The alignment factors below are computed from the *anchored* dims —
+        // The pow2 factors below are computed from the *anchored* dims —
         // the same bucketing the `m`/`n`/`k` fields get — never from the raw
         // values. A dimension carrying a runtime-dependent length (a KV-cache
         // width, a dynamic batch) would otherwise re-split every anchored
@@ -147,6 +147,11 @@ impl MatmulAutotuneKey {
         // bucket shares the kernel choice benchmarked on one representative,
         // and the launch still derives the legal line size from the real
         // tensors.
+        //
+        // The stride factors are the exception: [`stride_factor`] must split
+        // out real strides under the 16-byte async-copy/TMA threshold, or a
+        // winner tuned on an aligned bucket member is an invalid config for
+        // the under-aligned ones. See its doc comment.
         let m_anchored = anchor(m, None, None, None);
         let n_anchored = anchor(n, None, None, None);
         let k_anchored = anchor(k, None, None, None);
@@ -173,21 +178,21 @@ impl MatmulAutotuneKey {
         // its transposed view. Batch strides are products of these, so their
         // alignment can only be higher.
         let lhs_stride_factor = match matrix_layout_lhs {
-            MatrixBatchLayout::Contiguous => stride_factor(k_anchored, elem_lhs),
+            MatrixBatchLayout::Contiguous => stride_factor(k, k_anchored, elem_lhs),
             // TMA can't handle discontiguous batches because they're all combined into one dim
             MatrixBatchLayout::MildlyPermuted {
                 transposed: true,
                 batch_swap: false,
-            } => stride_factor(m_anchored, elem_lhs),
+            } => stride_factor(m, m_anchored, elem_lhs),
             _ => 0,
         };
         let rhs_stride_factor = match matrix_layout_rhs {
-            MatrixBatchLayout::Contiguous => stride_factor(n_anchored, elem_rhs),
+            MatrixBatchLayout::Contiguous => stride_factor(n, n_anchored, elem_rhs),
             // TMA can't handle discontiguous batches because they're all combined into one dim
             MatrixBatchLayout::MildlyPermuted {
                 transposed: true,
                 batch_swap: false,
-            } => stride_factor(k_anchored, elem_rhs),
+            } => stride_factor(k, k_anchored, elem_rhs),
             _ => 0,
         };
 
@@ -219,9 +224,38 @@ impl MatmulAutotuneKey {
     }
 }
 
-/// Stride alignment (in powers of two of bytes) of the canonical row stride
-/// `cols` — the tightest non-contiguous stride of the layout.
-fn stride_factor(cols: usize, elem: ElemType) -> u8 {
+/// Async-copy and TMA global readers require 16-byte (2^4) aligned strides;
+/// selection-time validation checks the *real* strides against this threshold
+/// (`validate_async_copy_with_problem` / `validate_tma_with_problem`).
+const READER_ALIGN_FACTOR: u8 = 4;
+
+/// Stride alignment (in powers of two of bytes) of the canonical row stride —
+/// the tightest non-contiguous stride of the layout (`cols` for a contiguous
+/// `[.., rows, cols]`, `rows` for its transposed view).
+///
+/// Aligned dims key from the *anchored* value so raw lengths inside one
+/// anchored bucket share a key (see the bucket comment in [`from_parts`]).
+/// A dim whose real stride is under the 16-byte reader threshold must NOT
+/// share that bucket: async-copy/TMA algorithms validate the real strides at
+/// setup, so a winner tuned on an aligned representative is an invalid config
+/// for the under-aligned members of its bucket — the launch then fails after
+/// selection instead of never being selected. Clamping the anchored factor to
+/// the threshold keeps the invariant `factor < 4  ⟺  real stride is under
+/// 16 bytes` even when the anchor base is not a power of two (autotune levels
+/// 0 and 2).
+///
+/// [`from_parts`]: MatmulAutotuneKey::from_parts
+fn stride_factor(cols_raw: usize, cols_anchored: usize, elem: ElemType) -> u8 {
+    let raw = raw_stride_factor(cols_raw, elem);
+    if raw < READER_ALIGN_FACTOR {
+        raw
+    } else {
+        raw_stride_factor(cols_anchored, elem).max(READER_ALIGN_FACTOR)
+    }
+}
+
+/// [`stride_factor`] of one dim, without bucketing.
+fn raw_stride_factor(cols: usize, elem: ElemType) -> u8 {
     let bytes = (cols * elem.size_bits()) / 8;
     bytes.trailing_zeros().min(MAX_STRIDE_FACTOR) as u8
 }
@@ -264,12 +298,39 @@ mod tests {
     /// endlessly for problems the anchor treats as equal.
     #[test]
     fn raw_lengths_within_a_bucket_share_one_key() {
-        // 65..=128 all anchor to the 128 bucket, at every alignment class:
-        // odd, 2-, 4-, 8-, 16-aligned, and the exact power of two.
-        let reference = key(64, 69, 64);
-        for kv in [70, 76, 88, 96, 112, 128] {
+        // 65..=128 all anchor to the 128 bucket. Every 16-byte-aligned raw
+        // length shares the bucket key: 76/88/96/112 (f32 row strides of
+        // 304/352/384/448 bytes) and the exact power of two.
+        let reference = key(64, 76, 64);
+        for kv in [88, 96, 112, 128] {
             assert_eq!(reference, key(64, kv, 64), "kv {kv} split the bucket");
         }
+    }
+
+    /// Raw lengths whose real row stride is under the 16-byte async-copy/TMA
+    /// threshold must NOT share the bucket of the aligned lengths: the reader
+    /// algorithms validate the real strides at setup, so an async-copy winner
+    /// tuned on an aligned representative is an invalid config for the
+    /// under-aligned members and the launch fails after selection. On an async
+    /// runner that failure is only warn-logged, which surfaced as silent NaN
+    /// weights in training (see the PR description for the full chain).
+    #[test]
+    fn under_aligned_lengths_split_from_the_aligned_bucket() {
+        let aligned = key(64, 128, 64);
+        // 126: f32 row stride 504 bytes = 8-byte aligned; anchors to 128.
+        assert_ne!(
+            aligned,
+            key(64, 126, 64),
+            "under-aligned kv shared the bucket"
+        );
+        // 69 (odd) and 70 (2-aligned) split too, and by alignment class.
+        assert_ne!(aligned, key(64, 69, 64));
+        assert_ne!(aligned, key(64, 70, 64));
+        assert_ne!(
+            key(64, 69, 64),
+            key(64, 70, 64),
+            "distinct under-aligned classes merged"
+        );
     }
 
     /// The bucket maximum shares its bucket's key. The scale thresholds sit
@@ -315,10 +376,19 @@ mod tests {
                 None,
             )
         };
-        // 65..=128 all anchor to the 128 bucket, at every alignment class.
-        let reference = key_t(69);
-        for m in [70, 76, 88, 96, 112, 128] {
+        // 65..=128 all anchor to the 128 bucket; the 16-byte-aligned raw
+        // lengths share its key.
+        let reference = key_t(76);
+        for m in [88, 96, 112, 128] {
             assert_eq!(reference, key_t(m), "m {m} split the transposed bucket");
         }
+        // Under-aligned rows split out, exactly as in the contiguous case:
+        // this is the `dW = x^T @ dy` shape of a Linear(126, _) backward,
+        // whose real canonical stride is 126 * 4 = 504 bytes.
+        assert_ne!(
+            reference,
+            key_t(126),
+            "under-aligned transposed m shared the bucket"
+        );
     }
 }
