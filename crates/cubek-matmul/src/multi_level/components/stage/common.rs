@@ -4,21 +4,20 @@
 
 use std::marker::PhantomData;
 
-use cubecl::prelude::*;
-use cubek_std::{
-    PartitionSize, StageSize,
-    stage::StageMemoryConfig,
-    tile::{PartitionSchedulerScheme, PartitionTile, PipelinedTile, Plane, Tile, TileScope, Unit},
-};
-
-pub use cubek_std::tile::{PartitionBuffering, Partitioner, PlanePartitioner, UnitPartitioner};
-
 use crate::multi_level::{
+    PartitionSize, StageSize,
     components::{
         global::PlaneFlowConfig,
         tile::{TileMatmul, allocate_acc, allocate_lhs, allocate_rhs},
     },
     definition::{AccRE, LhsRE, MatmulTypes, MatrixTypes, RhsRE},
+    stage::StageMemoryConfig,
+    tile::{PartitionSchedulerScheme, PartitionTile, PipelinedTile, Plane, Tile, TileScope, Unit},
+};
+use cubecl::prelude::*;
+
+pub use crate::multi_level::tile::{
+    PartitionBuffering, Partitioner, PlanePartitioner, UnitPartitioner,
 };
 
 use super::StageMatmulKind;
@@ -56,7 +55,7 @@ impl NumStages {
 }
 
 // =====================================================================
-// Partitioner glue — pair cubek-std's `Partitioner` with the matmul-flow
+// Partitioner glue — pair the tile module's `Partitioner` with the matmul-flow
 // `StageMatmulKind` selector + the role-rule-derived coordinate helper.
 // =====================================================================
 
@@ -128,7 +127,7 @@ pub fn init_a_fragment<MT: MatmulTypes, Sc: TileScope>(
 /// Initialize the rhs register fragment(s) as a `Pipelined`-kind [`Tile`].
 /// The inner sequence's comptime length is 1 (single-buffered) or 2
 /// (double-buffered);
-/// [`Tile::mma_partition`](cubek_std::tile::Tile::mma_partition) reads it to
+/// [`Tile::mma_partition`](crate::multi_level::tile::Tile::mma_partition) reads it to
 /// pick the buffering strategy.
 ///
 /// # Safety
@@ -160,8 +159,8 @@ pub fn init_b_fragments<MT: MatmulTypes, Sc: TileScope>(
 /// # Safety
 ///
 /// This may point towards uninitialized memory. Make sure to call
-/// [`load_partition_from_stage`](cubek_std::tile::load_partition_from_stage)
-/// prior to [`Tile::mma_partition`](cubek_std::tile::Tile::mma_partition).
+/// [`load_partition_from_stage`](crate::multi_level::tile::load_partition_from_stage)
+/// prior to [`Tile::mma_partition`](crate::multi_level::tile::Tile::mma_partition).
 pub fn init_accumulator<MT: MatmulTypes, Sc: TileScope>(
     #[comptime] shared_config: PartitionedStageMatmul,
 ) -> Tile<AccRE<MT>, Sc> {

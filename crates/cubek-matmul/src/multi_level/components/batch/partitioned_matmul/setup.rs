@@ -20,10 +20,10 @@ use crate::{
             stage::NumStages,
         },
         definition::{BatchMatmulBlueprint, CubeMappingLaunch, MatmulTypes},
+        stage::StageMemoryConfig,
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::stage::StageMemoryConfig;
 
 /// Simple partitioned batch matmul family for any precision
 pub struct PartitionedBatchMatmulFamily<
@@ -199,9 +199,9 @@ fn smem_bytes(cfg: &StageMemoryConfig) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::multi_level::stage::SwizzleMode;
     use cubecl::ir::{ElemType, FloatKind};
     use cubek_std::MatrixLayout;
-    use cubek_std::stage::SwizzleMode;
 
     /// A stage holding `rows * cols` f16 elements per stage, `num_stages` deep,
     /// so its footprint is `rows * cols * num_stages * 2` bytes.

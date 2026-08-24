@@ -1,5 +1,4 @@
 use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::ViewMut};
-use cubek_std::stage::StageMemoryConfig;
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, StageIdent},
@@ -15,6 +14,7 @@ use crate::{
             stage::{NumStages, StageMatmul as StageMatmulInstance},
         },
         definition::{AccG, BatchMatmulBlueprint, LhsG, MatmulTypes, RhsG},
+        stage::StageMemoryConfig,
     },
 };
 use cubecl::std::tensor::{View, layout::Coords2d};

@@ -2,7 +2,7 @@
 mod t8x8x8 {
     use super::*;
     use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 8, n: 8, k: 8 })
@@ -15,7 +15,7 @@ mod t8x8x8 {
 mod t16x16x16 {
     use super::*;
     use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize {
@@ -32,7 +32,7 @@ mod t16x16x16 {
 mod t32x8x16 {
     use super::*;
     use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 32, n: 8, k: 16 })
@@ -45,7 +45,7 @@ mod t32x8x16 {
 mod t8x32x16 {
     use super::*;
     use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 8, n: 32, k: 16 })
@@ -58,7 +58,7 @@ mod t8x32x16 {
 mod t16x16x8 {
     use super::*;
     use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 16, n: 16, k: 8 })
@@ -70,7 +70,7 @@ mod t16x16x8 {
 mod t16x8x16 {
     use super::*;
     use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 16, n: 8, k: 16 })

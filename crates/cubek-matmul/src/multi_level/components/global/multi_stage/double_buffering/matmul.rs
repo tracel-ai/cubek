@@ -20,12 +20,12 @@ use crate::multi_level::{
         Acc, AccG, AccRE, AccSE, AccSS, Lhs, LhsG, LhsRE, MatmulTypes, MatrixTypes, Rhs, RhsG,
         RhsRE, Stage, StageSize,
     },
+    tile::{PartitionScheduler, Tile, load_partition_from_stage},
 };
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::Coords2d},
 };
-use cubek_std::tile::{PartitionScheduler, Tile, load_partition_from_stage};
 use std::marker::PhantomData;
 
 // Per-flow Stage type aliases — keep call sites readable.

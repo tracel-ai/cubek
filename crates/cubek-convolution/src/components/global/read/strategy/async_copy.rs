@@ -3,10 +3,11 @@ use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_matmul::multi_level::components::{
-    global::GlobalReaderConfig, stage::StridedStageMemory,
+use cubek_matmul::multi_level::{
+    components::{global::GlobalReaderConfig, stage::StridedStageMemory},
+    tile::TilingLayout,
 };
-use cubek_std::{MatrixLayout, StageIdent, tile::TilingLayout};
+use cubek_std::{MatrixLayout, StageIdent};
 
 use crate::components::{ConvolutionOperation, global::args::RuntimeArgs};
 

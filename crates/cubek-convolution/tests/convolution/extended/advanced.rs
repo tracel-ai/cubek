@@ -3,8 +3,10 @@
 //! per-routine combinations live in `full/`.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-use cubek_std::{PartitionSize, StageSize, SwizzleModes, stage::SwizzleMode};
+use cubek_matmul::multi_level::{
+    PartitionSize, StageSize, components::stage::PartitionBuffering, stage::SwizzleMode,
+    stage::SwizzleModes,
+};
 
 use super::common::{default_size, default_tile_size, f16_dtypes, tiling_scheme};
 use crate::convolution::launcher_strategy::test_algo;

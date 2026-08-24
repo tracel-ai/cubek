@@ -13,10 +13,10 @@ use crate::multi_level::{
         stage::LoadStageFamily,
     },
     definition::MatmulTypes,
+    tile::TilingLayout,
 };
 use cubecl::prelude::{barrier::Barrier, *};
 use cubecl::std::tensor::{View, layout::Coords2d};
-use cubek_std::tile::TilingLayout;
 
 #[cube]
 /// A strategy for loading partial stage memory

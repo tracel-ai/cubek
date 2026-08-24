@@ -1,11 +1,13 @@
+use crate::multi_level::{
+    components::{global::GlobalReaderConfig, stage::StridedStageMemory},
+    tile::TilingLayout,
+};
 use cubecl::{
     prelude::barrier::{copy_async, copy_async_checked},
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::{MatrixLayout, tile::TilingLayout};
-
-use crate::multi_level::components::{global::GlobalReaderConfig, stage::StridedStageMemory};
+use cubek_std::MatrixLayout;
 
 /// The instruction has a max width of 128 bits, even on Blackwell which supports 256-bit loads
 pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;

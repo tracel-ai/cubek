@@ -12,8 +12,7 @@ use cubek_matmul::{
     },
 };
 
-use cubek_std::SwizzleModes;
-use cubek_std::stage::SwizzleMode;
+use cubek_matmul::multi_level::{stage::SwizzleMode, stage::SwizzleModes};
 
 use crate::components::ConvolutionProblem;
 

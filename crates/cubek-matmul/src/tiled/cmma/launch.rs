@@ -2,8 +2,10 @@
 //! deliveries; the blueprint decides, and only the operand construction differs.
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_std::launch::tma::{stride_align_bits, tma_operand};
-use cubek_std::{InputBinding, MatrixLayout};
+use cubek_std::{
+    InputBinding, MatrixLayout,
+    launch::tma::{stride_align_bits, tma_operand},
+};
 use cubek_tile::{
     Axis, Buffering, CubeAxis, Cut, Instruction, Launcher, Operand, Residence, Space, Strided,
     Tiling, Tma, TmaTileArgLaunch, WalkOrder,

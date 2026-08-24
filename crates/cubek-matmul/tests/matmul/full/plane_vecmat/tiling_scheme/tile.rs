@@ -1,7 +1,7 @@
 mod t1x8x256 {
     use super::*;
     use cubek_matmul::multi_level::definition::{TilingScheme, TilingSchemeBuilder};
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 1, n: 8, k: 256 })
@@ -13,7 +13,7 @@ mod t1x8x256 {
 mod t1x4x128 {
     use super::*;
     use cubek_matmul::multi_level::definition::{TilingScheme, TilingSchemeBuilder};
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 1, n: 4, k: 128 })
@@ -25,7 +25,7 @@ mod t1x4x128 {
 mod t1x1x128 {
     use super::*;
     use cubek_matmul::multi_level::definition::{TilingScheme, TilingSchemeBuilder};
-    use cubek_std::TileSize;
+    use cubek_matmul::multi_level::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
         builder.with_tile_size(TileSize { m: 1, n: 1, k: 128 })

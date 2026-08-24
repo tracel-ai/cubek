@@ -8,9 +8,8 @@ use cubecl::{
     ir::{ElemType, VectorSize},
 };
 use cubek_std::{
+    MatmulProblemSize, MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    stage::SwizzleMode,
-    {MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize},
 };
 
 use crate::{
@@ -18,6 +17,7 @@ use crate::{
         MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
     },
     multi_level::{
+        PartitionSize, StageSize, TileSize,
         components::{
             global::{InputLoadFlow, LoadFlows},
             stage::PartitionBuffering,
@@ -27,6 +27,7 @@ use crate::{
             BatchMatmulBlueprint, MultiRowStrategy, SwizzleModes, TilingScheme, adjust_dtypes,
         },
         routines::selector::is_tiny,
+        stage::SwizzleMode,
     },
 };
 
@@ -290,14 +291,15 @@ fn select_size(
     (rows, plane_count / rows, plane_count)
 }
 
-/// The instruction shape for this problem — [`cubek_std::find_instruction_size`]
+/// The instruction shape for this problem — [`crate::multi_level::find_instruction_size`]
 /// with matmul's own error on the empty case, and the client and element triple
 /// bound into its capability closures. The stages itself is shape-only and takes
 /// neither, so a selector without a runtime in hand can call it.
 ///
 /// The heuristic itself is not matmul's: convolution and attention pick an
-/// instruction the same way, so it lives beside the size types in `cubek-std` and
-/// takes the device's capabilities as closures. Only the error is ours.
+/// instruction the same way, so it lives beside the size types at the root of
+/// `multi_level` and takes the device's capabilities as closures. Only the error
+/// is ours.
 #[allow(clippy::type_complexity)]
 pub fn find_instruction_size<R, IsSupported, SupportedSizes>(
     client: &ComputeClient<R>,
@@ -313,7 +315,7 @@ where
     SupportedSizes: Fn(&ComputeClient<R>, ElemType, ElemType, ElemType) -> Vec<TileSize>,
 {
     let (lhs, rhs, acc) = elems;
-    cubek_std::find_instruction_size(
+    crate::multi_level::find_instruction_size(
         problem_size,
         forced,
         |m, n, k| {

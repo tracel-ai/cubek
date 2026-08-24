@@ -7,13 +7,14 @@
 //! Only one representative backend per routine is covered here; backend-level
 //! coverage lives in `normal/` and the full cartesian in `full/`.
 
+use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize};
 use cubek_matmul::{
     definition::MatmulProblem,
     multi_level::{Strategy as MultiLevel, test_only::TestStrategy},
     routine::BlueprintStrategy,
     strategy::Strategy,
 };
-use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
+use cubek_std::MatrixLayout;
 
 use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem, row_row};
 use crate::matmul::{extended::test_matmul_test_strategy, test_matmul_strategy};

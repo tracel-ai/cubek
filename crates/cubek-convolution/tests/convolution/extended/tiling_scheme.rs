@@ -3,8 +3,9 @@
 //! routine — the full cartesian across other algorithm families lives in `full/`.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-use cubek_std::{PartitionSize, StageSize, SwizzleModes};
+use cubek_matmul::multi_level::{
+    PartitionSize, StageSize, components::stage::PartitionBuffering, stage::SwizzleModes,
+};
 
 use super::common::{default_size, default_tile_size, f16_dtypes, tiling_scheme};
 use crate::convolution::launcher_strategy::test_algo;

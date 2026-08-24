@@ -30,7 +30,6 @@ benchmarks = ["testing"]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false, optional = true }
-half = { workspace = true, features = ["bytemuck"] }
 
 [dev-dependencies]
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false }

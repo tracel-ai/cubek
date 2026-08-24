@@ -5,6 +5,7 @@ use crate::{
     multi_level::{
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
         definition::{BatchMatmulBlueprint, SwizzleModes, TilingScheme},
+        stage::SwizzleMode,
     },
 };
 
@@ -16,7 +17,6 @@ use cubecl::{
 use cubek_std::{
     MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    stage::SwizzleMode,
 };
 
 #[derive(Default, Clone, Copy, Debug)]

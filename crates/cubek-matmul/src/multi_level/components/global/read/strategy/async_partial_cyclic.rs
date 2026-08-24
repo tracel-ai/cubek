@@ -21,6 +21,7 @@ use crate::{
             stage::{StridedStageFamily, StridedStageMemory},
         },
         definition::MatmulTypes,
+        tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
     },
 };
 use cubecl::{
@@ -28,10 +29,7 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{
-    InvalidConfigError,
-    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
-};
+use cubek_std::InvalidConfigError;
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 

@@ -11,13 +11,13 @@ use crate::multi_level::{
         },
     },
     definition::*,
+    tile::{
+        NoEvent, PartitionScheduler, Tile, load_partition_from_stage, write_partition_to_stage,
+    },
 };
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::Coords2d},
-};
-use cubek_std::tile::{
-    NoEvent, PartitionScheduler, Tile, load_partition_from_stage, write_partition_to_stage,
 };
 use std::marker::PhantomData;
 

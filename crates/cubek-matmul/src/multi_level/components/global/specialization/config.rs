@@ -5,10 +5,10 @@ use crate::{
     },
 };
 
-// `InputLoadFlow` is part of the plane-flow vocabulary that now lives in
-// cubek-std. Re-export it so existing `use crate::multi_level::components::global::*`
-// paths keep working.
-pub use cubek_std::InputLoadFlow;
+// `InputLoadFlow` is part of the plane-flow vocabulary that lives at the root of
+// `multi_level`. Re-export it so existing
+// `use crate::multi_level::components::global::*` paths keep working.
+pub use crate::multi_level::InputLoadFlow;
 
 /// Configuration for how each input tensor (Lhs and Rhs) is loaded,
 /// specifying the plane roles responsible for loading them.

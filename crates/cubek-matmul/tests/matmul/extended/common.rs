@@ -3,6 +3,7 @@
 use cubecl::{
     Runtime, TestRuntime, client::ComputeClient, frontend::Scalar, ir::AddressType, zspace::shape,
 };
+use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize, stage::SwizzleModes};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     multi_level::{
@@ -15,7 +16,7 @@ use cubek_matmul::{
     },
 };
 use cubek_std::{
-    MatrixLayout, PartitionSize, StageSize, SwizzleModes, TileSize,
+    MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},
 };
 

@@ -4,10 +4,10 @@
 //! is to exercise the bounds-checking and vector-size handling of the loader
 //! under awkward shapes, not to cover every routine.
 
+use cubek_matmul::multi_level::{PartitionSize, StageSize};
 use cubek_matmul::{
     multi_level::Strategy as MultiLevel, routine::BlueprintStrategy, strategy::Strategy,
 };
-use cubek_std::{PartitionSize, StageSize};
 
 use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem, row_row};
 use crate::matmul::test_matmul_strategy;

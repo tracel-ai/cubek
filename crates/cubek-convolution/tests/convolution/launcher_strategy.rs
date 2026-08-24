@@ -15,6 +15,7 @@ use cubek_convolution::{
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
     definition::{ConvBlueprint, ForwardBlueprint},
 };
+use cubek_matmul::multi_level::stage::SwizzleModes;
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems, MatmulGlobalElems},
     multi_level::{
@@ -27,7 +28,7 @@ use cubek_matmul::{
     },
     routine::{BlueprintStrategy, Routine},
 };
-use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};
+use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
 use cubek_convolution::eval::cpu_reference::assert_result;

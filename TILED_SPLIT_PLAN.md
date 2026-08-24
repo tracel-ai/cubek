@@ -223,7 +223,7 @@ the shared root names neither branch, and `multi_level/` names neither `crate::t
 `cubek_tile`. Exactly three files name both branches: `lib.rs`, `strategy.rs` (the branch point),
 and `eval/benchmarks/gemm/strategy.rs` (Phase 7 splits it).
 
-### Phase 3 — demolish cubek-std's matmul half
+### Phase 3 — demolish cubek-std's matmul half  ✅ DONE
 
 Move into `cubek-matmul/src/multi_level/`: `tile/` (44 files with `stage/`), `stage/`,
 `plane_flow.rs`, `instruction.rs`, `cube_dim_resource.rs`, and the three tiling size
@@ -233,14 +233,48 @@ Re-point:
 
 - `cubek-attention`: `cubek_std::{tile, stage}` → `cubek_matmul::multi_level::{tile, stage}`;
   `cubek_matmul::components::*` → `cubek_matmul::multi_level::components::*`.
-  Add `cubek-matmul = { features = ["multi-level"] }`.
 - `cubek-convolution`: same, plus `cubek_matmul::args` → `multi_level::args`,
   `cubek_matmul::strategy::launch_kernel` → `multi_level::launch_kernel`,
   `cubek_matmul::routines::*` → `multi_level::routines::*`.
 - `cubek-reduce` keeps its `cubek-std` dep (uses `cube_count` only).
 
-`cubek-attention` and `cubek-convolution` still depend on `cubek-std` for `cube_count`
-and `launch::tma`.
+`cubek-attention` and `cubek-convolution` still depend on `cubek-std`: attention for
+`cube_count`, `InvalidConfigError`, `MatrixLayout` and `StageIdent`, convolution for
+`InputBinding` and `MatrixLayout`.
+
+**What actually landed**, and where it deviated from the sketch above:
+
+- Two leaks the sketch did not list, both found by compiling:
+  - `stage_ident.rs` stays in `cubek-std` (phase 1's watch item), but its `SwizzleModes`
+    is four `SwizzleMode`s, and `SwizzleMode` lives in `stage/`. `SwizzleModes` moved next
+    to it in `multi_level/stage/stage_memory/swizzle.rs`; `stage_ident.rs` is now `StageIdent`
+    alone.
+  - The shared `MatmulAvailabilityError::CmmaInstructionUnavailable` carried a `TileSize`,
+    which would have made the shared root name a tower type. Its payload is now
+    `Option<(u32, u32, u32)>` — `(m, n, k)` — and the three constructors (two in the tower's
+    tile configs, one in attention) pass a tuple.
+- `GlobalPartitionSize` moved too, into `multi_level/size.rs`. The sketch left it in
+  `cubek-std`, but the tower is its only caller and it is the same tiling vocabulary as the
+  three named size types.
+- Both size macros are `#[macro_export]`ed, not just `define_3d_size_base!`: the moved types
+  need `impl_from_tuple!` as well. Exporting it makes the name public API, so it is now
+  `impl_3d_size_from_tuple!`. Both bodies name `$crate::MatmulDim`, which stays in `cubek-std`
+  with `MatmulProblemSize`.
+- `half` left `cubek-std`'s dependencies: the moved code was its only user.
+- The `features = ["multi-level"]` declarations on attention and convolution wait for phase 4,
+  which is where the feature is created.
+- Mechanical: the moved files' `crate::` imports split by destination (moved items →
+  `crate::multi_level`, the rest → `cubek_std`), and consumers that ended up with several
+  `use crate::multi_level::…` statements were merged back into one.
+
+`cubek-std` is now `cube_count/`, `launch/`, `layout/`, `error.rs`, `input_binding.rs`,
+`matrix_layout.rs`, `size.rs` (`MatmulDim`, `MatmulProblemSize`, the two macros),
+`stage_ident.rs`, and `eval/`. Verified by grep that it names no tower concept, and that
+`tiled/` and the shared root name neither `multi_level` nor anything that moved.
+
+Verified: `cargo check`/`clippy` on the workspace `--all-features`, `--tests` on every crate
+except matmul's `full` tier, `--benches` on the benchmarks crate, `cargo fmt` clean, and the
+basic test tiers of matmul (47), convolution (60), attention, tile and std all green.
 
 ### Phase 4 — feature flags
 

@@ -3,9 +3,11 @@ use crate::{
     multi_level::components::global::{MaxGlobalReaderPlanes, specialization::config::LoadFlows},
 };
 
-// Plane-flow vocabulary now lives in cubek-std; re-export the names callers
-// in this crate (and downstream crates) have always used.
-pub use cubek_std::{PlaneFlowConfig, PlaneFlowCounts, PlaneFlowPartition, PlaneFlowPartitionRule};
+// Plane-flow vocabulary lives at the root of `multi_level`; re-export the names
+// callers in this crate (and downstream crates) have always used.
+pub use crate::multi_level::{
+    PlaneFlowConfig, PlaneFlowCounts, PlaneFlowPartition, PlaneFlowPartitionRule,
+};
 
 /// Build a [`PlaneFlowConfig`] from matmul-specific load-flow inputs.
 pub fn make_plane_flow_config(

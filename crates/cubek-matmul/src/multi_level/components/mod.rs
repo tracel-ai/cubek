@@ -3,5 +3,5 @@ pub mod global;
 pub mod stage;
 pub mod tile;
 
-// Internal-only — external crates import this directly from cubek-std.
-pub(crate) use cubek_std::CubeDimResource;
+// Internal-only — external crates name it `cubek_matmul::multi_level::CubeDimResource`.
+pub(crate) use crate::multi_level::CubeDimResource;

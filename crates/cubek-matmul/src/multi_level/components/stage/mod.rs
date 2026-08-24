@@ -9,8 +9,8 @@
 //! `StagePartitioner`, `init_*`) lives in [`common`].
 //!
 //! The generic `Stage` / `StageFamily` / `LoadStageFamily` traits and the
-//! `StridedStageMemory` impls live in [`cubek_std::stage`]; cubek-matmul only
-//! adds matmul-domain glue here.
+//! `StridedStageMemory` impls live in [`crate::multi_level::stage`]; the
+//! components only add matmul-domain glue here.
 
 #![allow(clippy::type_complexity)]
 
@@ -28,23 +28,23 @@ pub use unit_partitioned::UnitPartitioned;
 pub use variant::StageVariant;
 
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    CubeDimResource, InvalidConfigError, MatrixLayout, stage::StageMemoryConfig,
-    tile::PartitionSchedulerScheme,
-};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 // Re-exports so callers can keep `use crate::multi_level::components::stage::{Stage, …}`
 // working without reaching into cubek_std directly.
-pub use cubek_std::partition_coordinates;
-pub use cubek_std::stage::{
+pub use crate::multi_level::partition_coordinates;
+pub use crate::multi_level::stage::{
     LoadStageFamily, Stage, StageFamily, StridedStageFamily, StridedStageMemory,
 };
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
     multi_level::{
+        CubeDimResource,
         components::global::{MatmulPlaneCounts, PlaneFlowConfig},
         definition::BatchMatmulBlueprint,
+        stage::StageMemoryConfig,
+        tile::PartitionSchedulerScheme,
     },
 };
 
