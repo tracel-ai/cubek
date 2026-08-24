@@ -92,21 +92,21 @@ pub fn interpolate_tile_launch<R: Runtime>(
     );
     match options.mode {
         InterpolateMode::Nearest(_) => {
-            launch_with::<R, NearestFilter>(client, input, output, options, dtype, geometry, config)
+            launch::<R, NearestFilter>(client, input, output, options, dtype, geometry, config)
         }
-        InterpolateMode::Bilinear => launch_with::<R, BilinearFilter>(
-            client, input, output, options, dtype, geometry, config,
-        ),
+        InterpolateMode::Bilinear => {
+            launch::<R, BilinearFilter>(client, input, output, options, dtype, geometry, config)
+        }
         InterpolateMode::Bicubic => {
-            launch_with::<R, BicubicFilter>(client, input, output, options, dtype, geometry, config)
+            launch::<R, BicubicFilter>(client, input, output, options, dtype, geometry, config)
         }
-        InterpolateMode::Lanczos3 => launch_with::<R, Lanczos3Filter>(
-            client, input, output, options, dtype, geometry, config,
-        ),
+        InterpolateMode::Lanczos3 => {
+            launch::<R, Lanczos3Filter>(client, input, output, options, dtype, geometry, config)
+        }
     }
 }
 
-fn launch_with<R: Runtime, F: SeparableFilterFamily>(
+fn launch<R: Runtime, F: SeparableFilterFamily>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
@@ -212,7 +212,7 @@ fn launch_with<R: Runtime, F: SeparableFilterFamily>(
         .with_boundary(checked.then_some(F::BOUNDARY))
         .vectorize(vector_size);
     if let Some(width) = stage_width {
-        input_arg = input_arg.stage_vectorize(width);
+        input_arg = input_arg.stage_width(width);
     }
     let input_arg = input_arg.build();
     let output_arg = launch
