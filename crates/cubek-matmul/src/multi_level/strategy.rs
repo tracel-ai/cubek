@@ -1,4 +1,4 @@
-//! Strategies built on the batch/global/stage/tile level tower.
+//! Strategies built on the batch/global/stage/tile levels.
 
 use std::fmt::Display;
 

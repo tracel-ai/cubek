@@ -3,10 +3,10 @@
 ## Goal
 
 `cubek-matmul` gets one branch point at its root. Everything below it is either
-tile-DSL work (`tiled/`) or level-tower work (`multi_level/`). Each side compiles
+tile-DSL work (`tiled/`) or multi-level work (`multi_level/`). Each side compiles
 without the other, and every test lives under one of the two.
 
-The tiled side becomes first class: no component tower, no `args` trait zoo, no
+The tiled side becomes first class: no component stack, no `args` trait zoo, no
 fake tiling borrowed from `cubek-std`. The other side keeps working (several of
 those kernels are still the fastest we have) but sits in its own island, so that
 when the tile DSL wins everywhere the island can be deleted in one move.
@@ -16,7 +16,7 @@ do not.
 
 ## Where the seam already is (measured)
 
-The good news: the tiled routines barely touch the tower today.
+The good news: the tiled routines barely touch multi-level today.
 
 `routines/cmma/` and `routines/cpu_gemm/` (8 files) import from `crate`:
 
@@ -25,7 +25,7 @@ The good news: the tiled routines barely touch the tower today.
 - `components::global::read::stride_align_bits` — the single genuine leak, one pure
   8-line function about TMA stride alignment.
 
-Everything else in `cubek-matmul` is tower-side: `components/` (12.8k lines, 121 files
+Everything else in `cubek-matmul` belongs to multi-level: `components/` (12.8k lines, 121 files
 with the multi-level routines), `args.rs` minus its `RuntimeConfig` blanket trait,
 `routines/{batch,gemm,gemv_unit_perpendicular,naive,selector}`, `strategy/select_kernel.rs`,
 and about two thirds of `definition/`.
@@ -128,36 +128,36 @@ Pure file splits inside the current tree. Nothing changes location yet, so revie
 about the split lines, not about `git mv` noise.
 
 1. Move `stride_align_bits` from `components/global/read/strategy/base.rs` to
-   `cubek_std::launch::tma`. Kills the only tiled → tower import.
+   `cubek_std::launch::tma`. Kills the only tiled → multi-level import.
 2. Split `routines/base.rs` (213 lines):
    - stays shared: `Routine`, `M`/`N`/`K`, `batch_axis`, `MatmulOperands`,
      `into_contiguous_if_highly_permuted`, `DeviceSettings`, `num_concurrent_planes`
-   - tower-only: `BatchMatmulRoutine`, `ExpandInfo`, `LaunchInfo`,
+   - multi-level only: `BatchMatmulRoutine`, `ExpandInfo`, `LaunchInfo`,
      `batch_validate_blueprint`
 3. Split `args.rs` (550 lines): `RuntimeConfig` (2 lines, blanket impl) stays shared;
    `MatmulArgs`, `TensorArgs`, `TensorMapArgs`, `ConcreteInputsFactory`,
-   `ConcreteOutputFactory`, `TensorInputIdent` go tower-side.
+   `ConcreteOutputFactory`, `TensorInputIdent` go to multi-level.
 4. Split `definition/`:
    - shared: `base.rs`, `error.rs`, `vectorization.rs`, `cost.rs`, and
      `MatmulElems` / `MatmulGlobalElems` carved out of `spec.rs`
-   - tower: `blueprint.rs`, `tiling_scheme.rs`, `cube_mapping.rs`, and the rest of
+   - multi-level: `blueprint.rs`, `tiling_scheme.rs`, `cube_mapping.rs`, and the rest of
      `spec.rs` (`MatmulPrecision`, `MatmulTypes`, `Lhs`/`Rhs`/`Acc` alias zoo)
 5. Split `routines/selector/`: `BlueprintStrategy` shared; `TilingArgs`, `plane.rs`,
-   `unit.rs` tower-side.
+   `unit.rs` multi-level.
 6. Split `strategy/`: `tune_key.rs` shared; `select_kernel.rs` and `test_only.rs`
-   tower-side; `strategy.rs` into two enums plus the root wrapper.
+   multi-level; `strategy.rs` into two enums plus the root wrapper.
 
 Watch item: `MatmulIdent::into_stage` returns `StageIdent`. Keeping `stage_ident.rs`
-in `cubek-std` (26 lines) avoids a shared → tower dependency here.
+in `cubek-std` (26 lines) avoids a shared → multi-level dependency here.
 
 **What actually landed**, and where it deviated from the sketch above:
 
-- `RuntimeConfig` now lives in `routines/base.rs`; `args.rs` re-exports it. A tower module
-  re-exporting a shared item is the allowed direction, and it kept ~40 tower files untouched.
+- `RuntimeConfig` now lives in `routines/base.rs`; `args.rs` re-exports it. A multi-level module
+  re-exporting a shared item is the allowed direction, and it kept ~40 of its files untouched.
 - `MatmulElems` / `MatmulGlobalElems` moved to a new `definition/elems.rs`. Two methods stayed
-  tower-side as second inherent impls in `definition/spec.rs`: `MatmulElems::new_deprecated`
+  on the multi-level side as second inherent impls in `definition/spec.rs`: `MatmulElems::new_deprecated`
   (needs the precision traits) and `MatmulIdent::view_direction` (returns
-  `components::global::memory::ViewDirection`). That second one was an unlisted shared → tower
+  `components::global::memory::ViewDirection`). That second one was an unlisted shared → multi-level
   leak; it is now gone from `definition/base.rs`.
 - `BlueprintStrategy` moved out of `routines/selector/base.rs` into `routines/base.rs`, leaving
   `selector/base.rs` holding only `TilingArgs`.
@@ -173,7 +173,7 @@ Seam verified by grep, both directions: `routines/cmma`, `routines/cpu_gemm`, an
 `strategy/tiled.rs` contain no reference to `components::`, `args::`, `BatchMatmul*`,
 `TilingScheme`, `MatmulTypes`, `MatmulPrecision`, `cubek_std::tile`, or `cubek_std::stage`.
 Same for the shared root (`routines/base.rs`, the five shared `definition/` files,
-`strategy/strategy.rs`, `strategy/tune_key.rs`, `launch.rs`). And the reverse: the tower
+`strategy/strategy.rs`, `strategy/tune_key.rs`, `launch.rs`). And the reverse: multi-level
 names no `cubek_tile` item and `strategy/multi_level.rs` names no tiled routine.
 
 Verification for this and every later phase: `cargo check` / `cargo clippy`, including
@@ -184,7 +184,7 @@ Verification for this and every later phase: `cargo check` / `cargo clippy`, inc
 ### Phase 2 — introduce the two modules  ✅ DONE
 
 `git mv` only, plus import fixups. `tiled/` gets `cmma/`, `cpu_gemm/`, its strategy
-enum. `multi_level/` gets `components/`, the four tower routine families, the selector,
+enum. `multi_level/` gets `components/`, the four multi-level routine families, the selector,
 `args.rs`, its half of `definition/`, `select_kernel.rs`, its strategy enum. Root keeps
 `launch.rs`, `strategy.rs`, `routine.rs`, `definition/`, `tune_key.rs`.
 
@@ -205,20 +205,20 @@ Path moves beyond the sketch:
 Public path changes for downstream (conv and attention were ported in this phase; burn is not):
 `cubek_matmul::components` → `::multi_level::components`, `::args` → `::multi_level::args`,
 `::routines::<family>` → `::multi_level::routines::<family>`, `::routines::{Routine,
-BlueprintStrategy, DeviceSettings}` → `::routine::{…}`, the tower half of `::definition` →
+BlueprintStrategy, DeviceSettings}` → `::routine::{…}`, the multi-level half of `::definition` →
 `::multi_level::definition`, `::strategy::{launch_kernel*}` → `::multi_level::{…}`,
 `::strategy::test_only` → `::multi_level::test_only`.
 
 Two spots needed hand-work rather than a path rewrite: `routines/batch/{double_buffering,
 specialized}.rs` referred to `base::Routine` / `batch_base::BatchMatmulRoutine` as *module*
-aliases inside macro bodies (now the traits are named directly), and six tower files import
+aliases inside macro bodies (now the traits are named directly), and six multi-level files import
 `crate::definition::*` as a glob, which now needs `crate::multi_level::definition::*` alongside it.
 
 Verified: `cargo check` on the whole workspace `--all-features`; `--tests` on every crate except
 matmul's `full` tier; `--benches` on the benchmarks crate; `clippy` clean on matmul (extended +
 benchmarks + tests) and on convolution / attention / std / tile; `cargo fmt` clean.
 
-Seam re-verified after the move, three directions: `tiled/` names nothing from the tower,
+Seam re-verified after the move, three directions: `tiled/` names nothing from multi-level,
 the shared root names neither branch, and `multi_level/` names neither `crate::tiled` nor
 `cubek_tile`. Exactly three files name both branches: `lib.rs`, `strategy.rs` (the branch point),
 and `eval/benchmarks/gemm/strategy.rs` (Phase 7 splits it).
@@ -250,11 +250,11 @@ Re-point:
     to it in `multi_level/stage/stage_memory/swizzle.rs`; `stage_ident.rs` is now `StageIdent`
     alone.
   - The shared `MatmulAvailabilityError::CmmaInstructionUnavailable` carried a `TileSize`,
-    which would have made the shared root name a tower type. Its payload is now
-    `Option<(u32, u32, u32)>` — `(m, n, k)` — and the three constructors (two in the tower's
+    which would have made the shared root name a multi-level type. Its payload is now
+    `Option<(u32, u32, u32)>` — `(m, n, k)` — and the three constructors (two in multi-level's
     tile configs, one in attention) pass a tuple.
 - `GlobalPartitionSize` moved too, into `multi_level/size.rs`. The sketch left it in
-  `cubek-std`, but the tower is its only caller and it is the same tiling vocabulary as the
+  `cubek-std`, but multi-level is its only caller and it is the same tiling vocabulary as the
   three named size types.
 - Both size macros are `#[macro_export]`ed, not just `define_3d_size_base!`: the moved types
   need `impl_from_tuple!` as well. Exporting it makes the name public API, so it is now
@@ -269,7 +269,7 @@ Re-point:
 
 `cubek-std` is now `cube_count/`, `launch/`, `layout/`, `error.rs`, `input_binding.rs`,
 `matrix_layout.rs`, `size.rs` (`MatmulDim`, `MatmulProblemSize`, the two macros),
-`stage_ident.rs`, and `eval/`. Verified by grep that it names no tower concept, and that
+`stage_ident.rs`, and `eval/`. Verified by grep that it names no multi-level concept, and that
 `tiled/` and the shared root name neither `multi_level` nor anything that moved.
 
 Verified: `cargo check`/`clippy` on the workspace `--all-features`, `--tests` on every crate
@@ -350,7 +350,7 @@ Without a CI job the cfg attributes rot within a week. Add to the matrix:
 ```
 
 for `build`, `test`, and `clippy`. The tiled-only job is the one that proves the goal;
-the multi-level-only job proves we did not accidentally make the tower depend on the
+the multi-level-only job proves we did not accidentally make multi-level depend on the
 tile DSL.
 
 `xtask test` learns the same three combos for `cubek-matmul`.
@@ -374,7 +374,7 @@ The `benchmarks` crate keeps both features on.
 2. **burn takes the break, with `multi-level` on.** Every `Strategy::SimpleUnit(..)`
    call site becomes `Strategy::MultiLevel(multi_level::Strategy::SimpleUnit(..))`. No
    compatibility shims: burn declares `cubek-matmul` with `features = ["multi-level"]`
-   and stays on the tower for as long as it needs. A shim layer would re-blur the branch
+   and stays on multi-level for as long as it needs. A shim layer would re-blur the branch
    and someone would have to delete it later.
 
 3. **`RuntimeConfig` on the tiled side.** Deferred. Every tiled use is
@@ -384,7 +384,7 @@ The `benchmarks` crate keeps both features on.
    stays in the shared root; revisit once the split is green.
 
 4. **`bias.rs` is the only test reaching into `components::global::memory`.** It builds
-   launch args by hand. It moves to `multi_level/`, but it is a sign that the tower's
+   launch args by hand. It moves to `multi_level/`, but it is a sign that multi-level's
    test surface leaks into internals; not this refactor's problem.
 
 5. **attention and convolution eventually need the same branch.** Their tiled sides

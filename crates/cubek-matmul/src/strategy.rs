@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// How to solve a matmul. The two arms are the two kernel families: routines written on
-/// the tile DSL, and routines written on the batch/global/stage/tile level tower.
+/// the tile DSL, and routines written on the batch/global/stage/tile levels.
 #[derive(Clone, Default)]
 pub enum Strategy {
     Tiled(tiled::Strategy),

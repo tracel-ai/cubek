@@ -1,16 +1,16 @@
-//! Matmul routines written on the batch/global/stage/tile level tower.
+//! Matmul routines written on the batch/global/stage/tile levels.
 
-/// Tensor argument DSL (`MatmulArgs` and friends) shared by the tower launch paths.
+/// Tensor argument DSL (`MatmulArgs` and friends) shared by the multi-level launch paths.
 pub mod args;
 /// Components for matrix multiplication
 pub mod components;
-/// Blueprint, tiling scheme, and precision vocabulary specific to the tower.
+/// Blueprint, tiling scheme, and precision vocabulary specific to multi-level.
 pub mod definition;
 /// Contains matmul kernels
 pub mod routines;
-/// Shared memory stages the tower reads tiles out of.
+/// Shared memory stages the levels read tiles out of.
 pub mod stage;
-/// The tile abstraction the tower's innermost level computes on.
+/// The tile abstraction the innermost level computes on.
 pub mod tile;
 
 mod cube_dim_resource;

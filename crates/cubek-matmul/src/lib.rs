@@ -2,7 +2,7 @@
 //!
 //! Two families live here, and the crate branches between them at its root:
 //! [`tiled`] holds routines written on the tile DSL, [`multi_level`] holds routines
-//! written on the batch/global/stage/tile level tower. Everything outside those two
+//! written on the batch/global/stage/tile levels. Everything outside those two
 //! modules is vocabulary both of them speak.
 
 /// The problem, its element types, and the errors either family can raise.
