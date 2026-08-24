@@ -28,6 +28,7 @@ use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
 use cubek_tile::*;
 
 // Output positions, window taps, and the one channel axis every operand shares.
+const B: Axis = Axis(5);
 const OH: Axis = Axis(0);
 const OW: Axis = Axis(1);
 const C: Axis = Axis(2);
@@ -57,6 +58,7 @@ fn ramp(n: usize, period: usize) -> Vec<f32> {
 }
 
 struct Depthwise {
+    b: usize,
     oh: usize,
     ow: usize,
     c: usize,
@@ -66,35 +68,44 @@ struct Depthwise {
     sw: usize,
     dh: usize,
     dw: usize,
+    ph: usize,
+    pw: usize,
 }
 
 impl Depthwise {
     fn in_h(&self) -> usize {
-        (self.oh - 1) * self.sh + (self.rh - 1) * self.dh + 1
+        (self.oh - 1) * self.sh + (self.rh - 1) * self.dh + 1 - 2 * self.ph
     }
     fn in_w(&self) -> usize {
-        (self.ow - 1) * self.sw + (self.rw - 1) * self.dw + 1
+        (self.ow - 1) * self.sw + (self.rw - 1) * self.dw + 1 - 2 * self.pw
     }
 
     /// One filter per channel, and no sum over input channels: that missing inner loop is the
     /// only way this differs from the dense reference.
     fn reference(&self, input: &[f32], weight: &[f32]) -> Vec<f32> {
-        let (iw, c) = (self.in_w(), self.c);
-        let mut out = vec![0.0f32; self.oh * self.ow * c];
-        for oh in 0..self.oh {
-            for ow in 0..self.ow {
-                for ch in 0..c {
-                    let mut acc = 0.0f32;
-                    for rh in 0..self.rh {
-                        for rw in 0..self.rw {
-                            let h = oh * self.sh + rh * self.dh;
-                            let w_ = ow * self.sw + rw * self.dw;
-                            let x = input[(h * iw + w_) * c + ch];
-                            let k = weight[(rh * self.rw + rw) * c + ch];
-                            acc += x * k;
+        let (ih, iw, c) = (self.in_h(), self.in_w(), self.c);
+        let mut out = vec![0.0f32; self.b * self.oh * self.ow * c];
+        for b in 0..self.b {
+            for oh in 0..self.oh {
+                for ow in 0..self.ow {
+                    for ch in 0..c {
+                        let mut acc = 0.0f32;
+                        for rh in 0..self.rh {
+                            for rw in 0..self.rw {
+                                // Signed: the padded border reads outside the input and
+                                // contributes nothing, which is what `checked` enforces.
+                                let h = (oh * self.sh + rh * self.dh) as isize - self.ph as isize;
+                                let w_ = (ow * self.sw + rw * self.dw) as isize - self.pw as isize;
+                                if h < 0 || w_ < 0 || h >= ih as isize || w_ >= iw as isize {
+                                    continue;
+                                }
+                                let x = input[((b * ih + h as usize) * iw + w_ as usize) * c + ch];
+                                let k = weight[(rh * self.rw + rw) * c + ch];
+                                acc += x * k;
+                            }
                         }
+                        out[((b * self.oh + oh) * self.ow + ow) * c + ch] = acc;
                     }
-                    out[(oh * self.ow + ow) * c + ch] = acc;
                 }
             }
         }
@@ -104,6 +115,7 @@ impl Depthwise {
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
         let space = Tiling::new()
             .extents(&[
+                (B, self.b),
                 (OH, self.oh),
                 (OW, self.ow),
                 (C, self.c),
@@ -111,7 +123,8 @@ impl Depthwise {
                 (RW, self.rw),
             ])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(OH, Cut::sequential(tile_oh))
+                l.axis(B, Cut::sequential(1))
+                    .axis(OH, Cut::sequential(tile_oh))
                     .axis(OW, Cut::sequential(tile_ow))
                     .axis(C, Cut::sequential(tile_c))
                     .axis(RH, Cut::sequential(self.rh))
@@ -126,25 +139,35 @@ impl Depthwise {
                 // The contracted taps come last: the gather leaf lines the input along the
                 // fastest contracted axis, so `RW` has to be the operand's innermost logical
                 // axis. The physical maps below stay in physical order (H, W, C) regardless.
-                &[OH, OW, C, RH, RW],
+                &[B, OH, OW, C, RH, RW],
                 &[
-                    PhysicalAxisMap::affine(&[(OH, self.sh), (RH, self.dh)]),
-                    PhysicalAxisMap::affine(&[(OW, self.sw), (RW, self.dw)]),
+                    PhysicalAxisMap::of(B),
+                    PhysicalAxisMap::affine_with_offset(
+                        &[(OH, self.sh), (RH, self.dh)],
+                        -(self.ph as isize),
+                    ),
+                    PhysicalAxisMap::affine_with_offset(
+                        &[(OW, self.sw), (RW, self.dw)],
+                        -(self.pw as isize),
+                    ),
                     PhysicalAxisMap::of(C),
                 ],
             ),
             MEMORY_LEAF,
-        );
+        )
+        .checked(true);
 
         let (got, want) = self.run(space, in_spec);
-        for oh in 0..self.oh {
-            for ow in 0..self.ow {
-                for ch in 0..self.c {
-                    assert_eq!(
-                        got.get_f32(&[oh, ow, ch]),
-                        want[(oh * self.ow + ow) * self.c + ch],
-                        "depthwise: wrong at ({oh}, {ow}, {ch})"
-                    );
+        for b in 0..self.b {
+            for oh in 0..self.oh {
+                for ow in 0..self.ow {
+                    for ch in 0..self.c {
+                        assert_eq!(
+                            got.get_f32(&[b, oh, ow, ch]),
+                            want[((b * self.oh + oh) * self.ow + ow) * self.c + ch],
+                            "depthwise: wrong at ({b}, {oh}, {ow}, {ch})"
+                        );
+                    }
                 }
             }
         }
@@ -154,9 +177,9 @@ impl Depthwise {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::elem_type_native();
 
-        let in_shape: Shape = shape![self.in_h(), self.in_w(), self.c];
+        let in_shape: Shape = shape![self.b, self.in_h(), self.in_w(), self.c];
         let w_shape: Shape = shape![self.rh, self.rw, self.c];
-        let out_shape: Shape = shape![self.oh, self.ow, self.c];
+        let out_shape: Shape = shape![self.b, self.oh, self.ow, self.c];
 
         let in_data = ramp(in_shape.num_elements(), 7);
         let w_data = ramp(w_shape.num_elements(), 5);
@@ -176,7 +199,7 @@ impl Depthwise {
 
         // The weight follows the gathered input's plan, as the dense case has it do.
         let w_spec = TileSpec::direct(&[RH, RW, C], MEMORY_LEAF).residence(&in_spec.residence);
-        let out_spec = TileSpec::direct(&[OH, OW, C], MEMORY_LEAF);
+        let out_spec = TileSpec::direct(&[B, OH, OW, C], MEMORY_LEAF);
 
         depthwise_kernel::launch::<TestRuntime>(
             &client,
@@ -199,6 +222,7 @@ impl Depthwise {
 #[test]
 fn depthwise_3x3_unit_stride() {
     Depthwise {
+        b: 1,
         oh: 4,
         ow: 4,
         c: 8,
@@ -208,6 +232,8 @@ fn depthwise_3x3_unit_stride() {
         sw: 1,
         dh: 1,
         dw: 1,
+        ph: 0,
+        pw: 0,
     }
     .check(2, 2, 4);
 }
@@ -216,6 +242,7 @@ fn depthwise_3x3_unit_stride() {
 #[test]
 fn depthwise_3x3_stride_2() {
     Depthwise {
+        b: 1,
         oh: 3,
         ow: 3,
         c: 4,
@@ -225,6 +252,8 @@ fn depthwise_3x3_stride_2() {
         sw: 2,
         dh: 1,
         dw: 1,
+        ph: 0,
+        pw: 0,
     }
     .check(3, 3, 4);
 }
@@ -233,6 +262,7 @@ fn depthwise_3x3_stride_2() {
 #[test]
 fn depthwise_5x5() {
     Depthwise {
+        b: 1,
         oh: 2,
         ow: 2,
         c: 4,
@@ -242,6 +272,49 @@ fn depthwise_5x5() {
         sw: 1,
         dh: 1,
         dw: 1,
+        ph: 0,
+        pw: 0,
     }
     .check(2, 2, 4);
+}
+
+/// The shape the encoder is actually made of: batched, 3x3, unit stride, padded to keep the
+/// resolution. This is the one `conv_direct` is the only candidate for today.
+#[test]
+fn depthwise_3x3_padded_batched() {
+    Depthwise {
+        b: 2,
+        oh: 4,
+        ow: 4,
+        c: 8,
+        rh: 3,
+        rw: 3,
+        sh: 1,
+        sw: 1,
+        dh: 1,
+        dw: 1,
+        ph: 1,
+        pw: 1,
+    }
+    .check(2, 2, 4);
+}
+
+/// Padded *and* strided, which is how a padded stage downsamples.
+#[test]
+fn depthwise_3x3_padded_stride_2() {
+    Depthwise {
+        b: 2,
+        oh: 3,
+        ow: 3,
+        c: 4,
+        rh: 3,
+        rw: 3,
+        sh: 2,
+        sw: 2,
+        dh: 1,
+        dw: 1,
+        ph: 1,
+        pw: 1,
+    }
+    .check(3, 3, 4);
 }
