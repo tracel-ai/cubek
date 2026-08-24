@@ -573,6 +573,24 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Clone this tile's handle with an operation-scoped accumulator replacement policy. Memory
+    /// handles stamp the policy into their metadata; resident accumulators state their own
+    /// initialization and pass through unchanged.
+    pub(crate) fn with_replace(&self, #[comptime] replace: bool) -> Tile<T> {
+        let tile_kind = match &self.tile_kind {
+            TileKind::Gmem(data) => TileKind::new_Gmem(data.with_replace(comptime!(replace))),
+            TileKind::Smem(data) => TileKind::new_Smem(data.with_replace(comptime!(replace))),
+            TileKind::PlaneTile(data) => TileKind::new_PlaneTile(data.clone()),
+            TileKind::PlanePartition(data) => TileKind::new_PlanePartition(data.clone()),
+            TileKind::TmaGmem(data) => TileKind::new_TmaGmem(data.clone()),
+            TileKind::Procedural(data) => TileKind::new_Procedural(data.clone()),
+        };
+        Tile::<T> {
+            tile_kind,
+            space: comptime!(self.space.clone()),
+        }
+    }
+
     /// This operand's decode site ([`DequantAt`]). A tile with nothing to decode answers
     /// [`DequantAt::Load`]: served and stored are the same element, so its load already delivers
     /// what the read wants and the stage takes that element. A tma source is never quantized, so it
@@ -789,10 +807,11 @@ impl<T: Numeric> Tile<T> {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
-    /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
-    /// `out = A·B` zeroes first. Same shape as [`mma`](Tile::mma): a final tile clears its store,
-    /// a level walks and recurses (each region clears exactly the windows it owns; a fragment
-    /// output takes the unrolled walk, memory the compact loop).
+    /// Zero this tile. A promoted accumulator explicitly states its initialization before `mma`;
+    /// a memory accumulator can instead let `mma` replace its sink when the complete contraction
+    /// fits at the leaf. Same shape as [`mma`](Tile::mma): a final tile clears its store, a level
+    /// walks and recurses (each region clears exactly the windows it owns; a fragment output takes
+    /// the unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
         match comptime!(self.space.partitioner().clone()) {
             Partitioner::Final => match &mut self.tile_kind {

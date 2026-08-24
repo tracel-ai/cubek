@@ -904,7 +904,8 @@ fn register_matmul_unit_spread_n() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        // K fits whole at the leaf, so MMA must replace this sink through the scoped stamp.
+        .uniform(4242, 10., 100.);
 
     launch_staged_matmul::launch::<TestRuntime>(
         &client,

@@ -14,6 +14,8 @@ pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2
     values: MaskedViewMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
     lane_share: LaneShare,
+    #[cube(comptime)]
+    replace: bool,
 }
 
 #[cube]
@@ -21,8 +23,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
+        #[comptime] replace: bool,
     ) -> Self {
-        AccumulateView::<'a, E, V, C> { values, lane_share }
+        AccumulateView::<'a, E, V, C> {
+            values,
+            lane_share,
+            replace,
+        }
     }
 
     /// The underlying overhang-mask flag, so a leaf makes the same unroll decision it makes on a
@@ -40,11 +47,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
     /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.
     pub fn seed(&self, pos: C, #[comptime] fold: LeafOp) -> Vector<E, V> {
-        match comptime!(self.lane_share) {
-            LaneShare::Plane | LaneShare::Group { .. } => {
-                Vector::<E, V>::cast_from(LeafOp::identity::<E>(fold))
-            }
-            LaneShare::Whole => self.values.read(pos),
+        // A folded share holds no whole cell to carry forward, and a replacing contraction is
+        // discarding whatever is there anyway: both start from the identity and skip the read.
+        let carries = comptime!(matches!(self.lane_share, LaneShare::Whole) && !self.replace);
+        if comptime!(carries) {
+            self.values.read(pos)
+        } else {
+            Vector::<E, V>::cast_from(LeafOp::identity::<E>(fold))
         }
     }
 
@@ -56,22 +65,34 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         match comptime!(self.lane_share) {
             LaneShare::Plane => {
                 let combined = plane::broadcast::<Vector<E, V>>(value, fold);
-                if UNIT_POS_X == 0 {
-                    let old = self.values.read(pos.clone());
-                    self.values
-                        .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
-                }
+                self.commit_shared(pos, combined, UNIT_POS_X == 0, fold);
             }
             LaneShare::Group { fold_mask } => {
                 let combined = plane::group(value, fold_mask, fold);
                 let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
-                if lane_in_group == 0 {
-                    let old = self.values.read(pos.clone());
-                    self.values
-                        .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
-                }
+                self.commit_shared(pos, combined, lane_in_group == 0, fold);
             }
             LaneShare::Whole => self.values.write(pos, value),
+        }
+    }
+
+    /// Commit a cell combined across the lanes that share it. A replacing operation writes its
+    /// result directly; otherwise the elected lane folds in the sink exactly once.
+    fn commit_shared(
+        &mut self,
+        pos: C,
+        combined: Vector<E, V>,
+        leader: bool,
+        #[comptime] fold: LeafOp,
+    ) {
+        if leader {
+            if comptime!(self.replace) {
+                self.values.write(pos, combined);
+            } else {
+                let old = self.values.read(pos.clone());
+                self.values
+                    .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
+            }
         }
     }
 }

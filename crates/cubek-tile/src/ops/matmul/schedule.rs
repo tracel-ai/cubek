@@ -4,6 +4,7 @@
 
 use cubecl::prelude::*;
 
+use super::lower::lower_mma;
 use crate::*;
 
 /// One level's matmul as a [`Pipelined`] operation: the accumulator it writes and the two operands
@@ -65,7 +66,8 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, R
         slot.consume(|staged_lhs, staged_rhs| {
             let lhs = read_operand(staged_lhs, region, lhs_payload);
             let rhs = read_operand(staged_rhs, region, rhs_payload);
-            self.acc.at(region).mma(&lhs, &rhs)
+            let mut acc = self.acc.at(region);
+            lower_mma(&mut acc, &lhs, &rhs);
         });
     }
 }

@@ -57,6 +57,10 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
+    /// Whether accumulator views replace their sink instead of carrying it forward. Unlike
+    /// `lane_share`, this is stamped once for an operation and copied unchanged through `at`.
+    #[cube(comptime)]
+    pub(crate) replace: bool,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -376,6 +380,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
+                replace: comptime!(false),
             }),
             space: comptime!(space),
         }
@@ -665,6 +670,7 @@ impl<T: Numeric> MemData<T> {
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
+                replace: comptime!(false),
             }),
             space: comptime!(meta.space),
         }
@@ -716,6 +722,22 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
+    /// Clone this memory handle with the replacement policy for one accumulator operation.
+    pub(crate) fn with_replace(&self, #[comptime] replace: bool) -> MemData<T> {
+        MemData::<T> {
+            store: self.store.clone(),
+            layout: self.layout.clone(),
+            window: self.window.clone(),
+            projection: comptime!(self.projection.clone()),
+            map: self.map.clone(),
+            offsets: self.offsets.clone(),
+            window_start: self.window_start,
+            access: comptime!(self.access.clone()),
+            lane_share: comptime!(self.lane_share),
+            replace: comptime!(replace),
+        }
+    }
+
     /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole
     /// `Vector<T, W>` lines at `self`'s width, unit `u` moving lines `u`, `u + CUBE_DIM`, ….
     /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
@@ -1507,18 +1529,20 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
-    /// [`LaneShare`] these cells carry, so a leaf accumulates through it without being told.
+    /// [`LaneShare`] and replacement policy these cells carry, so a leaf accumulates through it
+    /// without being told.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
         #[comptime] space: Space,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share)
+        let replace = comptime!(self.replace);
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, replace)
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
-    /// [`LaneShare`] these cells carry.
+    /// [`LaneShare`] and replacement policy these cells carry.
     pub(crate) fn flat_accumulate<W: Size>(&mut self) -> AccumulateView<'_, T, W, Coords1d> {
         // A flat logical scan only agrees with this physical window under the direct,
         // non-storage-tiled mapping. Otherwise the reduction's logical accumulator index would
@@ -1532,7 +1556,8 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share)
+        let replace = comptime!(self.replace);
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, replace)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -1679,6 +1704,7 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
+            replace: comptime!(self.replace),
         }
     }
 }
