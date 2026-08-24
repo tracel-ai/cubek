@@ -871,6 +871,90 @@ fn matmul_staged_invariant_lhs() {
         .enforce()
 }
 
+/// A level whose edges equal the extents handed to it partitions nothing, so the build drops
+/// it: the two plans are one [`Space`] and compile one kernel, and the kernel is the one the
+/// plain plan describes. Its operands' residence columns lose the padded entry with it.
+#[test]
+fn matmul_a_level_that_cuts_nothing_is_dropped() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (8usize, 8usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    let dtype = f32::elem_type_native();
+    let operands = || {
+        (
+            Operand::new(&[M, K], dtype),
+            Operand::new(&[K, N], dtype),
+            Operand::new(&[M, N], dtype),
+        )
+    };
+
+    let mut plain_ops = operands();
+    let plain = Tiling::over(&mut plain_ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .build();
+
+    let mut ops = operands();
+    // The second level's edges are the first's: every axis's count is 1, and no operand
+    // states anything here.
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+        })
+        .build();
+
+    assert_eq!(space, plain);
+    assert_eq!(space.cube_dim(&client), plain.cube_dim(&client));
+    assert_eq!(ops.0.residences(), plain_ops.0.residences());
+
+    let a = TileInput::builder(&client, space.project(ops.0.axes()))
+        .operand(&ops.0)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(ops.1.axes()))
+        .operand(&ops.1)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint
 /// column of the register-leaf output and contracts the whole K in registers — the
 /// gemv-perpendicular mapping. `Cut::unit` declares the split without the lane count;

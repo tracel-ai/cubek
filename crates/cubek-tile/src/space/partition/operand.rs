@@ -120,6 +120,12 @@ impl Operand {
         self.stages.iter().map(|stage| stage.residence).collect()
     }
 
+    /// Whether this operand stated a residence at level `index`, asked before
+    /// [`close_level`](Self::close_level) pads an omission.
+    pub(crate) fn stated_at(&self, index: usize) -> bool {
+        self.stages.len() > index
+    }
+
     /// Seal level `index`: reject a double statement, pad an omission to an
     /// [`InPlace`](Residence::InPlace) move. Run by the builder as each level closure returns.
     pub(crate) fn close_level(&mut self, index: usize) {
@@ -135,6 +141,19 @@ impl Operand {
                 dtype,
             });
         }
+    }
+
+    /// Drop the stages of the levels the build did not keep, `kept` holding one flag per
+    /// declared level. Only a level no operand stated anything at is dropped, so every stage
+    /// this removes is the [`InPlace`](Residence::InPlace) padding, and the column stays one
+    /// entry per level of the space that was built.
+    pub(crate) fn keep_levels(&mut self, kept: &[bool]) {
+        let mut level = 0;
+        self.stages.retain(|_| {
+            let keep = kept.get(level).copied().unwrap_or(true);
+            level += 1;
+            keep
+        });
     }
 
     /// Freeze the operand once its space is built: every later statement panics, so the
