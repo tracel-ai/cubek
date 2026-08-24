@@ -993,8 +993,63 @@ fn matmul_staged_accumulate_preseeded_sink() {
         .enforce()
 }
 
-/// Multi-level contraction with K split across levels: `is_contracted_at_leaf` must return false,
-/// vetoing replacement so that all K chunks across levels accumulate into the sink.
+/// Writing the accumulator by hand between `zero()` and `mma`: the zero's identity stamp must not
+/// survive the write, or the contraction seeds from `0` and the hand-written values vanish. The
+/// contraction here lands whole at the leaf, so the replacement is armed and only the stamp's
+/// invalidation stands between the write and its loss.
+#[test]
+fn matmul_staged_hand_write_after_zero_survives() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(k))
+        })
+        .build();
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul_hand_seeded::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            let mma: f32 = (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum();
+            HAND_SEED as f32 + mma
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Multi-level contraction with K split across levels: the leaf-span check must fail, vetoing
+/// replacement so that all K chunks across levels accumulate into the sink.
 #[test]
 fn matmul_staged_k_split_levels_zeroed() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1058,8 +1113,10 @@ fn matmul_staged_k_split_levels_zeroed() {
         .enforce()
 }
 
-/// Lane-folded split-K (`Cut::unit` on K axis): `is_contracted_at_leaf` must return false,
-/// and `commit_shared` correctly combines across lanes without replacing.
+/// Lane-folded split-K (`Cut::unit` on K axis): each lane holds a partial of the same cell, so
+/// `commit_shared` must fold the sink in exactly once, under the elected lane. The stamp never
+/// reaches this path (a folded share seeds from the identity whatever the buffer holds), which is
+/// what makes this the regression guard for the commit, not for the replacement.
 #[test]
 fn register_matmul_unit_spread_k() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1526,6 +1583,34 @@ fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
     let mut c = c.tile(space);
     c.mma(&a, &b);
 }
+
+/// `zero`, then hand-written cells, then `mma`. The zero stamps the buffer as holding `Sum`'s
+/// identity; the hand write invalidates that claim, and taking a mutable view is the only notice
+/// the tile gets. Miss it and the contraction seeds from `0`, dropping `HAND_SEED` on the floor.
+#[cube(launch)]
+fn launch_staged_matmul_hand_seeded<E: Numeric, V: Size>(
+    a: &TileArg<'_, E, V>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.zero();
+    let size!(W) = c.vector_size();
+    let seed = Vector::<E, W>::cast_from(E::from_int(HAND_SEED));
+    let mut cells = c.flat_mut::<W>();
+    let total = cells.shape();
+    for i in 0..total {
+        cells.write(i, seed);
+    }
+    c.mma(&a, &b);
+}
+
+/// The value [`launch_staged_matmul_hand_seeded`] writes over its zeroed accumulator.
+const HAND_SEED: i64 = 7;
 
 /// The tensor-core kernel: promote the accumulator to its register form, zero it (the
 /// classic `init_accumulator`), run the whole contraction on it, copy it back (the

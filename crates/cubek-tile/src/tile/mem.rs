@@ -58,7 +58,15 @@ pub struct MemData<T: Numeric> {
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
     /// Which operation's identity this buffer is known to hold, so an accumulation can replace
-    /// the initial sink read. Stamped by `Tile::zero` or `Tile::init_identity`.
+    /// the initial sink read. Stamped by [`Tile::zero`] and [`Tile::init_identity`].
+    ///
+    /// A claim about the cells, so every door that writes them has to drop it or the claim goes
+    /// stale and the replacement silently discards the write. The whole-tile verbs
+    /// ([`Tile::init`], [`Tile::copy_from`], [`Tile::drain_cast_into`]) and every mutable view
+    /// ([`Tile::dense_mut`], [`Tile::flat_mut`], [`Tile::matrix_mut`], [`Tile::view_mut`]) do;
+    /// a new one must too. The exception is [`matrix_accumulate`](MemData::matrix_accumulate) and
+    /// [`flat_accumulate`](MemData::flat_accumulate), which hand the stamp to the fold that is
+    /// entitled to it and leave the siblings it says nothing about alone.
     #[cube(comptime)]
     pub(crate) sink_identity: Option<LeafOp>,
 }
@@ -702,6 +710,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+        self.set_sink_identity(comptime!(None));
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 if comptime!(g.store.quant.is_some()) {

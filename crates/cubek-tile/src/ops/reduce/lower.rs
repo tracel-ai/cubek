@@ -12,11 +12,16 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `c.reduce_axis(input, fold)`: reduce `input` into `self` across contracted axes, folding
     /// each contracted cell into whatever `self` already holds there.
     ///
-    /// When `self` has been explicitly seeded with `fold`'s identity ([`Tile::init_identity`] or
-    /// [`Tile::zero`] for `Sum`) and every contracted axis is spanned whole at the leaf level,
-    /// the initial sink read is safely replaced by `fold`'s identity. If `self` was not seeded with
-    /// `fold`'s identity, or if the reduction spans multiple levels, it preserves the existing sink
-    /// and accumulates onto it.
+    /// Where `self` is known to hold `fold`'s identity ([`Tile::init_identity`]) and the
+    /// reduction lands whole at the leaf
+    /// ([`spans_contracted_at_leaf`](Space::spans_contracted_at_leaf)), the initial sink read is
+    /// replaced by that identity instead. Otherwise `self`'s existing value is the fold's literal
+    /// starting point: the caller must have seeded it, or an uninitialized/stale accumulator folds
+    /// against garbage.
+    ///
+    /// The stamp is consumed here, so a caller-owned loop folding over its own contraction steps
+    /// must seed *inside* the loop or not at all: seeding above it serves the first step and
+    /// leaves the rest reading a sink they never wrote.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
         let replaces = self.replaces_reduce_sink(input, fold);
         self.set_sink_identity(comptime!(if replaces { Some(fold) } else { None }));
@@ -25,16 +30,15 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// Whether this reduction may seed from the identity instead of reading the sink: the buffer
-    /// must be known to hold `fold`'s identity, and the final tile must span every contracted axis whole,
-    /// so the walk above the leaf never returns to a cell it has already written.
+    /// must be known to hold `fold`'s identity, and the final tile must span every contracted
+    /// axis whole, so the walk above the leaf never returns to a cell it has already written.
     fn replaces_reduce_sink<In: Numeric>(
         &self,
         input: &Tile<In>,
         #[comptime] fold: LeafOp,
     ) -> comptime_type!(bool) {
         let sink_id = self.sink_identity();
-        let sink_is_fold = comptime!(sink_id == Some(fold));
-        comptime!(sink_is_fold && is_reduced_at_leaf(&self.space, &input.space))
+        comptime!(sink_id == Some(fold) && input.space.spans_contracted_at_leaf(&self.space))
     }
 
     /// The level's operation space: the input operand's space, sized by whichever operand
@@ -129,18 +133,4 @@ fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
             );
         }
     }
-}
-
-/// Whether the final tile spans every contracted axis whole.
-fn is_reduced_at_leaf(out: &Space, input: &Space) -> bool {
-    let leaf = input.final_space();
-    for axis in input.contracting(out).iter() {
-        // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
-        // settled here. Seeding from the sink is the answer that is right either way.
-        match (input.extent_raw(*axis), leaf.extent_raw(*axis)) {
-            (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf => {}
-            _ => return false,
-        }
-    }
-    true
 }

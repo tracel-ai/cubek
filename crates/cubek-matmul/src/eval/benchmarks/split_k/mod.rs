@@ -75,6 +75,9 @@ fn launch_split_k_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
+    // The contract is `out = A·B`, and zeroing is also what lets the leaf seed from the
+    // identity instead of reading the sink, which is the cost this benchmark measures.
+    c.zero();
     c.mma(&a, &b);
 }
 

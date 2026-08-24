@@ -80,6 +80,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+        self.set_sink_identity(comptime!(None));
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {

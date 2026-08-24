@@ -39,6 +39,9 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
+    // The contract is `out = A·B`, and zeroing is also what lets the leaf seed from the
+    // identity instead of reading the sink, which is the cost this benchmark measures.
+    c.zero();
     c.mma(&a, &b);
 }
 

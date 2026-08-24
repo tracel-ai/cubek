@@ -13,11 +13,12 @@ use crate::*;
 impl<Acc: Numeric> Tile<Acc> {
     /// `c.mma(a, b)`: contract at a final tile, else walk this level.
     ///
-    /// When `c` has been explicitly zeroed (`c.zero()`) and every contracted axis is spanned whole
-    /// at the leaf level, the initial sink read is safely replaced by the contraction identity (`0`).
-    /// If `c` was not zeroed (e.g. pre-seeded or caller-owned loop), or if the contraction spans
-    /// multiple levels or outer reduction loops, it preserves the existing sink and accumulates
-    /// onto it.
+    /// Accumulates onto whatever `c` holds. Where `c` is known to hold `0`
+    /// ([`zero`](Tile::zero)) and the contraction lands whole at the leaf
+    /// ([`spans_contracted_at_leaf`](Space::spans_contracted_at_leaf)), the initial sink read is
+    /// replaced by that `0` instead. The stamp is consumed here, so a caller-owned loop
+    /// accumulating over its own contraction steps must zero *inside* the loop or not at all:
+    /// zeroing above it seeds the first step and leaves the rest reading a sink they never wrote.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let replaces = self.replaces_mma_sink(lhs, rhs);
         self.set_sink_identity(comptime!(if replaces { Some(LeafOp::Sum) } else { None }));
@@ -26,16 +27,18 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// Whether this contraction may seed from the identity instead of reading the sink: the buffer
-    /// must be known to hold `Sum`'s identity (`0`), and the final tile must span every contracted axis whole,
-    /// so the walk above the leaf never returns to a cell it has already written.
+    /// must be known to hold `Sum`'s identity (`0`), and the final tile must span every contracted
+    /// axis whole, so the walk above the leaf never returns to a cell it has already written.
     fn replaces_mma_sink<Lhs: Numeric, Rhs: Numeric>(
         &self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
     ) -> comptime_type!(bool) {
         let sink_id = self.sink_identity();
-        let sink_is_sum = comptime!(sink_id == Some(LeafOp::Sum));
-        comptime!(sink_is_sum && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space))
+        comptime!(
+            sink_id == Some(LeafOp::Sum)
+                && Space::merge(&[&lhs.space, &rhs.space]).spans_contracted_at_leaf(&self.space)
+        )
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
@@ -158,21 +161,6 @@ impl<E: Numeric> PlaneTile<E> {
             }
         }
     }
-}
-
-/// Whether the final tile spans every contracted axis whole.
-fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
-    let merged = Space::merge(&[lhs, rhs]);
-    let leaf = merged.final_space();
-    for axis in merged.contracting(out).iter() {
-        // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
-        // settled here. Seeding from the sink is the answer that is right either way.
-        match (merged.extent_raw(*axis), leaf.extent_raw(*axis)) {
-            (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf => {}
-            _ => return false,
-        }
-    }
-    true
 }
 
 /// Asserts that operands are not gathered and have a single contracted axis.

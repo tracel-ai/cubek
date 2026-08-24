@@ -842,35 +842,21 @@ impl<T: Numeric> Tile<T> {
         self.set_sink_identity(comptime!(Some(LeafOp::Sum)));
     }
 
-    /// Initialize this tile with `op`'s identity value. Same shape as [`init`](Tile::init).
-    /// Stamping the identity enables fast-path accumulator replacement when folding under `op`.
+    /// Seed this tile with `op`'s identity, so a fold under `op` starts from a value folding it in
+    /// leaves unchanged. Stamping the identity is what lets [`reduce_axis`](Tile::reduce_axis)
+    /// replace its initial sink read.
+    ///
+    /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
+    /// fragments included; the other folds need a real value and so reach only the forms
+    /// [`init`](Tile::init) serves.
     pub fn init_identity(&mut self, #[comptime] op: LeafOp) {
-        let val = LeafOp::identity::<T>(op);
-        match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final => match &mut self.tile_kind {
-                TileKind::Gmem(d) | TileKind::Smem(d) => d.init(val),
-                TileKind::PlaneTile(t) => match comptime!(op) {
-                    LeafOp::Sum => t.zero(),
-                    _ => panic!("Tile::init_identity: only Sum is supported for plane tiles"),
-                },
-                TileKind::PlanePartition(p) => match comptime!(op) {
-                    LeafOp::Sum => p.zero(),
-                    _ => panic!("Tile::init_identity: only Sum is supported for plane partitions"),
-                },
-                TileKind::TmaGmem(_) => panic!("Tile::init_identity: a tma source is not writable"),
-                TileKind::Procedural(_) => {
-                    panic!("Tile::init_identity: a procedural tile is not writable")
-                }
-            },
-            Partitioner::Level(_) => {
-                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
-                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
-                    let mut sub = self.at(&region);
-                    sub.init_identity(op);
-                }
-            }
+        let is_sum = comptime!(op == LeafOp::Sum);
+        if comptime!(is_sum) {
+            self.zero();
+        } else {
+            self.init(LeafOp::identity::<T>(op));
+            self.set_sink_identity(comptime!(Some(op)));
         }
-        self.set_sink_identity(comptime!(Some(op)));
     }
 
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
