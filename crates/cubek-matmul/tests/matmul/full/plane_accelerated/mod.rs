@@ -1,11 +1,13 @@
 mod matmul_plane_accelerated {
     mod cmma {
         use cubecl::{TestRuntime, client::ComputeClient};
-        use cubek_matmul::definition::MatmulProblem;
-        use cubek_matmul::multi_level::Strategy as MultiLevel;
-        use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
-        use cubek_matmul::multi_level::test_only::TestStrategy;
-        use cubek_matmul::routine::BlueprintStrategy;
+        use cubek_matmul::{
+            definition::MatmulProblem,
+            multi_level::{
+                Strategy as MultiLevel, definition::BatchMatmulBlueprint, test_only::TestStrategy,
+            },
+            routine::BlueprintStrategy,
+        };
 
         use crate::matmul::{test_matmul_strategy, test_matmul_test_strategy};
 
@@ -136,11 +138,13 @@ mod matmul_plane_accelerated {
 
     mod mma {
         use cubecl::{TestRuntime, client::ComputeClient};
-        use cubek_matmul::definition::MatmulProblem;
-        use cubek_matmul::multi_level::Strategy as MultiLevel;
-        use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
-        use cubek_matmul::multi_level::test_only::TestStrategy;
-        use cubek_matmul::routine::BlueprintStrategy;
+        use cubek_matmul::{
+            definition::MatmulProblem,
+            multi_level::{
+                Strategy as MultiLevel, definition::BatchMatmulBlueprint, test_only::TestStrategy,
+            },
+            routine::BlueprintStrategy,
+        };
 
         use crate::matmul::{test_matmul_strategy, test_matmul_test_strategy};
 

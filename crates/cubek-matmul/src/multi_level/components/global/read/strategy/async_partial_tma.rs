@@ -1,21 +1,22 @@
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::SharedGlobalMatmulConfig;
-use crate::multi_level::components::global::memory::GlobalIterator;
-use crate::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
-use crate::multi_level::components::global::read::async_tma::AsyncTma;
-use crate::multi_level::components::global::read::{
-    AsyncPartialLoadingStrategy, validate_tma_with_problem,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    multi_level::{
+        args::RuntimeConfig,
+        components::{
+            global::{
+                GlobalConfig, GlobalReaderConfig, PlaneFlowPartition, SharedGlobalMatmulConfig,
+                memory::GlobalIterator,
+                multi_stage::LoadMaxRoundPlaneCount,
+                read::{
+                    AsyncPartialLoadingStrategy, PartialLoadingStrategy, async_tma::AsyncTma,
+                    validate_async_barrier, validate_tma, validate_tma_with_problem,
+                },
+            },
+            stage::{StridedStageFamily, StridedStageMemory},
+        },
+        definition::{LhsS, MatmulTypes, RhsS},
+    },
 };
-use crate::multi_level::components::global::read::{
-    PartialLoadingStrategy, validate_async_barrier, validate_tma,
-};
-use crate::multi_level::components::global::{
-    GlobalConfig, GlobalReaderConfig, PlaneFlowPartition,
-};
-use crate::multi_level::components::stage::StridedStageFamily;
-use crate::multi_level::components::stage::StridedStageMemory;
-use crate::multi_level::definition::{LhsS, MatmulTypes, RhsS};
 use cubecl::{
     prelude::*,
     {ir::DeviceProperties, prelude::barrier::Barrier},

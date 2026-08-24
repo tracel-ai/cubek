@@ -1,11 +1,17 @@
-use crate::definition::StageIdent;
-use crate::multi_level::components::global::read::tiled::{TiledCoords, TiledLayout};
-use crate::multi_level::components::global::{
-    GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage, PartitionedStageFamily,
-    WriteEvent, WriteEventExpand, WriteEventListener,
+use crate::{
+    definition::StageIdent,
+    multi_level::{
+        components::{
+            global::{
+                GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage,
+                PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
+                read::tiled::{TiledCoords, TiledLayout},
+            },
+            stage::{PlanePartitioner, partition_coordinates},
+        },
+        definition::MatrixTypes,
+    },
 };
-use crate::multi_level::components::stage::{PlanePartitioner, partition_coordinates};
-use crate::multi_level::definition::MatrixTypes;
 use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},

@@ -1,17 +1,19 @@
 use std::marker::PhantomData;
 
 use super::{StageBuffer, TaskCounter};
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::memory::GlobalIterator;
-use crate::multi_level::components::global::multi_stage::{
-    JobExecutor, JobIterator, LoadMaxRoundPlaneCount,
+use crate::multi_level::{
+    args::RuntimeConfig,
+    components::{
+        global::{
+            GlobalReaderConfig, SharedGlobalMatmulConfig,
+            memory::GlobalIterator,
+            multi_stage::{JobExecutor, JobIterator, LoadMaxRoundPlaneCount},
+            read::{LoadingJob, LoadingValidation, PartialLoaderStage, SyncBarrier, SyncStrategy},
+        },
+        stage::LoadStageFamily,
+    },
+    definition::MatmulTypes,
 };
-use crate::multi_level::components::global::read::{
-    LoadingJob, LoadingValidation, PartialLoaderStage, SyncBarrier, SyncStrategy,
-};
-use crate::multi_level::components::global::{GlobalReaderConfig, SharedGlobalMatmulConfig};
-use crate::multi_level::components::stage::LoadStageFamily;
-use crate::multi_level::definition::MatmulTypes;
 use cubecl::prelude::{barrier::Barrier, *};
 use cubecl::std::tensor::{View, layout::Coords2d};
 use cubek_std::tile::TilingLayout;

@@ -3,25 +3,35 @@ use std::fmt::Display;
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::tile::RowMajorTilingOrder;
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
+            },
+            global::{
+                PlaneWriterFamily,
+                multi_stage::ordered::OrderedDoubleBufferingMatmulFamily,
+                read::{
+                    sync_full_cyclic::SyncFullCyclicLoading,
+                    sync_partial_cyclic::SyncPartialCyclicLoading,
+                },
+            },
+            stage::{NumStages, PlanePartitioner},
+            tile::TileMatmulKind,
+        },
+        definition::{BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy},
+        routines::{
+            TilingArgs,
+            selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+        },
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-use crate::multi_level::components::batch::BatchMatmulFamily;
-use crate::multi_level::components::batch::{
-    PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
-};
-use crate::multi_level::components::global::PlaneWriterFamily;
-use crate::multi_level::components::global::multi_stage::ordered::OrderedDoubleBufferingMatmulFamily;
-use crate::multi_level::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
-use crate::multi_level::components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading;
-use crate::multi_level::components::stage::{NumStages, PlanePartitioner};
-use crate::multi_level::components::tile::TileMatmulKind;
-use crate::multi_level::definition::{BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy};
-use crate::multi_level::routines::TilingArgs;
-use crate::multi_level::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::multi_level::{BatchMatmulRoutine, ExpandInfo, LaunchInfo, batch_validate_blueprint};
-use crate::routine::{BlueprintStrategy, DeviceSettings, Routine};
 
 /// The batch-matmul family powering [`OrderedDoubleBufferingAlgorithm`].
 type OrderedDoubleBufferingBatch<RC> = PartitionedBatchMatmulFamily<

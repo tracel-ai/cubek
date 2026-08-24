@@ -1,8 +1,8 @@
 //! Forced-blueprint tests across the four lhs/rhs matrix-layout combinations.
 
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::routine::BlueprintStrategy;
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::{
+    multi_level::Strategy as MultiLevel, routine::BlueprintStrategy, strategy::Strategy,
+};
 use cubek_std::{MatrixLayout, PartitionSize, StageSize};
 
 use super::common::{client, default_tile_size, f16_elems, plane_blueprint, problem};

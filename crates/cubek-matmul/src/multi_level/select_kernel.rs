@@ -1,13 +1,15 @@
-use crate::definition::MatmulElems;
-use crate::definition::{MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::args::ConfigRuntimeArg;
-use crate::multi_level::args::{
-    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, InputRuntimeArg, MatmulArgs, OutputArg,
-    OutputRuntimeArg,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, LaunchInfo,
+        args::{
+            ConcreteInputsFactory, ConcreteOutputFactory, ConfigRuntimeArg, InputArg,
+            InputRuntimeArg, MatmulArgs, OutputArg, OutputRuntimeArg,
+        },
+        definition::cube_mapping_launch,
+    },
+    routine::BlueprintStrategy,
 };
-use crate::multi_level::definition::cube_mapping_launch;
-use crate::multi_level::{BatchMatmulRoutine, LaunchInfo};
-use crate::routine::BlueprintStrategy;
 use cubecl::{
     prelude::TensorBinding,
     {Runtime, client::ComputeClient},

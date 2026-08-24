@@ -6,15 +6,13 @@ use cubek_tile::{
     Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, StorageTiling, Tiling, WalkOrder,
 };
 
-use crate::definition::{
-    AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+use crate::{
+    definition::{
+        AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+    },
+    routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis},
+    tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
 };
-
-use crate::routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis};
-
-use crate::tiled::cpu_gemm::base::CpuGemmRoutine;
-
-use crate::tiled::cpu_gemm::kernel::cpu_gemm_kernel;
 
 /// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
 /// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the

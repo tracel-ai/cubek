@@ -36,8 +36,10 @@ use cubek_std::{
     },
 };
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::definition::BatchMatmulBlueprint;
+use crate::{
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
+    multi_level::definition::BatchMatmulBlueprint,
+};
 
 /// Tile-level matmul configuration. Each variant carries the per-kind config.
 ///

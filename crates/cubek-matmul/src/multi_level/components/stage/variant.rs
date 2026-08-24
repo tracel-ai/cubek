@@ -2,8 +2,7 @@
 
 use cubek_std::{CubeDimResource, InvalidConfigError};
 
-use crate::definition::MatmulSetupError;
-use crate::multi_level::definition::BatchMatmulBlueprint;
+use crate::{definition::MatmulSetupError, multi_level::definition::BatchMatmulBlueprint};
 
 use super::{PartitionedStageMatmul, StageMatmul};
 

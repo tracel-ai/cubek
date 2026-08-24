@@ -1,10 +1,11 @@
 use cubecl::CubeDim;
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
-
-use crate::multi_level::definition::TilingScheme;
+use crate::{
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        components::global::multi_stage::LoadMaxRoundPlaneCount, definition::TilingScheme,
+    },
+};
 
 #[allow(unused_variables)]
 pub fn cube_dim_validation(cube_dim: CubeDim) -> Result<(), MatmulSetupError> {

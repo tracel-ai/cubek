@@ -1,12 +1,11 @@
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        components::{CubeDimResource, global::memory::GlobalLayoutConfig, stage::NumStages},
+        definition::{AccG, Blueprint, CubeMapping, CubeMappingLaunch, LhsG, MatmulTypes, RhsG},
+    },
 };
-use crate::multi_level::components::CubeDimResource;
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
-use crate::multi_level::components::stage::NumStages;
-use crate::multi_level::definition::{AccG, Blueprint, LhsG, MatmulTypes, RhsG};
-use crate::multi_level::definition::{CubeMapping, CubeMappingLaunch};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use std::{fmt::Debug, hash::Hash};
 

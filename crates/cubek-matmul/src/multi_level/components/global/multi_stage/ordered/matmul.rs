@@ -1,21 +1,27 @@
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::GlobalWriterFamily;
-use crate::multi_level::components::global::Specializer;
-use crate::multi_level::components::global::multi_stage::double_buffer_execution::{
-    execute_current_and_read_next, execute_last_and_write_results, read_first,
+use crate::multi_level::{
+    args::RuntimeConfig,
+    components::{
+        global::{
+            self, GlobalWriter, GlobalWriterFamily, SharedGlobalMatmulConfig, Specializer,
+            multi_stage::{
+                double_buffer_execution::{
+                    execute_current_and_read_next, execute_last_and_write_results, read_first,
+                },
+                ordered::LL,
+            },
+            read::{
+                FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader,
+                LoadingValidation as _, PartialLoaderStage, PartialLoadingStrategy,
+                PartialStageGlobalReader, StageBuffer, sync::Synchronous,
+            },
+        },
+        stage::{
+            StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments,
+            partition_coordinates,
+        },
+    },
+    definition::{Rhs, Stage, *},
 };
-use crate::multi_level::components::global::multi_stage::ordered::LL;
-use crate::multi_level::components::global::read::sync::Synchronous;
-use crate::multi_level::components::global::read::{
-    FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, LoadingValidation as _,
-    PartialLoaderStage, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
-};
-use crate::multi_level::components::global::{self, GlobalWriter, SharedGlobalMatmulConfig};
-use crate::multi_level::components::stage::{
-    StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments, partition_coordinates,
-};
-use crate::multi_level::definition::*;
-use crate::multi_level::definition::{Rhs, Stage};
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::Coords2d},

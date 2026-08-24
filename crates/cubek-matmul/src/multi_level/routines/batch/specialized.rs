@@ -8,36 +8,39 @@ use cubek_std::{
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
 };
 
-use crate::definition::MatmulElems;
-use crate::definition::{MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::BatchMatmulRoutine;
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
+            },
+            global::{
+                InputLoadFlow, LoadFlows, PlaneWriterFamily,
+                multi_stage::specialized::SpecializedMatmulFamily,
+                read::{
+                    AsyncPartialLoadingStrategy, FullLoadingStrategy,
+                    async_partial_tma::AsyncPartialTmaLoading,
+                    sync_full_strided::SyncFullStridedLoading,
+                },
+            },
+            stage::{NumStages, PartitionBuffering, PlanePartitioner, StageFamily},
+            tile::TileMatmulKind,
+        },
+        definition::{
+            BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy, SwizzleModes, TilingScheme,
+            adjust_dtypes,
+        },
+        routines::{
+            TilingArgs,
+            selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane, select_swizzle},
+        },
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-use crate::multi_level::components::batch::BatchMatmulFamily;
-use crate::multi_level::components::batch::{
-    PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
-};
-use crate::multi_level::components::global::PlaneWriterFamily;
-use crate::multi_level::components::global::multi_stage::specialized::SpecializedMatmulFamily;
-use crate::multi_level::components::global::read::AsyncPartialLoadingStrategy;
-use crate::multi_level::components::global::read::FullLoadingStrategy;
-use crate::multi_level::components::global::read::async_partial_tma::AsyncPartialTmaLoading;
-use crate::multi_level::components::global::read::sync_full_strided::SyncFullStridedLoading;
-use crate::multi_level::components::global::{InputLoadFlow, LoadFlows};
-use crate::multi_level::components::stage::PartitionBuffering;
-use crate::multi_level::components::stage::{NumStages, PlanePartitioner, StageFamily};
-use crate::multi_level::components::tile::TileMatmulKind;
-use crate::multi_level::definition::{
-    BatchMatmulBlueprint, CubeMappingLaunch, SwizzleModes, adjust_dtypes,
-};
-use crate::multi_level::definition::{MultiRowStrategy, TilingScheme};
-use crate::multi_level::routines::TilingArgs;
-use crate::multi_level::routines::selector::select_swizzle;
-use crate::multi_level::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::multi_level::{ExpandInfo, LaunchInfo, batch_validate_blueprint};
-use crate::routine::Routine;
-use crate::routine::{BlueprintStrategy, DeviceSettings};
 
 /// The batch-matmul family powering [`SpecializedAlgorithm`].
 type SpecializedBatch<RC, L, AL> = PartitionedBatchMatmulFamily<

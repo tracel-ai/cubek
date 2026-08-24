@@ -669,7 +669,11 @@ fn test_reduce_axis_max_inner_axis_reduced_v4() {
         let want = (0..k)
             .map(|j| ((i * k + j) % 7) as f32)
             .fold(f32::NEG_INFINITY, f32::max);
-        assert_eq!(got.get_f32(&[i]), want, "Line-folded max mismatch at row {i}");
+        assert_eq!(
+            got.get_f32(&[i]),
+            want,
+            "Line-folded max mismatch at row {i}"
+        );
     }
 }
 

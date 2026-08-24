@@ -25,10 +25,10 @@ use cubecl::{
 use cubek_std::InputBinding;
 use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 
-use crate::definition::MatmulElems;
-use crate::routine::BlueprintStrategy;
-use crate::tiled::cpu_gemm::{
-    CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
+use crate::{
+    definition::MatmulElems,
+    routine::BlueprintStrategy,
+    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
 };
 
 /// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` instruction (no

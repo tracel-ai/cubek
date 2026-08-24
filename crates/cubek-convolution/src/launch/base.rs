@@ -5,14 +5,15 @@
 //! dispatches to the per-operation helper based on `ConvolutionInputs`.
 
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::multi_level::components::tile::TileMatmulKind;
-use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
-use cubek_matmul::multi_level::routines::TilingArgs;
-use cubek_matmul::routine::{BlueprintStrategy, Routine as MatmulRoutine};
+use cubek_matmul::{
+    definition::MatmulElems,
+    multi_level::{
+        components::tile::TileMatmulKind, definition::BatchMatmulBlueprint, routines::TilingArgs,
+    },
+    routine::{BlueprintStrategy, Routine as MatmulRoutine},
+};
 
-use crate::components::ConvolutionOperation;
-use crate::definition::ConvBlueprint;
+use crate::{components::ConvolutionOperation, definition::ConvBlueprint};
 
 fn blueprint_operation(blueprint: &ConvBlueprint) -> ConvolutionOperation {
     match blueprint {

@@ -3,41 +3,32 @@ use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use std::{fmt::Display, marker::PhantomData};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::{ExpandInfo, LaunchInfo};
-
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
+            },
+            global::{
+                UnitWriterFamily,
+                read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
+                single_stage::simple::SimpleMatmulFamily,
+            },
+            stage::{NumStages, UnitPartitioner},
+            tile::TileMatmulKind,
+        },
+        definition::{BatchMatmulBlueprint, CubeMappingLaunch},
+        routines::selector::{
+            PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
+            infer_blueprint_unit,
+        },
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-
-use crate::multi_level::components::batch::{
-    BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
-};
-
-use crate::multi_level::components::global::UnitWriterFamily;
-
-use crate::multi_level::components::global::read::FullLoadingStrategy;
-
-use crate::multi_level::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
-
-use crate::multi_level::components::global::single_stage::simple::SimpleMatmulFamily;
-
-use crate::multi_level::components::stage::{NumStages, UnitPartitioner};
-
-use crate::multi_level::components::tile::TileMatmulKind;
-
-use crate::multi_level::definition::{BatchMatmulBlueprint, CubeMappingLaunch};
-
-use crate::multi_level::routines::selector::{
-    PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
-    infer_blueprint_unit,
-};
-
-use crate::routine::{BlueprintStrategy, DeviceSettings};
-
-use crate::multi_level::{BatchMatmulRoutine, batch_validate_blueprint};
-use crate::routine::Routine;
 
 /// The batch-matmul family powering [`SimpleUnitAlgorithm`].
 type SimpleUnitBatch<RC, LL, RL, AL> = PartitionedBatchMatmulFamily<

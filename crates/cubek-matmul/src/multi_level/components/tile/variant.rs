@@ -11,8 +11,10 @@
 use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
 use cubek_std::{CubeDimResource, InvalidConfigError, TileSize};
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::definition::BatchMatmulBlueprint;
+use crate::{
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
+    multi_level::definition::BatchMatmulBlueprint,
+};
 
 pub trait TileVariant: Sized {
     /// Whether this tile matmul requires specialized hardware accelerators

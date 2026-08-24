@@ -1,14 +1,13 @@
 use std::fmt::Display;
 
-use crate::definition::{
-    MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes,
+use crate::{
+    definition::{MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes},
+    multi_level::{
+        components::{stage::PartitionBuffering, tile::TileMatmulKind},
+        definition::{BatchMatmulBlueprint, SwizzleModes, TilingScheme},
+    },
 };
 
-use crate::multi_level::components::stage::PartitionBuffering;
-
-use crate::multi_level::components::tile::TileMatmulKind;
-
-use crate::multi_level::definition::{BatchMatmulBlueprint, SwizzleModes, TilingScheme};
 use cubecl::{
     Runtime,
     client::ComputeClient,

@@ -1,10 +1,12 @@
 use cubek_std::MatrixLayout;
 
-use crate::definition::{MatmulProblem, MatmulSetupError};
-
-use crate::multi_level::components::batch::{BatchConfig, CheckBounds};
-
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
+use crate::{
+    definition::{MatmulProblem, MatmulSetupError},
+    multi_level::components::{
+        batch::{BatchConfig, CheckBounds},
+        global::memory::GlobalLayoutConfig,
+    },
+};
 
 /// Per-operand layout classification, with a special case for vectors.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

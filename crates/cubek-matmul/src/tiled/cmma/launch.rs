@@ -9,15 +9,16 @@ use cubek_tile::{
     Tiling, Tma, TmaTileArgLaunch, WalkOrder,
 };
 
-use crate::definition::{
-    AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+use crate::{
+    definition::{
+        AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+    },
+    routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis},
+    tiled::cmma::{
+        base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
+        kernel::cmma_kernel,
+    },
 };
-
-use crate::routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis};
-
-use crate::tiled::cmma::base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine};
-
-use crate::tiled::cmma::kernel::cmma_kernel;
 
 /// The register accumulate type the routine mandates, independent of how the caller built
 /// `dtypes` (some paths build a single-dtype `MatmulElems` that never upgrades): tensor

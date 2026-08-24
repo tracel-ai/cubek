@@ -1,20 +1,21 @@
 use std::marker::PhantomData;
 
-use crate::multi_level::args::RuntimeConfig;
-
-use crate::multi_level::components::global::GlobalReaderConfig;
-
-use crate::multi_level::components::global::memory::GlobalIterator;
-
-use crate::multi_level::components::global::multi_stage::{
-    JobExecutor, JobIterator, LoadMaxRoundPlaneCount,
+use crate::multi_level::{
+    args::RuntimeConfig,
+    components::{
+        global::{
+            GlobalReaderConfig,
+            memory::GlobalIterator,
+            multi_stage::{JobExecutor, JobIterator, LoadMaxRoundPlaneCount},
+            read::{
+                FullLoaderStage, LoadingJob, LoadingValidation, StageBuffer, SyncStrategy,
+                TaskCounter,
+            },
+        },
+        stage::LoadStageFamily,
+    },
 };
 
-use crate::multi_level::components::global::read::{
-    FullLoaderStage, LoadingJob, LoadingValidation, StageBuffer, SyncStrategy, TaskCounter,
-};
-
-use crate::multi_level::components::stage::LoadStageFamily;
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},

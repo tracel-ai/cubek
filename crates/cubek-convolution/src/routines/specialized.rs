@@ -1,15 +1,18 @@
 use cubecl::{
     Runtime, client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError,
 };
-use cubek_matmul::definition::AvailableVectorSizes;
-use cubek_matmul::multi_level::args::{TensorArgs, TensorMapArgs};
-use cubek_matmul::multi_level::components::global::read::AsyncPartialLoadingStrategy;
-use cubek_matmul::multi_level::components::global::read::async_partial_cyclic::AsyncPartialCyclicLoading;
-use cubek_matmul::multi_level::components::global::read::async_partial_strided::AsyncPartialStridedLoading;
-use cubek_matmul::multi_level::components::global::read::async_partial_tma::AsyncPartialTmaLoading;
-use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
-use cubek_matmul::multi_level::routines::batch::specialized::{
-    SpecializedAlgorithm, SpecializedStrategy,
+use cubek_matmul::{
+    definition::AvailableVectorSizes,
+    multi_level::{
+        args::{TensorArgs, TensorMapArgs},
+        components::global::read::{
+            AsyncPartialLoadingStrategy, async_partial_cyclic::AsyncPartialCyclicLoading,
+            async_partial_strided::AsyncPartialStridedLoading,
+            async_partial_tma::AsyncPartialTmaLoading,
+        },
+        definition::BatchMatmulBlueprint,
+        routines::batch::specialized::{SpecializedAlgorithm, SpecializedStrategy},
+    },
 };
 use cubek_std::tile::ColMajorTilingOrder;
 use std::marker::PhantomData;

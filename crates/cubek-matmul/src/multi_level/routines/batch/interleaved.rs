@@ -10,28 +10,31 @@ use cubek_std::{
 };
 use std::{fmt::Display, marker::PhantomData};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
+            },
+            global::{
+                PlaneWriterFamily,
+                read::{FullLoadingStrategy, sync_full_cyclic::SyncFullCyclicLoading},
+                single_stage::simple::SimpleMatmulFamily,
+            },
+            stage::{NumStages, PartitionBuffering, PlanePartitioner},
+            tile::TileMatmulKind,
+        },
+        definition::{
+            BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy, TilingScheme, adjust_dtypes,
+        },
+        routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-use crate::multi_level::components::batch::BatchMatmulFamily;
-use crate::multi_level::components::batch::{
-    PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
-};
-use crate::multi_level::components::global::PlaneWriterFamily;
-use crate::multi_level::components::global::read::FullLoadingStrategy;
-use crate::multi_level::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
-use crate::multi_level::components::global::single_stage::simple::SimpleMatmulFamily;
-use crate::multi_level::components::stage::{NumStages, PartitionBuffering, PlanePartitioner};
-use crate::multi_level::components::tile::TileMatmulKind;
-use crate::multi_level::definition::{
-    BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy, TilingScheme, adjust_dtypes,
-};
-use crate::multi_level::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::multi_level::{BatchMatmulRoutine, batch_validate_blueprint};
-use crate::multi_level::{ExpandInfo, LaunchInfo};
-use crate::routine::Routine;
-use crate::routine::{BlueprintStrategy, DeviceSettings};
 
 /// Plane accelerated single stage matmul with configurable readers (default to cyclic)
 pub struct InterleavedAlgorithm<

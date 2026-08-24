@@ -1,7 +1,9 @@
 use cubecl::prelude::CubeType;
 
-use crate::multi_level::components::global::read::{FullLoadingStrategy, PartialLoadingStrategy};
-use crate::multi_level::components::stage::StageFamily;
+use crate::multi_level::components::{
+    global::read::{FullLoadingStrategy, PartialLoadingStrategy},
+    stage::StageFamily,
+};
 
 #[derive(Copy, Clone, CubeType)]
 /// Identifier for the stage in global double buffering

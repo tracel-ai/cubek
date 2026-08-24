@@ -9,23 +9,26 @@ use std::fmt::Display;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 use cubek_std::{InputBinding, tile::ColMajorTilingOrder};
 
-use crate::definition::{MatmulElems, MatmulSetupError};
-
-use crate::multi_level::components::global::read::async_full_cooperative::AsyncFullCooperativeLoading;
-
-use crate::multi_level::components::global::read::async_full_cyclic::AsyncFullCyclicLoading;
-
-use crate::multi_level::components::tile::TileMatmulKind;
-
-use crate::multi_level::routines::TilingArgs;
-
-use crate::multi_level::routines::batch::launch as launch_tiling;
-
-use crate::multi_level::routines::batch::interleaved::InterleavedAlgorithm;
-
-use crate::multi_level::routines::batch::simple::SimpleBarrierAlgorithm;
-
-use crate::routine::{BlueprintStrategy, Routine};
+use crate::{
+    definition::{MatmulElems, MatmulSetupError},
+    multi_level::{
+        components::{
+            global::read::{
+                async_full_cooperative::AsyncFullCooperativeLoading,
+                async_full_cyclic::AsyncFullCyclicLoading,
+            },
+            tile::TileMatmulKind,
+        },
+        routines::{
+            TilingArgs,
+            batch::{
+                interleaved::InterleavedAlgorithm, launch as launch_tiling,
+                simple::SimpleBarrierAlgorithm,
+            },
+        },
+    },
+    routine::{BlueprintStrategy, Routine},
+};
 
 /// Non-public strategy variants reserved for test coverage.
 #[allow(clippy::type_complexity)]

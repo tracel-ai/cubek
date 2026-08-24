@@ -1,14 +1,18 @@
-use crate::definition::{
-    AvailableVectorSizes, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+use crate::{
+    definition::{
+        AvailableVectorSizes, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+    },
+    multi_level::{
+        BatchMatmulRoutine,
+        args::{
+            ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg,
+            TensorArgs, TensorMapArgs,
+        },
+        definition::BatchMatmulBlueprint,
+        launch_kernel_concrete,
+    },
+    routine::{BlueprintStrategy, into_contiguous_if_highly_permuted},
 };
-use crate::multi_level::BatchMatmulRoutine;
-use crate::multi_level::args::{
-    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, MatmulArgs, OutputArg, TensorArgs,
-    TensorMapArgs,
-};
-use crate::multi_level::definition::BatchMatmulBlueprint;
-use crate::multi_level::launch_kernel_concrete;
-use crate::routine::{BlueprintStrategy, into_contiguous_if_highly_permuted};
 use cubecl::{
     features::{Tma, TypeUsage},
     std::tensor::{MatrixBatchLayout, matrix_batch_layout},

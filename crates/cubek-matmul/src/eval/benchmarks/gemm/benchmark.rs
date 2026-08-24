@@ -10,11 +10,13 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::definition::MatmulElems;
-use crate::eval::benchmarks::gemm::problem::{GemmProblem, Precision};
-use crate::launch::launch_ref;
-use crate::multi_level::definition::MatmulPrecision;
-use crate::strategy::Strategy;
+use crate::{
+    definition::MatmulElems,
+    eval::benchmarks::gemm::problem::{GemmProblem, Precision},
+    launch::launch_ref,
+    multi_level::definition::MatmulPrecision,
+    strategy::Strategy,
+};
 
 pub fn bench(
     strategy: &Strategy,

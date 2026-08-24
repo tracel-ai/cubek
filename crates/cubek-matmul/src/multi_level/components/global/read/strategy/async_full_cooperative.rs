@@ -1,13 +1,21 @@
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::GlobalReaderConfig;
-use crate::multi_level::components::global::memory::{GlobalIterator, load_window_in_stage};
-use crate::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
-use crate::multi_level::components::global::read::async_barrier::AsyncBarrier;
-use crate::multi_level::components::global::read::{
-    FullLoadingStrategy, LoadingJob, validate_async_barrier, validate_noswizzle,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    multi_level::{
+        args::RuntimeConfig,
+        components::{
+            global::{
+                GlobalReaderConfig,
+                memory::{GlobalIterator, load_window_in_stage},
+                multi_stage::LoadMaxRoundPlaneCount,
+                read::{
+                    FullLoadingStrategy, LoadingJob, async_barrier::AsyncBarrier,
+                    validate_async_barrier, validate_noswizzle,
+                },
+            },
+            stage::{StridedStageFamily, StridedStageMemory},
+        },
+    },
 };
-use crate::multi_level::components::stage::{StridedStageFamily, StridedStageMemory};
 use cubecl::{
     ir::DeviceProperties,
     prelude::{barrier::Barrier, *},

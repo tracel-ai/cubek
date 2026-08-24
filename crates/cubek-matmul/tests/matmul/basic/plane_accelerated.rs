@@ -4,11 +4,12 @@
 //! against a representative shape; that is enough to catch selector regressions
 //! without blowing up compile time.
 
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::routine::BlueprintStrategy;
-use cubek_matmul::strategy::Strategy;
-use cubek_matmul::tiled::Strategy as Tiled;
-use cubek_matmul::tiled::cmma::CmmaStrategy;
+use cubek_matmul::{
+    multi_level::Strategy as MultiLevel,
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+    tiled::{Strategy as Tiled, cmma::CmmaStrategy},
+};
 
 use super::common::{client, f16_elems, square};
 use crate::matmul::test_matmul_strategy;
@@ -306,9 +307,10 @@ fn cmma_batched_f32() {
 /// cube-shared smem (every plane contracted plane 0's windows).
 #[test]
 fn cmma_partition_1x1_f32() {
-    use cubek_matmul::tiled::cmma::CmmaDelivery;
-    use cubek_matmul::tiled::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
+    };
 
     let blueprint = CmmaBlueprint {
         instruction: InstructionShape { m: 8, n: 8, k: 8 },
@@ -352,11 +354,14 @@ fn cmma_tma_square_f16() {
 /// clean setup error, on any backend (the plan check precedes the availability gate).
 #[test]
 fn cmma_tma_rejects_oversized_box() {
-    use cubek_matmul::definition::{AvailableVectorSizes, MatmulSetupError};
-    use cubek_matmul::routine::DeviceSettings;
-    use cubek_matmul::tiled::cmma::CmmaDelivery;
-    use cubek_matmul::tiled::cmma::{CmmaBlueprint, CmmaRoutine, Partition};
-    use cubek_matmul::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::{
+            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.

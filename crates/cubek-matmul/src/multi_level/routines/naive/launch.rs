@@ -8,19 +8,16 @@ use cubecl::{
 };
 use cubek_std::InputBinding;
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::definition::cube_mapping_launch;
-
-use crate::multi_level::BatchMatmulRoutine as _;
-
-use crate::multi_level::args::{
-    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, OutputArg, TensorArgs,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine as _,
+        args::{ConcreteInputsFactory, ConcreteOutputFactory, InputArg, OutputArg, TensorArgs},
+        definition::cube_mapping_launch,
+        routines::naive::NaiveRoutine,
+    },
+    routine::BlueprintStrategy,
 };
-
-use crate::multi_level::routines::naive::NaiveRoutine;
-
-use crate::routine::BlueprintStrategy;
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(

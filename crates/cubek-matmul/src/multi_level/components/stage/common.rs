@@ -13,9 +13,13 @@ use cubek_std::{
 
 pub use cubek_std::tile::{PartitionBuffering, Partitioner, PlanePartitioner, UnitPartitioner};
 
-use crate::multi_level::components::global::PlaneFlowConfig;
-use crate::multi_level::components::tile::{TileMatmul, allocate_acc, allocate_lhs, allocate_rhs};
-use crate::multi_level::definition::{AccRE, LhsRE, MatmulTypes, MatrixTypes, RhsRE};
+use crate::multi_level::{
+    components::{
+        global::PlaneFlowConfig,
+        tile::{TileMatmul, allocate_acc, allocate_lhs, allocate_rhs},
+    },
+    definition::{AccRE, LhsRE, MatmulTypes, MatrixTypes, RhsRE},
+};
 
 use super::StageMatmulKind;
 

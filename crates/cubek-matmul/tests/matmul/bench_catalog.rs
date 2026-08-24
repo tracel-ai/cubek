@@ -3,11 +3,15 @@
 #![cfg(feature = "benchmarks")]
 
 use cubecl::Runtime;
-use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, GemmProblem};
-use cubek_matmul::eval::benchmarks::gemv::{GemvCorrectness, GemvProblem};
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::strategy::Strategy;
-use cubek_matmul::tiled::Strategy as Tiled;
+use cubek_matmul::{
+    eval::benchmarks::{
+        gemm::{GemmCorrectness, GemmProblem},
+        gemv::{GemvCorrectness, GemvProblem},
+    },
+    multi_level::Strategy as MultiLevel,
+    strategy::Strategy,
+    tiled::Strategy as Tiled,
+};
 use cubek_test_utils::{
     CatalogEntry, Correctness, TestOutcome, assert_equals_approx, skip_unless_cpu,
 };
@@ -129,10 +133,14 @@ fn gemm_cmma_timing_vs_legacy() {
 #[test]
 #[ignore = "crosspoint probe guard, run manually"]
 fn gemm_cyclic_cmma_forced_point_correctness() {
-    use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, problems};
-    use cubek_matmul::routine::BlueprintStrategy;
-    use cubek_matmul::tiled::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+    use cubek_matmul::{
+        eval::benchmarks::gemm::{GemmCorrectness, problems},
+        routine::BlueprintStrategy,
+        tiled::{
+            cmma::{CmmaBlueprint, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
     use cubek_test_utils::Correctness;
 
     let problem: GemmProblem = lookup(problems(), "rect_1x512x512x512_rr_f16");
@@ -162,14 +170,19 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
 #[ignore = "timing probe, run manually"]
 fn gemm_cyclic_cmma_crosspoint_timing() {
     use cubecl::ir::AddressType;
-    use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem};
-    use cubek_matmul::eval::benchmarks::gemm::{bench, problems};
-    use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-    use cubek_matmul::multi_level::components::tile::TileMatmulKind;
-    use cubek_matmul::multi_level::definition::TilingScheme;
-    use cubek_matmul::routine::BlueprintStrategy;
-    use cubek_matmul::tiled::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+    use cubek_matmul::{
+        definition::{MatmulGlobalElems, MatmulProblem},
+        eval::benchmarks::gemm::{bench, problems},
+        multi_level::{
+            components::{stage::PartitionBuffering, tile::TileMatmulKind},
+            definition::TilingScheme,
+        },
+        routine::BlueprintStrategy,
+        tiled::{
+            cmma::{CmmaBlueprint, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
     use cubek_std::MatrixLayout;
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");

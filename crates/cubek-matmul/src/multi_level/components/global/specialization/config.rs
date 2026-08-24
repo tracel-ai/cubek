@@ -1,6 +1,9 @@
-use crate::definition::StageIdent;
-use crate::multi_level::components::global::MaxGlobalReaderPlanes;
-use crate::multi_level::components::global::specialization::roles::PlaneFlowCounts;
+use crate::{
+    definition::StageIdent,
+    multi_level::components::global::{
+        MaxGlobalReaderPlanes, specialization::roles::PlaneFlowCounts,
+    },
+};
 
 // `InputLoadFlow` is part of the plane-flow vocabulary that now lives in
 // cubek-std. Re-export it so existing `use crate::multi_level::components::global::*`

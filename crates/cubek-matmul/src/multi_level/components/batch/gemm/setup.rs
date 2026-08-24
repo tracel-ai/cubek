@@ -6,26 +6,24 @@ use cubecl::{
 };
 use cubek_std::{MatrixLayout, cube_count::HypercubeBlueprint};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::args::*;
-
-use crate::multi_level::components::CubeDimResource;
-
-use crate::multi_level::components::batch::{BatchMatmulFamily, CheckBounds};
-
-use crate::multi_level::components::batch::gemm::{
-    Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant,
-};
-
-use crate::multi_level::components::batch::gemm::matmul::matmul_entry;
-
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
-
-use crate::multi_level::components::stage::NumStages;
-
-use crate::multi_level::definition::{
-    Blueprint, CubeMappingLaunch, MatmulTypes, SwizzleModes, TilingScheme,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        args::*,
+        components::{
+            CubeDimResource,
+            batch::{
+                BatchMatmulFamily, CheckBounds,
+                gemm::{
+                    Gemm, GemmConfig, MatmulOperandLayouts, PlanesSplit, Variant,
+                    matmul::matmul_entry,
+                },
+            },
+            global::memory::GlobalLayoutConfig,
+            stage::NumStages,
+        },
+        definition::{Blueprint, CubeMappingLaunch, MatmulTypes, SwizzleModes, TilingScheme},
+    },
 };
 
 /// Unified GEMM family. Selects a kernel variant from operand layouts:

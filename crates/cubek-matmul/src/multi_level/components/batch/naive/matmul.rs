@@ -1,19 +1,18 @@
 use std::marker::PhantomData;
 
-use crate::multi_level::components::batch::{BatchConfig as _, SliceIndex};
+use crate::{
+    definition::*,
+    multi_level::{
+        args::MatmulArgs,
+        components::batch::{
+            BatchConfig as _, BatchMatmul, SliceIndex,
+            base::BatchMatmulFamily,
+            naive::{NaiveBatchMatmulFamily, NaiveBlueprint, NaiveMatmulConfig},
+        },
+        definition::*,
+    },
+};
 
-use crate::multi_level::components::batch::base::BatchMatmulFamily;
-
-use crate::multi_level::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
-
-use crate::definition::*;
-use crate::multi_level::definition::*;
-
-use crate::multi_level::args::MatmulArgs;
-
-use crate::multi_level::components::batch::BatchMatmul;
-
-use crate::multi_level::components::batch::naive::NaiveMatmulConfig;
 use cubecl::{
     prelude::*,
     std::tensor::View,

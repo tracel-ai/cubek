@@ -1,19 +1,27 @@
 use std::marker::PhantomData;
 
-use crate::definition::MatmulAvailabilityError;
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::args::{ConfigRuntimeArg, RuntimeConfig, *};
-use crate::multi_level::components::CubeDimResource;
-use crate::multi_level::components::batch::BatchMatmulFamily;
-use crate::multi_level::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
-use crate::multi_level::components::batch::partitioned_matmul::matmul::{
-    PartitionedBatchMatmul, matmul_entry,
+use crate::{
+    definition::{
+        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    },
+    multi_level::{
+        args::{ConfigRuntimeArg, RuntimeConfig, *},
+        components::{
+            CubeDimResource,
+            batch::{
+                BatchMatmulFamily,
+                partitioned_matmul::{
+                    config::PartitionedBatchConfig,
+                    matmul::{PartitionedBatchMatmul, matmul_entry},
+                    partition::GlobalPartitionMatmul,
+                },
+            },
+            global::{GlobalConfig, GlobalMatmulFamily},
+            stage::NumStages,
+        },
+        definition::{BatchMatmulBlueprint, CubeMappingLaunch, MatmulTypes},
+    },
 };
-use crate::multi_level::components::batch::partitioned_matmul::partition::GlobalPartitionMatmul;
-use crate::multi_level::components::global::GlobalConfig;
-use crate::multi_level::components::global::GlobalMatmulFamily;
-use crate::multi_level::components::stage::NumStages;
-use crate::multi_level::definition::{BatchMatmulBlueprint, CubeMappingLaunch, MatmulTypes};
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::stage::StageMemoryConfig;
 

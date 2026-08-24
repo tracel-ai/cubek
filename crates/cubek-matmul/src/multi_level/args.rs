@@ -10,18 +10,19 @@ use cubecl::unexpanded;
 use cubek_std::launch::tma::tma_operand;
 use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
 
-use crate::multi_level::components::global::memory::{
-    BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
-    GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
-    SimpleTmaGlobalLayoutLaunch,
-};
 pub use crate::routine::RuntimeConfig;
-
-use crate::definition::{MatmulElems, MatmulProblem, MatmulVectorSizes};
-
-use crate::multi_level::BatchMatmulRoutine;
-
-use crate::multi_level::definition::Blueprint as _;
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine,
+        components::global::memory::{
+            BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutConfig, GlobalLayoutLaunch,
+            GlobalScaleLayout, NoopLayout, NoopLayoutLaunch, SimpleTmaGlobalLayout,
+            SimpleTmaGlobalLayoutLaunch,
+        },
+        definition::Blueprint as _,
+    },
+};
 
 define_scalar!(pub Lhs);
 define_scalar!(pub Rhs);

@@ -1,8 +1,13 @@
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::multi_level::components::global::memory::GlobalIterator;
-use crate::multi_level::components::global::{GlobalReaderConfig, SharedGlobalMatmulConfig};
-use crate::multi_level::components::stage::StageFamily;
-use crate::multi_level::definition::MatmulTypes;
+use crate::{
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    multi_level::{
+        components::{
+            global::{GlobalReaderConfig, SharedGlobalMatmulConfig, memory::GlobalIterator},
+            stage::StageFamily,
+        },
+        definition::MatmulTypes,
+    },
+};
 use cubecl::{
     ir::{DeviceProperties, OpaqueType},
     prelude::*,

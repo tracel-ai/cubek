@@ -1,7 +1,6 @@
 use cubek_std::MatrixLayout;
 
-use crate::multi_level::components::batch::BatchConfig;
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
+use crate::multi_level::components::{batch::BatchConfig, global::memory::GlobalLayoutConfig};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct NaiveMatmulConfig {}

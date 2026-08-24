@@ -2,16 +2,18 @@ use cubecl::ir::HardwareProperties;
 use cubecl::prelude::*;
 use cubek_std::cube_count::CubeCountPlan;
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        components::{
+            CubeDimResource, batch::BatchMatmulFamily, global::cube_dim_validation,
+            stage::NumStages,
+        },
+        definition::{BatchMatmulBlueprint, Blueprint, CubeMappingLaunch},
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-use crate::multi_level::components::CubeDimResource;
-use crate::multi_level::components::batch::BatchMatmulFamily;
-use crate::multi_level::components::global::cube_dim_validation;
-use crate::multi_level::components::stage::NumStages;
-use crate::multi_level::definition::{BatchMatmulBlueprint, Blueprint, CubeMappingLaunch};
-use crate::routine::{BlueprintStrategy, DeviceSettings, Routine};
 
 /// The launch pipeline for matmuls with a batch matmul (might become legacy)
 pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprint> {

@@ -40,9 +40,13 @@ pub use cubek_std::stage::{
     LoadStageFamily, Stage, StageFamily, StridedStageFamily, StridedStageMemory,
 };
 
-use crate::definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::components::global::{MatmulPlaneCounts, PlaneFlowConfig};
-use crate::multi_level::definition::BatchMatmulBlueprint;
+use crate::{
+    definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        components::global::{MatmulPlaneCounts, PlaneFlowConfig},
+        definition::BatchMatmulBlueprint,
+    },
+};
 
 // =====================================================================
 // StageMatmul — matmul-domain configuration enum

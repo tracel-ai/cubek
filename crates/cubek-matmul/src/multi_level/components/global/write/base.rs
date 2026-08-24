@@ -1,10 +1,13 @@
-use crate::multi_level::components::global::memory::GlobalMemoryConfig;
-use crate::multi_level::components::global::{
-    PlaneFlowPartitionRule, WriteEventListener, WriteTiling,
+use crate::multi_level::{
+    components::{
+        global::{
+            PlaneFlowPartitionRule, WriteEventListener, WriteTiling, memory::GlobalMemoryConfig,
+        },
+        stage::{Stage, StageFamily},
+    },
+    definition,
+    definition::MatrixTypes,
 };
-use crate::multi_level::components::stage::{Stage, StageFamily};
-use crate::multi_level::definition;
-use crate::multi_level::definition::MatrixTypes;
 use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},

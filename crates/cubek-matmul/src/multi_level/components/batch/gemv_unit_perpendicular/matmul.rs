@@ -1,21 +1,20 @@
 use std::marker::PhantomData;
 
-use crate::definition::*;
-use crate::multi_level::definition::*;
-
-use crate::multi_level::args::MatmulArgs;
-
-use crate::multi_level::components::batch::{
-    BatchConfig as _, BatchMatmul, CheckBounds, SliceIndex,
+use crate::{
+    definition::*,
+    multi_level::{
+        args::MatmulArgs,
+        components::batch::{
+            BatchConfig as _, BatchMatmul, CheckBounds, SliceIndex,
+            base::BatchMatmulFamily,
+            gemv_unit_perpendicular::{
+                VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig,
+                VecMatUnitPerpendicularFamily,
+            },
+        },
+        definition::{cube_pos_to_matrix_batch, *},
+    },
 };
-
-use crate::multi_level::components::batch::base::BatchMatmulFamily;
-
-use crate::multi_level::components::batch::gemv_unit_perpendicular::{
-    VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularConfig, VecMatUnitPerpendicularFamily,
-};
-
-use crate::multi_level::definition::cube_pos_to_matrix_batch;
 
 use cubecl::{
     prelude::*,

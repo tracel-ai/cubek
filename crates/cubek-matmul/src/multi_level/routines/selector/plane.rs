@@ -13,16 +13,22 @@ use cubek_std::{
     {MatmulProblemSize, MatrixLayout, PartitionSize, StageSize, TileSize},
 };
 
-use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+use crate::{
+    definition::{
+        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    },
+    multi_level::{
+        components::{
+            global::{InputLoadFlow, LoadFlows},
+            stage::PartitionBuffering,
+            tile::TileMatmulKind,
+        },
+        definition::{
+            BatchMatmulBlueprint, MultiRowStrategy, SwizzleModes, TilingScheme, adjust_dtypes,
+        },
+        routines::selector::is_tiny,
+    },
 };
-use crate::multi_level::components::global::{InputLoadFlow, LoadFlows};
-use crate::multi_level::components::stage::PartitionBuffering;
-use crate::multi_level::components::tile::TileMatmulKind;
-use crate::multi_level::definition::{
-    BatchMatmulBlueprint, MultiRowStrategy, SwizzleModes, TilingScheme, adjust_dtypes,
-};
-use crate::multi_level::routines::selector::is_tiny;
 
 pub const NUM_SM_APPROX: u32 = 50;
 pub const NUM_TENSOR_CORES_APPROX: u32 = 4;

@@ -1,6 +1,7 @@
-use crate::definition::MatmulSetupError;
-use crate::multi_level::components::global::MaxGlobalReaderPlanes;
-use crate::multi_level::components::global::specialization::config::LoadFlows;
+use crate::{
+    definition::MatmulSetupError,
+    multi_level::components::global::{MaxGlobalReaderPlanes, specialization::config::LoadFlows},
+};
 
 // Plane-flow vocabulary now lives in cubek-std; re-export the names callers
 // in this crate (and downstream crates) have always used.

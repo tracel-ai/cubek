@@ -3,36 +3,43 @@ use std::fmt::Display;
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-use crate::multi_level::BatchMatmulRoutine;
-use crate::multi_level::ExpandInfo;
-use crate::multi_level::args::{
-    ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily, PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
+            },
+            global::{
+                PlaneWriterFamily,
+                multi_stage::double_buffering::DoubleBufferingMatmulFamily,
+                read::{
+                    async_full_cyclic::AsyncFullCyclicLoading,
+                    async_full_strided::AsyncFullStridedLoading,
+                    async_full_tma::AsyncFullTmaLoading,
+                    async_partial_cyclic::AsyncPartialCyclicLoading,
+                    async_partial_strided::AsyncPartialStridedLoading,
+                    async_partial_tma::AsyncPartialTmaLoading,
+                    sync_full_cyclic::SyncFullCyclicLoading,
+                    sync_full_tilewise::SyncFullTilewiseLoading,
+                    sync_partial_cyclic::SyncPartialCyclicLoading,
+                    sync_partial_tilewise::SyncPartialTilewiseLoading,
+                },
+            },
+            stage::{NumStages, PlanePartitioner},
+            tile::TileMatmulKind,
+        },
+        definition::{BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy},
+        routines::{
+            TilingArgs,
+            selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
+        },
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-use crate::multi_level::components::batch::BatchMatmulFamily;
-use crate::multi_level::components::batch::{
-    PartitionedBatchMatmulFamily, RowMajorGlobalPartitionMatmul,
-};
-use crate::multi_level::components::global::PlaneWriterFamily;
-use crate::multi_level::components::global::multi_stage::double_buffering::DoubleBufferingMatmulFamily;
-use crate::multi_level::components::global::read::async_full_cyclic::AsyncFullCyclicLoading;
-use crate::multi_level::components::global::read::async_full_strided::AsyncFullStridedLoading;
-use crate::multi_level::components::global::read::async_full_tma::AsyncFullTmaLoading;
-use crate::multi_level::components::global::read::async_partial_cyclic::AsyncPartialCyclicLoading;
-use crate::multi_level::components::global::read::async_partial_strided::AsyncPartialStridedLoading;
-use crate::multi_level::components::global::read::async_partial_tma::AsyncPartialTmaLoading;
-use crate::multi_level::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
-use crate::multi_level::components::global::read::sync_full_tilewise::SyncFullTilewiseLoading;
-use crate::multi_level::components::global::read::sync_partial_cyclic::SyncPartialCyclicLoading;
-use crate::multi_level::components::global::read::sync_partial_tilewise::SyncPartialTilewiseLoading;
-use crate::multi_level::components::stage::{NumStages, PlanePartitioner};
-use crate::multi_level::components::tile::TileMatmulKind;
-use crate::multi_level::definition::{BatchMatmulBlueprint, CubeMappingLaunch, MultiRowStrategy};
-use crate::multi_level::routines::TilingArgs;
-use crate::multi_level::routines::selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane};
-use crate::multi_level::{LaunchInfo, batch_validate_blueprint};
-use crate::routine::Routine;
-use crate::routine::{BlueprintStrategy, DeviceSettings};
 
 /// Plane accelerated double buffered matmul with cyclic readers
 pub struct CyclicDoubleBufferingAlgorithm;

@@ -5,23 +5,25 @@ use std::fmt::Display;
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::cube_count::CubeCountPlan;
 
-use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+use crate::{
+    definition::{
+        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+    },
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily,
+                naive::{NaiveBatchMatmulFamily, NaiveBlueprint},
+            },
+            stage::NumStages,
+        },
+        definition::CubeMappingLaunch,
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-
-use crate::multi_level::{BatchMatmulRoutine, ExpandInfo, LaunchInfo, batch_validate_blueprint};
-
-use crate::multi_level::args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
-
-use crate::multi_level::components::batch::BatchMatmulFamily;
-
-use crate::multi_level::components::batch::naive::{NaiveBatchMatmulFamily, NaiveBlueprint};
-
-use crate::multi_level::components::stage::NumStages;
-
-use crate::multi_level::definition::CubeMappingLaunch;
-
-use crate::routine::{BlueprintStrategy, DeviceSettings, Routine};
 
 pub struct NaiveRoutine {}
 

@@ -4,8 +4,7 @@
 //! and quantization.
 
 use cubecl::{TestRuntime, client::ComputeClient};
-use cubek_matmul::definition::MatmulProblem;
-use cubek_matmul::multi_level::test_only::TestStrategy;
+use cubek_matmul::{definition::MatmulProblem, multi_level::test_only::TestStrategy};
 
 use crate::matmul::launcher_strategy::run;
 

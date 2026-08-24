@@ -1,12 +1,17 @@
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
-use crate::multi_level::components::global::read::sync::Synchronous;
-use crate::multi_level::components::global::read::{
-    FullLoadingStrategy, validate_swizzle_atom_size,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    multi_level::{
+        args::RuntimeConfig,
+        components::{
+            global::{
+                GlobalReaderConfig, PlaneFlowPartition,
+                multi_stage::LoadMaxRoundPlaneCount,
+                read::{FullLoadingStrategy, sync::Synchronous, validate_swizzle_atom_size},
+            },
+            stage::StridedStageFamily,
+        },
+    },
 };
-use crate::multi_level::components::global::{GlobalReaderConfig, PlaneFlowPartition};
-use crate::multi_level::components::stage::StridedStageFamily;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::{
     tile::{ContiguousTilingLayout, OrderedTilingOrder, TilingValidation},

@@ -15,12 +15,18 @@ use cubek_convolution::{
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
     definition::{ConvBlueprint, ForwardBlueprint},
 };
-use cubek_matmul::definition::{AvailableVectorSizes, MatmulElems, MatmulGlobalElems};
-use cubek_matmul::multi_level::components::global::{InputLoadFlow, LoadFlows};
-use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-use cubek_matmul::multi_level::components::tile::TileMatmulKind;
-use cubek_matmul::multi_level::definition::{BatchMatmulBlueprint, TilingScheme};
-use cubek_matmul::routine::{BlueprintStrategy, Routine};
+use cubek_matmul::{
+    definition::{AvailableVectorSizes, MatmulElems, MatmulGlobalElems},
+    multi_level::{
+        components::{
+            global::{InputLoadFlow, LoadFlows},
+            stage::PartitionBuffering,
+            tile::TileMatmulKind,
+        },
+        definition::{BatchMatmulBlueprint, TilingScheme},
+    },
+    routine::{BlueprintStrategy, Routine},
+};
 use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 

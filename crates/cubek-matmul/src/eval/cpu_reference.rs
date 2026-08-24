@@ -12,11 +12,11 @@ use cubek_test_utils::{
     assert_equals_approx, launch_and_capture_outcome,
 };
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
-
-use crate::launch::launch_ref;
-
-use crate::strategy::Strategy;
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    launch::launch_ref,
+    strategy::Strategy,
+};
 
 /// Run `strategy` against `problem` with seeded inputs and return its output as
 /// a [`HostData`].

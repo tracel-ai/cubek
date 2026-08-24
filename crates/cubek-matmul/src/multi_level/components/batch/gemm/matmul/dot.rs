@@ -1,8 +1,10 @@
 use cubecl::{cube, num_traits::Zero, std::tensor::View, std::tensor::layout::Coords2d};
 use cubecl::{prelude::*, std::tensor::ViewMut};
 
-use crate::multi_level::components::batch::CheckBounds;
-use crate::multi_level::components::batch::gemm::io::{read, write};
+use crate::multi_level::components::batch::{
+    CheckBounds,
+    gemm::io::{read, write},
+};
 
 /// Plane-cooperative dot product over K — one output cell per plane.
 ///

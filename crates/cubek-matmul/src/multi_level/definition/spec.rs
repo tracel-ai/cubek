@@ -1,8 +1,10 @@
 use cubecl::prelude::*;
 use half::{bf16, f16};
 
-use crate::definition::{MatmulElems, MatmulIdent};
-use crate::multi_level::components::global::memory::ViewDirection;
+use crate::{
+    definition::{MatmulElems, MatmulIdent},
+    multi_level::components::global::memory::ViewDirection,
+};
 
 /// Matrix multiplication precisions.
 pub trait MatmulPrecision: Send + Sync + Copy + 'static {

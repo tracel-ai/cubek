@@ -3,14 +3,15 @@ use cubecl::{
     client::ComputeClient,
     ir::{ElemType, VectorSize},
 };
-use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-
-use cubek_matmul::definition::{MatmulAvailabilityError, MatmulElems, MatmulVectorSizes};
-use cubek_matmul::multi_level::components::tile::TileMatmulKind;
-use cubek_matmul::multi_level::definition::{BatchMatmulBlueprint, TilingScheme, adjust_dtypes};
-use cubek_matmul::multi_level::routines::{
-    NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size,
+use cubek_matmul::{
+    definition::{MatmulAvailabilityError, MatmulElems, MatmulVectorSizes},
+    multi_level::{
+        components::{stage::PartitionBuffering, tile::TileMatmulKind},
+        definition::{BatchMatmulBlueprint, TilingScheme, adjust_dtypes},
+        routines::{NUM_SM_APPROX, NUM_TENSOR_CORES_APPROX, find_instruction_size},
+    },
 };
+
 use cubek_std::SwizzleModes;
 use cubek_std::stage::SwizzleMode;
 

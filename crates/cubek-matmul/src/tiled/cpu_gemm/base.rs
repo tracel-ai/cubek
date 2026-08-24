@@ -28,9 +28,10 @@ use std::fmt::Display;
 
 use cubecl::Runtime;
 
-use crate::definition::{MatmulProblem, MatmulSetupError};
-
-use crate::routine::{BlueprintStrategy, DeviceSettings, Routine};
+use crate::{
+    definition::{MatmulProblem, MatmulSetupError},
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
+};
 
 /// L1 data-cache budget the blocking targets, in bytes. Conservative constant until
 /// the runtime exposes per-core cache sizes.

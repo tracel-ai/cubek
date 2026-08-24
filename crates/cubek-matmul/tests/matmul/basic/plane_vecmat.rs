@@ -4,9 +4,11 @@
 //! tests don't use the default row-row `rect` helper.
 
 use cubecl::{ir::AddressType, zspace::shape};
-use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem};
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::{
+    definition::{MatmulGlobalElems, MatmulProblem},
+    multi_level::Strategy as MultiLevel,
+    strategy::Strategy,
+};
 use cubek_std::MatrixLayout;
 
 use super::common::{client, f16_elems};

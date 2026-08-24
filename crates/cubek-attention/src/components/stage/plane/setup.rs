@@ -4,6 +4,7 @@ use crate::{
     components::{
         stage::{
             AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
+            StageAttentionFamily,
             plane::{PlanePartitionAttention, PlanePartitionStageConfig},
         },
         tile::TileAttentionKind,
@@ -19,8 +20,6 @@ use cubek_std::{
     MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},
 };
-
-use crate::components::stage::StageAttentionFamily;
 
 pub struct PlanePartitionStageAttentionFamily<SK: StageFamily, SV: StageFamily, SO: StageFamily> {
     _phantom: PhantomData<(SK, SV, SO)>,

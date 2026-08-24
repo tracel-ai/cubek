@@ -7,11 +7,17 @@
 //! MMA-based swizzling depends on the `alignment` client feature, so those
 //! cases live in `full/` with the platform-specific routines instead.
 
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::multi_level::components::global::{InputLoadFlow, LoadFlows};
-use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-use cubek_matmul::routine::BlueprintStrategy;
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::{
+    multi_level::{
+        Strategy as MultiLevel,
+        components::{
+            global::{InputLoadFlow, LoadFlows},
+            stage::PartitionBuffering,
+        },
+    },
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+};
 use cubek_std::{
     PartitionSize, StageSize, SwizzleModes,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},

@@ -1,9 +1,13 @@
 use cubecl::prelude::*;
 
-use crate::multi_level::args::MatmulArgs;
-use crate::multi_level::components::batch::SliceIndex;
-use crate::multi_level::components::global::{self, GlobalConfig};
-use crate::multi_level::definition::{AccG, LhsG, MatmulTypes, RhsG};
+use crate::multi_level::{
+    args::MatmulArgs,
+    components::{
+        batch::SliceIndex,
+        global::{self, GlobalConfig},
+    },
+    definition::{AccG, LhsG, MatmulTypes, RhsG},
+};
 
 #[derive(CubeType)]
 /// Area of a tensor a cube is responsible of performing matmul

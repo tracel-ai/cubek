@@ -1,9 +1,10 @@
 use std::ops::Deref;
 
 use cubecl::CubeDim;
-use cubek_matmul::definition::{MatmulSetupError, MatmulVectorSizes};
-use cubek_matmul::multi_level::components::global::GlobalConfig;
-use cubek_matmul::multi_level::components::global::memory::GlobalMemoryConfig;
+use cubek_matmul::{
+    definition::{MatmulSetupError, MatmulVectorSizes},
+    multi_level::components::global::{GlobalConfig, memory::GlobalMemoryConfig},
+};
 use std::{fmt::Debug, hash::Hash};
 
 use super::*;

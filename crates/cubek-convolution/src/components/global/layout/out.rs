@@ -3,8 +3,9 @@ use cubecl::std::{
     FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::multi_level::args::BatchedCoords;
-use cubek_matmul::multi_level::components::global::memory::GlobalLayoutConfig;
+use cubek_matmul::multi_level::{
+    args::BatchedCoords, components::global::memory::GlobalLayoutConfig,
+};
 
 use crate::components::{
     ConvolutionOperation, ConvolutionProblem,

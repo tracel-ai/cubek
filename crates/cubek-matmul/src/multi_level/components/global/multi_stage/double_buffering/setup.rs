@@ -1,20 +1,21 @@
-use crate::definition::{
-    MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, StageIdent,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, StageIdent},
+    multi_level::{
+        args::RuntimeConfig,
+        components::{
+            CubeDimResource,
+            global::{
+                GlobalMatmulFamily, GlobalReaderConfig, GlobalWriterConfig, GlobalWriterFamily,
+                MaxGlobalReaderPlanes, SharedGlobalMatmulConfig, make_plane_flow_config,
+                memory::{GlobalMemoryConfig, ViewDirection},
+                multi_stage::{EventLoadingMode, double_buffering::DoubleBufferingMatmul},
+                read::{FullLoadingStrategy, PartialLoadingStrategy},
+            },
+            stage::{NumStages, StagePartitioner},
+        },
+        definition::{BatchMatmulBlueprint, MatmulTypes},
+    },
 };
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::CubeDimResource;
-use crate::multi_level::components::global::GlobalWriterFamily;
-use crate::multi_level::components::global::memory::{GlobalMemoryConfig, ViewDirection};
-use crate::multi_level::components::global::multi_stage::EventLoadingMode;
-use crate::multi_level::components::global::multi_stage::double_buffering::DoubleBufferingMatmul;
-use crate::multi_level::components::global::read::{FullLoadingStrategy, PartialLoadingStrategy};
-use crate::multi_level::components::global::{GlobalMatmulFamily, MaxGlobalReaderPlanes};
-use crate::multi_level::components::global::{
-    GlobalReaderConfig, GlobalWriterConfig, SharedGlobalMatmulConfig, make_plane_flow_config,
-};
-use crate::multi_level::components::stage::{NumStages, StagePartitioner};
-use crate::multi_level::definition::BatchMatmulBlueprint;
-use crate::multi_level::definition::MatmulTypes;
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_std::MatrixLayout;
 use std::marker::PhantomData;

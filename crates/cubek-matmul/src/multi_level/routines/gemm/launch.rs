@@ -4,21 +4,17 @@ use cubecl::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::components::batch::gemm::{MatmulOperandLayouts, OperandLayout};
-
-use crate::multi_level::definition::cube_mapping_launch;
-
-use crate::multi_level::BatchMatmulRoutine as _;
-
-use crate::multi_level::args::{
-    ConcreteInputsFactory, ConcreteOutputFactory, InputArg, OutputArg, TensorArgs,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine as _,
+        args::{ConcreteInputsFactory, ConcreteOutputFactory, InputArg, OutputArg, TensorArgs},
+        components::batch::gemm::{MatmulOperandLayouts, OperandLayout},
+        definition::cube_mapping_launch,
+        routines::gemm::GemmRoutine,
+    },
+    routine::{BlueprintStrategy, into_contiguous_if_highly_permuted},
 };
-
-use crate::multi_level::routines::gemm::GemmRoutine;
-
-use crate::routine::{BlueprintStrategy, into_contiguous_if_highly_permuted};
 
 fn vector_size_for<R: Runtime>(
     client: &ComputeClient<R>,

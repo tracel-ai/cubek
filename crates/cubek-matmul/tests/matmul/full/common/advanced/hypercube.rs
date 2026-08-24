@@ -1,7 +1,6 @@
 pub mod row_fp {
     use super::*;
-    use cubek_matmul::definition::MatmulProblem;
-    use cubek_matmul::multi_level::definition::TilingScheme;
+    use cubek_matmul::{definition::MatmulProblem, multi_level::definition::TilingScheme};
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(

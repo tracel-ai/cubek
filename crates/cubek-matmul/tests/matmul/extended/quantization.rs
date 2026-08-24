@@ -1,9 +1,11 @@
 use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*};
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
-use cubek_matmul::eval::cpu_reference::matmul_cpu_reference;
-use cubek_matmul::launch::launch_ref;
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
+    eval::cpu_reference::matmul_cpu_reference,
+    launch::launch_ref,
+    multi_level::Strategy as MultiLevel,
+    strategy::Strategy,
+};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{

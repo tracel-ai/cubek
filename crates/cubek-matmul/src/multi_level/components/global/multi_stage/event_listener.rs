@@ -1,9 +1,10 @@
 use cubecl::prelude::*;
 use cubek_std::tile::{StageEvent, StageEventListener};
 
-use crate::multi_level::components::global::{GlobalConfig, GlobalReaderConfig, LoadingSides};
-
-use crate::multi_level::components::global::read::{StageBuffer, SyncStrategy};
+use crate::multi_level::components::global::{
+    GlobalConfig, GlobalReaderConfig, LoadingSides,
+    read::{StageBuffer, SyncStrategy},
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// For a tensor, whether it is constrained to be loaded respecting order

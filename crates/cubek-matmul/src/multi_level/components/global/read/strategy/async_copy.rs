@@ -5,8 +5,7 @@ use cubecl::{
 };
 use cubek_std::{MatrixLayout, tile::TilingLayout};
 
-use crate::multi_level::components::global::GlobalReaderConfig;
-use crate::multi_level::components::stage::StridedStageMemory;
+use crate::multi_level::components::{global::GlobalReaderConfig, stage::StridedStageMemory};
 
 /// The instruction has a max width of 128 bits, even on Blackwell which supports 256-bit loads
 pub(crate) const ASYNC_COPY_WIDTH: u32 = 128;

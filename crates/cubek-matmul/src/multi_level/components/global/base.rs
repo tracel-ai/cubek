@@ -1,19 +1,22 @@
 use cubecl::{ir::DeviceProperties, prelude::*, std::tensor::ViewMut};
 use cubek_std::stage::StageMemoryConfig;
 
-use crate::definition::{
-    MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, StageIdent,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes, StageIdent},
+    multi_level::{
+        args::RuntimeConfig,
+        components::{
+            CubeDimResource,
+            global::{
+                GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig,
+                SpecializedLoadingSides, memory::GlobalMemoryConfig, multi_stage::EventLoadingMode,
+                read::ReaderMode,
+            },
+            stage::{NumStages, StageMatmul as StageMatmulInstance},
+        },
+        definition::{AccG, BatchMatmulBlueprint, LhsG, MatmulTypes, RhsG},
+    },
 };
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::CubeDimResource;
-use crate::multi_level::components::global::memory::GlobalMemoryConfig;
-use crate::multi_level::components::global::multi_stage::EventLoadingMode;
-use crate::multi_level::components::global::read::ReaderMode;
-use crate::multi_level::components::global::{
-    GlobalWriterConfig, InputLoadFlow, LoadFlows, PlaneFlowConfig, SpecializedLoadingSides,
-};
-use crate::multi_level::components::stage::{NumStages, StageMatmul as StageMatmulInstance};
-use crate::multi_level::definition::{AccG, BatchMatmulBlueprint, LhsG, MatmulTypes, RhsG};
 use cubecl::std::tensor::{View, layout::Coords2d};
 use std::{fmt::Debug, hash::Hash};
 

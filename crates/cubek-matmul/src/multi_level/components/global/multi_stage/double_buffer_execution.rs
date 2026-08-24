@@ -3,14 +3,18 @@
 use crate::multi_level::components::global::multi_stage::{
     DoubleBufferingEventListener, JobExecutor,
 };
-use crate::multi_level::components::global::read::{StageBuffer, SyncStrategy};
-use crate::multi_level::components::global::{
-    GlobalConfig, GlobalReaderConfig, GlobalWriter, LoadingSides, PlaneFlowPartition, Specializer,
-    SpecializerKind,
-};
-use crate::multi_level::components::stage::StagePartitioner;
-use crate::multi_level::definition::{
-    AccRE, AccSS, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS,
+use crate::multi_level::{
+    components::{
+        global::{
+            GlobalConfig, GlobalReaderConfig, GlobalWriter, LoadingSides, PlaneFlowPartition,
+            Specializer, SpecializerKind,
+            read::{StageBuffer, SyncStrategy},
+        },
+        stage::StagePartitioner,
+    },
+    definition::{
+        AccRE, AccSS, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS,
+    },
 };
 use cubecl::prelude::*;
 use cubek_std::tile::{NoEvent, PartitionScheduler, Tile, write_partition_to_stage};

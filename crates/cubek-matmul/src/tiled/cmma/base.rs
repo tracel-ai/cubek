@@ -18,11 +18,11 @@ use std::fmt::Display;
 use cubecl::{Runtime, features::MmaConfig};
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
 
-use crate::definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError};
-
-use crate::routine::{BlueprintStrategy, DeviceSettings, Routine};
-
-use crate::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+use crate::{
+    definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
+    tiled::cpu_gemm::{InstructionShape, PlaneGrid},
+};
 
 /// Upper bound on planes along one stage axis; 2×4 or 4×2 tends to saturate without
 /// blowing the cube dim.

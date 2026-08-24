@@ -1,10 +1,13 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::multi_level::Strategy as MultiLevel;
-use crate::multi_level::routines::batch::simple::SimpleArgs;
-use crate::multi_level::routines::gemm::GemmStrategy;
-use crate::routine::BlueprintStrategy;
-use crate::strategy::Strategy;
+use crate::{
+    multi_level::{
+        Strategy as MultiLevel,
+        routines::{batch::simple::SimpleArgs, gemm::GemmStrategy},
+    },
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+};
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     vec![

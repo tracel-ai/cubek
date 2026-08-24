@@ -1,13 +1,18 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::multi_level::Strategy as MultiLevel;
-use crate::multi_level::routines::TileSizeSelection;
-use crate::multi_level::routines::batch::simple::SimpleArgs;
-use crate::multi_level::routines::batch::simple_unit::SimpleUnitSelectionArgs;
-use crate::multi_level::routines::gemm::GemmStrategy;
-use crate::multi_level::routines::gemv_unit_perpendicular::GemvUnitPerpendicularStrategy;
-use crate::routine::BlueprintStrategy;
-use crate::strategy::Strategy;
+use crate::{
+    multi_level::{
+        Strategy as MultiLevel,
+        routines::{
+            TileSizeSelection,
+            batch::{simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs},
+            gemm::GemmStrategy,
+            gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
+        },
+    },
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+};
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
     vec![

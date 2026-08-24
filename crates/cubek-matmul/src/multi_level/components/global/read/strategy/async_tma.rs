@@ -3,9 +3,10 @@ use cubecl::{
     prelude::*,
 };
 
-use crate::multi_level::components::global::read::SyncStrategy;
-use crate::multi_level::components::global::{GlobalConfig, SharedGlobalMatmulConfig};
-use crate::multi_level::definition::{LhsS, MatmulTypes, RhsS};
+use crate::multi_level::{
+    components::global::{GlobalConfig, SharedGlobalMatmulConfig, read::SyncStrategy},
+    definition::{LhsS, MatmulTypes, RhsS},
+};
 
 /// Asynchronous barrier for TMA loads
 pub struct AsyncTma {}

@@ -1,18 +1,26 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::multi_level::Strategy as MultiLevel;
-use crate::multi_level::routines::TileSizeSelection;
-use crate::multi_level::routines::batch::double_buffering::DoubleBufferingArgs;
-use crate::multi_level::routines::batch::double_unit::DoubleUnitSelectionArgs;
-use crate::multi_level::routines::batch::ordered_double_buffering::OrderedSelectionArgs;
-use crate::multi_level::routines::batch::simple::SimpleArgs;
-use crate::multi_level::routines::batch::simple_unit::SimpleUnitSelectionArgs;
-use crate::multi_level::routines::gemm::GemmStrategy;
-use crate::routine::BlueprintStrategy;
-use crate::strategy::Strategy;
-use crate::tiled::Strategy as Tiled;
-use crate::tiled::cmma::CmmaStrategy;
-use crate::tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid};
+use crate::{
+    multi_level::{
+        Strategy as MultiLevel,
+        routines::{
+            TileSizeSelection,
+            batch::{
+                double_buffering::DoubleBufferingArgs, double_unit::DoubleUnitSelectionArgs,
+                ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
+                simple_unit::SimpleUnitSelectionArgs,
+            },
+            gemm::GemmStrategy,
+        },
+    },
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+    tiled::{
+        Strategy as Tiled,
+        cmma::CmmaStrategy,
+        cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid},
+    },
+};
 
 fn cpu_gemm_forced(
     tag: &'static str,

@@ -8,25 +8,26 @@ use std::{
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::{
-    BatchMatmulRoutine, ExpandInfo, LaunchInfo, batch_validate_blueprint, num_concurrent_planes,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg},
+        batch_validate_blueprint,
+        components::{
+            batch::{
+                BatchMatmulFamily, CheckBounds,
+                gemv_unit_perpendicular::{
+                    VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
+                },
+            },
+            stage::NumStages,
+        },
+        definition::CubeMappingLaunch,
+        num_concurrent_planes,
+    },
+    routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
-
-use crate::multi_level::args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg};
-
-use crate::multi_level::components::batch::{BatchMatmulFamily, CheckBounds};
-
-use crate::multi_level::components::batch::gemv_unit_perpendicular::{
-    VecMatUnitPerpendicularBlueprint, VecMatUnitPerpendicularFamily,
-};
-
-use crate::multi_level::components::stage::NumStages;
-
-use crate::multi_level::definition::CubeMappingLaunch;
-
-use crate::routine::{BlueprintStrategy, DeviceSettings, Routine};
 
 pub struct GemvUnitPerpendicularRoutine {}
 

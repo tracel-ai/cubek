@@ -1,15 +1,19 @@
 use cubecl::{
     Runtime, client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError,
 };
-use cubek_matmul::definition::AvailableVectorSizes;
-use cubek_matmul::multi_level::args::{TensorArgs, TensorMapArgs};
-use cubek_matmul::multi_level::components::global::read::FullLoadingStrategy;
-use cubek_matmul::multi_level::components::global::read::async_full_tma::AsyncFullTmaLoading;
-use cubek_matmul::multi_level::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
-use cubek_matmul::multi_level::components::global::read::sync_full_strided::SyncFullStridedLoading;
-use cubek_matmul::multi_level::components::global::read::sync_full_tilewise::SyncFullTilewiseLoading;
-use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
-use cubek_matmul::multi_level::routines::batch::simple::{SimpleAlgorithm, SimpleArgs};
+use cubek_matmul::{
+    definition::AvailableVectorSizes,
+    multi_level::{
+        args::{TensorArgs, TensorMapArgs},
+        components::global::read::{
+            FullLoadingStrategy, async_full_tma::AsyncFullTmaLoading,
+            sync_full_cyclic::SyncFullCyclicLoading, sync_full_strided::SyncFullStridedLoading,
+            sync_full_tilewise::SyncFullTilewiseLoading,
+        },
+        definition::BatchMatmulBlueprint,
+        routines::batch::simple::{SimpleAlgorithm, SimpleArgs},
+    },
+};
 use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use std::marker::PhantomData;
 

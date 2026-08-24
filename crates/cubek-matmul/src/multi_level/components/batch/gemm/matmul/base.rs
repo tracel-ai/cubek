@@ -3,20 +3,21 @@ use std::marker::PhantomData;
 use cubecl::cube;
 use cubecl::prelude::*;
 
-use crate::multi_level::components::batch::gemm::mat_layout::MatLayout;
-use crate::multi_level::components::batch::gemm::matmul::dot::execute_dot;
-use crate::multi_level::components::batch::gemm::matmul::outer_product::execute_outer_product;
-use crate::multi_level::components::batch::gemm::{
-    GemmBlueprint, GemmConfig, GemmFamily, PlanesSplit, Variant,
+use crate::{
+    definition::*,
+    multi_level::{
+        args::MatmulArgs,
+        components::batch::{
+            BatchConfig as _, BatchMatmul, BatchMatmulFamily,
+            gemm::{
+                GemmBlueprint, GemmConfig, GemmFamily, PlanesSplit, Variant,
+                mat_layout::MatLayout,
+                matmul::{dot::execute_dot, outer_product::execute_outer_product},
+            },
+        },
+        definition::{cube_pos_to_m_n_batch, *},
+    },
 };
-use crate::multi_level::components::batch::{BatchConfig as _, BatchMatmul, BatchMatmulFamily};
-
-use crate::definition::*;
-use crate::multi_level::definition::*;
-
-use crate::multi_level::args::MatmulArgs;
-
-use crate::multi_level::definition::cube_pos_to_m_n_batch;
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]
 #[allow(clippy::type_complexity)]

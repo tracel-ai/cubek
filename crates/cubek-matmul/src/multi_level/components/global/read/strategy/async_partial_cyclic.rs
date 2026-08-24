@@ -1,25 +1,28 @@
 use std::marker::PhantomData;
 
-use crate::definition::{MatmulElems, MatmulProblem, StageIdent};
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::SharedGlobalMatmulConfig;
-use crate::multi_level::components::global::memory::GlobalIterator;
-use crate::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
-use crate::multi_level::components::global::read::PartialLoadingStrategy;
-use crate::multi_level::components::global::read::async_barrier::AsyncCopy;
-use crate::multi_level::components::global::read::async_copy::ASYNC_COPY_WIDTH;
-use crate::multi_level::components::global::read::async_copy::async_copy_from;
-use crate::multi_level::components::global::read::tiled::TiledLayout;
-use crate::multi_level::components::global::read::validate_async_barrier;
-use crate::multi_level::components::global::read::{
-    AsyncPartialLoadingStrategy, validate_async_copy,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, StageIdent},
+    multi_level::{
+        args::RuntimeConfig,
+        components::{
+            global::{
+                GlobalReaderConfig, PlaneFlowPartition, SharedGlobalMatmulConfig,
+                memory::GlobalIterator,
+                multi_stage::LoadMaxRoundPlaneCount,
+                read::{
+                    AsyncPartialLoadingStrategy, PartialLoadingStrategy,
+                    async_barrier::AsyncCopy,
+                    async_copy::{ASYNC_COPY_WIDTH, async_copy_from},
+                    tiled::TiledLayout,
+                    validate_async_barrier, validate_async_copy, validate_async_copy_with_problem,
+                    validate_swizzle_atom_size,
+                },
+            },
+            stage::{StridedStageFamily, StridedStageMemory},
+        },
+        definition::MatmulTypes,
+    },
 };
-use crate::multi_level::components::global::read::{
-    validate_async_copy_with_problem, validate_swizzle_atom_size,
-};
-use crate::multi_level::components::global::{GlobalReaderConfig, PlaneFlowPartition};
-use crate::multi_level::components::stage::{StridedStageFamily, StridedStageMemory};
-use crate::multi_level::definition::MatmulTypes;
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Layout, LayoutExpand},

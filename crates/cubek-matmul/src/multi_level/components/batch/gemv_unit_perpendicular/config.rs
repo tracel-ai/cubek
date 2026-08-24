@@ -1,7 +1,9 @@
 use cubek_std::MatrixLayout;
 
-use crate::multi_level::components::batch::{BatchConfig, CheckBounds};
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
+use crate::multi_level::components::{
+    batch::{BatchConfig, CheckBounds},
+    global::memory::GlobalLayoutConfig,
+};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VecMatUnitPerpendicularConfig {

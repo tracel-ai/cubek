@@ -1,27 +1,26 @@
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::GlobalWriterFamily;
-use crate::multi_level::components::global::Specializer;
-use crate::multi_level::components::global::multi_stage::double_buffer_execution::{
-    execute_current_and_read_next, execute_last_and_write_results, read_first,
+use crate::multi_level::{
+    args::RuntimeConfig,
+    components::{
+        global::{
+            GlobalMatmul, GlobalWriter, GlobalWriterFamily, SharedGlobalMatmulConfig, Specializer,
+            multi_stage::double_buffer_execution::{
+                execute_current_and_read_next, execute_last_and_write_results, read_first,
+            },
+            read::{
+                FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, PartialLoaderStage,
+                PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer, SyncStrategy,
+            },
+        },
+        stage::{
+            StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments,
+            partition_coordinates,
+        },
+    },
+    definition::{
+        Acc, AccG, AccRE, AccSE, AccSS, Lhs, LhsG, LhsRE, MatmulTypes, MatrixTypes, Rhs, RhsG,
+        RhsRE, Stage, StageSize,
+    },
 };
-use crate::multi_level::components::global::read::FullLoadingStrategy;
-use crate::multi_level::components::global::read::SyncStrategy;
-use crate::multi_level::components::global::read::{FullLoaderStage, PartialLoaderStage};
-use crate::multi_level::components::global::read::{
-    FullStageGlobalReader, PartialLoadingStrategy, PartialStageGlobalReader, StageBuffer,
-};
-use crate::multi_level::components::global::{
-    GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
-};
-use crate::multi_level::components::stage::{
-    StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments, partition_coordinates,
-};
-use crate::multi_level::definition::Acc;
-use crate::multi_level::definition::Rhs;
-use crate::multi_level::definition::{
-    AccG, AccRE, AccSE, AccSS, LhsG, LhsRE, MatmulTypes, MatrixTypes, RhsG, RhsRE,
-};
-use crate::multi_level::definition::{Lhs, Stage, StageSize};
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::Coords2d},

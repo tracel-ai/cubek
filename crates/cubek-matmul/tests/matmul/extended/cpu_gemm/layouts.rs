@@ -6,10 +6,10 @@ use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::Scalar,
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
-use cubek_matmul::definition::{MatmulElems, MatmulProblem};
-use cubek_matmul::routine::BlueprintStrategy;
-use cubek_matmul::tiled::cpu_gemm::{
-    CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulProblem},
+    routine::BlueprintStrategy,
+    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};

@@ -11,13 +11,15 @@ use cubecl::{
     },
     zspace::{metadata::Metadata, shape, strides},
 };
-use cubek_matmul::definition::MatmulElems;
-use cubek_matmul::multi_level::BatchMatmulRoutine;
-use cubek_matmul::multi_level::args::*;
-use cubek_matmul::multi_level::components::global::memory::{
-    NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch,
+use cubek_matmul::{
+    definition::MatmulElems,
+    multi_level::{
+        BatchMatmulRoutine,
+        args::*,
+        components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
+        definition::{BatchMatmulBlueprint, Blueprint},
+    },
 };
-use cubek_matmul::multi_level::definition::{BatchMatmulBlueprint, Blueprint};
 use cubek_std::launch::tma::{remap_storage_for_tma, tma_meta_tiled};
 use cubek_std::{InputBinding, stage::SwizzleMode};
 use enumset::EnumSet;

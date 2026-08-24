@@ -9,11 +9,10 @@ use cubecl::zspace::Shape;
 use cubecl_common::quant::scheme::QuantScheme;
 use cubek_std::MatrixLayout;
 
-use crate::definition::MatmulProblem;
-
-use crate::multi_level::args::BatchedCoords;
-
-use crate::multi_level::components::global::memory::GlobalMemoryConfig;
+use crate::{
+    definition::MatmulProblem,
+    multi_level::{args::BatchedCoords, components::global::memory::GlobalMemoryConfig},
+};
 
 /// Global layout that uses the last two dimensions and ignores all others.
 /// Same rules as cubek-tile's `TmaDynLayout` (dyn coords); keep the two in step.

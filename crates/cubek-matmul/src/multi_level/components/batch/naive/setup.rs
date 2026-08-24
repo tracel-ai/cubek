@@ -6,22 +6,21 @@ use cubecl::{
 };
 use cubek_std::MatrixLayout;
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes};
-
-use crate::multi_level::args::*;
-
-use crate::multi_level::components::CubeDimResource;
-
-use crate::multi_level::components::batch::BatchMatmulFamily;
-
-use crate::multi_level::components::batch::naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry};
-
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
-
-use crate::multi_level::components::stage::NumStages;
-
-use crate::multi_level::definition::{
-    Blueprint, CubeMappingLaunch, MatmulTypes, SwizzleModes, TilingScheme,
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
+    multi_level::{
+        args::*,
+        components::{
+            CubeDimResource,
+            batch::{
+                BatchMatmulFamily,
+                naive::{NaiveMatmul, NaiveMatmulConfig, matmul_entry},
+            },
+            global::memory::GlobalLayoutConfig,
+            stage::NumStages,
+        },
+        definition::{Blueprint, CubeMappingLaunch, MatmulTypes, SwizzleModes, TilingScheme},
+    },
 };
 
 /// Simple partitioned batch matmul family for any precision

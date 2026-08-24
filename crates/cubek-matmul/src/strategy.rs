@@ -3,8 +3,10 @@ use std::fmt::Display;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
-use crate::definition::{MatmulElems, MatmulSetupError};
-use crate::{multi_level, tiled};
+use crate::{
+    definition::{MatmulElems, MatmulSetupError},
+    multi_level, tiled,
+};
 
 /// How to solve a matmul. The two arms are the two kernel families: routines written on
 /// the tile DSL, and routines written on the batch/global/stage/tile level tower.

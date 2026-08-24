@@ -3,10 +3,10 @@ use cubecl::{
     prelude::*,
     std::tensor::{into_contiguous_pitched, is_contiguous_pitched},
 };
-use cubek_matmul::definition::AvailableVectorSizes;
-use cubek_matmul::multi_level::BatchMatmulRoutine as MatmulRoutine;
-use cubek_matmul::multi_level::args::MatmulArgs;
-use cubek_matmul::multi_level::definition::Blueprint;
+use cubek_matmul::{
+    definition::AvailableVectorSizes,
+    multi_level::{BatchMatmulRoutine as MatmulRoutine, args::MatmulArgs, definition::Blueprint},
+};
 use std::fmt::Display;
 
 /// Specifications for a convolution routine.

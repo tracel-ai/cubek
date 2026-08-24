@@ -4,23 +4,20 @@ use cubek_std::{
     cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
 };
 
-use crate::definition::{MatmulElems, MatmulProblem, MatmulSetupError};
+use crate::{
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
+    multi_level::{
+        components::{
+            CubeDimResource,
+            global::{LoadFlows, memory::GlobalLayoutConfig, read::ReaderMode},
+            stage::PartitionBuffering,
+            tile::TileMatmulKind,
+        },
+        definition::TilingScheme,
+    },
+    routine::DeviceSettings,
+};
 
-use crate::multi_level::components::CubeDimResource;
-
-use crate::multi_level::components::global::LoadFlows;
-
-use crate::multi_level::components::global::memory::GlobalLayoutConfig;
-
-use crate::multi_level::components::global::read::ReaderMode;
-
-use crate::multi_level::components::stage::PartitionBuffering;
-
-use crate::multi_level::components::tile::TileMatmulKind;
-
-use crate::multi_level::definition::TilingScheme;
-
-use crate::routine::DeviceSettings;
 use std::{fmt::Debug, hash::Hash};
 
 pub trait Blueprint: Debug + Clone + Eq + PartialEq + Hash {

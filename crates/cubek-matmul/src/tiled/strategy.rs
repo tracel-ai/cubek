@@ -5,13 +5,14 @@ use std::fmt::Display;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
-use crate::definition::{MatmulElems, MatmulSetupError};
-
-use crate::routine::{BlueprintStrategy, into_contiguous_if_highly_permuted};
-
-use crate::tiled::cmma::{self, CmmaRoutine};
-
-use crate::tiled::cpu_gemm::{self, CpuGemmRoutine, WithLayout};
+use crate::{
+    definition::{MatmulElems, MatmulSetupError},
+    routine::{BlueprintStrategy, into_contiguous_if_highly_permuted},
+    tiled::{
+        cmma::{self, CmmaRoutine},
+        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
+    },
+};
 
 #[derive(Clone)]
 pub enum Strategy {

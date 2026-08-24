@@ -1,20 +1,22 @@
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::GlobalWriterFamily;
-use crate::multi_level::components::global::read::AsyncPartialLoadingStrategy;
-use crate::multi_level::components::global::read::{
-    FullLoaderStage, FullLoadingStrategy, SyncStrategy,
+use crate::multi_level::{
+    args::RuntimeConfig,
+    components::{
+        global::{
+            GlobalMatmul, GlobalWriter, GlobalWriterFamily, PlaneFlowPartition,
+            SharedGlobalMatmulConfig, WriterStage,
+            read::{
+                AsyncPartialLoadingStrategy, FullLoaderStage, FullLoadingStrategy,
+                FullStageGlobalReader, PartialLoaderStage, PartialStageGlobalReader, StageBuffer,
+                SyncStrategy,
+            },
+        },
+        stage::{
+            StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments,
+            partition_coordinates,
+        },
+    },
+    definition::{Stage, *},
 };
-use crate::multi_level::components::global::read::{FullStageGlobalReader, PartialLoaderStage};
-use crate::multi_level::components::global::read::{PartialStageGlobalReader, StageBuffer};
-use crate::multi_level::components::global::{
-    GlobalMatmul, PlaneFlowPartition, SharedGlobalMatmulConfig,
-};
-use crate::multi_level::components::global::{GlobalWriter, WriterStage};
-use crate::multi_level::components::stage::{
-    StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments, partition_coordinates,
-};
-use crate::multi_level::definition::Stage;
-use crate::multi_level::definition::*;
 
 use cubecl::{
     prelude::{barrier::Barrier, *},

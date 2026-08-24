@@ -4,14 +4,20 @@ use cubecl::{
 };
 use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
-use crate::definition::StageIdent;
-use crate::multi_level::components::global::read::tiled::{TiledCoords, TiledLayout};
-use crate::multi_level::components::global::{
-    GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage, PartitionedStageFamily,
-    WriteEvent, WriteEventExpand, WriteEventListener,
+use crate::{
+    definition::StageIdent,
+    multi_level::{
+        components::{
+            global::{
+                GlobalWriter, GlobalWriterConfig, GlobalWriterFamily, PartitionedStage,
+                PartitionedStageFamily, WriteEvent, WriteEventExpand, WriteEventListener,
+                read::tiled::{TiledCoords, TiledLayout},
+            },
+            stage::{UnitPartitioner, partition_coordinates},
+        },
+        definition::MatrixTypes,
+    },
 };
-use crate::multi_level::components::stage::{UnitPartitioner, partition_coordinates};
-use crate::multi_level::definition::MatrixTypes;
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory

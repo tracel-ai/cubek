@@ -8,53 +8,45 @@ use cubek_std::{
     tile::{ColMajorTilingOrder, RowMajorTilingOrder},
 };
 
-use crate::definition::{MatmulElems, MatmulSetupError};
-
-use crate::multi_level::components::global::read::{
-    async_full_cyclic, async_full_strided, sync_full_strided, sync_full_tilewise,
+use crate::{
+    definition::{MatmulElems, MatmulSetupError},
+    multi_level::{
+        components::{
+            global::read::{
+                async_full_cyclic, async_full_strided,
+                async_partial_cyclic::AsyncPartialCyclicLoading,
+                async_partial_strided::AsyncPartialStridedLoading, sync_full_strided,
+                sync_full_tilewise,
+            },
+            tile::TileMatmulKind,
+        },
+        routines::{
+            batch::{
+                double_buffering::{
+                    AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
+                    CyclicDoubleBufferingAlgorithm, DoubleBufferingArgs,
+                    HybridDoubleBufferingAlgorithm, TilewiseDoubleBufferingAlgorithm,
+                    TmaDoubleBufferingAlgorithm,
+                },
+                double_unit::DoubleUnitAlgorithm,
+                gemv_innerproduct::{
+                    DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm,
+                },
+                launch as launch_tiling,
+                ordered_double_buffering::{OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs},
+                simple::{SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm},
+                simple_unit::SimpleUnitAlgorithm,
+                specialized::{SpecializedAlgorithm, SpecializedStrategy},
+            },
+            gemm::{GemmRoutine, launch as launch_gemm},
+            gemv_unit_perpendicular::{
+                GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
+            },
+            naive::launch as launch_naive,
+        },
+    },
+    routine::{BlueprintStrategy, Routine},
 };
-
-use crate::multi_level::components::global::read::async_partial_cyclic::AsyncPartialCyclicLoading;
-
-use crate::multi_level::components::global::read::async_partial_strided::AsyncPartialStridedLoading;
-
-use crate::multi_level::components::tile::TileMatmulKind;
-
-use crate::multi_level::routines::batch::launch as launch_tiling;
-
-use crate::multi_level::routines::batch::double_buffering::{
-    AsyncCyclicDoubleBufferingAlgorithm, AsyncStridedDoubleBufferingAlgorithm,
-    CyclicDoubleBufferingAlgorithm, DoubleBufferingArgs, HybridDoubleBufferingAlgorithm,
-    TilewiseDoubleBufferingAlgorithm, TmaDoubleBufferingAlgorithm,
-};
-
-use crate::multi_level::routines::batch::double_unit::DoubleUnitAlgorithm;
-
-use crate::multi_level::routines::batch::gemv_innerproduct::{
-    DoubleVecMatInnerProductAlgorithm, VecMatInnerProductAlgorithm,
-};
-
-use crate::multi_level::routines::batch::ordered_double_buffering::{
-    OrderedDoubleBufferingAlgorithm, OrderedSelectionArgs,
-};
-
-use crate::multi_level::routines::batch::simple::{
-    SimpleAlgorithm, SimpleArgs, SimpleTmaAlgorithm,
-};
-
-use crate::multi_level::routines::batch::simple_unit::SimpleUnitAlgorithm;
-
-use crate::multi_level::routines::batch::specialized::{SpecializedAlgorithm, SpecializedStrategy};
-
-use crate::multi_level::routines::gemm::{GemmRoutine, launch as launch_gemm};
-
-use crate::multi_level::routines::gemv_unit_perpendicular::{
-    GemvUnitPerpendicularRoutine, launch as launch_gemv_unit_perpendicular,
-};
-
-use crate::multi_level::routines::naive::launch as launch_naive;
-
-use crate::routine::{BlueprintStrategy, Routine};
 
 /// Returns a clone of `sel` with `args.tile_matmul` overridden to `kind` when
 /// in Inferred mode. Forced mode is left untouched since the user-supplied

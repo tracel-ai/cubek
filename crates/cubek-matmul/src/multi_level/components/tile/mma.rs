@@ -4,10 +4,10 @@ use cubek_std::{
     tile::{MmaIOConfig, Plane, TileScope},
 };
 
-use crate::definition::{
-    MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes,
+use crate::{
+    definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes},
+    multi_level::definition::BatchMatmulBlueprint,
 };
-use crate::multi_level::definition::BatchMatmulBlueprint;
 
 use super::variant::TileVariant;
 

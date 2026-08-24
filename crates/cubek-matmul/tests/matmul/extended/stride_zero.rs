@@ -12,11 +12,13 @@
 //! `reported_m_broadcast` tests pin that behaviour.
 
 use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
-use cubek_matmul::multi_level::Strategy as MultiLevel;
-use cubek_matmul::routine::BlueprintStrategy;
-use cubek_matmul::strategy::Strategy;
-use cubek_matmul::tiled::Strategy as Tiled;
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
+    multi_level::Strategy as MultiLevel,
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+    tiled::Strategy as Tiled,
+};
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{TestOutcome, ValidationResult};
 

@@ -1,9 +1,10 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
-use crate::definition::{MatmulElems, MatmulSetupError};
-
-use crate::strategy::Strategy;
+use crate::{
+    definition::{MatmulElems, MatmulSetupError},
+    strategy::Strategy,
+};
 
 #[allow(clippy::result_large_err)]
 /// Launches a matrix multiplication kernel..

@@ -1,22 +1,25 @@
 use cubecl::prelude::*;
 use std::marker::PhantomData;
 
-use crate::definition::{MatmulElems, MatmulVectorSizes};
-use crate::multi_level::args::MatmulArgs;
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::batch::partitioned_matmul::config::PartitionedBatchConfig;
-use crate::multi_level::components::batch::partitioned_matmul::partition::{
-    GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges,
-};
-use crate::multi_level::components::batch::{
-    BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily,
-};
-use crate::multi_level::components::global::{
-    self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily,
-};
-use crate::multi_level::definition::{
-    AccG, BatchMatmulBlueprint, Blueprint as _, CubeMapping, LhsG, MatmulTypes, RhsG,
-    cube_pos_to_m_n_batch,
+use crate::{
+    definition::{MatmulElems, MatmulVectorSizes},
+    multi_level::{
+        args::{MatmulArgs, RuntimeConfig},
+        components::{
+            batch::{
+                BatchMatmul, BatchMatmulFamily, PartitionedBatchMatmulFamily,
+                partitioned_matmul::{
+                    config::PartitionedBatchConfig,
+                    partition::{GlobalPartitionMatmul, PartitionRangeDim, PartitionRanges},
+                },
+            },
+            global::{self, GlobalConfig, GlobalMatmul, GlobalMatmulFamily},
+        },
+        definition::{
+            AccG, BatchMatmulBlueprint, Blueprint as _, CubeMapping, LhsG, MatmulTypes, RhsG,
+            cube_pos_to_m_n_batch,
+        },
+    },
 };
 
 #[cube(launch_unchecked, explicit_define, address_type = "dynamic")]

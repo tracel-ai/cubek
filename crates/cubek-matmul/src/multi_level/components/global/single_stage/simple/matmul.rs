@@ -1,15 +1,17 @@
-use crate::multi_level::args::RuntimeConfig;
-use crate::multi_level::components::global::read::{
-    FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy,
+use crate::multi_level::{
+    args::RuntimeConfig,
+    components::{
+        global::{
+            GlobalMatmul, GlobalWriter, GlobalWriterFamily, SharedGlobalMatmulConfig, WriterStage,
+            read::{FullLoaderStage, FullLoadingStrategy, FullStageGlobalReader, SyncStrategy},
+        },
+        stage::{
+            StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments,
+            partition_coordinates,
+        },
+    },
+    definition::*,
 };
-use crate::multi_level::components::global::{
-    GlobalMatmul, GlobalWriter, SharedGlobalMatmulConfig,
-};
-use crate::multi_level::components::global::{GlobalWriterFamily, WriterStage};
-use crate::multi_level::components::stage::{
-    StagePartitioner, init_a_fragment, init_accumulator, init_b_fragments, partition_coordinates,
-};
-use crate::multi_level::definition::*;
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::Coords2d},

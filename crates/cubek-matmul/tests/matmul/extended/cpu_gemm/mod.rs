@@ -3,12 +3,14 @@ mod layouts;
 
 use crate::matmul::test_matmul_strategy;
 use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
-use cubek_matmul::routine::BlueprintStrategy;
-use cubek_matmul::strategy::Strategy;
-use cubek_matmul::tiled::Strategy as Tiled;
-use cubek_matmul::tiled::cpu_gemm::{
-    CpuGemmBlueprint, CpuGemmStrategy, InstructionShape, PlaneGrid,
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
+    routine::BlueprintStrategy,
+    strategy::Strategy,
+    tiled::{
+        Strategy as Tiled,
+        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy, InstructionShape, PlaneGrid},
+    },
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::skip_unless_cpu;
