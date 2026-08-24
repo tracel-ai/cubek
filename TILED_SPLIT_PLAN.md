@@ -276,7 +276,7 @@ Verified: `cargo check`/`clippy` on the workspace `--all-features`, `--tests` on
 except matmul's `full` tier, `--benches` on the benchmarks crate, `cargo fmt` clean, and the
 basic test tiers of matmul (47), convolution (60), attention, tile and std all green.
 
-### Phase 4 — feature flags
+### Phase 4 — feature flags  ✅ DONE
 
 `cubek-matmul`:
 
@@ -306,7 +306,24 @@ fallback slot. It was tuned for CPU and has never been measured as a GPU fallbac
 we wire it now and measure later. Until then the tiled-only `Auto` path is correct
 but of unknown speed on accelerator-less GPUs.
 
-### Phase 5 — tests
+**What actually landed**, and where it deviated from the sketch above:
+
+- A build with neither feature raises a `compile_error!` naming both, rather than failing
+  as a pile of missing items.
+- Two items sat on the wrong side of the seam, both found by a single-family build
+  reporting them dead:
+  - `M`/`N`/`K`, `batch_axis` and `MatmulOperands` are tile-DSL vocabulary only the tiled
+    routines use. They moved from the shared `routine.rs` to `tiled/operands.rs`, which
+    makes cubek-tile a tiled-only dependency (`tiled = ["dep:cubek-tile"]`).
+  - `MatmulPrecision` / `MatrixPrecision` and `MatmulElems::new_deprecated` are a pure
+    element-type mapping that both families' harnesses launch through. They moved the
+    other way, from `multi_level/definition/spec.rs` into the shared
+    `definition/precision.rs`. `MatmulTypes` / `MatrixTypes` and the alias zoo stay
+    multi-level.
+- The two `Auto` pairs are two `#[cfg]`'d `auto` functions rather than one function with
+  branches inside.
+
+### Phase 5 — tests  ✅ DONE
 
 ```
 crates/cubek-matmul/tests/
@@ -339,7 +356,28 @@ Assignment of the 64 existing test files:
 The `heavy` / `extended` / `full` tiers stay as they are and cross with the branch
 axis, not replace it.
 
-### Phase 6 — enforcement
+**What actually landed**, and where it deviated from the sketch above:
+
+- The `matmul/` level under `tests/` is gone; `harness/`, `tiled/`, `multi_level/` and
+  `auto/` sit directly under `tests/`.
+- Three files had to be cut in two, not one. `basic/plane_accelerated.rs` splits at its
+  tile-DSL comment. `extended/stride_zero.rs` splits because its strategy table is
+  multi-level but one entry is `CpuGemm`; its `Broadcast` / `make_problem` /
+  `assert_batch_broadcast` helpers became `harness/broadcast.rs`. `bench_catalog.rs`
+  splits three ways: per-family correctness files plus `multi_level/comparison.rs` for
+  the dsl-vs-legacy probes, `#[cfg(feature = "tiled")]` inside the island so they die
+  with it.
+- **Deviation from the zero-`#[test]`-outside rule**: the `Strategy::Auto` suite belongs
+  to neither island and stays correct when either is deleted, so it lives at
+  `tests/auto/`. A directory module, because a bare `tests/*.rs` becomes its own test
+  binary and could not then reach `crate::harness`.
+- No per-branch `test_strategy` wrapper was needed: `MultiLevel::X(..).into()` at the call
+  site already reads fine, and one wrapper per branch would have been two names for what
+  `test_matmul_strategy` does.
+- `extended/common.rs` stayed multi-level (it builds `BatchMatmulBlueprint`s); only its
+  duplicated `client` / `f16_elems` / `f32_elems` moved to the harness.
+
+### Phase 6 — enforcement  ✅ DONE
 
 Without a CI job the cfg attributes rot within a week. Add to the matrix:
 
@@ -355,7 +393,17 @@ tile DSL.
 
 `xtask test` learns the same three combos for `cubek-matmul`.
 
-### Phase 7 — benchmarks and eval
+**What actually landed.** `cargo xtask test` runs cubek-matmul twice more per backend,
+once per family alone; CI clippies both single-family builds at the `extended` tier.
+
+The first tiled-only run proved the seam was not being tested at all: the package's own
+dev-dependency (`cubek-matmul = { path = "." }`, there for `cpu-reference`) carried
+default features, so every test build unified both families back in. With
+`default-features = false` on it, a tiled-only test binary holds only the tiled and
+`Auto` tests: 9 + 9, against 15 + 47 for a full build and 15 + 39 for multi-level alone.
+All three pass on `cubecl/cpu`.
+
+### Phase 7 — benchmarks and eval  ✅ DONE
 
 `eval/cpu_reference.rs` stays at the root (branch-agnostic). Catalogues split:
 `gemm_cpu_tiled`, `tile_quant_stage` → `tiled/eval/`; `gemm`, `gemv`, `split_k`,
@@ -364,12 +412,24 @@ either splits or gets per-entry cfgs.
 
 The `benchmarks` crate keeps both features on.
 
+**What actually landed.** Landed before phase 4, which needed it: a tiled-only build
+cannot compile a catalogue that names multi-level.
+
+- `split_k` and `tile_quant_stage` are written on the tile DSL, not multi-level as the
+  sketch assumed, so both went to `tiled/eval/`. `gemv` and `quantized_matmul` went to
+  `multi_level/eval/`.
+- `gemm` names both too, for the same reason `gemm_cpu` does: it exists to put the two
+  families on one table. Both stay at the root. `gemm`'s `strategies()` is now a
+  concatenator over `tiled::eval::gemm::strategies()` and
+  `multi_level::eval::gemm::strategies()`, each `#[cfg]`'d, so each branch owns its own
+  entries and the root only decides that both appear. `gemm_cpu` filters `gemm`'s list by
+  id and needed no change at all.
+
 ## Open items
 
-1. **Tiled-only `Auto` is unmeasured.** Decided: wire `Cmma` → `CpuGemm` now, measure
-   later. Owed work, not a blocker: bench the tiled-only `Auto` path on wgpu/metal
-   against `SimpleUnit` once the split is green, and revisit if it is bad enough to
-   prefer a loud `Unavailable`.
+1. **Tiled-only `Auto` is unmeasured.** Still owed. `Cmma` → `CpuGemm` is wired and
+   correct; bench it on wgpu/metal against `SimpleUnit` and revisit if it is bad enough
+   to prefer a loud `Unavailable`.
 
 2. **burn takes the break, with `multi-level` on.** Every `Strategy::SimpleUnit(..)`
    call site becomes `Strategy::MultiLevel(multi_level::Strategy::SimpleUnit(..))`. No
@@ -384,7 +444,7 @@ The `benchmarks` crate keeps both features on.
    stays in the shared root; revisit once the split is green.
 
 4. **`bias.rs` is the only test reaching into `components::global::memory`.** It builds
-   launch args by hand. It moves to `multi_level/`, but it is a sign that multi-level's
+   launch args by hand. It now sits in `multi_level/`, but it is a sign that multi-level's
    test surface leaks into internals; not this refactor's problem.
 
 5. **attention and convolution eventually need the same branch.** Their tiled sides
