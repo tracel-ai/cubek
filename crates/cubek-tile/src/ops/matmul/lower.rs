@@ -13,14 +13,17 @@ use crate::*;
 impl<Acc: Numeric> Tile<Acc> {
     /// `c.mma(a, b)`: contract at a final tile, else walk this level.
     ///
-    /// Automatically seeds memory accumulator cells from the contraction identity (`0`)
-    /// and skips the initial sink read when every contracted axis is spanned whole at the
-    /// leaf level. If the contraction spans multiple levels or outer reduction loops,
-    /// it preserves the existing sink and accumulates onto it.
+    /// When `c` has been explicitly zeroed (`c.zero()`) and every contracted axis is spanned whole
+    /// at the leaf level, the initial sink read is safely replaced by the contraction identity (`0`).
+    /// If `c` was not zeroed (e.g. pre-seeded or caller-owned loop) or if the contraction spans
+    /// multiple levels / outer reduction loops, it preserves the existing sink and accumulates onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replace = comptime!(is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space));
+        let replace = comptime!(
+            self.is_replace() && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space)
+        );
         let mut acc = self.with_replace(replace);
         lower_mma(&mut acc, lhs, rhs);
+        comptime!(self.set_replace(false));
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
@@ -149,6 +152,10 @@ impl<E: Numeric> PlaneTile<E> {
 /// seed sound: the walk above the leaf never returns to a cell it has already written.
 fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
     let merged = Space::merge(&[lhs, rhs]);
+    assert!(
+        out.partitioner().depth() == merged.partitioner().depth(),
+        "is_contracted_at_leaf: output and operand partitioner depth mismatch"
+    );
     let leaf = merged.final_space();
     for axis in Space::contracted(&[lhs, rhs], out).iter() {
         // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be

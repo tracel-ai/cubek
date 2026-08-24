@@ -724,18 +724,18 @@ impl<T: Numeric> Tile<T> {
 impl<T: Numeric> MemData<T> {
     /// Clone this memory handle with the replacement policy for one accumulator operation.
     pub(crate) fn with_replace(&self, #[comptime] replace: bool) -> MemData<T> {
-        MemData::<T> {
-            store: self.store.clone(),
-            layout: self.layout.clone(),
-            window: self.window.clone(),
-            projection: comptime!(self.projection.clone()),
-            map: self.map.clone(),
-            offsets: self.offsets.clone(),
-            window_start: self.window_start,
-            access: comptime!(self.access.clone()),
-            lane_share: comptime!(self.lane_share),
-            replace: comptime!(replace),
-        }
+        comptime!({
+            let mut cloned = self.clone();
+            cloned.replace = replace;
+            cloned
+        })
+    }
+
+    /// Set the replacement policy on this memory handle.
+    pub(crate) fn set_replace(&mut self, #[comptime] replace: bool) {
+        comptime!({
+            self.replace = replace;
+        });
     }
 
     /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole

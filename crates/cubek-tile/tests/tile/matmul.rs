@@ -935,6 +935,185 @@ fn register_matmul_unit_spread_n() {
         .enforce()
 }
 
+/// Accumulating onto a pre-seeded sink without `zero()`: verifies that MMA preserves the existing
+/// buffer values and adds the contraction result rather than replacing them.
+#[test]
+fn matmul_staged_accumulate_preseeded_sink() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+
+    let (m, k, nr) = (4usize, 8usize, 2usize);
+    let n = lanes * nr;
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(m)).axis(N, Cut::unit(nr)).axis(K, seq(k))
+        })
+        .build()
+        .resolve_lanes(lanes);
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(1337, 10., 100.);
+    let c_init = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+
+    launch_staged_matmul_accumulate::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            let mma: f32 = (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum();
+            c_init.data.get_f32(idx) + mma
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Multi-level contraction with K split across levels: `is_contracted_at_leaf` must return false,
+/// vetoing replacement so that all K chunks across levels accumulate into the sink.
+#[test]
+fn matmul_staged_k_split_levels_zeroed() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (8usize, 8usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    let dtype = f32::elem_type_native();
+    let mut ops = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .build();
+
+    let a = TileInput::builder(&client, space.project(ops.0.axes()))
+        .operand(&ops.0)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(ops.1.axes()))
+        .operand(&ops.1)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Lane-folded split-K (`Cut::unit` on K axis): `is_contracted_at_leaf` must return false,
+/// and `commit_shared` correctly combines across lanes without replacing.
+#[test]
+fn register_matmul_unit_spread_k() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+
+    let (m, n, kr) = (4usize, 4usize, 2usize);
+    let k = lanes * kr;
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, Cut::unit(kr))
+        })
+        .build()
+        .resolve_lanes(lanes);
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// The legacy register budget as a level structure: an in-place contraction-step walk
 /// (windowing only), an N-walk refilling one B fragment per step while the A
 /// column fills once above it, and an M-only fragment walk below. Exercises sub-block
@@ -1320,6 +1499,22 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// from its partitioner's `Buffering` (here `.buffered(Buffering::SINGLE)` or `.buffered(Buffering::DOUBLE)`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, V: Size>(
+    a: &TileArg<'_, E, V>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.zero();
+    c.mma(&a, &b);
+}
+
+/// Drives `launch_staged_matmul` without zeroing first, accumulating directly into `c`.
+#[cube(launch)]
+fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
@@ -3654,6 +3849,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
+    c.zero();
     c.mma(&a, &b);
 }
 
@@ -3924,6 +4120,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
+    c.zero();
     c.mma(&a, &b);
 }
 

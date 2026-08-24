@@ -373,6 +373,42 @@ pub struct Tile<T: Numeric> {
     pub space: Space,
 }
 
+impl<T: Numeric> Tile<T> {
+    /// Whether this tile is stamped to replace its sink on the next `mma` contraction.
+    pub(crate) fn is_replace(&self) -> bool {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.replace,
+            _ => false,
+        }
+    }
+
+    /// Set the replacement policy on this tile's memory handles.
+    pub(crate) fn set_replace(&mut self, replace: bool) {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.replace = replace,
+            _ => {}
+        }
+    }
+}
+
+impl<T: Numeric> TileExpand<T> {
+    /// Whether this tile is stamped to replace its sink on the next `mma` contraction.
+    pub(crate) fn is_replace(&self) -> bool {
+        match &self.tile_kind {
+            TileKindExpand::Gmem(d) | TileKindExpand::Smem(d) => d.replace,
+            _ => false,
+        }
+    }
+
+    /// Set the replacement policy on this tile's memory handles.
+    pub(crate) fn set_replace(&mut self, replace: bool) {
+        match &mut self.tile_kind {
+            TileKindExpand::Gmem(d) | TileKindExpand::Smem(d) => d.replace = replace,
+            _ => {}
+        }
+    }
+}
+
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
 /// coefficient `1`. `None` otherwise, which is either of the two ways a bound stops being that
 /// extent: a gather, where the dim holds the receptive field several axes reach over, and storage
@@ -807,9 +843,10 @@ impl<T: Numeric> Tile<T> {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
-    /// Zero this tile. A promoted accumulator explicitly states its initialization before `mma`;
-    /// a memory accumulator can instead let `mma` replace its sink when the complete contraction
-    /// fits at the leaf. Same shape as [`mma`](Tile::mma): a final tile clears its store, a level
+    /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
+    /// `out = A·B` zeroes first. Stamping `zero` also enables the fast-path accumulator replacement
+    /// when the contraction is proven to visit every cell at the leaf level, skipping the sink
+    /// read. Same shape as [`mma`](Tile::mma): a final tile clears its store, a level
     /// walks and recurses (each region clears exactly the windows it owns; a fragment output takes
     /// the unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
@@ -829,6 +866,7 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
+        comptime!(self.set_replace(true));
     }
 
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).

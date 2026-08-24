@@ -76,8 +76,8 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 
-    /// Commit a cell combined across the lanes that share it. A replacing operation writes its
-    /// result directly; otherwise the elected lane folds in the sink exactly once.
+    /// Commit a cell combined across the lanes that share it. The elected lane folds in the sink
+    /// exactly once.
     fn commit_shared(
         &mut self,
         pos: C,
@@ -86,13 +86,9 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         #[comptime] fold: LeafOp,
     ) {
         if leader {
-            if comptime!(self.replace) {
-                self.values.write(pos, combined);
-            } else {
-                let old = self.values.read(pos.clone());
-                self.values
-                    .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
-            }
+            let old = self.values.read(pos.clone());
+            self.values
+                .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
         }
     }
 }
