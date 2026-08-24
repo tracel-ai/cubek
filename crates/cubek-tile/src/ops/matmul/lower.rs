@@ -19,21 +19,22 @@ impl<Acc: Numeric> Tile<Acc> {
     /// multiple levels or outer reduction loops, it preserves the existing sink and accumulates
     /// onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replaces = self.replaces_sink(lhs, rhs);
-        self.set_sink_identity(if replaces { Some(LeafOp::Sum) } else { None });
+        let replaces = self.replaces_mma_sink(lhs, rhs);
+        self.set_sink_identity(comptime!(if replaces { Some(LeafOp::Sum) } else { None }));
         lower_mma(self, lhs, rhs);
-        self.set_sink_identity(None);
+        self.set_sink_identity(comptime!(None));
     }
 
     /// Whether this contraction may seed from the identity instead of reading the sink: the buffer
     /// must be known to hold `Sum`'s identity (`0`), and the final tile must span every contracted axis whole,
     /// so the walk above the leaf never returns to a cell it has already written.
-    fn replaces_sink<Lhs: Numeric, Rhs: Numeric>(
+    fn replaces_mma_sink<Lhs: Numeric, Rhs: Numeric>(
         &self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
     ) -> comptime_type!(bool) {
-        let sink_is_sum = self.sink_identity() == Some(LeafOp::Sum);
+        let sink_id = self.sink_identity();
+        let sink_is_sum = comptime!(sink_id == Some(LeafOp::Sum));
         comptime!(sink_is_sum && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space))
     }
 

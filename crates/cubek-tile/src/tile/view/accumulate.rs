@@ -52,8 +52,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         // `fold`'s identity already holds the starting value: both start from the identity
         // and skip the read.
         let carries = comptime!(
-            matches!(self.lane_share, LaneShare::Whole)
-                && !(self.sink_identity == Some(fold))
+            matches!(self.lane_share, LaneShare::Whole) && !(self.sink_identity == Some(fold))
         );
         if comptime!(carries) {
             self.values.read(pos)

@@ -18,21 +18,22 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `fold`'s identity, or if the reduction spans multiple levels, it preserves the existing sink
     /// and accumulates onto it.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
-        let replaces = self.replaces_sink(input, fold);
-        self.set_sink_identity(if replaces { Some(fold) } else { None });
+        let replaces = self.replaces_reduce_sink(input, fold);
+        self.set_sink_identity(comptime!(if replaces { Some(fold) } else { None }));
         lower_reduce(self, input, fold);
-        self.set_sink_identity(None);
+        self.set_sink_identity(comptime!(None));
     }
 
     /// Whether this reduction may seed from the identity instead of reading the sink: the buffer
     /// must be known to hold `fold`'s identity, and the final tile must span every contracted axis whole,
     /// so the walk above the leaf never returns to a cell it has already written.
-    fn replaces_sink<In: Numeric>(
+    fn replaces_reduce_sink<In: Numeric>(
         &self,
         input: &Tile<In>,
         #[comptime] fold: LeafOp,
     ) -> comptime_type!(bool) {
-        let sink_is_fold = self.sink_identity() == Some(fold);
+        let sink_id = self.sink_identity();
+        let sink_is_fold = comptime!(sink_id == Some(fold));
         comptime!(sink_is_fold && is_reduced_at_leaf(&self.space, &input.space))
     }
 
