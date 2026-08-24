@@ -15,11 +15,12 @@ use crate::{
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
-    routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis},
+    routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
         kernel::cmma_kernel,
     },
+    tiled::{K, M, MatmulOperands, N, batch_axis},
 };
 
 /// The register accumulate type the routine mandates, independent of how the caller built

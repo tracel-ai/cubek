@@ -10,8 +10,9 @@ use crate::{
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
-    routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis},
+    routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
+    tiled::{K, M, MatmulOperands, N, batch_axis},
 };
 
 /// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
