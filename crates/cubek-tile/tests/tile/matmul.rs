@@ -1855,6 +1855,113 @@ fn register_matmul_folded_step_two_contracted_axes() {
         .enforce()
 }
 
+/// The quantized folded step: the weight lined along `K` in packed `u32` words, the activation
+/// lined along `K` in plain lines, and the decode sitting between the read and the `fma`.
+#[cube(launch)]
+fn launch_matmul_folded_quant<I: Numeric, E: Numeric, BV: Size>(
+    a: &QuantTileArg<'_, I, Const<1>>,
+    b: &TileArg<'_, E, BV>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(I)] _a_dtype: ElemType,
+    #[define(E)] _e_dtype: ElemType,
+) {
+    let a = a.tile::<E>(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.zero();
+    c.mma(&a, &b);
+}
+
+/// A folded step whose lhs is packed `q8s` (4 values per word): the pack factor narrows the
+/// *physical* line to one `u32` while the served line stays `pack` wide, so the same walk, gate
+/// and fold run with a decode added on the read.
+#[test]
+fn register_matmul_folded_step_quant_q8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_folded_step_quant(client, QuantValue::Q8S, (4, 4, 8), 4);
+}
+
+/// The `q4s` twin: eight values per word, the brief's headline packing. Needs a device whose
+/// vectors reach the factor, so it skips on WGSL-bound targets.
+#[test]
+fn register_matmul_folded_step_quant_q4() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    run_folded_step_quant(client, QuantValue::Q4S, (4, 4, 16), 4);
+}
+
+/// Drive [`launch_matmul_folded_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[j,p]`.
+fn run_folded_step_quant(
+    client: ComputeClient<TestRuntime>,
+    value: QuantValue,
+    (m, n, k): (usize, usize, usize),
+    bm: usize,
+) {
+    let scheme = QuantScheme::default()
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(value);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below {value:?}'s packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let space = lined_lhs_space(m, n, k);
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .packed(&scheme, DequantAt::Read)
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[N, K]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_matmul_folded_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        pack,
+        QuantTileArgLaunch::new(
+            a.tile.tensor_arg(1),
+            a.scales_binding().into_tensor_arg(),
+            None.into(),
+            None.into(),
+            TileSpec::direct(&[M, K]),
+            scheme,
+            DequantAt::Read,
+        ),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(64)),
+        u32::elem_type_native(),
+        f32::elem_type_native(),
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a.q[i * k + p] as f32) * a.scale_values[i / bm] * ((j * k + p) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 // ---- cmma fragment transit (tensor-core) -------------------------------------
 
 /// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no
