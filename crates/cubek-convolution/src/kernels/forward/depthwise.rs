@@ -57,9 +57,11 @@ fn depthwise_kernel<E: Numeric>(
 
 /// How much of each axis one cube takes. Spatial tiles stay small because the window overlaps —
 /// neighbouring output positions re-read the same input — while the channel tile is what the read
-/// coalesces along, so it is the one worth making wide.
-const TILE_OH: usize = 4;
-const TILE_OW: usize = 4;
+/// coalesces along, so it is the one worth making wide. A channel tile of 32 is one plane's worth
+/// on the hardware this was measured on; a count that does not divide it ceil-divides, and the
+/// tail cube is simply short.
+const TILE_OH: usize = 8;
+const TILE_OW: usize = 8;
 const TILE_C: usize = 32;
 
 /// Launch a depthwise convolution.
@@ -96,11 +98,27 @@ pub fn launch_depthwise<R: Runtime>(
 
     let space = Tiling::new()
         .extents(&[(B, b), (OH, oh), (OW, ow), (C, channels), (RH, rh), (RW, rw)])
+        // Two levels. The first separates the output across the launch grid — an
+        // all-`sequential` level would put the whole convolution in one instance, which
+        // is a correct kernel and a useless one. The channel axis takes X so that the
+        // fastest-moving cube index is the one memory is contiguous along.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(B, Cut::sequential(1))
-                .axis(OH, Cut::sequential(TILE_OH))
-                .axis(OW, Cut::sequential(TILE_OW))
-                .axis(C, Cut::sequential(TILE_C))
+            l.axis(C, Cut::cube(CubeAxis::X, TILE_C))
+                .axis(OW, Cut::cube(CubeAxis::Y, TILE_OW))
+                .axis(OH, Cut::cube(CubeAxis::Z, TILE_OH))
+                .axis(B, Cut::cube(CubeAxis::Z, 1))
+                .axis(RH, Cut::sequential(rh))
+                .axis(RW, Cut::sequential(rw))
+        })
+        // Channels across the cube's planes; the leaf spreads each plane's tile over its
+        // own lanes, so consecutive lanes read consecutive channels of one pixel. The
+        // taps stay sequential: they are the contraction, and every tap of one output
+        // position accumulates into the same register.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(C, Cut::plane(1))
+                .axis(OW, Cut::sequential(1))
+                .axis(OH, Cut::sequential(1))
+                .axis(B, Cut::sequential(1))
                 .axis(RH, Cut::sequential(rh))
                 .axis(RW, Cut::sequential(rw))
         })
@@ -120,9 +138,15 @@ pub fn launch_depthwise<R: Runtime>(
         ),
         MEMORY_LEAF,
     )
-    // The padded border reads outside the input; `checked` is what makes it read as zero.
-    .checked(true);
+    // The padded border reads outside the input, and `checked` is what makes it read as zero.
+    // Unpadded, every read is in bounds by construction and the guard is a comparison per tap
+    // paid for nothing.
+    .checked(ph > 0 || pw > 0);
 
+    // Read in place rather than staged. Staging the filter into shared memory was measured
+    // and rejected: it pays a cooperative fill and a sync per cube, which the deep blocks —
+    // few output positions, many channels — never amortise, and they regressed roughly 2x
+    // while only the widest spatial shapes gained.
     let w_spec = TileSpec::direct(&[C, RH, RW], MEMORY_LEAF);
     let out_spec = TileSpec::direct(&[B, OH, OW, C], MEMORY_LEAF);
 
