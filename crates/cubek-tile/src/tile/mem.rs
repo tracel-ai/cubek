@@ -436,14 +436,11 @@ impl<T: Numeric> MemData<T> {
             DequantAt::Load => {
                 let space = comptime!(operand.space.divide());
                 let projection = operand.projection();
+                let vector_size = operand.vector_size();
                 // The stage is one level down, so it takes the operand's plan from the next level
                 // on: its own residence was consumed by the decision to build it.
                 let source_plan = operand.stage_plan();
                 let stage = comptime!(source_plan.descend());
-                // A padded stage is served wider than the operand it is filled from: the buffer
-                // owns its own layout, so an axis global memory could not vectorize still reaches
-                // the leaf in lines. `fill_straight` widens across the two.
-                let vector_size = operand.vector_size();
 
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, vector_size, stage)
@@ -779,6 +776,8 @@ impl<T: Numeric> MemData<T> {
         } else if comptime!(
             self.access.whole && !self.access.overhang.masks() && src.store.quant.is_none()
         ) {
+            // Plain → plain, whole destination: fill in destination-physical order (the write is
+            // linear and only the source decodes, once per line by constants on a static store).
             self.fill_straight::<T, W>(src, comptime!(space.clone()));
         } else {
             // The general path reads the source as a flat run of its *window* and writes the
@@ -1310,27 +1309,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(layout),
-            self.needs_boundary_mask(),
-        )
-    }
-
-    /// The mask flag a *read* view is built with: [`Overhang::masks`], minus what the boundary
-    /// policy has already settled.
-    ///
-    /// [`Boundary::Clamp`] folds an out-of-range coordinate onto the edge cell inside
-    /// [`Window::to_source_pos`], so nothing past the data is ever addressed. The layers under the
-    /// window see a coordinate already inside `bound` and can only re-derive `true`, but a
-    /// view-wide `check` is what turns their tests on, so each of them spells one out: a per-axis
-    /// conjunction in [`GmemLayout`], the composed layout's own box, and the buffer's linear
-    /// bound, each masking the loaded line again.
-    ///
-    /// [`Window::is_in_bounds`] is the layer that knows which axes still need the answer, and it
-    /// tests the [`Boundary::Zero`] ones and only those. Where none is `Zero` its result is
-    /// unconditionally `true`, and with it the whole composed check, so the view is built
-    /// unchecked and the reads address the clamped cell directly.
-    fn needs_boundary_mask(&self) -> comptime_type!(bool) {
-        comptime!(
-            self.access.overhang.masks() && self.window.boundaries.contains(&Some(Boundary::Zero))
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -1379,7 +1358,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
-            self.needs_boundary_mask(),
+            comptime!(self.access.overhang.masks()),
         )
     }
 
@@ -1410,7 +1389,7 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(FlatLayout::new(self.window.extent.clone()));
                 let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
-                FlatView::new(dequant.view(), self.needs_boundary_mask())
+                FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
             }
             ComptimeOption::None => self.flat::<W>(),
         }
@@ -1458,7 +1437,7 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(layout);
                 let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
-                MaskedView::new(dequant.view(), self.needs_boundary_mask())
+                MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
             }
             ComptimeOption::None => self.masked::<W, C, L>(layout),
         }

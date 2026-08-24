@@ -175,9 +175,6 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 ///
 /// At `served > 1` the block's lanes are partials of one cell, so the accumulator's value seeds
 /// lane 0 alone and the rest start at the identity.
-///
-/// Whether the sink is carried forward belongs to [`AccumulateView`], which knows whether this
-/// contraction replaces cells that have not been accumulated yet.
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
