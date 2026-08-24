@@ -21,11 +21,14 @@ use super::coords::{cell_position, cell_read};
 /// factor is the whole gap against a walk that hoists them by hand. A spanning lhs needs its walk
 /// per line, which has to stay outside the taps, so it nests the other way.
 ///
-/// The lines of one such run are adjacent on the operand's innermost physical axis, which is one
-/// logical axis at coefficient `1` ([`Projection::validate`](crate::Projection::validate)). Their
-/// source coordinates therefore differ in that axis alone, one cell apart, so the run folds the
-/// map once ([`Tile::nd_map`]) and steps the result rather than re-running every term, and under a
-/// rational axis a divide with them, per line.
+/// Both nestings fold the map by hand ([`Tile::nd_map`]) rather than re-running it per read. The
+/// lines of one run are adjacent on the operand's innermost physical axis, which is one logical
+/// axis at coefficient `1` ([`Projection::validate`](crate::Projection::validate)), so their source
+/// coordinates differ in that axis alone and one cell apart. The taps above them move only the
+/// contracted axes, which a resampling map steps outside its floor, so the whole run shares one
+/// anchor ([`AxisProjection::anchor`]) and each read is that anchor plus an addition. Re-running
+/// the map would spell every term again, and under a rational axis a divide with them, per line
+/// and per tap.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: Size, V: Size>(
@@ -60,15 +63,15 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
 
     for mat in 0..matrices {
         let batch = unravel(&batch_extents, mat.fcast::<u32>());
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()), vw);
         let unroll = comptime!(mr * nr <= config.unroll_limit);
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
-        // `kc` bodies per cell, so the limit reads the whole emitted block rather than the cell
-        // count the register block is sized against. A checked operand is no reason to keep `p`
-        // dynamic, and every filter wider than one tap reads one: folding the coordinate turns
-        // the per-tap bounds test comptime on the interior taps and leaves it only on the edges.
-        let unroll_taps = comptime!(mr * nr * kc <= config.unroll_limit);
+        // `kc` bodies per cell, so it answers to the body budget rather than the register one the
+        // block above is sized against. A checked operand is no reason to keep `p` dynamic, and
+        // every filter wider than one tap reads one: folding the coordinate turns the per-tap
+        // bounds test comptime on the interior taps and leaves it only on the edges.
+        let unroll_taps = comptime!(mr * nr * kc <= config.body_limit);
         let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll, replace);
 
         #[unroll(unroll)]
@@ -128,6 +131,23 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
                     comptime!(offsets.clone()),
                 );
 
+                // The taps are the only coordinates moving under this row, so the map's rational
+                // axes carry the same numerator at all `kc` of them: their floor is taken once
+                // here and each tap steps the result.
+                let anchor = rhs_map.anchor(
+                    cell_position(
+                        &batch,
+                        i as u32,
+                        0u32,
+                        &factor_coords(comptime!(factors), 0usize, 0usize),
+                        comptime!(rhs.space.clone()),
+                        comptime!(space.clone()),
+                        comptime!(reduce.clone()),
+                        vw,
+                    ),
+                    comptime!(reduce.clone()),
+                );
+
                 #[unroll(unroll_taps)]
                 for p in 0..kc {
                     let reduce_coords =
@@ -139,16 +159,20 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
                         comptime!(offsets.clone()),
                     ));
 
-                    let base = rhs_map.source(cell_position(
-                        &batch,
-                        i as u32,
-                        0u32,
-                        &reduce_coords,
-                        comptime!(rhs.space.clone()),
-                        comptime!(space.clone()),
+                    let base = rhs_map.advance(
+                        &anchor,
+                        cell_position(
+                            &batch,
+                            i as u32,
+                            0u32,
+                            &reduce_coords,
+                            comptime!(rhs.space.clone()),
+                            comptime!(space.clone()),
+                            comptime!(reduce.clone()),
+                            vw,
+                        ),
                         comptime!(reduce.clone()),
-                        vw,
-                    ));
+                    );
 
                     #[unroll(unroll)]
                     for n in 0..nr {

@@ -159,7 +159,7 @@ pub(crate) fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
 /// masked block must stay rolled whatever its size.
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size>(
-    acc: &mut AccumulateView<'_, E, V>,
+    acc: &mut BlockAccumulate<'_, E, V>,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
@@ -170,18 +170,18 @@ pub(crate) fn seed<E: Numeric, V: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            c[i * nr + n] = acc.seed((i as u32, n as u32), LeafOp::Sum, replace);
+            c[i * nr + n] = acc.seed(i as u32, n as u32, LeafOp::Sum, replace);
         }
     }
     c
 }
 
 /// The twin of [`seed`]: commit the block back once the whole reduce is folded into
-/// it. Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
+/// it. Through [`BlockAccumulate`], so a lane-split accumulator reduces across lanes on the way out
 /// rather than the leaf knowing it was split.
 #[cube]
 pub(crate) fn commit<E: Numeric, V: Size>(
-    acc: &mut AccumulateView<'_, E, V>,
+    acc: &mut BlockAccumulate<'_, E, V>,
     c: Array<Vector<E, V>>,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
@@ -191,7 +191,7 @@ pub(crate) fn commit<E: Numeric, V: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            acc.commit((i as u32, n as u32), c[i * nr + n], LeafOp::Sum);
+            acc.commit(i as u32, n as u32, c[i * nr + n], LeafOp::Sum);
         }
     }
 }

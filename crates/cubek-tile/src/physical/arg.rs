@@ -37,6 +37,9 @@ pub struct TileSpec {
     /// default) is every level [`InPlace`](Residence::InPlace): read where it already is, staging
     /// nothing.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
+    /// The line width this operand's shared-memory stages are served at; `None` serves them at the
+    /// operand's own. See [`StagePlan::width`](crate::StagePlan::width).
+    pub stage_width: Option<usize>,
     /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
     /// two encodings. Stated when the spec is built, so no operand ever carries an implied one; a
     /// format decision, so it belongs to the operand rather than to the partitioning.
@@ -61,6 +64,7 @@ impl TileSpec {
             units: 0,
             storage: None,
             residence: SmallVec::new(),
+            stage_width: None,
             leaf,
         }
     }
@@ -101,6 +105,14 @@ impl TileSpec {
                 .unwrap_or_else(|| StageStorage::for_leaf(self.leaf)),
             self.units,
         )
+        .staged_at(self.stage_width)
+    }
+
+    /// Serve this operand's shared-memory stages at `width`-wide lines rather than at the width it
+    /// is read from global memory in. See [`StagePlan::width`](crate::StagePlan::width).
+    pub fn stage_width(mut self, width: Option<usize>) -> Self {
+        self.stage_width = width;
+        self
     }
 
     /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. A boolean

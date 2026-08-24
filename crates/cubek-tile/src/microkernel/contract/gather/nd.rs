@@ -56,7 +56,7 @@ pub(super) fn contract<
 
     for mat in 0..matrices {
         let batch = unravel(&batch_extents, mat.fcast::<u32>());
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()), vw);
         let acc_check = acc.check();
         let unroll = comptime!(mr * nr <= unroll_limit && !lhs_check && !rhs_check && !acc_check);
         let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll, replace);

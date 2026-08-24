@@ -153,21 +153,45 @@ impl AxisProjection {
     }
 }
 
-#[cube]
-impl AxisProjection {
-    /// [`to_source_pos`](Layout::to_source_pos) as an inherent call, for a caller outside this
-    /// module that folds the map by hand instead of reading through it.
-    pub fn source(&self, pos: CoordsDyn) -> CoordsDyn {
-        self.to_source_pos(pos)
+/// The static physical step a term contributes once it is taken out of its axis's evaluation:
+/// under a floor only what the divisor factors out
+/// ([`static_offset_step`](PhysicalAxisMap::static_offset_step)), elsewhere the coefficient itself.
+/// `None` for a dynamic coefficient outside a floor, which the kernel reads at runtime instead.
+///
+/// Panics for a term a rational axis keeps inside its floor: its contribution to the physical
+/// coordinate is not additive there, so no walk can step past it and the map has to be folded at
+/// every position.
+fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
+    if map.is_rational() {
+        return Some(map.static_offset_step(term).unwrap_or_else(|| {
+            panic!(
+                "AxisProjection::advance: {:?} stays inside this axis's floor, so stepping it is \
+                 not an addition and the map has to be folded at every position",
+                map.terms()[term].axis
+            )
+        }));
+    }
+    match map.terms()[term].scale {
+        Scale::Static(s) => Some(s),
+        Scale::Dynamic { .. } => None,
     }
 }
 
 #[cube]
-impl Layout for AxisProjection {
-    type Coordinates = CoordsDyn;
-    type SourceCoordinates = CoordsDyn;
+impl AxisProjection {
+    /// The source coordinate of `pos` with every axis in `moving` held at zero: the part of the
+    /// map a walk over those axes leaves alone, which [`advance`](Self::advance) puts back.
+    ///
+    /// The rational axes are what the split buys. Their numerator is the same expression at every
+    /// point of such a walk, so a gather takes one floor per accumulator cell where folding the
+    /// whole map takes one per tap.
+    pub fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
+        self.fold(pos, moving)
+    }
 
-    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+    /// [`to_source_pos`](Layout::to_source_pos) over the terms `moving` does not name, the whole
+    /// map when it names none.
+    fn fold(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
         let mut out = CoordsDyn::new();
 
         #[unroll]
@@ -189,15 +213,19 @@ impl Layout for AxisProjection {
             #[unroll]
             for t in 0..n {
                 let term = comptime!(axis_map.terms()[t]);
-                let p = comptime!(self.space.position(term.axis));
-                match comptime!(axis_map.static_offset_step(t)) {
-                    Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
-                    None => match comptime!(term.scale) {
-                        Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                        Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
-                            comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
-                        ))),
-                    },
+                if comptime!(!moving.contains(&term.axis)) {
+                    let p = comptime!(self.space.position(term.axis));
+                    match comptime!(axis_map.static_offset_step(t)) {
+                        Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
+                        None => match comptime!(term.scale) {
+                            Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
+                            Scale::Dynamic { .. } => {
+                                terms.push(pos[p].fmul(self.map.coefficients.at(comptime!(
+                                    self.projection.dynamic_scale_index(pa, t).unwrap()
+                                ))))
+                            }
+                        },
+                    }
                 }
             }
             let n_kept = terms.len();
@@ -225,6 +253,57 @@ impl Layout for AxisProjection {
         }
 
         out
+    }
+
+    /// `anchor` moved to where `pos` places the `moving` axes, which must be the ones it was
+    /// [anchored](Self::anchor) against.
+    ///
+    /// Every one of them enters linearly, so the move is an exact addition: outside a division by
+    /// the term's own coefficient, and under one by the static step the divisor factors out of the
+    /// floor.
+    pub fn advance(
+        &self,
+        anchor: &CoordsDyn,
+        pos: CoordsDyn,
+        #[comptime] moving: Vec<Axis>,
+    ) -> CoordsDyn {
+        let mut out = CoordsDyn::new();
+
+        #[unroll]
+        for pa in 0..comptime!(self.projection.physical_rank()) {
+            let axis_map = comptime!(self.projection.physical_axis(pa));
+            let n = comptime!(axis_map.terms().len());
+
+            let mut steps = Coords::<u32>::new();
+            steps.push(anchor[pa]);
+            #[unroll]
+            for t in 0..n {
+                let term = comptime!(axis_map.terms()[t]);
+                if comptime!(moving.contains(&term.axis)) {
+                    let p = comptime!(self.space.position(term.axis));
+                    match comptime!(split_step(axis_map, t)) {
+                        Some(step) => steps.push(pos[p].fmul(comptime!(step as u32))),
+                        None => steps.push(pos[p].fmul(self.map.coefficients.at(comptime!(
+                            self.projection.dynamic_scale_index(pa, t).unwrap()
+                        )))),
+                    }
+                }
+            }
+            let n_steps = steps.len();
+            out.push(steps.fsum(comptime!((0..n_steps).collect::<Vec<_>>())));
+        }
+
+        out
+    }
+}
+
+#[cube]
+impl Layout for AxisProjection {
+    type Coordinates = CoordsDyn;
+    type SourceCoordinates = CoordsDyn;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        self.fold(pos, comptime!(Vec::new()))
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {

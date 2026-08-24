@@ -440,11 +440,15 @@ impl<T: Numeric> MemData<T> {
                 let space = comptime!(operand.space.divide());
                 let projection = operand.projection();
                 let leaf = comptime!(operand.leaf);
-                let vector_size = operand.vector_size();
                 // The stage is one level down, so it takes the operand's plan from the next level
                 // on: its own residence was consumed by the decision to build it.
                 let source_plan = operand.stage_plan();
                 let stage = comptime!(source_plan.descend());
+                // A padded stage is served wider than the operand it is filled from: the buffer
+                // owns its own layout, so an axis global memory could not vectorize still reaches
+                // the leaf in lines. `fill_straight` widens across the two.
+                let source_width = operand.vector_size();
+                let vector_size = comptime!(source_plan.stage_width(source_width));
 
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, leaf, vector_size, stage)
@@ -793,7 +797,13 @@ impl<T: Numeric> MemData<T> {
         ) {
             // Plain → plain, whole destination: fill in destination-physical order (the write is
             // linear and only the source decodes, once per line by constants on a static store).
-            self.fill_straight::<T, W>(src, comptime!(space.clone()));
+            // A *padded* stage is served in lines its source has no way to hand it whole
+            // ([`StagePlan::width`]), so it assembles each one lane by lane instead.
+            if comptime!(self.store.vector_size == src.store.vector_size) {
+                self.fill_straight::<T, W>(src, comptime!(space.clone()));
+            } else {
+                self.fill_widening::<W>(src, comptime!(space.clone()));
+            }
         } else {
             // The general path reads the source as a flat run of its *window* and writes the
             // destination as a flat run of its own, which pairs the two only when they are the same
@@ -940,6 +950,142 @@ impl<T: Numeric> MemData<T> {
             let mut i = UNIT_POS as usize;
             while i < total {
                 d[i] = s.read(physical_pos(comptime!(projection.clone()), i, &shape));
+                i += workers;
+            }
+        }
+    }
+
+    /// [`fill_straight`](MemData::fill_straight) across a width change: a *padded* stage, served
+    /// in lines wider than the source it is filled from ([`StagePlan::width`]), assembling each
+    /// destination line out of `W` scalar source reads.
+    ///
+    /// The source is scalar, and that is the only source there is: an operand already wide enough
+    /// to serve lines has nothing to gain from a stage that regroups them, so the one reason to
+    /// widen is an axis global memory cannot vectorize at all (an `NHWC` tensor at `C = 3` has no
+    /// 4-aligned row start). Its cells are contiguous either way, so the reads a line is built
+    /// from are adjacent and the backend still coalesces them.
+    ///
+    /// The lanes past the operand's innermost extent are the padding. Where that extent fills
+    /// whole lines they do not exist and nothing is emitted for them; otherwise they are skipped
+    /// at comptime where the line count settles it and by one compare per lane where it does not,
+    /// and hold zero. Reading them instead would take the *next* row's cells, which are live data
+    /// rather than a boundary the source's own mask would zero.
+    fn fill_widening<W: Size>(&mut self, src: &MemData<T>, #[comptime] space: Space) {
+        let w = comptime!(self.store.vector_size);
+        comptime!(assert!(
+            src.store.vector_size == 1 && src.store.quant.is_none() && self.store.quant.is_none(),
+            "MemData::fill_widening: a padded stage is filled from a plain scalar operand, but \
+             its source serves {}-wide lines",
+            src.store.vector_size
+        ));
+        // A gathered stage owns mutable map registers alongside its bytes; see `fill_straight`.
+        if comptime!(self.projection.is_rational() || self.projection.has_dynamic_scales()) {
+            self.map.store_from(&src.map);
+        }
+        let check = comptime!(src.access.overhang.masks());
+        let compaction = comptime!(stage_compaction(
+            &src.projection,
+            &self.projection,
+            w,
+            &space
+        ));
+        let steps = comptime!(match &compaction {
+            Some(c) if !c.is_dense() => c.steps().to_vec(),
+            _ => Vec::new(),
+        });
+        let shape = self.layout.physical_shape.clone();
+        let plen = shape.len().comptime();
+        // `StepUp` bounds-checks the coordinate it is handed against its own box, and the
+        // coordinate is in source elements here, so the innermost entry of that box is too.
+        let s = if comptime!(steps.is_empty()) {
+            MaskedView::new(
+                src.lines_storage::<T, Const<1>>()
+                    .view(src.base())
+                    .view(src.window()),
+                check,
+            )
+        } else {
+            MaskedView::new(
+                src.lines_storage::<T, Const<1>>()
+                    .view(src.base())
+                    .view(src.window())
+                    .view(StepUp::new(
+                        widened_shape(&shape, comptime!(plen), comptime!(w)),
+                        comptime!(steps),
+                    )),
+                check,
+            )
+        };
+        let total = shape
+            .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
+            .fcast::<usize>();
+        let projection = comptime!(self.layout.projection.clone());
+        let src_rank = comptime!(src.projection.physical_rank());
+        // The innermost logical extent, in elements: the lanes of the last line past it are the
+        // padding. `None` where the extent is Dynamic, which leaves the source's own boundary mask
+        // as the only thing that can zero them, so it has to be armed.
+        let lanes = comptime!(match space.extent_raw(space.axis_at(space.rank() - 1)) {
+            Extent::Static(e) => Some(e),
+            Extent::Dynamic => {
+                assert!(
+                    check,
+                    "MemData::fill_widening: a padded stage over a Dynamic innermost extent \
+                     cannot know at comptime which lanes are padding, so its source must be \
+                     bounds-checked for them to read as zero"
+                );
+                None
+            }
+        });
+        let units = comptime!(self.access.stage.units);
+        let total_c = total.constant();
+        let cells = comptime!(compaction.as_ref().map(|c| c.cells(w)));
+        comptime!(assert!(
+            match cells {
+                Some(n) => matches!(total_c, Some(t) if t as usize == n),
+                None => true,
+            },
+            "MemData::fill_widening: a gathered source fills a destination of {total_c:?} lines, \
+             but its compacted window is {cells:?}"
+        ));
+        let straight =
+            comptime!(matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8));
+        let d = self.lines_storage_mut::<T, W>();
+        if comptime!(straight) {
+            let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
+            #[unroll]
+            for t in 0..tasks {
+                let i = UNIT_POS as usize + comptime!(t * units);
+                if comptime!((t + 1) * units > total_c.unwrap() as usize) {
+                    if i < total {
+                        d[i] = widen_line::<T, W>(
+                            &s,
+                            &physical_pos(comptime!(projection.clone()), i, &shape),
+                            comptime!(src_rank),
+                            comptime!(w),
+                            comptime!(lanes),
+                        );
+                    }
+                } else {
+                    d[i] = widen_line::<T, W>(
+                        &s,
+                        &physical_pos(comptime!(projection.clone()), i, &shape),
+                        comptime!(src_rank),
+                        comptime!(w),
+                        comptime!(lanes),
+                    );
+                }
+            }
+        } else {
+            let workers = CUBE_DIM as usize;
+            let mut i = UNIT_POS as usize;
+            while i < total {
+                d[i] = widen_line::<T, W>(
+                    &s,
+                    &physical_pos(comptime!(projection.clone()), i, &shape),
+                    comptime!(src_rank),
+                    comptime!(w),
+                    comptime!(lanes),
+                );
                 i += workers;
             }
         }
@@ -1323,7 +1469,32 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(layout),
-            comptime!(self.access.overhang.masks()),
+            self.read_check(),
+        )
+    }
+
+    /// The mask flag a *read* view is built with: [`Overhang::masks`], minus what the boundary
+    /// policy has already settled.
+    ///
+    /// [`Boundary::Clamp`] folds an out-of-range coordinate onto the edge cell inside
+    /// [`Window::to_source_pos`], so nothing past the data is ever addressed. The layers under the
+    /// window see a coordinate already inside `bound` and can only re-derive `true`, but a
+    /// view-wide `check` is what turns their tests on, so each of them spells one out: a per-axis
+    /// conjunction in [`GmemLayout`], the composed layout's own box, and the buffer's linear
+    /// bound, each masking the loaded line again.
+    ///
+    /// [`Window::is_in_bounds`] is the layer that knows which axes still need the answer, and it
+    /// tests the [`Boundary::Zero`] ones and only those. Where none is `Zero` its result is
+    /// unconditionally `true`, and with it the whole composed check, so the view is built
+    /// unchecked and the reads address the clamped cell directly.
+    fn read_check(&self) -> comptime_type!(bool) {
+        comptime!(
+            self.access.overhang.masks()
+                && self
+                    .window
+                    .boundaries
+                    .iter()
+                    .any(|mode| *mode == Some(Boundary::Zero))
         )
     }
 
@@ -1372,7 +1543,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
-            comptime!(self.access.overhang.masks()),
+            self.read_check(),
         )
     }
 
@@ -1403,7 +1574,7 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(FlatLayout::new(self.window.extent.clone()));
                 let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
-                FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+                FlatView::new(dequant.view(), self.read_check())
             }
             ComptimeOption::None => self.flat::<W>(),
         }
@@ -1451,7 +1622,7 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(layout);
                 let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
-                MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+                MaskedView::new(dequant.view(), self.read_check())
             }
             ComptimeOption::None => self.masked::<W, C, L>(layout),
         }
@@ -1535,15 +1706,44 @@ impl<T: Numeric> MemData<T> {
         self.masked_mut::<W, Coords2d, BatchMatrix>(layout)
     }
 
-    /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
+    /// The [`BlockAccumulate`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
     /// [`LaneShare`] these cells carry, so a leaf accumulates through it without being told.
+    ///
+    /// `width` is the block's, which is the rhs's. It is this store's own except where the rhs was
+    /// *padded* into lines this sink has no way to hold ([`StagePlan::width`]), and a sink that
+    /// cannot hold them holds scalars: there is no third width, because a line view exists only
+    /// where the innermost axis lines up, and one that does lines up at the operand's own width.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
         #[comptime] space: Space,
-    ) -> AccumulateView<'_, T, W> {
+        #[comptime] width: usize,
+    ) -> BlockAccumulate<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share)
+        if comptime!(self.store.vector_size == width) {
+            BlockAccumulate::new(
+                BlockCells::new_Lines(AccumulateView::new(
+                    self.matrix_mut::<W>(i, space),
+                    lane_share,
+                )),
+                width,
+            )
+        } else {
+            comptime!(assert!(
+                self.store.vector_size == 1,
+                "MemData::matrix_accumulate: a {width}-wide block reaches a sink of {}-wide \
+                 lines, which is neither its own width nor the scalar addressing a sink that \
+                 cannot line up its innermost axis is left with",
+                self.store.vector_size
+            ));
+            BlockAccumulate::new(
+                BlockCells::new_Lanes(AccumulateView::new(
+                    self.matrix_mut::<Const<1>>(i, space),
+                    lane_share,
+                )),
+                width,
+            )
+        }
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
@@ -2187,6 +2387,92 @@ fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32
     fold_physical(comptime!(projection), &digits, shape)
 }
 
+/// One padded destination line, assembled out of the `width` adjacent scalar source cells the
+/// line covers. `pos` is the destination's coordinate with its innermost entry in *lines*; the
+/// source's is in elements, so that entry scales by `width` and the lane rides on top.
+///
+/// `lanes` is the innermost logical extent when it is known: the lanes at or past it are padding
+/// and hold zero. A extent that fills whole lines has none, and emits the plain assembly.
+#[cube]
+fn widen_line<T: Numeric, W: Size>(
+    s: &MaskedView<'_, Vector<T, Const<1>>, CoordsDyn>,
+    pos: &CoordsDyn,
+    #[comptime] rank: usize,
+    #[comptime] width: usize,
+    #[comptime] lanes: Option<usize>,
+) -> Vector<T, W> {
+    let last = comptime!(rank - 1);
+    let line = pos[last];
+    let mut out = Vector::<T, W>::cast_from(T::from_int(0));
+    // A extent that is a whole number of lines never reaches a padding lane, so the guard is
+    // dropped rather than evaluated; one that is not needs the source cell's own index, which is
+    // runtime whenever the innermost axis holds more than one line.
+    let guarded = comptime!(match lanes {
+        Some(n) => !n.is_multiple_of(width),
+        None => false,
+    });
+    #[unroll]
+    for l in 0..width {
+        let cell = line.fmul(comptime!(width as u32)).fadd(comptime!(l as u32));
+        if comptime!(guarded) {
+            if cell < comptime!(lanes.unwrap() as u32) {
+                out.insert(
+                    l,
+                    s.read(source_lane(pos, comptime!(rank), cell))
+                        .extract(0usize),
+                );
+            }
+        } else {
+            out.insert(
+                l,
+                s.read(source_lane(pos, comptime!(rank), cell))
+                    .extract(0usize),
+            );
+        }
+    }
+    out
+}
+
+/// `pos` with its innermost entry replaced by `cell`: the destination's line coordinate re-read as
+/// the source's element one.
+#[cube]
+fn source_lane(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
+    let mut out = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..rank {
+        if comptime!(p == rank - 1) {
+            out.push(cell);
+        } else {
+            out.push(pos[p]);
+        }
+    }
+
+    out
+}
+
+/// A destination physical shape with its innermost entry re-expressed in elements rather than in
+/// `width`-wide lines, which is the frame a widening fill hands [`StepUp`] its coordinates in.
+#[cube]
+fn widened_shape(
+    shape: &Coords<u32>,
+    #[comptime] rank: usize,
+    #[comptime] width: usize,
+) -> Coords<u32> {
+    let mut out = Coords::<u32>::new();
+
+    #[unroll]
+    for p in 0..rank {
+        if comptime!(p == rank - 1) {
+            out.push(shape.at(p).fmul(comptime!(width as u32)));
+        } else {
+            out.push(shape.at(p));
+        }
+    }
+
+    out
+}
+
 /// Digit `j` of flat line `x` under `shape`'s row-major suffix strides.
 #[cube]
 fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
@@ -2334,13 +2620,10 @@ impl Layout for Window {
         #[unroll]
         for i in 0..self.origin.len() {
             let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-            // Clamp negative coordinates to 0 before bounds masking.
+            // Clamp negative coordinates to 0 before bounds masking. Branchless: this runs per
+            // tap of every gathered read, where a diamond would cost more than the cast it skips.
             let shifted = if comptime!(self.signed) {
-                if abs >= 0i32 {
-                    abs.fcast::<u32>()
-                } else {
-                    0u32
-                }
+                select(abs >= 0i32, abs.fcast::<u32>(), 0u32)
             } else {
                 abs.fcast::<u32>()
             };
@@ -2349,15 +2632,11 @@ impl Layout for Window {
             let shifted = match comptime!(self.boundaries.get(i).copied().flatten()) {
                 Some(Boundary::Clamp) => {
                     let bound_i = self.bound.at(i);
-                    // A zero-extent axis has no edge cell to fold onto, and `bound - 1` would
-                    // wrap into a wild line index; it folds to `0` like an underflow instead.
-                    if bound_i == 0u32 {
-                        0u32
-                    } else if shifted >= bound_i {
-                        bound_i - 1u32
-                    } else {
-                        shifted
-                    }
+                    let edge = select(shifted >= bound_i, bound_i.fsub(1u32), shifted);
+                    // A zero-extent axis has no edge cell to fold onto, and the `bound - 1` above
+                    // wrapped into a wild line index; both arms evaluate, so it is discarded here
+                    // rather than skipped, and the axis folds to `0` like an underflow instead.
+                    select(bound_i == 0u32, 0u32, edge)
                 }
                 None | Some(Boundary::Zero) => shifted,
             };

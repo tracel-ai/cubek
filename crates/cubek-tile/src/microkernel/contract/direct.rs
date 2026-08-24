@@ -77,7 +77,7 @@ pub(super) fn contract<
     for mat in 0..matrices {
         let lhs = lhs.matrix_transparent::<IL, WPL, L>(mat);
         let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()), vw);
 
         // A checked edge normally rolls every local array access. When enabled, split the leaf
         // into two comptime-specialized bodies: interior instances prove their complete operand
@@ -105,7 +105,7 @@ pub(super) fn contract<
             );
             let in_bounds = lhs.block_in_bounds(origin, lhs_extent)
                 && rhs.block_in_bounds(origin, rhs_extent)
-                && acc.block_in_bounds(origin, acc_extent);
+                && acc.block_in_bounds(origin.0, origin.1, acc_extent.0, acc_extent.1);
             if in_bounds {
                 contract_body::<E, EL, L, ER, V>(
                     &mut acc,
@@ -155,7 +155,7 @@ pub(super) fn contract<
 /// arrays (`unroll = true`) or the checked edge fallback (`unroll = false`).
 #[cube]
 fn contract_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
-    acc: &mut AccumulateView<'_, E, V>,
+    acc: &mut BlockAccumulate<'_, E, V>,
     lhs: &MatrixView<'_, Vector<EL, L>>,
     rhs: &MatrixView<'_, Vector<ER, V>>,
     #[comptime] lw: usize,

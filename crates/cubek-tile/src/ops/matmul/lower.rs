@@ -12,30 +12,17 @@ use crate::*;
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// `c.mma(a, b)`: contract at a final tile, else walk this level.
+    ///
+    /// Automatically seeds memory accumulator cells from the contraction identity (`0`)
+    /// and skips the initial sink read when every contracted axis is spanned whole at the
+    /// leaf level. If the contraction spans multiple levels or outer reduction loops,
+    /// it preserves the existing sink and accumulates onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        self.mma_with(lhs, rhs, comptime!(false));
-    }
-
-    /// `c.mma_replace(a, b)`: [`mma`](Tile::mma) seeding each accumulator cell from the
-    /// contraction's identity instead of reading the sink back, so the caller does not zero it
-    /// first.
-    ///
-    /// A memory accumulator round-trips every cell through its store: the leaf seeds a register
-    /// block from it ([`AccumulateView::seed`](crate::AccumulateView)) and commits back, and the
-    /// zero that made the seed meaningful is a third touch. Replacing drops one load and one store
-    /// per cell, which is the whole difference on a contraction with too few taps to amortize
-    /// them. A promoted accumulator already states its own init and has nothing to replace.
-    ///
-    /// Sound only where each cell is contracted once, so the final tile has to span every
-    /// contracted axis whole: an axis a level above splits sends the walk back to a cell it has
-    /// already written, and the second visit would discard the first. Checked, not trusted.
-    pub fn mma_replace<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        comptime!(assert_contracted_at_leaf(
-            &self.space,
-            &lhs.space,
-            &rhs.space
-        ));
-        self.mma_with(lhs, rhs, comptime!(true));
+        let replace = comptime!(
+            matches!(self.leaf, Leaf::Memory { .. })
+                && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space)
+        );
+        self.mma_with(lhs, rhs, replace);
     }
 
     pub(crate) fn mma_with<Lhs: Numeric, Rhs: Numeric>(
@@ -163,21 +150,18 @@ impl<E: Numeric> PlaneTile<E> {
     }
 }
 
-/// Asserts that the final tile spans every contracted axis whole, which is what makes a replacing
-/// seed sound: the walk above the leaf then steps only axes the accumulator spans, so it never
-/// returns to a cell it has already written.
-fn assert_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) {
+/// Whether the final tile spans every contracted axis whole, which is what makes a replacing
+/// seed sound: the walk above the leaf never returns to a cell it has already written.
+fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
     let merged = Space::merge(&[lhs, rhs]);
     let leaf = merged.final_space();
     for axis in Space::contracted(&[lhs, rhs], out).iter() {
         let (whole, at_leaf) = (merged.extent(*axis), leaf.extent(*axis));
-        assert!(
-            whole == at_leaf,
-            "Tile::mma_replace: {axis:?} is contracted over {whole} but the final tile spans \
-             {at_leaf} of it, so the walk revisits every accumulator cell and a replacing seed \
-             would discard what the previous visit left; use `mma` over a zeroed sink"
-        );
+        if whole != at_leaf {
+            return false;
+        }
     }
+    true
 }
 
 /// Asserts that operands are not gathered and have a single contracted axis.
