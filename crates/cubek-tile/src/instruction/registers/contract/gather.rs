@@ -98,6 +98,10 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let k_tail = comptime!(kc % lw);
 
     let lane_fanout = comptime!(config.lane_fanout);
+    let innermost_divisible = comptime!(match reduce_extents.last() {
+        Some(&extent) => extent.is_multiple_of(lw),
+        None => true,
+    });
 
     for mat in 0..matrices {
         let batch = unravel(
@@ -152,7 +156,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     rhs_spans_col,
                 );
             }
-        } else if comptime!(lane_fanout && lw > 1) {
+        } else if comptime!(lane_fanout && lw > 1 && innermost_divisible) {
             for line in 0..k_lines {
                 #[unroll]
                 for lane in 0..lw {
