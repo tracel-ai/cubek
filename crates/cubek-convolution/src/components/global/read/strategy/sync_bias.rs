@@ -1,17 +1,13 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_matmul::{
-    args::RuntimeConfig,
-    components::global::{
-        GlobalReaderConfig, PlaneFlowPartition,
-        memory::GlobalIterator,
-        multi_stage::LoadMaxRoundPlaneCount,
-        read::{
-            FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
-            validate_swizzle_atom_size,
-        },
-    },
-    definition::{MatmulElems, MatmulProblem},
+use cubek_matmul::definition::{MatmulElems, MatmulProblem};
+use cubek_matmul::multi_level::args::RuntimeConfig;
+use cubek_matmul::multi_level::components::global::memory::GlobalIterator;
+use cubek_matmul::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
+use cubek_matmul::multi_level::components::global::read::sync::Synchronous;
+use cubek_matmul::multi_level::components::global::read::{
+    FullLoadingStrategy, LoadingJob, LoadingValidation, validate_swizzle_atom_size,
 };
+use cubek_matmul::multi_level::components::global::{GlobalReaderConfig, PlaneFlowPartition};
 use cubek_std::{
     InvalidConfigError, StageIdent,
     tile::{NoTilingLayout, TilingValidation},

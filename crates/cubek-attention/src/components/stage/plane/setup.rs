@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use cubecl::ir::DeviceProperties;
-use cubek_matmul::components::stage::StageFamily;
+use cubek_matmul::multi_level::components::stage::StageFamily;
 use cubek_std::{
     MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},

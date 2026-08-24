@@ -9,10 +9,8 @@ use crate::{
     routines::Routine,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::{
-    definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
-    routines::BlueprintStrategy,
-};
+use cubek_matmul::definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError};
+use cubek_matmul::routine::BlueprintStrategy;
 use cubek_std::{InputBinding, MatrixLayout};
 
 /// Backward-data dispatch helper.

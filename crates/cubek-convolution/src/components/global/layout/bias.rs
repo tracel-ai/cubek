@@ -5,7 +5,7 @@ use cubecl::{
         layout::*,
     },
 };
-use cubek_matmul::args::BatchedCoords;
+use cubek_matmul::multi_level::args::BatchedCoords;
 
 #[derive(CubeType)]
 pub struct BiasLayout {

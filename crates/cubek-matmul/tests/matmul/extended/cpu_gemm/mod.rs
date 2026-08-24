@@ -3,13 +3,12 @@ mod layouts;
 
 use crate::matmul::test_matmul_strategy;
 use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
-use cubek_matmul::{
-    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
-    routines::{
-        BlueprintStrategy,
-        cpu_gemm::{CpuGemmBlueprint, CpuGemmStrategy, InstructionShape, PlaneGrid},
-    },
-    strategy::Strategy,
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
+use cubek_matmul::routine::BlueprintStrategy;
+use cubek_matmul::strategy::Strategy;
+use cubek_matmul::tiled::Strategy as Tiled;
+use cubek_matmul::tiled::cpu_gemm::{
+    CpuGemmBlueprint, CpuGemmStrategy, InstructionShape, PlaneGrid,
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::skip_unless_cpu;
@@ -74,14 +73,15 @@ fn mixed_precision_f16_inputs_f32_acc() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -123,14 +123,15 @@ fn very_small_square() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -172,14 +173,15 @@ fn small_square() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -221,14 +223,15 @@ fn rectangular() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -270,14 +273,15 @@ fn single_tile() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -308,7 +312,7 @@ fn many_tiles_inferred_size() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
     );
 }
 
@@ -339,7 +343,7 @@ fn transposed_lhs_m_not_vector_multiple() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
     );
 }
 
@@ -368,14 +372,15 @@ fn transposed_lhs_batched() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -417,14 +422,15 @@ fn batched_small() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -466,14 +472,15 @@ fn batched_rectangular() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -503,14 +510,15 @@ fn indivisible_all_axes() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -540,14 +548,15 @@ fn indivisible_rectangular_batched() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -577,7 +586,7 @@ fn indivisible_inferred() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
     );
 }
 
@@ -608,7 +617,7 @@ fn matvec_inferred() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
     );
 }
 
@@ -638,7 +647,7 @@ fn narrow_n_inferred() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())),
+        Tiled::CpuGemm(BlueprintStrategy::Inferred(CpuGemmStrategy::default())).into(),
     );
 }
 
@@ -669,14 +678,15 @@ fn broadcast_rhs_unbatched() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -706,14 +716,15 @@ fn broadcast_lhs_unbatched() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -745,14 +756,15 @@ fn broadcast_two_axes() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -783,14 +795,15 @@ fn batched_two_axes() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }
 
@@ -820,13 +833,14 @@ fn broadcast_indivisible() {
     test_matmul_strategy(
         client,
         problem,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile_size,
                 n: tile_size,
                 k: tile_size,
             },
             planes: PlaneGrid { m: 2, n: 2 },
-        })),
+        }))
+        .into(),
     );
 }

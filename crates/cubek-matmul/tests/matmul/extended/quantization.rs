@@ -1,10 +1,9 @@
 use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*};
-use cubek_matmul::{
-    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
-    eval::cpu_reference::matmul_cpu_reference,
-    launch::launch_ref,
-    strategy::Strategy,
-};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
+use cubek_matmul::eval::cpu_reference::matmul_cpu_reference;
+use cubek_matmul::launch::launch_ref;
+use cubek_matmul::multi_level::Strategy as MultiLevel;
+use cubek_matmul::strategy::Strategy;
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
@@ -38,7 +37,7 @@ impl Default for QuantizedMatmulCase {
             rhs_scheme: None,
             lhs_layout: MatrixLayout::RowMajor,
             rhs_layout: MatrixLayout::RowMajor,
-            strategy: Strategy::Naive,
+            strategy: MultiLevel::Naive.into(),
             epsilon_scale: 1.0,
         }
     }
@@ -404,7 +403,7 @@ pub fn test_matmul_quantized_lhs_q8f_native() {
 
 #[test]
 pub fn test_matmul_quantized_lhs_q8s_block16() {
-    // Block-level isn't supported by `Strategy::Naive`. Use
+    // Block-level isn't supported by `MultiLevel::Naive.into()`. Use
     // `Strategy::Auto` here so the tiling path, which handles block-scaled
     // inputs natively, is exercised instead.
     run_quantized_matmul(QuantizedMatmulCase {
@@ -473,7 +472,7 @@ pub fn test_matmul_quantized_rhs_gemv() {
         n: 64,
         k: 64,
         rhs_scheme: Some(tensor_scheme(QuantValue::Q4S)),
-        strategy: Strategy::GemvUnitPerpendicular(Default::default()),
+        strategy: MultiLevel::GemvUnitPerpendicular(Default::default()).into(),
         ..Default::default()
     });
 }

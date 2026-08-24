@@ -1,10 +1,9 @@
 //! Shared helpers for the basic tier.
 
 use cubecl::prelude::{CubePrimitive, Scalar};
-use cubek_matmul::{
-    components::stage::PartitionBuffering,
-    definition::{MatmulElems, MatmulGlobalElems, TilingScheme},
-};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
+use cubek_matmul::multi_level::components::stage::PartitionBuffering;
+use cubek_matmul::multi_level::definition::TilingScheme;
 use cubek_std::{PartitionSize, StageSize, SwizzleModes, TileSize};
 
 use crate::convolution::launcher_strategy::ConvolutionSize;

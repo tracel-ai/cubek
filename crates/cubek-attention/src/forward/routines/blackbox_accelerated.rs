@@ -1,8 +1,7 @@
 use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::Scalar};
-use cubek_matmul::{
-    components::{global::PartitionedStageFamily, stage::StridedStageFamily},
-    routines::find_instruction_size,
-};
+use cubek_matmul::multi_level::components::global::PartitionedStageFamily;
+use cubek_matmul::multi_level::components::stage::StridedStageFamily;
+use cubek_matmul::multi_level::routines::find_instruction_size;
 use cubek_std::cube_count::CubeCountStrategy;
 
 use crate::forward::definition::{

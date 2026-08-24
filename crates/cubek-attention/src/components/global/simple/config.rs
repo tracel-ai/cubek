@@ -1,7 +1,6 @@
 use cubecl::CubeDim;
-use cubek_matmul::components::global::{
-    GlobalReaderConfig, GlobalWriterConfig, memory::GlobalMemoryConfig,
-};
+use cubek_matmul::multi_level::components::global::memory::GlobalMemoryConfig;
+use cubek_matmul::multi_level::components::global::{GlobalReaderConfig, GlobalWriterConfig};
 
 use crate::components::{global::GlobalAttentionConfig, stage::StageAttentionConfig};
 

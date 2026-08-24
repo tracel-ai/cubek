@@ -7,7 +7,7 @@ pub fn test_unit_perpendicular_very_small_square_rhs_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -22,7 +22,7 @@ pub fn test_unit_perpendicular_k_larger_than_n() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -37,7 +37,7 @@ pub fn test_unit_perpendicular_k_smaller_than_n() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -52,7 +52,7 @@ pub fn test_unit_perpendicular_small_square_rhs_row_major() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -67,7 +67,7 @@ pub fn test_unit_perpendicular_large() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -82,7 +82,7 @@ pub fn test_unit_perpendicular_large_broadcast_lhs() {
         mat_batch: 2,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -97,7 +97,7 @@ pub fn test_unit_perpendicular_large_broadcast_rhs() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -112,7 +112,7 @@ pub fn test_unit_perpendicular_large_batched() {
         mat_batch: 2,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -127,7 +127,7 @@ pub fn test_unit_perpendicular_uneven_shape() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();
@@ -142,7 +142,7 @@ pub fn test_unit_perpendicular_not_same_vectorization() {
         mat_batch: 1,
         mat_layout: MatrixLayout::RowMajor,
         elems: elems(),
-        strategy: Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())),
+        strategy: MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(Default::default())).into(),
         kind: GemvKind::VecMat,
     }
     .test();

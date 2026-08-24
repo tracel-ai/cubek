@@ -4,8 +4,11 @@
 //! against a representative shape; that is enough to catch selector regressions
 //! without blowing up compile time.
 
-use cubek_matmul::routines::{BlueprintStrategy, cmma::CmmaStrategy};
+use cubek_matmul::multi_level::Strategy as MultiLevel;
+use cubek_matmul::routine::BlueprintStrategy;
 use cubek_matmul::strategy::Strategy;
+use cubek_matmul::tiled::Strategy as Tiled;
+use cubek_matmul::tiled::cmma::CmmaStrategy;
 
 use super::common::{client, f16_elems, square};
 use crate::matmul::test_matmul_strategy;
@@ -15,7 +18,7 @@ fn simple_cyclic_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleCyclicCmma(Default::default()),
+        MultiLevel::SimpleCyclicCmma(Default::default()).into(),
     );
 }
 
@@ -24,7 +27,7 @@ fn simple_cyclic_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleCyclicMma(Default::default()),
+        MultiLevel::SimpleCyclicMma(Default::default()).into(),
     );
 }
 
@@ -33,7 +36,7 @@ fn simple_strided_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleStridedCmma(Default::default()),
+        MultiLevel::SimpleStridedCmma(Default::default()).into(),
     );
 }
 
@@ -42,7 +45,7 @@ fn simple_strided_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleStridedMma(Default::default()),
+        MultiLevel::SimpleStridedMma(Default::default()).into(),
     );
 }
 
@@ -51,7 +54,7 @@ fn simple_tilewise_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleTilewiseCmma(Default::default()),
+        MultiLevel::SimpleTilewiseCmma(Default::default()).into(),
     );
 }
 
@@ -60,7 +63,7 @@ fn simple_tilewise_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleTilewiseMma(Default::default()),
+        MultiLevel::SimpleTilewiseMma(Default::default()).into(),
     );
 }
 
@@ -69,7 +72,7 @@ fn simple_async_strided_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleAsyncStridedCmma(Default::default()),
+        MultiLevel::SimpleAsyncStridedCmma(Default::default()).into(),
     );
 }
 
@@ -78,7 +81,7 @@ fn simple_async_strided_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleAsyncStridedMma(Default::default()),
+        MultiLevel::SimpleAsyncStridedMma(Default::default()).into(),
     );
 }
 
@@ -87,7 +90,7 @@ fn simple_async_cyclic_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleAsyncCyclicCmma(Default::default()),
+        MultiLevel::SimpleAsyncCyclicCmma(Default::default()).into(),
     );
 }
 
@@ -96,7 +99,7 @@ fn simple_async_cyclic_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleAsyncCyclicMma(Default::default()),
+        MultiLevel::SimpleAsyncCyclicMma(Default::default()).into(),
     );
 }
 
@@ -105,7 +108,7 @@ fn double_cyclic_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleCyclicCmma(Default::default()),
+        MultiLevel::DoubleCyclicCmma(Default::default()).into(),
     );
 }
 
@@ -114,7 +117,7 @@ fn double_cyclic_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleCyclicMma(Default::default()),
+        MultiLevel::DoubleCyclicMma(Default::default()).into(),
     );
 }
 
@@ -123,7 +126,7 @@ fn double_tilewise_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleTilewiseCmma(Default::default()),
+        MultiLevel::DoubleTilewiseCmma(Default::default()).into(),
     );
 }
 
@@ -132,7 +135,7 @@ fn double_tilewise_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleTilewiseMma(Default::default()),
+        MultiLevel::DoubleTilewiseMma(Default::default()).into(),
     );
 }
 
@@ -141,7 +144,7 @@ fn double_hybrid_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleHybridCmma(Default::default()),
+        MultiLevel::DoubleHybridCmma(Default::default()).into(),
     );
 }
 
@@ -150,7 +153,7 @@ fn double_hybrid_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleHybridMma(Default::default()),
+        MultiLevel::DoubleHybridMma(Default::default()).into(),
     );
 }
 
@@ -159,7 +162,7 @@ fn double_async_cyclic_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleAsyncCyclicCmma(Default::default()),
+        MultiLevel::DoubleAsyncCyclicCmma(Default::default()).into(),
     );
 }
 
@@ -168,7 +171,7 @@ fn double_async_cyclic_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleAsyncCyclicMma(Default::default()),
+        MultiLevel::DoubleAsyncCyclicMma(Default::default()).into(),
     );
 }
 
@@ -177,7 +180,7 @@ fn double_async_strided_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleAsyncStridedCmma(Default::default()),
+        MultiLevel::DoubleAsyncStridedCmma(Default::default()).into(),
     );
 }
 
@@ -186,7 +189,7 @@ fn double_async_strided_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleAsyncStridedMma(Default::default()),
+        MultiLevel::DoubleAsyncStridedMma(Default::default()).into(),
     );
 }
 
@@ -195,7 +198,7 @@ fn specialized_cyclic_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SpecializedCyclicCmma(Default::default()),
+        MultiLevel::SpecializedCyclicCmma(Default::default()).into(),
     );
 }
 
@@ -204,7 +207,7 @@ fn specialized_cyclic_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SpecializedCyclicMma(Default::default()),
+        MultiLevel::SpecializedCyclicMma(Default::default()).into(),
     );
 }
 
@@ -213,7 +216,7 @@ fn specialized_strided_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SpecializedStridedCmma(Default::default()),
+        MultiLevel::SpecializedStridedCmma(Default::default()).into(),
     );
 }
 
@@ -222,7 +225,7 @@ fn specialized_strided_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SpecializedStridedMma(Default::default()),
+        MultiLevel::SpecializedStridedMma(Default::default()).into(),
     );
 }
 
@@ -231,7 +234,7 @@ fn ordered_double_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::OrderedDoubleCmma(Default::default()),
+        MultiLevel::OrderedDoubleCmma(Default::default()).into(),
     );
 }
 
@@ -240,7 +243,7 @@ fn ordered_double_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::OrderedDoubleMma(Default::default()),
+        MultiLevel::OrderedDoubleMma(Default::default()).into(),
     );
 }
 
@@ -251,7 +254,7 @@ fn cmma_square_f32() {
     test_matmul_strategy(
         client(),
         square(256, super::common::f32_elems()),
-        Strategy::Cmma(Default::default()),
+        Tiled::Cmma(Default::default()).into(),
     );
 }
 
@@ -260,7 +263,7 @@ fn cmma_square_f16() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::Cmma(Default::default()),
+        Tiled::Cmma(Default::default()).into(),
     );
 }
 
@@ -269,7 +272,7 @@ fn cmma_rect_f32() {
     test_matmul_strategy(
         client(),
         super::common::rect(64, 128, 32, super::common::f32_elems()),
-        Strategy::Cmma(Default::default()),
+        Tiled::Cmma(Default::default()).into(),
     );
 }
 
@@ -294,7 +297,7 @@ fn cmma_batched_f32() {
         elems,
         AddressType::U32,
     );
-    test_matmul_strategy(client(), problem, Strategy::Cmma(Default::default()));
+    test_matmul_strategy(client(), problem, Tiled::Cmma(Default::default()).into());
 }
 
 /// A plane owning exactly one fragment along both axes: the Staged level's cuts equal the
@@ -303,11 +306,9 @@ fn cmma_batched_f32() {
 /// cube-shared smem (every plane contracted plane 0's windows).
 #[test]
 fn cmma_partition_1x1_f32() {
-    use cubek_matmul::routines::cmma::CmmaDelivery;
-    use cubek_matmul::routines::{
-        cmma::{CmmaBlueprint, Partition},
-        cpu_gemm::{InstructionShape, PlaneGrid},
-    };
+    use cubek_matmul::tiled::cmma::CmmaDelivery;
+    use cubek_matmul::tiled::cmma::{CmmaBlueprint, Partition};
+    use cubek_matmul::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
 
     let blueprint = CmmaBlueprint {
         instruction: InstructionShape { m: 8, n: 8, k: 8 },
@@ -319,7 +320,7 @@ fn cmma_partition_1x1_f32() {
     test_matmul_strategy(
         client(),
         super::common::rect(128, 64, 96, super::common::f32_elems()),
-        Strategy::Cmma(BlueprintStrategy::Forced(blueprint)),
+        Tiled::Cmma(BlueprintStrategy::Forced(blueprint)).into(),
     );
 }
 
@@ -331,7 +332,7 @@ fn cmma_inferred_partition_1x1() {
     test_matmul_strategy(
         client(),
         super::common::rect(32, 40, 48, super::common::f32_elems()),
-        Strategy::Cmma(Default::default()),
+        Tiled::Cmma(Default::default()).into(),
     );
 }
 
@@ -343,7 +344,7 @@ fn cmma_tma_square_f16() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())),
+        Tiled::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())).into(),
     );
 }
 
@@ -352,12 +353,10 @@ fn cmma_tma_square_f16() {
 #[test]
 fn cmma_tma_rejects_oversized_box() {
     use cubek_matmul::definition::{AvailableVectorSizes, MatmulSetupError};
-    use cubek_matmul::routines::cmma::CmmaDelivery;
-    use cubek_matmul::routines::{
-        DeviceSettings,
-        cmma::{CmmaBlueprint, CmmaRoutine, Partition},
-        cpu_gemm::{InstructionShape, PlaneGrid},
-    };
+    use cubek_matmul::routine::DeviceSettings;
+    use cubek_matmul::tiled::cmma::CmmaDelivery;
+    use cubek_matmul::tiled::cmma::{CmmaBlueprint, CmmaRoutine, Partition};
+    use cubek_matmul::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.

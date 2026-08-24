@@ -3,16 +3,11 @@
 use cubecl::{
     Runtime, TestRuntime, client::ComputeClient, frontend::Scalar, ir::AddressType, zspace::shape,
 };
-use cubek_matmul::{
-    components::{
-        global::LoadFlows,
-        stage::PartitionBuffering,
-        tile::{TileMatmul, TileMatmulKind},
-    },
-    definition::{
-        BatchMatmulBlueprint, MatmulElems, MatmulGlobalElems, MatmulProblem, TilingScheme,
-    },
-};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
+use cubek_matmul::multi_level::components::global::LoadFlows;
+use cubek_matmul::multi_level::components::stage::PartitionBuffering;
+use cubek_matmul::multi_level::components::tile::{TileMatmul, TileMatmulKind};
+use cubek_matmul::multi_level::definition::{BatchMatmulBlueprint, TilingScheme};
 use cubek_std::{
     MatrixLayout, PartitionSize, StageSize, SwizzleModes, TileSize,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},

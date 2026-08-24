@@ -1,6 +1,7 @@
 pub mod row_fp {
     use super::*;
-    use cubek_matmul::definition::{MatmulProblem, TilingScheme};
+    use cubek_matmul::definition::MatmulProblem;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -18,7 +19,7 @@ pub mod row_fp {
 
 mod swizzlecol_fp {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -36,7 +37,7 @@ mod swizzlecol_fp {
 
 mod col_fl {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -54,7 +55,7 @@ mod col_fl {
 
 mod swizzlerow_fl {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -72,7 +73,7 @@ mod swizzlerow_fl {
 
 mod row_sm_exact {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -94,7 +95,7 @@ mod row_sm_exact {
 
 mod row_sm_full {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -116,7 +117,7 @@ mod row_sm_full {
 
 mod swizzlerow_cube_full {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(
@@ -138,7 +139,7 @@ mod swizzlerow_cube_full {
 
 mod swizzlerow_spread {
     use super::*;
-    use cubek_matmul::definition::TilingScheme;
+    use cubek_matmul::multi_level::definition::TilingScheme;
     use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
     fn hypercube_blueprint(

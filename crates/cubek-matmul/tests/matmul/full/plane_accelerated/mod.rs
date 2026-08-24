@@ -1,11 +1,11 @@
 mod matmul_plane_accelerated {
     mod cmma {
         use cubecl::{TestRuntime, client::ComputeClient};
-        use cubek_matmul::{
-            definition::{BatchMatmulBlueprint, MatmulProblem},
-            routines::BlueprintStrategy,
-            strategy::{Strategy, test_only::TestStrategy},
-        };
+        use cubek_matmul::definition::MatmulProblem;
+        use cubek_matmul::multi_level::Strategy as MultiLevel;
+        use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
+        use cubek_matmul::multi_level::test_only::TestStrategy;
+        use cubek_matmul::routine::BlueprintStrategy;
 
         use crate::matmul::{test_matmul_strategy, test_matmul_test_strategy};
 
@@ -17,7 +17,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_simple_strided(
@@ -28,7 +28,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SimpleStridedCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SimpleStridedCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_simple_tilewise(
@@ -39,7 +39,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SimpleTilewiseCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SimpleTilewiseCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_simple_barrier_cooperative(
@@ -72,7 +72,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_double_buffering_tilewise(
@@ -83,7 +83,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::DoubleTilewiseCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_double_buffering_hybrid(
@@ -94,7 +94,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::DoubleHybridCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::DoubleHybridCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_ordered_double_buffering(
@@ -105,7 +105,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::OrderedDoubleCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::OrderedDoubleCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_specialized_cyclic(
@@ -116,7 +116,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_specialized_strided(
@@ -127,7 +127,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SpecializedStridedCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SpecializedStridedCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
 
@@ -136,11 +136,11 @@ mod matmul_plane_accelerated {
 
     mod mma {
         use cubecl::{TestRuntime, client::ComputeClient};
-        use cubek_matmul::{
-            definition::{BatchMatmulBlueprint, MatmulProblem},
-            routines::BlueprintStrategy,
-            strategy::{Strategy, test_only::TestStrategy},
-        };
+        use cubek_matmul::definition::MatmulProblem;
+        use cubek_matmul::multi_level::Strategy as MultiLevel;
+        use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
+        use cubek_matmul::multi_level::test_only::TestStrategy;
+        use cubek_matmul::routine::BlueprintStrategy;
 
         use crate::matmul::{test_matmul_strategy, test_matmul_test_strategy};
 
@@ -152,7 +152,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SimpleCyclicMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SimpleCyclicMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_simple_strided(
@@ -163,7 +163,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SimpleStridedMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SimpleStridedMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_simple_tilewise(
@@ -174,7 +174,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SimpleTilewiseMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SimpleTilewiseMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_simple_barrier_cooperative(
@@ -207,7 +207,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::DoubleCyclicMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::DoubleCyclicMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_double_buffering_tilewise(
@@ -218,7 +218,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::DoubleTilewiseMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::DoubleTilewiseMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_double_buffering_hybrid(
@@ -229,7 +229,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::DoubleHybridMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::DoubleHybridMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_ordered_double_buffering(
@@ -240,7 +240,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::OrderedDoubleMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::OrderedDoubleMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_specialized_cyclic(
@@ -251,7 +251,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SpecializedCyclicMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SpecializedCyclicMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
         fn launch_specialized_strided(
@@ -262,7 +262,7 @@ mod matmul_plane_accelerated {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SpecializedStridedMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SpecializedStridedMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
 

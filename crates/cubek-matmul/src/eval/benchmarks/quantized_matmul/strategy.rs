@@ -1,6 +1,9 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::routines::{BlueprintStrategy, batch::simple::SimpleArgs, gemm::GemmStrategy};
+use crate::multi_level::Strategy as MultiLevel;
+use crate::multi_level::routines::batch::simple::SimpleArgs;
+use crate::multi_level::routines::gemm::GemmStrategy;
+use crate::routine::BlueprintStrategy;
 use crate::strategy::Strategy;
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
@@ -8,17 +11,19 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
         CatalogEntry::new(
             "gemm",
             "Gemm",
-            Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
+            MultiLevel::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
                 target_num_planes: None,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_cyclic_cmma",
             "Simple Cyclic CMMA",
-            Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
     ]
 }

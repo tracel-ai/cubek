@@ -2,10 +2,9 @@ use cubecl::{
     prelude::*,
     {self, ir::DeviceProperties},
 };
-use cubek_matmul::components::{
-    global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
-    stage::StageFamily,
-};
+use cubek_matmul::multi_level::components::global::read::sync_full_cyclic::SyncFullCyclicLoading;
+use cubek_matmul::multi_level::components::global::{WriteEventListener, WriteTiling};
+use cubek_matmul::multi_level::components::stage::StageFamily;
 use cubek_std::stage::StageMemoryConfig;
 use cubek_std::tile::{ContiguousTilingLayout, RowMajorTilingOrder};
 use std::{fmt::Debug, hash::Hash};

@@ -1,11 +1,12 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::routines::{
-    BlueprintStrategy, TileSizeSelection,
-    batch::{simple::SimpleArgs, simple_unit::SimpleUnitSelectionArgs},
-    gemm::GemmStrategy,
-    gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
-};
+use crate::multi_level::Strategy as MultiLevel;
+use crate::multi_level::routines::TileSizeSelection;
+use crate::multi_level::routines::batch::simple::SimpleArgs;
+use crate::multi_level::routines::batch::simple_unit::SimpleUnitSelectionArgs;
+use crate::multi_level::routines::gemm::GemmStrategy;
+use crate::multi_level::routines::gemv_unit_perpendicular::GemvUnitPerpendicularStrategy;
+use crate::routine::BlueprintStrategy;
 use crate::strategy::Strategy;
 
 pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
@@ -13,50 +14,55 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
         CatalogEntry::new(
             "gemv_unit_perpendicular",
             "Gemv Unit Perpendicular",
-            Strategy::GemvUnitPerpendicular(BlueprintStrategy::Inferred(
+            MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::Inferred(
                 GemvUnitPerpendicularStrategy {
                     target_num_planes: None,
                 },
-            )),
+            ))
+            .into(),
         ),
         CatalogEntry::new(
             "gemm",
             "Gemm",
-            Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
+            MultiLevel::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
                 target_num_planes: None,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_vecmat",
             "Simple VecMat",
-            Strategy::SimpleVecMat(BlueprintStrategy::Inferred(().into())),
+            MultiLevel::SimpleVecMat(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
             "double_vecmat",
             "Double VecMat",
-            Strategy::DoubleVecMat(BlueprintStrategy::Inferred(().into())),
+            MultiLevel::DoubleVecMat(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
             "simple_unit_min",
             "Simple Unit (min tile)",
-            Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+            MultiLevel::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MinTileSize,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_unit_max",
             "Simple Unit (max tile)",
-            Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+            MultiLevel::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MaxTileSize,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_cyclic_cmma",
             "Simple Cyclic CMMA",
-            Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
     ]
 }

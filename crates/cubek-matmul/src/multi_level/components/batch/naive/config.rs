@@ -1,0 +1,33 @@
+use cubek_std::MatrixLayout;
+
+use crate::multi_level::components::batch::BatchConfig;
+use crate::multi_level::components::global::memory::GlobalLayoutConfig;
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct NaiveMatmulConfig {}
+
+impl BatchConfig for NaiveMatmulConfig {
+    fn lhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: false,
+            check_col_bounds: false,
+        }
+    }
+
+    fn rhs_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::ColMajor,
+            check_row_bounds: false,
+            check_col_bounds: false,
+        }
+    }
+
+    fn out_global_layout_config(&self) -> GlobalLayoutConfig {
+        GlobalLayoutConfig {
+            matrix_layout: MatrixLayout::RowMajor,
+            check_row_bounds: false,
+            check_col_bounds: false,
+        }
+    }
+}

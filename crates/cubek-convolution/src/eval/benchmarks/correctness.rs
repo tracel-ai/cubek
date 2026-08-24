@@ -1,5 +1,6 @@
 use cubecl::{Runtime, TestRuntime, prelude::Scalar};
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulPrecision, MatrixPrecision};
+use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems};
+use cubek_matmul::multi_level::definition::{MatmulPrecision, MatrixPrecision};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::Strategy;

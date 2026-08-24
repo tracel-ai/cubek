@@ -26,8 +26,8 @@ use cubek_std::InputBinding;
 use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 
 use crate::definition::MatmulElems;
-use crate::routines::BlueprintStrategy;
-use crate::routines::cpu_gemm::{
+use crate::routine::BlueprintStrategy;
+use crate::tiled::cpu_gemm::{
     CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
 };
 

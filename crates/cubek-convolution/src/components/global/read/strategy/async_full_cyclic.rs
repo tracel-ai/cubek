@@ -5,20 +5,17 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_matmul::components::{
-    global::{
-        GlobalReaderConfig, PlaneFlowPartition,
-        memory::GlobalIterator,
-        multi_stage::LoadMaxRoundPlaneCount,
-        read::{
-            FullLoadingStrategy, LoadingJob, LoadingValidation, ReaderMode,
-            async_barrier::AsyncCopy,
-            async_full_cyclic::AsyncFullCyclicLoading as MatmulCyclicLoading, tiled::TiledLayout,
-        },
-    },
-    stage::{StridedStageFamily, StridedStageMemory},
-};
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
+use cubek_matmul::multi_level::components::global::memory::GlobalIterator;
+use cubek_matmul::multi_level::components::global::multi_stage::LoadMaxRoundPlaneCount;
+use cubek_matmul::multi_level::components::global::read::async_barrier::AsyncCopy;
+use cubek_matmul::multi_level::components::global::read::async_full_cyclic::AsyncFullCyclicLoading as MatmulCyclicLoading;
+use cubek_matmul::multi_level::components::global::read::tiled::TiledLayout;
+use cubek_matmul::multi_level::components::global::read::{
+    FullLoadingStrategy, LoadingJob, LoadingValidation, ReaderMode,
+};
+use cubek_matmul::multi_level::components::global::{GlobalReaderConfig, PlaneFlowPartition};
+use cubek_matmul::multi_level::components::stage::{StridedStageFamily, StridedStageMemory};
 use cubek_std::{
     InvalidConfigError, StageIdent,
     tile::{ContiguousTilingLayout, TilingOrder},

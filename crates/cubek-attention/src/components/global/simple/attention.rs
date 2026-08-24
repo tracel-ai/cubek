@@ -1,9 +1,8 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
-use cubek_matmul::{
-    components::global::PartitionedStage, components::global::read::FullStageGlobalReader,
-    components::stage::StridedStageMemory,
-};
+use cubek_matmul::multi_level::components::global::PartitionedStage;
+use cubek_matmul::multi_level::components::global::read::FullStageGlobalReader;
+use cubek_matmul::multi_level::components::stage::StridedStageMemory;
 use std::marker::PhantomData;
 
 use crate::components::stage::{

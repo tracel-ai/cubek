@@ -9,7 +9,8 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::Shape,
 };
-use cubek_matmul::definition::{MatmulElems, MatmulPrecision, MatrixPrecision};
+use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::multi_level::definition::{MatmulPrecision, MatrixPrecision};
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 

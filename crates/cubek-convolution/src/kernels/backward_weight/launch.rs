@@ -7,10 +7,8 @@ use crate::{
     routines::Routine,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
-use cubek_matmul::{
-    definition::{AvailableVectorSizes, MatmulElems},
-    routines::BlueprintStrategy,
-};
+use cubek_matmul::definition::{AvailableVectorSizes, MatmulElems};
+use cubek_matmul::routine::BlueprintStrategy;
 use cubek_std::{InputBinding, MatrixLayout};
 
 /// Backward-weight dispatch helper.

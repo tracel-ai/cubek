@@ -1,9 +1,7 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::{
-    global::{WriteEvent, WriteEventListener},
-    stage::Stage,
-};
+use cubek_matmul::multi_level::components::global::{WriteEvent, WriteEventListener};
+use cubek_matmul::multi_level::components::stage::Stage;
 use cubek_std::tile::{RowWise, SharedTile, Tile};
 use std::marker::PhantomData;
 

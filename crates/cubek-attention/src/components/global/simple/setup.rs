@@ -1,19 +1,15 @@
 use std::marker::PhantomData;
 
 use cubecl::ir::DeviceProperties;
-use cubek_matmul::{
-    components::{
-        global::{
-            GlobalReaderConfig, GlobalWriterConfig, InputLoadFlow, PartitionedStageFamily,
-            PlaneFlowConfig, PlaneFlowPartitionRule,
-            memory::{GlobalMemoryConfig, ViewDirection},
-            multi_stage::EventLoadingMode,
-            read::ReaderMode,
-        },
-        stage::StridedStageFamily,
-    },
-    definition::LoadingPrecomputeStrategy,
+use cubek_matmul::multi_level::components::global::memory::{GlobalMemoryConfig, ViewDirection};
+use cubek_matmul::multi_level::components::global::multi_stage::EventLoadingMode;
+use cubek_matmul::multi_level::components::global::read::ReaderMode;
+use cubek_matmul::multi_level::components::global::{
+    GlobalReaderConfig, GlobalWriterConfig, InputLoadFlow, PartitionedStageFamily, PlaneFlowConfig,
+    PlaneFlowPartitionRule,
 };
+use cubek_matmul::multi_level::components::stage::StridedStageFamily;
+use cubek_matmul::multi_level::definition::LoadingPrecomputeStrategy;
 use cubek_std::{MatrixLayout, StageIdent};
 
 use crate::{

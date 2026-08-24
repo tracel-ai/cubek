@@ -1,17 +1,18 @@
 use cubek_test_utils::CatalogEntry;
 
-use crate::routines::{
-    BlueprintStrategy, TileSizeSelection,
-    batch::{
-        double_buffering::DoubleBufferingArgs, double_unit::DoubleUnitSelectionArgs,
-        ordered_double_buffering::OrderedSelectionArgs, simple::SimpleArgs,
-        simple_unit::SimpleUnitSelectionArgs,
-    },
-    cmma::CmmaStrategy,
-    cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid},
-    gemm::GemmStrategy,
-};
+use crate::multi_level::Strategy as MultiLevel;
+use crate::multi_level::routines::TileSizeSelection;
+use crate::multi_level::routines::batch::double_buffering::DoubleBufferingArgs;
+use crate::multi_level::routines::batch::double_unit::DoubleUnitSelectionArgs;
+use crate::multi_level::routines::batch::ordered_double_buffering::OrderedSelectionArgs;
+use crate::multi_level::routines::batch::simple::SimpleArgs;
+use crate::multi_level::routines::batch::simple_unit::SimpleUnitSelectionArgs;
+use crate::multi_level::routines::gemm::GemmStrategy;
+use crate::routine::BlueprintStrategy;
 use crate::strategy::Strategy;
+use crate::tiled::Strategy as Tiled;
+use crate::tiled::cmma::CmmaStrategy;
+use crate::tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid};
 
 fn cpu_gemm_forced(
     tag: &'static str,
@@ -38,13 +39,14 @@ fn cpu_gemm_leaf(
     CatalogEntry::new(
         tag,
         label,
-        Strategy::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
+        Tiled::CpuGemm(BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape { m, n, k },
             planes: PlaneGrid {
                 m: plane_m,
                 n: plane_n,
             },
-        })),
+        }))
+        .into(),
     )
 }
 
@@ -53,109 +55,119 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
         CatalogEntry::new(
             "simple_cyclic_cmma",
             "SimpleCyclicCmma",
-            Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: false,
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_cyclic_cmma_multirows",
             "SimpleCyclicCmma (multi rows)",
-            Strategy::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
+            MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Inferred(SimpleArgs {
                 multi_rows: true,
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "double_tilewise_cmma",
             "DoubleTilewiseCmma",
-            Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+            MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
                 specialized: false,
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "double_tilewise_cmma_specialized",
             "DoubleTilewiseCmma (specialized)",
-            Strategy::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
+            MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::Inferred(DoubleBufferingArgs {
                 specialized: true,
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "ordered_double_cmma",
             "OrderedDoubleCmma (rc=8 rpp=2 pk=2)",
-            Strategy::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
+            MultiLevel::OrderedDoubleCmma(BlueprintStrategy::Inferred(OrderedSelectionArgs {
                 row_count: Some(8),
                 rows_per_plane: Some(2),
                 partition_k: Some(2),
                 ..Default::default()
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_unit_min",
             "Simple Unit (min tile)",
-            Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+            MultiLevel::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MinTileSize,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "simple_unit_max",
             "Simple Unit (max tile)",
-            Strategy::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
+            MultiLevel::SimpleUnit(BlueprintStrategy::Inferred(SimpleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MaxTileSize,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "double_unit_min",
             "Double Unit (min tile)",
-            Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
+            MultiLevel::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MinTileSize,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "double_unit_max",
             "Double Unit (max tile)",
-            Strategy::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
+            MultiLevel::DoubleUnit(BlueprintStrategy::Inferred(DoubleUnitSelectionArgs {
                 tile_size: TileSizeSelection::MaxTileSize,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "specialized_tma_mma",
             "Specialized TMA (mma)",
-            Strategy::SpecializedTmaMma(BlueprintStrategy::Inferred(().into())),
+            MultiLevel::SpecializedTmaMma(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
             "specialized_cyclic_mma",
             "Specialized Cyclic (mma)",
-            Strategy::SpecializedCyclicMma(BlueprintStrategy::Inferred(().into())),
+            MultiLevel::SpecializedCyclicMma(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
             "specialized_strided_mma",
             "Specialized Strided (mma)",
-            Strategy::SpecializedStridedMma(BlueprintStrategy::Inferred(().into())),
+            MultiLevel::SpecializedStridedMma(BlueprintStrategy::Inferred(().into())).into(),
         ),
         CatalogEntry::new(
             "gemm",
             "Gemm",
-            Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
+            MultiLevel::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
                 target_num_planes: None,
-            })),
+            }))
+            .into(),
         ),
         CatalogEntry::new(
             "cpu_gemm",
             "CpuGemm (tile-DSL CPU)",
-            Strategy::CpuGemm(BlueprintStrategy::default()),
+            Tiled::CpuGemm(BlueprintStrategy::default()).into(),
         ),
         CatalogEntry::new(
             "cmma",
             "Cmma (tile-DSL)",
-            Strategy::Cmma(BlueprintStrategy::default()),
+            Tiled::Cmma(BlueprintStrategy::default()).into(),
         ),
         CatalogEntry::new(
             "cmma_tma",
             "Cmma (tile-DSL, TMA)",
-            Strategy::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())),
+            Tiled::Cmma(BlueprintStrategy::Inferred(CmmaStrategy::tma())).into(),
         ),
         cpu_gemm_forced(
             "cpu_gemm_t64",

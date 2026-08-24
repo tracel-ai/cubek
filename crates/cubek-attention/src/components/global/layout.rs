@@ -4,7 +4,7 @@ use cubecl::std::tensor::{
     r#virtual::VirtualTensor,
 };
 use cubecl::{self as cubecl};
-use cubek_matmul::components::global::memory::GlobalMemoryConfig;
+use cubek_matmul::multi_level::components::global::memory::GlobalMemoryConfig;
 
 /// Global layout that uses the last two dimensions and ignores all others.
 #[derive(CubeType, Clone, Copy)]

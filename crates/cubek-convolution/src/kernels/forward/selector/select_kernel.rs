@@ -6,14 +6,10 @@ use cubecl::{
     prelude::TensorBinding,
     {Runtime, client::ComputeClient},
 };
-use cubek_matmul::{
-    args::{InputArg, OutputArg},
-    routines::BlueprintStrategy,
-};
-use cubek_matmul::{
-    definition::{MatmulElems, MatmulVectorSizes},
-    routines::BatchMatmulRoutine,
-};
+use cubek_matmul::definition::{MatmulElems, MatmulVectorSizes};
+use cubek_matmul::multi_level::BatchMatmulRoutine;
+use cubek_matmul::multi_level::args::{InputArg, OutputArg};
+use cubek_matmul::routine::BlueprintStrategy;
 use cubek_std::InputBinding;
 
 use crate::components::{ConvSetupError, ConvolutionProblem};
@@ -71,7 +67,7 @@ pub fn launch_kernel_concrete<
         dtypes,
     );
 
-    cubek_matmul::strategy::launch_kernel::<Args, R, A>(
+    cubek_matmul::multi_level::launch_kernel::<Args, R, A>(
         client,
         input,
         output,

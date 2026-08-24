@@ -1,5 +1,6 @@
 use cubecl::{CubeDim, Runtime};
-use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+use cubek_matmul::multi_level::components::global::PartitionedStageFamily;
+use cubek_matmul::multi_level::components::stage::StridedStageFamily;
 use cubek_std::{CubeDimResource, cube_count::CubeCountStrategy};
 
 use crate::forward::definition::{

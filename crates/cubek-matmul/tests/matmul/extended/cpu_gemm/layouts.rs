@@ -7,8 +7,8 @@ use cubecl::{
     ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
 };
 use cubek_matmul::definition::{MatmulElems, MatmulProblem};
-use cubek_matmul::routines::BlueprintStrategy;
-use cubek_matmul::routines::cpu_gemm::{
+use cubek_matmul::routine::BlueprintStrategy;
+use cubek_matmul::tiled::cpu_gemm::{
     CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
 };
 use cubek_std::{InputBinding, MatrixLayout};
