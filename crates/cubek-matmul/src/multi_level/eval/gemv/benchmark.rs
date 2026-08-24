@@ -13,8 +13,8 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{
     definition::MatmulElems,
-    eval::benchmarks::gemv::problem::{GemvProblem, ProblemKind},
     launch::launch_ref,
+    multi_level::eval::gemv::problem::{GemvProblem, ProblemKind},
     strategy::Strategy,
 };
 

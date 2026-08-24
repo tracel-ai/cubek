@@ -7,3 +7,6 @@ pub mod cpu_gemm;
 mod strategy;
 
 pub use strategy::Strategy;
+
+#[cfg(feature = "benchmarks")]
+pub mod eval;

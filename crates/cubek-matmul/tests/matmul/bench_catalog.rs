@@ -4,11 +4,11 @@
 
 use cubecl::Runtime;
 use cubek_matmul::{
-    eval::benchmarks::{
-        gemm::{GemmCorrectness, GemmProblem},
-        gemv::{GemvCorrectness, GemvProblem},
+    eval::benchmarks::gemm::{GemmCorrectness, GemmProblem},
+    multi_level::{
+        Strategy as MultiLevel,
+        eval::gemv::{GemvCorrectness, GemvProblem},
     },
-    multi_level::Strategy as MultiLevel,
     strategy::Strategy,
     tiled::Strategy as Tiled,
 };
@@ -50,7 +50,7 @@ fn run_gemm(strategy_id: &str, problem_id: &str) {
 }
 
 fn run_gemv(strategy_id: &str, problem_id: &str) {
-    use cubek_matmul::eval::benchmarks::gemv::{problems, strategies};
+    use cubek_matmul::multi_level::eval::gemv::{problems, strategies};
 
     let strategy: Strategy = lookup(strategies(), strategy_id);
     let problem: GemvProblem = lookup(problems(), problem_id);

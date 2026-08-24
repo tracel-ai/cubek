@@ -18,10 +18,10 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{
     definition::{MatmulElems, MatmulGlobalElems},
-    eval::benchmarks::quantized_matmul::problem::{
+    launch::launch_ref as matmul_launch_ref,
+    multi_level::eval::quantized_matmul::problem::{
         Layout, Mode, QuantSide, QuantizedMatmulProblem,
     },
-    launch::launch_ref as matmul_launch_ref,
     strategy::Strategy,
 };
 
