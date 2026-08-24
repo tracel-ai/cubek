@@ -1,6 +1,6 @@
 //! The element types a matmul runs at, as a type-level mapping: one `MatmulPrecision`
-//! names the global/stage/register element of each operand. Both families launch at a
-//! precision, so it sits beside [`MatmulElems`](crate::definition::MatmulElems).
+//! names the global/stage/register element of each operand. Both architectures launch at
+//! a precision, so it sits beside [`MatmulElems`](crate::definition::MatmulElems).
 
 use cubecl::prelude::*;
 use half::{bf16, f16};

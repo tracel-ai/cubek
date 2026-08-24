@@ -1,12 +1,12 @@
 //! Matrix multiplication kernels.
 //!
-//! Two families live here, and the crate branches between them at its root:
+//! Two architectures live here, and the crate branches between them at its root:
 //! `tiled` holds routines written on the tile DSL, `multi_level` holds routines
 //! written on the batch/global/stage/tile levels. Everything outside those two
 //! modules is vocabulary both of them speak. Each is behind a feature of its own
 //! name, both on by default, and either compiles without the other.
 
-/// The problem, its element types, and the errors either family can raise.
+/// The problem, its element types, and the errors either architecture can raise.
 pub mod definition;
 /// The public launch entry point.
 pub mod launch;

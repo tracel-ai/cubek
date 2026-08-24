@@ -1,5 +1,5 @@
-//! Launcher plumbing and problem builders shared by both families. Carries no test
-//! of its own: `run` takes a closure, so it is branch-agnostic.
+//! Launcher plumbing and problem builders shared by both architectures. Carries no
+//! test of its own: `run` takes a closure, so it is architecture-agnostic.
 
 mod broadcast;
 mod launcher;

@@ -9,8 +9,8 @@ use crate::multi_level;
 #[cfg(feature = "tiled")]
 use crate::tiled;
 
-/// How to solve a matmul. The two arms are the two kernel families: routines written on
-/// the tile DSL, and routines written on the batch/global/stage/tile levels.
+/// How to solve a matmul. The two arms are the two kernel architectures: routines written
+/// on the tile DSL, and routines written on the batch/global/stage/tile levels.
 #[derive(Clone, Default)]
 pub enum Strategy {
     #[cfg(feature = "tiled")]

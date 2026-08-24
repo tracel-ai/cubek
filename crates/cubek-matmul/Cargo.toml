@@ -14,7 +14,7 @@ version.workspace = true
 default = ["std", "tiled", "multi-level", "cubecl/default"]
 std = ["cubecl/std"]
 
-# The two kernel families. At least one is required; both are on by default.
+# The two kernel architectures. At least one is required; both are on by default.
 tiled = ["dep:cubek-tile"]
 multi-level = []
 

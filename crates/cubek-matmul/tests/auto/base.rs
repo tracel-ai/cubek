@@ -1,5 +1,5 @@
 //! `Strategy::Auto` across representative shapes and precisions: the root's own
-//! dispatch, whichever family is compiled behind it. It belongs to neither
+//! dispatch, whichever architecture is compiled behind it. It belongs to neither
 //! `tiled` nor `multi_level`, and stays correct when either is deleted.
 
 use cubecl::{Runtime, TestRuntime, ir::AddressType, zspace::shape};

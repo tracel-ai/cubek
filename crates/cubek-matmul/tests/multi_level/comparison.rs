@@ -1,5 +1,5 @@
 //! Manual probes comparing the tile-DSL cmma routine against the multi-level
-//! SimpleCyclicCmma it ports. They mean nothing without both families, so they
+//! SimpleCyclicCmma it ports. They mean nothing without both architectures, so they
 //! live under `multi_level` and are deleted with it.
 
 #![cfg(all(feature = "benchmarks", feature = "tiled"))]

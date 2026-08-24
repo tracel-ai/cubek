@@ -1,4 +1,4 @@
-//! The matmul problem, its element types, and the errors either family can raise.
+//! The matmul problem, its element types, and the errors either architecture can raise.
 
 mod base;
 mod cost;

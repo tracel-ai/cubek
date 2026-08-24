@@ -76,12 +76,13 @@ jobs:
       - name: Lint extended tests
         run: cargo clippy --tests --features extended -- -D warnings
       # --------------------------------------------------------------------------------
-      # cubek-matmul branches into `tiled` and `multi_level` at its root. Both are on
-      # by default, so only a single-family build checks the cfg attributes.
-      - name: Lint matmul with tiled alone
+      # Every other job compiles both of cubek-matmul's architectures, so nothing else
+      # would notice a `#[cfg]` that stopped being true. These two build each
+      # architecture without the other, tests included.
+      - name: Lint matmul on tiled alone
         run: cargo clippy -p cubek-matmul --no-default-features --features std,tiled,extended,cubecl/cpu --tests -- -D warnings
       # --------------------------------------------------------------------------------
-      - name: Lint matmul with multi-level alone
+      - name: Lint matmul on multi-level alone
         run: cargo clippy -p cubek-matmul --no-default-features --features std,multi-level,extended,cubecl/cpu --tests -- -D warnings
       # --------------------------------------------------------------------------------
       - name: Typos
