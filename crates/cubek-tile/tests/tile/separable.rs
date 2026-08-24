@@ -431,3 +431,113 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         }
     }
 }
+
+// ---- separable lhs against a resampling rhs --------------------------------
+
+/// The rhs's one gathered physical axis: `⌊(3·row + 2·tap) / 2⌋`, which is `⌊3·row / 2⌋ + tap`.
+///
+/// Both halves of the split the separable schedule runs on are load-bearing here. `row` stays
+/// inside the floor, so it has to be anchored; `tap` has a coefficient the divisor factors out, so
+/// it is stepped by `1` on top of that anchor. A schedule folding the whole map per tap would get
+/// the same answer, which is the point: this pins the hand-folded one against it.
+const ROW_NUM: usize = 3;
+const RESAMPLE: usize = 2;
+const RTAPS: usize = 2;
+const RROWS: usize = 4;
+const RCOLS: usize = 3;
+
+fn resample_origin(row: usize) -> usize {
+    (ROW_NUM * row) / RESAMPLE
+}
+
+/// One factor, over the single contracted axis: a stated factorization of rank one still takes the
+/// separable schedule, since the per-row weight walk it caches is worth `nr` evaluations whatever
+/// the rank.
+#[cube]
+fn resample_weights<E: Float>() -> Weights<E> {
+    let mut factors = Sequence::new();
+    factors.push(factor::<E>(0usize));
+    separable_product(factors)
+}
+
+#[cube(launch)]
+fn resample_kernel<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weights = Tile::<E>::procedural_separable::<Weights<E>>(
+        comptime!(space.project(&[ROW, TAP[0]])),
+        resample_weights::<E>(),
+    );
+
+    let mut output = output.tile(space);
+    output.zero();
+    output.mma(&weights, &input);
+}
+
+#[test]
+fn a_separable_lhs_contracts_a_resampling_rhs() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let in_rows = resample_origin(RROWS - 1) + RTAPS;
+    let in_shape = shape![in_rows, RCOLS];
+    let in_data = ramp(in_shape.num_elements());
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![RROWS, RCOLS])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(RROWS))
+                .axis(COL, Cut::sequential(RCOLS))
+                .axis(TAP[0], Cut::sequential(RTAPS))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[ROW, TAP[0], COL],
+        &[
+            PhysicalAxisMap::affine(&[(ROW, ROW_NUM), (TAP[0], RESAMPLE)]).over(RESAMPLE),
+            PhysicalAxisMap::of(COL),
+        ],
+    ));
+
+    resample_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for row in 0..RROWS {
+        for col in 0..RCOLS {
+            let mut want = 0.0f32;
+            for tap in 0..RTAPS {
+                let at = (resample_origin(row) + tap) * RCOLS + col;
+                want += factor_value(0, tap, row) * in_data[at];
+            }
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-4,
+                "separable resample: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
+}

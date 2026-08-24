@@ -12,26 +12,20 @@ use super::{GatherProblem, coords::cell_read};
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
-    #[comptime] served: usize,
-    #[comptime] lw: usize,
-    #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
 ) {
-    let rank = comptime!(problem.space.rank());
-    let mr = comptime!(problem.mr);
-    let nr = comptime!(problem.nr);
-    let matrices = comptime!(
-        (0..rank - 2)
-            .map(|p| problem.space.extent_at(p))
-            .product::<usize>()
-    );
-    let kc = comptime!(problem.kc);
+    let mr = comptime!(problem.block.mr);
+    let nr = comptime!(problem.block.nr);
+    let served = comptime!(problem.block.served);
+    let lw = comptime!(problem.block.lw);
+    let matrices = comptime!(problem.block.matrices());
+    let batch_extents = comptime!(problem.block.batch_extents());
+    let kc = comptime!(problem.block.kc);
 
     let lhs_view = lhs.nd_packed::<L>();
     let rhs_view = rhs.nd_packed::<V>();
@@ -49,23 +43,14 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
-        let batch = unravel(
-            &const_coords(comptime!(
-                (0..rank - 2)
-                    .map(|p| problem.space.extent_at(p))
-                    .collect::<Vec<_>>()
-            )),
-            mat.fcast::<u32>(),
-        );
+        let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
 
-        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(problem.space.clone()));
+        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(problem.block.space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
-        // The budget is scalars, and the block holds `mr * nr` lines of `served * aw` (exactly
-        // one of the two exceeds 1).
         let unroll = comptime!(
-            mr * nr * served * aw <= config.budget && !lhs_check && !rhs_check && !acc_check
+            problem.block.scalars() <= config.budget && !lhs_check && !rhs_check && !acc_check
         );
         let mut c = block::seed::<E, V, A>(&mut acc, served, comptime!(mr), comptime!(nr), unroll);
 
@@ -85,12 +70,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     &batch,
                     step * comptime!(served),
                     comptime!(None),
-                    served,
-                    mr,
-                    nr,
                     unroll,
                     comptime!(problem.clone()),
-                    lw,
                 );
             }
         } else if comptime!(lane_fanout && lw > 1) {
@@ -105,12 +86,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                         &batch,
                         line * lw + lane,
                         comptime!(Some(lane)),
-                        served,
-                        mr,
-                        nr,
                         unroll,
                         comptime!(problem.clone()),
-                        lw,
                     );
                 }
             }
@@ -124,12 +101,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     &batch,
                     comptime!(k_lines * lw + lane),
                     comptime!(Some(lane)),
-                    served,
-                    mr,
-                    nr,
                     unroll,
                     comptime!(problem.clone()),
-                    lw,
                 );
             }
         } else {
@@ -145,12 +118,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     &batch,
                     p,
                     comptime!(None),
-                    served,
-                    mr,
-                    nr,
                     unroll,
                     comptime!(problem.clone()),
-                    lw,
                 );
             }
         }
@@ -176,15 +145,15 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     batch: &Coords<u32>,
     p: usize,
     #[comptime] lane: Option<usize>,
-    #[comptime] served: usize,
-    #[comptime] mr: usize,
-    #[comptime] nr: usize,
     #[comptime] unroll: bool,
     #[comptime] problem: GatherProblem,
-    #[comptime] lw: usize,
 ) {
-    let reduce_coords = unravel(
-        &const_coords(comptime!(problem.reduce_extents.clone())),
+    let mr = comptime!(problem.block.mr);
+    let nr = comptime!(problem.block.nr);
+    let served = comptime!(problem.block.served);
+    let lw = comptime!(problem.block.lw);
+    let reduce_coords = unravel_const(
+        comptime!(problem.block.reduce_extents.clone()),
         p.fcast::<u32>(),
     );
 
@@ -201,7 +170,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 &reduce_coords,
                 comptime!(problem.rhs_space.clone()),
                 comptime!(problem.clone()),
-                comptime!(problem.vw),
+                comptime!(problem.block.vw),
             ));
         }
     }
@@ -235,7 +204,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 &reduce_coords,
                 comptime!(problem.rhs_space.clone()),
                 comptime!(problem.clone()),
-                comptime!(problem.vw),
+                comptime!(problem.block.vw),
             ));
         }
         #[unroll(unroll)]
@@ -268,7 +237,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     &reduce_coords,
                     comptime!(problem.rhs_space.clone()),
                     comptime!(problem.clone()),
-                    comptime!(problem.vw),
+                    comptime!(problem.block.vw),
                 ))
             };
             // Explicit `fma`, for the reason [`block::rank1_update`] gives.

@@ -650,21 +650,26 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// How many separable factors this tile's values are the product of. One for a tile read from
-    /// a buffer, and for a recipe stating no factorization: it is its own single factor.
-    pub(crate) fn factors(&self) -> comptime_type!(usize) {
+    /// The factorization this tile's values state, if any: `Some(n)` for a recipe presenting `n`
+    /// separable factors, `None` for a tile read from a buffer or a recipe that only answers as a
+    /// whole. A rank-one factorization is `Some(1)`, which a consumer can still exploit, and so is
+    /// deliberately not the same answer as `None`.
+    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
         match &self.tile_kind {
             TileKind::Procedural(data) => data.factors(),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_) => comptime!(1usize),
+            | TileKind::TmaGmem(_) => comptime!(None),
         }
     }
 
     /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
     /// that factor reads matters, which is what lets the contraction walk it in 1-D.
+    ///
+    /// Asking [`factors`](Tile::factors) first is the whole precondition: a tile answering `None`
+    /// has no factorization to index into, and is exactly the tile kind that cannot evaluate one.
     pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
         match &self.tile_kind {
             TileKind::Procedural(data) => {
@@ -675,7 +680,10 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_) => {
-                panic!("Tile::separable_factor: tile is not procedural")
+                panic!(
+                    "Tile::separable_factor: a tile read from a buffer states no factorization, \
+                     so `factors` answered `None` and there is no factor {factor} to evaluate"
+                )
             }
         }
     }

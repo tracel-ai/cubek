@@ -126,9 +126,10 @@ impl<T: Numeric> VirtualRecipe<T> {
         unexpanded!()
     }
 
-    /// How many factors the recipe presents. A recipe with no separable structure is the product
-    /// of one factor, itself, so a consumer asks for a count rather than for a yes or no.
-    pub fn factors(&self) -> comptime_type!(usize) {
+    /// The factorization the recipe states, if it states one: one factor per contracted axis.
+    /// `None` for a recipe with no separable structure, which is a different answer from a
+    /// factorization of rank one and reaches a different contraction schedule.
+    pub fn factors(&self) -> comptime_type!(Option<usize>) {
         unexpanded!()
     }
 
@@ -146,11 +147,10 @@ impl<T: Numeric> VirtualRecipeExpand<T> {
         self.state.evaluate_virtual(scope, coordinates)
     }
 
-    pub fn __expand_factors_method(&self, scope: &Scope) -> usize {
-        match &self.separable {
-            Some(separable) => separable.factors_virtual(scope),
-            None => 1,
-        }
+    pub fn __expand_factors_method(&self, scope: &Scope) -> Option<usize> {
+        self.separable
+            .as_ref()
+            .map(|separable| separable.factors_virtual(scope))
     }
 
     pub fn __expand_evaluate_factor_method(
@@ -161,8 +161,10 @@ impl<T: Numeric> VirtualRecipeExpand<T> {
     ) -> NativeExpand<T> {
         match &self.separable {
             Some(separable) => separable.evaluate_factor_virtual(scope, coordinates, factor),
+            // An unfactorized recipe is still its own factor zero, which keeps this total for a
+            // consumer that reached it without asking `factors` first.
             None => {
-                assert_eq!(factor, 0, "recipe has a single factor, itself");
+                assert_eq!(factor, 0, "recipe states no factorization beyond itself");
                 self.state.evaluate_virtual(scope, coordinates)
             }
         }

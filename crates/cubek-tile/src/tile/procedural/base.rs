@@ -98,7 +98,7 @@ impl<T: Numeric> ProceduralData<T> {
         self.recipe.evaluate(&absolute)
     }
 
-    pub(crate) fn factors(&self) -> comptime_type!(usize) {
+    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
         self.recipe.factors()
     }
 

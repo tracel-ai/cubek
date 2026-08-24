@@ -534,3 +534,45 @@ pub(crate) fn line_extents(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OUT: Axis = Axis(0);
+    const TAP: Axis = Axis(1);
+
+    /// Outside a floor a term steps by its own coefficient, which is what makes `advance` an
+    /// addition.
+    #[test]
+    fn a_plain_affine_term_steps_by_its_coefficient() {
+        let map = PhysicalAxisMap::affine(&[(OUT, 2), (TAP, 3)]);
+        assert_eq!(split_step(&map, 0), Some(2));
+        assert_eq!(split_step(&map, 1), Some(3));
+    }
+
+    /// A dynamic coefficient is a runtime read, not a static step.
+    #[test]
+    fn a_dynamic_coefficient_has_no_static_step() {
+        let map =
+            PhysicalAxisMap::scaled(&[(OUT, Scale::Static(2)), (TAP, Scale::Dynamic { max: 4 })]);
+        assert_eq!(split_step(&map, 1), None);
+    }
+
+    /// Under a floor a term steps by what the divisor factors out: `⌊(x + m·4)/2⌋` moves by `2`
+    /// per `m`, exactly.
+    #[test]
+    fn a_divisible_term_steps_by_what_the_floor_factors_out() {
+        let map = PhysicalAxisMap::affine(&[(OUT, 3), (TAP, 4)]).over(2);
+        assert_eq!(split_step(&map, 1), Some(2));
+    }
+
+    /// The same map's indivisible term: `⌊(3·out + …)/2⌋` is not `out` times anything, so it has
+    /// to stay anchored rather than be stepped.
+    #[test]
+    #[should_panic(expected = "stays inside this axis's floor")]
+    fn an_indivisible_term_under_a_floor_cannot_be_stepped() {
+        let map = PhysicalAxisMap::affine(&[(OUT, 3), (TAP, 4)]).over(2);
+        split_step(&map, 0);
+    }
+}

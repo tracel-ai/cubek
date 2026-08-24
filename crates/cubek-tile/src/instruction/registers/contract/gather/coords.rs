@@ -45,8 +45,8 @@ pub(super) fn cell_position(
     let acc_coords = acc_cell_coords(batch, row, col);
     resolve_nd_coords(
         operand,
-        comptime!(problem.space.clone()),
-        comptime!(problem.reduce.clone()),
+        comptime!(problem.block.space.clone()),
+        comptime!(problem.block.reduce.clone()),
         &acc_coords,
         reduce_coords,
         width,
@@ -85,6 +85,28 @@ fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
     out.push(col);
 
     out
+}
+
+/// What the separable schedule assumes on top of [`assert_operand_shapes`], where it steps one
+/// resolved coordinate along the accumulator's columns by hand instead of resolving each cell.
+///
+/// [`Projection::validate`] already states this for an operand served in lines, but it skips the
+/// rule at width `1`, where there are no lines to address and a scalar operand is free to gather
+/// on its innermost axis. The step below is not free of it either way, so it is asked for here at
+/// every width. Host-side, so a violation is a comptime message.
+pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_col: bool) {
+    let col = acc.axis_at(acc.rank() - 1);
+    assert!(
+        rhs_spans_col,
+        "contract gather: the separable schedule walks the accumulator's columns by stepping the \
+         rhs's innermost physical axis, so the rhs must span {col:?}"
+    );
+    let innermost = rhs.physical_axis(rhs.physical_rank() - 1);
+    assert!(
+        innermost.is_identity(col),
+        "contract gather: the separable schedule steps the rhs's innermost physical axis once per \
+         accumulator column, so that axis must be {col:?} at coefficient 1"
+    );
 }
 
 /// What [`resolve_nd_coords`] and the lane fold assume about how the operands are lined up. Both

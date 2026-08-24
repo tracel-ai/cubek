@@ -1470,6 +1470,11 @@ impl<T: Numeric> MemData<T> {
     /// either way, so a coordinate past the operand's data masks exactly as it does through
     /// [`nd_transparent`](MemData::nd_transparent). The identity step keeps the box's own bound,
     /// which is the part a caller cannot fold away.
+    ///
+    /// The logical box test goes with the map, though, so this masks against the physical box
+    /// alone. A caller owes it the coordinates the map would have produced from inside the logical
+    /// one: a position folded from a logical coordinate out of range is no longer caught here, and
+    /// reads whatever the window says lives at it.
     pub(crate) fn nd_physical<I: Numeric, WP: Size, W: Size>(
         &self,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {

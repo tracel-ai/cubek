@@ -23,15 +23,15 @@ use super::{
 /// per line, which has to stay outside the taps, so it nests the other way.
 ///
 /// Both nestings fold the map by hand ([`Tile::nd_split`]) rather than re-running it per read. The
-/// lines of one run are adjacent on the operand's innermost physical axis, which is one logical
-/// axis at coefficient `1` ([`Projection::validate`](crate::Projection::validate)), so their source
+/// lines of one run are adjacent on the operand's innermost physical axis, which is the
+/// accumulator's own column axis at coefficient `1`
+/// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so their source
 /// coordinates differ in that axis alone and one cell apart. The taps above them move only the
 /// contracted axes, which a resampling map steps outside its floor, so the whole run shares one
 /// anchor ([`AxisProjection::anchor`]) and each read is that anchor plus an addition. Re-running
 /// the map would spell every term again, and under a rational axis a divide with them, per line
 /// and per tap.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
@@ -39,36 +39,31 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
     #[comptime] problem: GatherProblem,
     #[comptime] config: RegisterBlock,
 ) {
-    let rank = comptime!(problem.space.rank());
-    let mr = comptime!(problem.mr);
-    let nr = comptime!(problem.nr);
-    let matrices = comptime!(
-        (0..rank - 2)
-            .map(|p| problem.space.extent_at(p))
-            .product::<usize>()
-    );
+    let mr = comptime!(problem.block.mr);
+    let nr = comptime!(problem.block.nr);
+    let matrices = comptime!(problem.block.matrices());
+    let batch_extents = comptime!(problem.block.batch_extents());
 
     let rhs_reader = rhs.nd_split_packed::<V>();
     let rhs_check = comptime!(rhs_reader.view.check);
-    let factors = comptime!(problem.factors);
-    let kc = comptime!(problem.kc);
+    let factors = comptime!(
+        problem
+            .factors
+            .expect("contract gather: the separable schedule needs a factorized lhs")
+    );
+    let kc = comptime!(problem.block.kc);
     let taps = comptime!(problem.taps);
-    let batch_extents = const_coords(comptime!(
-        (0..rank - 2)
-            .map(|p| problem.space.extent_at(p))
-            .collect::<Vec<_>>()
-    ));
 
     for mat in 0..matrices {
-        let batch = unravel(&batch_extents, mat.fcast::<u32>());
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(problem.space.clone()));
+        let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(problem.block.space.clone()));
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
         // `kc` bodies per cell, so the taps unroll on their own budget: the whole nest only when
         // every cell's scalars fit in it too.
         let acc_check = acc.check();
         let unroll =
-            comptime!(mr * nr * problem.vw * kc <= config.budget && !rhs_check && !acc_check);
+            comptime!(problem.block.scalars() * kc <= config.budget && !rhs_check && !acc_check);
         let unroll_taps = comptime!(kc <= config.budget);
         let mut c = block::seed::<E, V, V>(&mut acc, 1usize, comptime!(mr), comptime!(nr), unroll);
 
@@ -84,13 +79,16 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                         &batch,
                         i as u32,
                         n as u32,
+                        comptime!(factors),
                         comptime!(problem.clone()),
                     );
 
                     #[unroll(unroll_taps)]
                     for p in 0..kc {
-                        let reduce_coords =
-                            tap_coords(p.fcast::<u32>(), comptime!(problem.reduce_extents.clone()));
+                        let reduce_coords = unravel_const(
+                            comptime!(problem.block.reduce_extents.clone()),
+                            p.fcast::<u32>(),
+                        );
                         let weight = tap_weight::<EL>(
                             &weights,
                             &reduce_coords,
@@ -105,7 +103,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                             &reduce_coords,
                             comptime!(problem.rhs_space.clone()),
                             comptime!(problem.clone()),
-                            comptime!(problem.vw),
+                            comptime!(problem.block.vw),
                         ));
                         c[i * nr + n] =
                             fma(Vector::<E, V>::cast_from(weight), value, c[i * nr + n]);
@@ -119,6 +117,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                     &batch,
                     i as u32,
                     0u32,
+                    comptime!(factors),
                     comptime!(problem.clone()),
                 );
 
@@ -133,15 +132,17 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                         &factor_coords(comptime!(factors), 0usize, 0usize),
                         comptime!(problem.rhs_space.clone()),
                         comptime!(problem.clone()),
-                        comptime!(problem.vw),
+                        comptime!(problem.block.vw),
                     ),
-                    comptime!(problem.reduce.clone()),
+                    comptime!(problem.block.reduce.clone()),
                 );
 
                 #[unroll(unroll_taps)]
                 for p in 0..kc {
-                    let reduce_coords =
-                        tap_coords(p.fcast::<u32>(), comptime!(problem.reduce_extents.clone()));
+                    let reduce_coords = unravel_const(
+                        comptime!(problem.block.reduce_extents.clone()),
+                        p.fcast::<u32>(),
+                    );
                     let weight = Vector::<E, V>::cast_from(tap_weight::<EL>(
                         &weights,
                         &reduce_coords,
@@ -158,9 +159,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                             &reduce_coords,
                             comptime!(problem.rhs_space.clone()),
                             comptime!(problem.clone()),
-                            comptime!(problem.vw),
+                            comptime!(problem.block.vw),
                         ),
-                        comptime!(problem.reduce.clone()),
+                        comptime!(problem.block.reduce.clone()),
                     );
 
                     #[unroll(unroll)]
@@ -188,14 +189,13 @@ fn tap_walk<EL: Numeric>(
     batch: &Coords<u32>,
     row: u32,
     col: u32,
+    #[comptime] factors: usize,
     #[comptime] problem: GatherProblem,
 ) {
-    let factors = comptime!(problem.factors);
-
     #[unroll]
     for f in 0..factors {
         #[unroll]
-        for k in 0..comptime!(problem.reduce_extents[f]) {
+        for k in 0..comptime!(problem.block.reduce_extents[f]) {
             let pos = cell_position(
                 batch,
                 row,
@@ -249,25 +249,6 @@ fn factor_coords(
     #[unroll]
     for f in 0..factors {
         out.push(comptime!(if f == factor { tap as u32 } else { 0u32 }));
-    }
-
-    out
-}
-
-/// Resolve a flat Cartesian-product tap into one coordinate per factor.
-#[cube]
-fn tap_coords(p: u32, #[comptime] extents: Vec<usize>) -> Coords<u32> {
-    let n = comptime!(extents.len());
-    let mut out = Coords::<u32>::new();
-
-    #[unroll]
-    for f in 0..n {
-        let digit = p.fdiv(comptime!(extents[f + 1..].iter().product::<usize>() as u32));
-        if comptime!(f == 0) {
-            out.push(digit);
-        } else {
-            out.push(digit.frem(comptime!(extents[f] as u32)));
-        }
     }
 
     out
