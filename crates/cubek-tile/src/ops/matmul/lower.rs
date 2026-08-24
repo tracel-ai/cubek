@@ -21,8 +21,8 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
         let is_contracted = comptime!(is_contracted_at_leaf(&self.space, &merged));
-        let replaces_sink = self.replaces_sink();
-        let replaces = comptime!(replaces_sink && is_contracted);
+        let sink_is_zero = self.sink_is_zero();
+        let replaces = comptime!(sink_is_zero && is_contracted);
         self.set_sink_is_zero(replaces);
         lower_mma(self, lhs, rhs);
         self.set_sink_is_zero(false);
@@ -87,7 +87,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
         // A promoted accumulator states its own init (`zero` for `c = a·b`, `copy_from` to
-        // accumulate), so it has no sink read for `replace` to skip.
+        // accumulate), so it has no sink read for `sink_is_zero` to skip.
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.

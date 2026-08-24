@@ -1520,8 +1520,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
-    /// [`LaneShare`] and replacement policy these cells carry, so a leaf accumulates through it
-    /// without being told.
+    /// [`LaneShare`] and whether these cells hold zero ([`sink_is_zero`](MemData::sink_is_zero)),
+    /// so a leaf accumulates through it without being told.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
@@ -1547,6 +1547,8 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
+        // The reduce walk has no is_contracted_at_leaf check to prove sound replacement, so the
+        // sink must always be carried.
         AccumulateView::new(self.flat_mut::<W>(), lane_share, false)
     }
 

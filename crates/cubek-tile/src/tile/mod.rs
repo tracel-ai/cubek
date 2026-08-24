@@ -575,7 +575,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Whether this tile is backed by memory known to hold zero, so a sum contraction can replace
     /// the initial sink read. Comptime.
-    pub(crate) fn replaces_sink(&self) -> comptime_type!(bool) {
+    pub(crate) fn sink_is_zero(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.sink_is_zero,
             TileKind::PlaneTile(_)
@@ -946,6 +946,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
         }
+        dst.set_sink_is_zero(false);
     }
 }
 
