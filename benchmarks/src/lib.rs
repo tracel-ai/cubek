@@ -66,6 +66,13 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
 
+    let warmed = category.warm_peaks();
+    if warmed > 0 {
+        println!("warmed {warmed} device peak(s) before timing");
+    }
+
+    let mut any_over_peak = false;
+
     for problem in category.problems() {
         for strategy in category.strategies() {
             println!("---- {} / {} ----", strategy.label, problem.label);
@@ -76,18 +83,23 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                     }
                     if let Some(binding) = &samples.binding {
                         let pct = 100.0 * binding.fraction_of_peak;
+                        let over_peak = binding.fraction_of_peak > 1.0;
+                        any_over_peak |= over_peak;
+                        let suffix = if over_peak { ", over peak" } else { "" };
+                        let achieved_gb_s = binding.achieved_per_s / 1e9;
                         match binding.resource {
                             ResourceKind::Compute => {
-                                println!("bound by compute ({pct:.0}% of peak)");
+                                println!("bound by compute ({pct:.0}% of peak{suffix})");
                             }
-                            ResourceKind::Read | ResourceKind::Write => {
-                                let label = match binding.resource {
-                                    ResourceKind::Read => "read",
-                                    ResourceKind::Write => "write",
-                                    ResourceKind::Compute => unreachable!(),
-                                };
-                                let achieved_gb_s = binding.achieved_per_s / 1e9;
-                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of {label} peak)");
+                            ResourceKind::Read => {
+                                println!(
+                                    "{achieved_gb_s:.1} GB/s ({pct:.0}% of read peak{suffix})"
+                                );
+                            }
+                            ResourceKind::Write => {
+                                println!(
+                                    "{achieved_gb_s:.1} GB/s ({pct:.0}% of write peak{suffix})"
+                                );
                             }
                         }
                     }
@@ -100,6 +112,12 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                 Err(err) => println!("error: {err}"),
             }
         }
+    }
+
+    if any_over_peak {
+        println!(
+            "note: \"over peak\" rows beat the measured ceiling. The memory probes stream cold, so a working set that stays in cache can exceed them, and the write probe under-measures a contiguous fill."
+        );
     }
 }
 
