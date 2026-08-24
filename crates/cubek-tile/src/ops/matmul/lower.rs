@@ -19,13 +19,22 @@ impl<Acc: Numeric> Tile<Acc> {
     /// multiple levels or outer reduction loops, it preserves the existing sink and accumulates
     /// onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-        let is_contracted = comptime!(is_contracted_at_leaf(&self.space, &merged));
-        let sink_is_zero = self.sink_is_zero();
-        let replaces = comptime!(sink_is_zero && is_contracted);
+        let replaces = self.replaces_sink(lhs, rhs);
         self.set_sink_is_zero(replaces);
         lower_mma(self, lhs, rhs);
         self.set_sink_is_zero(false);
+    }
+
+    /// Whether this contraction may seed from the identity instead of reading the sink: the buffer
+    /// must be known to hold zero, and the final tile must span every contracted axis whole, so the
+    /// walk above the leaf never returns to a cell it has already written.
+    fn replaces_sink<Lhs: Numeric, Rhs: Numeric>(
+        &self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+    ) -> comptime_type!(bool) {
+        let sink_is_zero = self.sink_is_zero();
+        comptime!(sink_is_zero && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space))
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
@@ -150,9 +159,9 @@ impl<E: Numeric> PlaneTile<E> {
     }
 }
 
-/// Whether the final tile spans every contracted axis whole, which is what makes a replacing
-/// seed sound: the walk above the leaf never returns to a cell it has already written.
-fn is_contracted_at_leaf(out: &Space, merged: &Space) -> bool {
+/// Whether the final tile spans every contracted axis whole.
+fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
+    let merged = Space::merge(&[lhs, rhs]);
     let leaf = merged.final_space();
     for axis in merged.contracting(out).iter() {
         // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
