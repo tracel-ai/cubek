@@ -64,14 +64,12 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, IR: Numeric, WPR: S
     for mat in 0..matrices {
         let batch = unravel(&batch_extents, mat.fcast::<u32>());
         let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()), vw);
-        let unroll = comptime!(mr * nr <= config.unroll_limit);
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
-        // `kc` bodies per cell, so it answers to the body budget rather than the register one the
-        // block above is sized against. A checked operand is no reason to keep `p` dynamic, and
-        // every filter wider than one tap reads one: folding the coordinate turns the per-tap
-        // bounds test comptime on the interior taps and leaves it only on the edges.
-        let unroll_taps = comptime!(mr * nr * kc <= config.body_limit);
+        // `kc` bodies per cell. Prioritize unrolling taps first, and only unroll both outer (mr × nr)
+        // and inner (kc) when the total unrolled FMA count fits within `unroll_limit`.
+        let unroll = comptime!(mr * nr * kc <= config.unroll_limit);
+        let unroll_taps = comptime!(unroll || kc <= config.unroll_limit);
         let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll, replace);
 
         #[unroll(unroll)]
