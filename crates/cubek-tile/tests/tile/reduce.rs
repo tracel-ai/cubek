@@ -45,11 +45,7 @@ fn reduce_matmul_kernel<E: Numeric>(
 /// in this seed and the `LeafOp` passed to `reduce_axis`.
 #[cube]
 fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] op: LeafOp) {
-    match comptime!(op) {
-        LeafOp::Sum => output.zero(),
-        LeafOp::Max => output.init(E::min_value()),
-        LeafOp::Min => output.init(E::max_value()),
-    }
+    output.init_identity(op);
     output.reduce_axis(input, op);
 }
 
@@ -1201,7 +1197,7 @@ fn resident_fold_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let mut out = output.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, op);
-    acc.init(LeafOp::identity::<E>(op));
+    acc.init_identity(op);
     acc.reduce_axis(&input, op);
     out.copy_from(&acc);
 }

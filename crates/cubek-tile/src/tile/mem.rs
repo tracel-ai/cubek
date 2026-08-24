@@ -57,10 +57,10 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
-    /// Whether accumulator views know this buffer holds zero, so a sum contraction can replace
-    /// the initial sink read. Stamped by `Tile::zero` and verified by `is_contracted_at_leaf`.
+    /// Which operation's identity this buffer is known to hold, so an accumulation can replace
+    /// the initial sink read. Stamped by `Tile::zero` or `Tile::init_identity`.
     #[cube(comptime)]
-    pub(crate) sink_is_zero: bool,
+    pub(crate) sink_identity: Option<LeafOp>,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -380,7 +380,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                sink_is_zero: comptime!(false),
+                sink_identity: comptime!(None),
             }),
             space: comptime!(space),
         }
@@ -670,7 +670,7 @@ impl<T: Numeric> MemData<T> {
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                sink_is_zero: comptime!(false),
+                sink_identity: comptime!(None),
             }),
             space: comptime!(meta.space),
         }
@@ -722,10 +722,10 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// Set whether this memory handle is known to hold zero.
-    pub(crate) fn set_sink_is_zero(&mut self, #[comptime] sink_is_zero: bool) {
+    /// Set which operation's identity this memory handle is known to hold.
+    pub(crate) fn set_sink_identity(&mut self, #[comptime] sink_identity: Option<LeafOp>) {
         comptime!({
-            self.sink_is_zero = sink_is_zero;
+            self.sink_identity = sink_identity;
         });
     }
 
@@ -1520,7 +1520,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
-    /// [`LaneShare`] and whether these cells hold zero ([`sink_is_zero`](MemData::sink_is_zero)),
+    /// [`LaneShare`] and which identity these cells hold ([`sink_identity`](MemData::sink_identity)),
     /// so a leaf accumulates through it without being told.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
@@ -1528,8 +1528,8 @@ impl<T: Numeric> MemData<T> {
         #[comptime] space: Space,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        let sink_is_zero = comptime!(self.sink_is_zero);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, sink_is_zero)
+        let sink_identity = comptime!(self.sink_identity);
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, sink_identity)
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
@@ -1549,7 +1549,7 @@ impl<T: Numeric> MemData<T> {
         let lane_share = comptime!(self.lane_share);
         // The reduce walk has no is_contracted_at_leaf check to prove sound replacement, so the
         // sink must always be carried.
-        AccumulateView::new(self.flat_mut::<W>(), lane_share, false)
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, None)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -1696,7 +1696,7 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
-            sink_is_zero: comptime!(self.sink_is_zero),
+            sink_identity: comptime!(self.sink_identity),
         }
     }
 }

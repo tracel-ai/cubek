@@ -20,21 +20,21 @@ impl<Acc: Numeric> Tile<Acc> {
     /// onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let replaces = self.replaces_sink(lhs, rhs);
-        self.set_sink_is_zero(replaces);
+        self.set_sink_identity(if replaces { Some(LeafOp::Sum) } else { None });
         lower_mma(self, lhs, rhs);
-        self.set_sink_is_zero(false);
+        self.set_sink_identity(None);
     }
 
     /// Whether this contraction may seed from the identity instead of reading the sink: the buffer
-    /// must be known to hold zero, and the final tile must span every contracted axis whole, so the
-    /// walk above the leaf never returns to a cell it has already written.
+    /// must be known to hold `Sum`'s identity (`0`), and the final tile must span every contracted axis whole,
+    /// so the walk above the leaf never returns to a cell it has already written.
     fn replaces_sink<Lhs: Numeric, Rhs: Numeric>(
         &self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
     ) -> comptime_type!(bool) {
-        let sink_is_zero = self.sink_is_zero();
-        comptime!(sink_is_zero && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space))
+        let sink_is_sum = self.sink_identity() == Some(LeafOp::Sum);
+        comptime!(sink_is_sum && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space))
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
@@ -64,8 +64,8 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// Lower one operation-scoped accumulator handle to its leaf. `sink_is_zero` is derived before
-/// this recursion from the undivided operand spaces. When true, every contracted axis already
+/// Lower one operation-scoped accumulator handle to its leaf. `sink_identity` is derived before
+/// this recursion from the undivided operand spaces. When set to `Some(Sum)`, every contracted axis already
 /// fits in the final space, so no ancestor visits an output cell for multiple contracted regions;
 /// child handles preserve the stamp unchanged and never recompute it from their smaller spaces.
 #[cube]
@@ -96,7 +96,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
         // A promoted accumulator states its own init (`zero` for `c = a·b`, `copy_from` to
-        // accumulate), so it has no sink read for `sink_is_zero` to skip.
+        // accumulate), so it has no sink read for `sink_identity` to skip.
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.

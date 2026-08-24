@@ -15,7 +15,7 @@ pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2
     #[cube(comptime)]
     lane_share: LaneShare,
     #[cube(comptime)]
-    sink_is_zero: bool,
+    sink_identity: Option<LeafOp>,
 }
 
 #[cube]
@@ -23,12 +23,12 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
-        #[comptime] sink_is_zero: bool,
+        #[comptime] sink_identity: Option<LeafOp>,
     ) -> Self {
         AccumulateView::<'a, E, V, C> {
             values,
             lane_share,
-            sink_is_zero,
+            sink_identity,
         }
     }
 
@@ -46,14 +46,14 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// A block's starting value for a `fold` fold. A partial starts at `fold`'s identity: the
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
     /// once per lane. A `LaneShare::Whole` cell seeds from memory unless the buffer is known to
-    /// hold zero and `fold` is `Sum`, in which case it starts from the zero identity directly and
-    /// skips the read.
+    /// hold `fold`'s identity, in which case it starts from the identity directly and skips the read.
     pub fn seed(&self, pos: C, #[comptime] fold: LeafOp) -> Vector<E, V> {
-        // A folded share holds no whole cell to carry forward, and a zeroed buffer on a sum fold
-        // already holds the identity (0): both start from the identity and skip the read.
+        // A folded share holds no whole cell to carry forward, and a buffer known to hold
+        // `fold`'s identity already holds the starting value: both start from the identity
+        // and skip the read.
         let carries = comptime!(
             matches!(self.lane_share, LaneShare::Whole)
-                && !(self.sink_is_zero && matches!(fold, LeafOp::Sum))
+                && !(self.sink_identity == Some(fold))
         );
         if comptime!(carries) {
             self.values.read(pos)

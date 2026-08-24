@@ -573,25 +573,25 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile is backed by memory known to hold zero, so a sum contraction can replace
+    /// Which operation's identity this tile is backed by, so an accumulation can replace
     /// the initial sink read. Comptime.
-    pub(crate) fn sink_is_zero(&self) -> comptime_type!(bool) {
+    pub(crate) fn sink_identity(&self) -> comptime_type!(Option<LeafOp>) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.sink_is_zero,
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.sink_identity,
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                comptime!(false)
+                comptime!(None)
             }
         }
     }
 
-    /// Set whether this tile's memory handles are known to hold zero.
-    pub(crate) fn set_sink_is_zero(&mut self, #[comptime] is_zero: bool) {
+    /// Set which operation's identity this tile's memory handles are known to hold.
+    pub(crate) fn set_sink_identity(&mut self, #[comptime] sink_identity: Option<LeafOp>) {
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => {
-                d.set_sink_is_zero(comptime!(is_zero));
+                d.set_sink_identity(comptime!(sink_identity));
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -839,7 +839,36 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
-        self.set_sink_is_zero(true);
+        self.set_sink_identity(Some(LeafOp::Sum));
+    }
+
+    /// Initialize this tile with `op`'s identity value. Same shape as [`init`](Tile::init).
+    /// Stamping the identity enables fast-path accumulator replacement when folding under `op`.
+    pub fn init_identity(&mut self, #[comptime] op: LeafOp) {
+        let val = LeafOp::identity::<T>(op);
+        match comptime!(self.space.partitioner().clone()) {
+            Partitioner::Final => match &mut self.tile_kind {
+                TileKind::Gmem(d) | TileKind::Smem(d) => d.init(val),
+                TileKind::PlaneTile(t) => match comptime!(op) {
+                    LeafOp::Sum => t.zero(),
+                    _ => panic!("Tile::init_identity: only Sum is supported for plane tiles"),
+                },
+                TileKind::PlanePartition(p) => match comptime!(op) {
+                    LeafOp::Sum => p.zero(),
+                    _ => panic!("Tile::init_identity: only Sum is supported for plane partitions"),
+                },
+                TileKind::TmaGmem(_) => panic!("Tile::init_identity: a tma source is not writable"),
+                TileKind::Procedural(_) => panic!("Tile::init_identity: a procedural tile is not writable"),
+            },
+            Partitioner::Level(_) => {
+                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
+                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
+                    let mut sub = self.at(&region);
+                    sub.init_identity(op);
+                }
+            }
+        }
+        self.set_sink_identity(Some(op));
     }
 
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
@@ -860,7 +889,7 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
-        self.set_sink_is_zero(false);
+        self.set_sink_identity(None);
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
@@ -880,7 +909,7 @@ impl<T: Numeric> Tile<T> {
 
     /// The mutable twin of [`dense`](Tile::dense).
     pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.set_sink_is_zero(false);
+        self.set_sink_identity(None);
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -928,7 +957,7 @@ impl<T: Numeric> Tile<T> {
                 _ => panic!("Tile::copy_from: unsupported kind pairing"),
             },
         }
-        self.set_sink_is_zero(false);
+        self.set_sink_identity(None);
     }
 
     /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element
@@ -946,7 +975,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
         }
-        dst.set_sink_is_zero(false);
+        dst.set_sink_identity(None);
     }
 }
 
