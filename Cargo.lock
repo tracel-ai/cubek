@@ -1042,6 +1042,7 @@ dependencies = [
  "cubek-matmul",
  "cubek-std",
  "cubek-test-utils",
+ "cubek-tile",
  "derive-new",
  "enumset",
  "half",
