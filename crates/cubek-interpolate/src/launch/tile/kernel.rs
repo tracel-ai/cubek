@@ -5,22 +5,29 @@ use super::{
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::*;
 
+/// The distance from a tap to the source coordinate the output position lands on.
+///
+/// The rational is comptime because it is the same one the gather's projection already carries
+/// ([`Rational::tap_axis`](super::coordinate::Rational::tap_axis)), and the kernel is already
+/// compiled per shape. Handed as launch scalars instead, its divisor reaches [`Phase`] as a
+/// runtime value: nothing folds, and every output position pays a true integer division for the
+/// residue and a float division to normalize it, per resampled axis.
 #[cube]
 fn tap_distance<E: Float>(
     #[comptime] tap: Axis,
     #[comptime] output: Axis,
-    scale: u32,
-    offset: i32,
-    divisor: u32,
+    #[comptime] scale: u32,
+    #[comptime] offset: i32,
+    #[comptime] divisor: u32,
     #[comptime] radius: usize,
 ) -> TapDistance<E> {
     sum_of(
         affine_along(tap, E::new(-(radius as f32)), E::new(1.0_f32)),
         Phase::<E> {
             coefficient: E::new(-1.0_f32),
-            numerator_scale: scale,
-            numerator_offset: offset,
-            divisor,
+            numerator_scale: comptime!(scale),
+            numerator_offset: comptime!(offset),
+            divisor: comptime!(divisor),
             axis: output,
         },
     )
@@ -30,12 +37,12 @@ fn tap_distance<E: Float>(
 pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     input: &TileArg<'_, E, V>,
     output: &TileArg<'_, E, V>,
-    row_scale: u32,
-    row_offset: i32,
-    row_divisor: u32,
-    col_scale: u32,
-    col_offset: i32,
-    col_divisor: u32,
+    #[comptime] row_scale: u32,
+    #[comptime] row_offset: i32,
+    #[comptime] row_divisor: u32,
+    #[comptime] col_scale: u32,
+    #[comptime] col_offset: i32,
+    #[comptime] col_divisor: u32,
     #[comptime] radius: usize,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
@@ -54,7 +61,5 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     );
 
     let mut output = output.tile(space);
-    // Every tap is present at the leaf, so each output cell is contracted once: the sink never
-    // has to be read back, and the zero that would have made that read meaningful goes with it.
-    output.mma_replace(&weights, &input);
+    output.mma(&weights, &input);
 }

@@ -80,6 +80,24 @@ const TILE_GEOMETRIES: &[(usize, usize, usize)] = &[
     (1, 2, 16),
     (1, 4, 16),
     (2, 1, 16),
+    // Long row runs at a cache-line column width
+    (4, 8, 2),
+    (8, 8, 2),
+    (2, 16, 2),
+    (4, 16, 2),
+    (2, 32, 2),
+    (1, 16, 4),
+    (2, 16, 4),
+    (4, 16, 4),
+    (8, 16, 4),
+    (1, 32, 4),
+    (4, 8, 4),
+    (8, 8, 4),
+    (1, 8, 8),
+    (2, 8, 8),
+    (4, 8, 8),
+    (1, 16, 8),
+    (2, 16, 8),
 ];
 
 pub fn strategies() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {

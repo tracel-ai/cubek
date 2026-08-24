@@ -62,13 +62,16 @@ impl TileGeometry {
 /// The one derivation left: `(lane_cols, lane_channels, channel_block)` covering the plane exactly.
 ///
 /// A stated `block` is taken as the lane's channel run and the rest of the split is solved around
-/// it. It has to divide `channels`: the cube's channel cut is sized from it, and a run the axis
-/// does not cover exactly leaves the walk a partial tile the plane cover then refuses.
+/// it. It need not divide `channels`: a run the axis does not cover exactly leaves the last block
+/// part padding, which the space reports as an overhang and every read and write then masks. That
+/// is the point of stating one, since a block of `4` over `3` channels is what lets the operand be
+/// staged in whole lines an `NHWC` buffer could never hand out
+/// ([`stage_vectorize`](cubek_tile::StridedTileSource::stage_vectorize)).
 fn lane_split(channels: usize, lanes: usize, block: Option<usize>) -> (usize, usize, usize) {
     if let Some(block) = block {
         assert!(
-            block > 0 && channels.is_multiple_of(block),
-            "TileGeometry: the channel block ({block}) must divide the {channels} channels"
+            block > 0,
+            "TileGeometry: the channel block must be at least one element"
         );
     }
 
@@ -82,8 +85,9 @@ fn lane_split(channels: usize, lanes: usize, block: Option<usize>) -> (usize, us
     // A lane's channel run is one memory line, and past four `f32` a wider line buys nothing.
     let channel_block = block.unwrap_or_else(|| divisor_at_most(channels, 4));
     // Lanes cover the channel axis first, then spill onto the columns. `gcd` is the widest
-    // split that both divides the plane and leaves whole channel blocks per lane.
-    let lane_channels = gcd(lanes, channels / channel_block);
+    // split that both divides the plane and leaves whole channel blocks per lane. The count is
+    // rounded up: a block the axis does not fill exactly is still one block, its tail padding.
+    let lane_channels = gcd(lanes, channels.div_ceil(channel_block));
     (lanes / lane_channels, lane_channels, channel_block)
 }
 
@@ -145,12 +149,22 @@ mod tests {
         }
     }
 
-    /// The cube's channel cut is sized from the block, so a run the axis cannot cover is refused
-    /// here rather than surfacing as a plane cover failure.
+    /// A block wider than the axis is the padded case: one lane covers the whole channel run and
+    /// the rest ride the columns, exactly as they do for the unpadded block of `3`. The tail of
+    /// that block is padding, which the space reports as an overhang.
     #[test]
-    #[should_panic(expected = "must divide the 3 channels")]
-    fn a_channel_block_that_does_not_divide_is_refused() {
-        lane_split(3, 32, Some(4));
+    fn a_channel_block_may_overhang_the_axis() {
+        assert_eq!(lane_split(3, 32, Some(4)), (32, 1, 4));
+        assert_eq!(lane_split(3, 32, Some(3)), (32, 1, 3));
+    }
+
+    /// A block the axis covers in whole multiples splits the plane over those multiples, padded or
+    /// not: `6` channels in blocks of `4` is two blocks, the second half padding.
+    #[test]
+    fn a_partly_covered_axis_still_splits_over_whole_blocks() {
+        let (lane_cols, lane_channels, block) = lane_split(6, 32, Some(4));
+        assert_eq!((lane_channels, block), (2, 4));
+        assert_eq!(lane_cols * lane_channels, 32);
     }
 
     /// The stated choices reach the geometry untouched.

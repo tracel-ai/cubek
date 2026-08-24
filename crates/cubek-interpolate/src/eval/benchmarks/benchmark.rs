@@ -56,47 +56,6 @@ pub fn bench(
         if !is_cpu && config.cols_per_lane > 1 {
             return Err("tile interpolation with c > 1 is inefficient on GPU devices".to_string());
         }
-
-        if let InterpolateProblem::Forward(prob) = problem
-            && config.input_residence == Residence::Smem
-        {
-            let geometry = config.geometry(prob.channels, lanes);
-            let (row, col) = (
-                crate::launch::tile::coordinate::Rational::of(crate::definition::get_transform(
-                    prob.input_height,
-                    prob.output_height,
-                    prob.options,
-                )),
-                crate::launch::tile::coordinate::Rational::of(crate::definition::get_transform(
-                    prob.input_width,
-                    prob.output_width,
-                    prob.options,
-                )),
-            );
-            let taps = match prob.options.mode {
-                crate::definition::InterpolateMode::Nearest(_) => 1,
-                crate::definition::InterpolateMode::Bilinear => 2,
-                crate::definition::InterpolateMode::Bicubic => 4,
-                crate::definition::InterpolateMode::Lanczos3 => 6,
-            };
-            let radius = (taps - 1) / 2;
-            let vector_size = 1;
-            let requested_smem = crate::launch::tile::space::stage_window_bytes(
-                row,
-                col,
-                taps,
-                radius,
-                geometry,
-                vector_size,
-                dtype.size(),
-            );
-            if requested_smem > hardware.max_shared_memory_size {
-                return Err(format!(
-                    "requested shared memory {requested_smem} bytes exceeds device limit of {} bytes",
-                    hardware.max_shared_memory_size
-                ));
-            }
-        }
     }
 
     let bench = InterpolateBench {

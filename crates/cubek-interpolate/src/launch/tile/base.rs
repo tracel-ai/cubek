@@ -150,6 +150,25 @@ fn launch_with<R: Runtime, F: SeparableFilterFamily>(
     let in_bounds = tap_range_in_bounds(row, output_h, input_h, F::TAPS, F::radius())
         && tap_range_in_bounds(col, output_w, input_w, F::TAPS, F::radius());
 
+    // The channel block is the lane's channel run, so it is the width the contraction wants its
+    // lines in. Where the tensor's own channel count cannot serve them (`C = 3` has no 4-aligned
+    // row start, so `vector_size` above is 1), a shared-memory stage still can: it pads the axis
+    // out to whole lines, and the contraction runs `4` wide against a scalar output. Only a width
+    // the device actually serves is worth asking for, and only over a stage that exists.
+    let residence = config.input_residence;
+    let stage_width = (residence == Residence::Smem
+        && geometry.channel_block != vector_size
+        && client
+            .io_optimized_vector_sizes(dtype.size())
+            .any(|v| v == geometry.channel_block))
+    .then_some(geometry.channel_block);
+
+    // A padded stage reads the lanes past the real channel count, so those reads have to be the
+    // masked kind whatever the taps do: unchecked they would take the next pixel's channels, and
+    // run off the buffer entirely on the last one. Their values never reach the output (the sink's
+    // own overhang mask drops those columns), but the reads still have to be in bounds.
+    let checked = !in_bounds || stage_width.is_some();
+
     let max_smem = client.properties().hardware.max_shared_memory_size;
     let requested_smem = space::stage_window_bytes(
         row,
@@ -157,13 +176,12 @@ fn launch_with<R: Runtime, F: SeparableFilterFamily>(
         F::TAPS,
         F::radius(),
         geometry,
-        vector_size,
+        stage_width.unwrap_or(vector_size),
         dtype.size(),
     );
 
     // The residence is stated, so the only thing left to decide is whether the device can serve
     // it. Capacity is a hard limit rather than a preference, so it refuses instead of falling back.
-    let residence = config.input_residence;
     if residence == Residence::Smem && requested_smem > max_smem {
         return Err(InterpolateError::SharedMemoryLimitExceeded {
             requested: requested_smem,
@@ -171,14 +189,17 @@ fn launch_with<R: Runtime, F: SeparableFilterFamily>(
         });
     }
     let leaf = space::leaf(client);
-    let input_arg = launch
+    let mut input_arg = launch
         .arg(input, leaf)
         .gathered(space::input_projection(row, col, F::radius()))
-        .checked(!in_bounds)
-        .with_boundary((!in_bounds).then_some(F::BOUNDARY))
+        .checked(checked)
+        .with_boundary(checked.then_some(F::BOUNDARY))
         .vectorize(vector_size)
-        .residence(&[residence, Residence::InPlace, Residence::InPlace])
-        .build();
+        .residence(&[residence, Residence::InPlace, Residence::InPlace]);
+    if let Some(width) = stage_width {
+        input_arg = input_arg.stage_vectorize(width);
+    }
+    let input_arg = input_arg.build();
     let output_arg = launch
         .arg(output, leaf)
         .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])

@@ -13,11 +13,25 @@ pub const CHANNEL: Axis = Axis(5);
 ///
 /// A GPU keeps one nest body and the (line, lane) fan-out walk: the edge split clones the whole
 /// body, which doubles the shader and makes the two halves diverge within a plane. A CPU takes the
-/// opposite of each, plus the wider register block its register file has room for.
+/// opposite of each.
+///
+/// Their unroll budgets part ways for the same reason. A CPU accumulates in vector registers and
+/// has far fewer of them than a GPU thread has scalars, so its block rolls early: measured against
+/// this operation, only a single column of it is worth keeping in registers.
+///
+/// Four is that column, and a floor rather than a preference. The budget counts cells, so a
+/// channel count whose lines the tensor cannot serve pays for it twice: `C = 3` has no vectorizing
+/// width, which makes `nr` the whole channel run instead of one line, and a budget under that run
+/// rolls the block at every geometry rather than at the wide ones. Four covers the largest `nr`
+/// the catalogue reaches, so one column always unrolls and only genuinely wide blocks roll.
+///
+/// The tap bodies answer to a separate budget, which stays wide: a CPU's instruction cache is the
+/// larger of the two, and folding the contraction at comptime is what resolves a tap's coordinate
+/// once instead of per read.
 pub fn leaf<R: Runtime>(client: &ComputeClient<R>) -> Leaf {
     match client.properties().hardware.num_cpu_cores {
-        Some(_) => Leaf::memory(MemoryMmaConfig::new(256, true, false)),
-        None => Leaf::memory(MemoryMmaConfig::new(64, false, true)),
+        Some(_) => Leaf::memory(MemoryMmaConfig::new(64, 256, true, false)),
+        None => Leaf::memory(MemoryMmaConfig::new(64, 64, false, true)),
     }
 }
 
