@@ -3,7 +3,6 @@
 
 mod fold;
 pub mod instruction;
-pub mod microkernel;
 mod mma_config;
 mod ops;
 mod physical;

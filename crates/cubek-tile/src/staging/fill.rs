@@ -149,12 +149,10 @@ fn compatible_residence_pair(a: Residence, b: Residence) -> bool {
     match (a, b) {
         // A plane partition is private to its unit and assumes a solo fill; a shared-memory stage
         // selects a slot-wide Cube or Barrier pipeline. One slot cannot rendezvous both ways.
-        (Residence::Register(_), Residence::Smem) | (Residence::Smem, Residence::Register(_)) => {
-            false
-        }
-        (Residence::Register(_), Residence::Register(_) | Residence::InPlace) => true,
+        (Residence::Register, Residence::Smem) | (Residence::Smem, Residence::Register) => false,
+        (Residence::Register, Residence::Register | Residence::InPlace) => true,
         (Residence::Smem, Residence::Smem | Residence::InPlace) => true,
-        (Residence::InPlace, Residence::Register(_) | Residence::Smem | Residence::InPlace) => true,
+        (Residence::InPlace, Residence::Register | Residence::Smem | Residence::InPlace) => true,
     }
 }
 
@@ -442,7 +440,7 @@ fn stage_operand<T: Numeric>(
                 panic!("Staging: a TMA source cannot be read in place; give it Residence::Smem")
             }
         },
-        Residence::Register(_) => {
+        Residence::Register => {
             let delivery = input.delivery();
             comptime!(assert!(
                 !delivery.is_tma(),
@@ -451,11 +449,15 @@ fn stage_operand<T: Numeric>(
             comptime!(assert!(
                 !gathered,
                 "Staging: a gathered operand cannot stage into plane tiles (Residence::Register); \
-                 only Residence::Smem stages one, as the compacted window its leaf reads"
+                 only Residence::Smem stages one, as the compacted window its reader takes"
+            ));
+            let kind = comptime!(input.space.instruction().expect(
+                "Staging: an operand staging into registers needs the space to state which \
+                 instruction they are for; add `.instruction(...)` to its tiling"
             ));
             PlanePartition::store(
                 comptime!(input.space.divide()),
-                comptime!(input.leaf),
+                comptime!(kind),
                 comptime!(out.clone()),
             )
         }
@@ -511,15 +513,15 @@ mod tests {
     #[test]
     fn a_plane_stage_cannot_share_a_slot_with_smem() {
         assert!(!compatible_slot_residences(&[
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register,
             Residence::Smem,
         ]));
         assert!(!compatible_slot_residences(&[
             Residence::Smem,
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register,
         ]));
         assert!(compatible_slot_residences(&[
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register,
             Residence::InPlace,
         ]));
     }
@@ -533,11 +535,7 @@ mod tests {
         SlotPlan::new(
             &[
                 operand(Residence::Smem, Delivery::Procedural, &lhs),
-                operand(
-                    Residence::Register(RegisterKind::Cmma),
-                    Delivery::Copy,
-                    &rhs,
-                ),
+                operand(Residence::Register, Delivery::Copy, &rhs),
             ],
             &space,
         );
@@ -550,11 +548,7 @@ mod tests {
         SlotPlan::new(
             &[
                 operand(Residence::Smem, Delivery::Copy, &lhs),
-                operand(
-                    Residence::Register(RegisterKind::Cmma),
-                    Delivery::Copy,
-                    &rhs,
-                ),
+                operand(Residence::Register, Delivery::Copy, &rhs),
             ],
             &space,
         );
@@ -571,7 +565,7 @@ mod tests {
         ]));
         assert!(!slot_admits_operands(&[fragment(Residence::Smem, &lhs)]));
         assert!(!slot_admits_operands(&[fragment(
-            Residence::Register(RegisterKind::Cmma),
+            Residence::Register,
             &lhs
         )]));
     }
@@ -632,11 +626,7 @@ mod tests {
         assert!(resident.operand_plan(LHS, FIRST_SLOT).reads_fragments());
 
         let staged = SlotPlan::new(
-            &[operand(
-                Residence::Register(RegisterKind::Cmma),
-                Delivery::Copy,
-                &lhs,
-            )],
+            &[operand(Residence::Register, Delivery::Copy, &lhs)],
             &space,
         );
         assert!(staged.operand_plan(LHS, FIRST_SLOT).reads_fragments());

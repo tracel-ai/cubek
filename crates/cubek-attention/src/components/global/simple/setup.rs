@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use cubecl::ir::DeviceProperties;
-use cubek_matmul::{
+use cubek_matmul::multi_level::{
     components::{
         global::{
             GlobalReaderConfig, GlobalWriterConfig, InputLoadFlow, PartitionedStageFamily,

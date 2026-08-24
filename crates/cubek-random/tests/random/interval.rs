@@ -43,12 +43,14 @@ fn values_open_interval() {
 
 #[cube(launch)]
 pub(crate) fn kernel_to_unit_interval_co(input: &[u32], output: &mut [f32]) {
-    output[ABSOLUTE_POS] = to_unit_interval_closed_open(input[ABSOLUTE_POS]);
+    let value = Vector::<u32, Const<1>>::new(input[ABSOLUTE_POS]);
+    output[ABSOLUTE_POS] = to_unit_interval_closed_open(value).extract(0usize);
 }
 
 #[cube(launch)]
 pub(crate) fn kernel_to_unit_interval_oo(input: &[u32], output: &mut [f32]) {
-    output[ABSOLUTE_POS] = to_unit_interval_open(input[ABSOLUTE_POS]);
+    let value = Vector::<u32, Const<1>>::new(input[ABSOLUTE_POS]);
+    output[ABSOLUTE_POS] = to_unit_interval_open(value).extract(0usize);
 }
 
 #[test]

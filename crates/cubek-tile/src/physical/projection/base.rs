@@ -699,7 +699,7 @@ mod tests {
     /// twin (`TileSpec::new` plus a tiled `Storage`) describes the same buffer.
     #[test]
     fn a_tiled_spec_matches_its_buffer() {
-        use crate::{Leaf, MemoryMmaConfig, PhysicalAxis, TileSpec};
+        use crate::{PhysicalAxis, TileSpec};
 
         const BATCH: Axis = Axis(3);
         let layout = ConcreteLayout::new(&[
@@ -709,10 +709,7 @@ mod tests {
             PhysicalAxis::new(A, 8),
             PhysicalAxis::new(B, 8),
         ]);
-        let spec = TileSpec::new(
-            Projection::of_layout(&layout),
-            Leaf::memory(MemoryMmaConfig::new(0, false, false)),
-        );
+        let spec = TileSpec::new(Projection::of_layout(&layout));
 
         assert_eq!(spec.projection.physical_rank(), layout.axes().len());
         assert_eq!(

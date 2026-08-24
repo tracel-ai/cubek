@@ -1,24 +1,23 @@
 use cubecl::{CubeDim, Runtime};
-use cubek_matmul::components::{global::PartitionedStageFamily, stage::StridedStageFamily};
+use cubek_matmul::multi_level::components::{
+    global::PartitionedStageFamily, stage::StridedStageFamily,
+};
 use cubek_std::{CubeDimResource, cube_count::CubeCountStrategy};
 
-use crate::forward::definition::{
-    AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionPartitionSize,
-    AttentionProblem, AttentionSetupError, AttentionStageSize, AttentionTileSize,
-    AttentionTilingScheme, HypercubeBlueprint,
-};
-use crate::{
-    components::stage::unit::UnitPartitionStageAttentionFamily, components::tile::TileAttentionKind,
-};
 use crate::{
     components::{
         batch::simple::SimpleBatchAttentionFamily, global::simple::SimpleGlobalAttentionFamily,
+        stage::unit::UnitPartitionStageAttentionFamily, tile::TileAttentionKind,
     },
-    forward::routines::Routine,
-};
-use crate::{
-    forward::launch::BlueprintStrategy,
-    forward::routines::{DeviceSettings, LaunchInfo},
+    forward::{
+        definition::{
+            AttentionAvailabilityError, AttentionBlueprint, AttentionElems, AttentionPartitionSize,
+            AttentionProblem, AttentionSetupError, AttentionStageSize, AttentionTileSize,
+            AttentionTilingScheme, HypercubeBlueprint,
+        },
+        launch::BlueprintStrategy,
+        routines::{DeviceSettings, LaunchInfo, Routine},
+    },
 };
 
 #[derive(Debug, Clone)]

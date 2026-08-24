@@ -11,7 +11,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::plane, microkernel::horizontal, *};
+use crate::{instruction::plane, instruction::registers::horizontal, *};
 
 /// One plane's share of the streamed fold.
 ///

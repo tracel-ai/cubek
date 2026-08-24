@@ -1,5 +1,5 @@
 use cubecl::prelude::*;
-use cubek_matmul::components::stage::{LoadStageFamily, Stage, StageFamily};
+use cubek_matmul::multi_level::components::stage::{LoadStageFamily, Stage, StageFamily};
 
 use cubecl::std::{Swizzle, tensor::layout::Coords2d};
 use cubek_std::{

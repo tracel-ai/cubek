@@ -2,8 +2,9 @@ mod matmul_tma {
     mod cmma {
         use cubecl::{TestRuntime, client::ComputeClient};
         use cubek_matmul::{
-            definition::{BatchMatmulBlueprint, MatmulProblem},
-            routines::BlueprintStrategy,
+            definition::MatmulProblem,
+            multi_level::{Strategy as MultiLevel, definition::BatchMatmulBlueprint},
+            routine::BlueprintStrategy,
             strategy::Strategy,
         };
 
@@ -14,14 +15,22 @@ mod matmul_tma {
             p: MatmulProblem,
             bp: BatchMatmulBlueprint,
         ) {
-            test_matmul_strategy(c, p, Strategy::SimpleTmaCmma(BlueprintStrategy::Forced(bp)));
+            test_matmul_strategy(
+                c,
+                p,
+                MultiLevel::SimpleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
+            );
         }
         fn launch_double_buffering_tma(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
             bp: BatchMatmulBlueprint,
         ) {
-            test_matmul_strategy(c, p, Strategy::DoubleTmaCmma(BlueprintStrategy::Forced(bp)));
+            test_matmul_strategy(
+                c,
+                p,
+                MultiLevel::DoubleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
+            );
         }
         fn launch_specialized_tma(
             c: ComputeClient<TestRuntime>,
@@ -31,7 +40,7 @@ mod matmul_tma {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SpecializedTmaCmma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SpecializedTmaCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
 
@@ -41,9 +50,8 @@ mod matmul_tma {
     mod mma {
         use cubecl::{TestRuntime, client::ComputeClient};
         use cubek_matmul::{
-            definition::{BatchMatmulBlueprint, MatmulProblem},
-            routines::BlueprintStrategy,
-            strategy::Strategy,
+            definition::MatmulProblem, multi_level::definition::BatchMatmulBlueprint,
+            routine::BlueprintStrategy, strategy::Strategy,
         };
 
         use crate::matmul::test_matmul_strategy;
@@ -53,14 +61,22 @@ mod matmul_tma {
             p: MatmulProblem,
             bp: BatchMatmulBlueprint,
         ) {
-            test_matmul_strategy(c, p, Strategy::SimpleTmaMma(BlueprintStrategy::Forced(bp)));
+            test_matmul_strategy(
+                c,
+                p,
+                MultiLevel::SimpleTmaMma(BlueprintStrategy::Forced(bp)).into(),
+            );
         }
         fn launch_double_buffering_tma(
             c: ComputeClient<TestRuntime>,
             p: MatmulProblem,
             bp: BatchMatmulBlueprint,
         ) {
-            test_matmul_strategy(c, p, Strategy::DoubleTmaMma(BlueprintStrategy::Forced(bp)));
+            test_matmul_strategy(
+                c,
+                p,
+                MultiLevel::DoubleTmaMma(BlueprintStrategy::Forced(bp)).into(),
+            );
         }
         fn launch_specialized_tma(
             c: ComputeClient<TestRuntime>,
@@ -70,7 +86,7 @@ mod matmul_tma {
             test_matmul_strategy(
                 c,
                 p,
-                Strategy::SpecializedTmaMma(BlueprintStrategy::Forced(bp)),
+                MultiLevel::SpecializedTmaMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
 

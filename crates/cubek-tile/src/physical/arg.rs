@@ -30,23 +30,19 @@ pub struct TileSpec {
     /// The launch's cube size (units per cube), `0` when unknown; carried into the
     /// [`StagePlan`](crate::StagePlan) of every stage derived from this operand.
     pub units: usize,
-    /// Explicit stage-layout override; `None` derives from this operand's leaf in
-    /// [`Tile::of`](crate::Tile::of) ([`StageStorage::for_leaf`]).
+    /// Explicit stage-layout override; `None` derives from this operand's stages
+    /// ([`StageStorage::for_stages`]).
     pub storage: Option<StageStorage>,
     /// Where this operand lives at each level of the kernel's space, coarse to fine. Empty (the
     /// default) is every level [`InPlace`](Residence::InPlace): read where it already is, staging
-    /// nothing.
+    /// nothing. Also the operand's format statement: its finest register stage is what it is at
+    /// the instruction ([`Instruction::at_instruction`]), and operands that disagree meet the
+    /// kind-pairing panics there.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
-    /// What this operand is at the instruction: a memory window, or a plane fragment in one of the
-    /// two encodings. Stated when the spec is built, so no operand ever carries an implied one; a
-    /// format decision, so it belongs to the operand rather than to the partitioning.
-    /// [`Tile::of`](crate::Tile::of) carries it onto the tile, and operands that disagree meet the
-    /// kind-pairing panics at the instruction.
-    pub leaf: Leaf,
 }
 
 impl TileSpec {
-    /// An operand's spec from its mapping and its leaf; the optional halves are the safe defaults
+    /// An operand's spec from its mapping; the optional halves are the safe defaults
     /// (unchecked, cube size unknown, nothing staged) and are set by
     /// [`with_boundary`](Self::with_boundary), [`checked`](Self::checked), [`units`](Self::units),
     /// [`storage`](Self::storage), and [`residence`](Self::residence).
@@ -54,21 +50,20 @@ impl TileSpec {
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
     /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
     /// that is where it runs instead.
-    pub fn new(projection: Projection, leaf: Leaf) -> Self {
+    pub fn new(projection: Projection) -> Self {
         TileSpec {
             projection,
             boundaries: SmallVec::new(),
             units: 0,
             storage: None,
             residence: SmallVec::new(),
-            leaf,
         }
     }
 
     /// [`new`](Self::new) over the [`direct`](Projection::direct) mapping: one logical axis per
     /// physical axis, which is every non-gather, untiled operand.
-    pub fn direct(axes: &[Axis], leaf: Leaf) -> Self {
-        Self::new(Projection::direct(axes), leaf)
+    pub fn direct(axes: &[Axis]) -> Self {
+        Self::new(Projection::direct(axes))
     }
 
     /// The axes this operand spans, in its logical order.
@@ -77,7 +72,7 @@ impl TileSpec {
     }
 
     /// Override the derived stages' [`StageStorage`] layout (default
-    /// [`StageStorage::for_leaf`]).
+    /// [`StageStorage::for_stages`]).
     pub fn storage(mut self, layout: StageStorage) -> Self {
         self.storage = Some(layout);
         self
@@ -93,12 +88,14 @@ impl TileSpec {
     }
 
     /// This operand's [`StagePlan`]: its per-level residences, plus the stage layout its
-    /// materialized levels take (the explicit override, else derived from its leaf).
-    pub fn stage_plan(&self) -> StagePlan {
+    /// materialized levels take (the explicit override, else derived from its stages).
+    /// `instruction` is the space's statement of what runs at the last level: it decides the
+    /// stage layout when this operand is staged into registers, and is unread otherwise.
+    pub fn stage_plan(&self, instruction: Option<Instruction>) -> StagePlan {
         StagePlan::new(
             &self.residence,
             self.storage
-                .unwrap_or_else(|| StageStorage::for_leaf(self.leaf)),
+                .unwrap_or_else(|| StageStorage::for_stages(&self.residence, instruction)),
             self.units,
         )
     }
@@ -271,8 +268,7 @@ impl<E: Numeric> TmaTileArg<E> {
         TmaData::from_tensor_map(
             self.view.clone(),
             comptime!(space.project(self.spec.axes())),
-            comptime!(self.spec.leaf),
-            comptime!(self.spec.stage_plan()),
+            comptime!(self.spec.stage_plan(space.instruction())),
         )
     }
 }
@@ -354,19 +350,19 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
 }
 
 impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
-    /// Load a TMA tensor-map as a tile argument. `dims` is the operand's logical runtime
-    /// `(batch, rows, cols)`; `transposed` flags a col-major operand whose descriptor
-    /// swapped its inner pair (the layout swaps coords back). `axes` are the operand's
-    /// spanned axes: 3 with a leading batch axis, 2 without. The spec's width and storage
-    /// don't apply to a tensor map, so the spec is built here, not by the caller.
+    /// Load a TMA tensor-map as a tile argument for `operand`, whose axes (3 with a leading
+    /// batch axis, 2 without) and per-level residences drive the spec. `dims` is the
+    /// operand's logical runtime `(batch, rows, cols)`; `transposed` flags a col-major
+    /// operand whose descriptor swapped its inner pair (the layout swaps coords back). The
+    /// spec's width and storage don't apply to a tensor map, so the spec is built here, not
+    /// by the caller.
     pub fn tensor_map(
         tensor_map: TensorMapArg<R, Tiled>,
-        axes: &[Axis],
+        operand: &Operand,
         dims: (u32, u32, u32),
         transposed: bool,
-        leaf: Leaf,
-        residence: &[Residence],
     ) -> Self {
+        let axes = operand.axes();
         let batched = match axes.len() {
             2 => false,
             3 => true,
@@ -376,7 +372,10 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
         };
         let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
-        Self::new(view, TileSpec::direct(axes, leaf).residence(residence))
+        Self::new(
+            view,
+            TileSpec::direct(axes).residence(&operand.residences()),
+        )
     }
 }
 

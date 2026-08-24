@@ -1,19 +1,16 @@
+//! The matmul problem, its element types, and the errors either family can raise.
+
 mod base;
-mod blueprint;
 mod cost;
-mod cube_mapping;
+mod elems;
 mod error;
-mod spec;
-mod tiling_scheme;
 mod vectorization;
 
 pub use base::*;
-pub use blueprint::*;
 pub use cost::*;
-pub use cube_mapping::*;
-// Internal-only — external crates import these directly from cubek-std.
-pub(crate) use cubek_std::{StageIdent, SwizzleModes};
+pub use elems::*;
 pub use error::*;
-pub use spec::*;
-pub use tiling_scheme::*;
 pub use vectorization::*;
+
+// Internal-only — external crates import this directly from cubek-std.
+pub(crate) use cubek_std::StageIdent;

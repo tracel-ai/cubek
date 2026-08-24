@@ -1,6 +1,6 @@
 //! Inferred-blueprint smoke tests for TMA routines.
 
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::multi_level::Strategy as MultiLevel;
 
 use super::common::{client, f16_elems, square};
 use crate::matmul::test_matmul_strategy;
@@ -10,7 +10,7 @@ fn simple_tma_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleTmaCmma(Default::default()),
+        MultiLevel::SimpleTmaCmma(Default::default()).into(),
     );
 }
 
@@ -19,7 +19,7 @@ fn simple_tma_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SimpleTmaMma(Default::default()),
+        MultiLevel::SimpleTmaMma(Default::default()).into(),
     );
 }
 
@@ -28,7 +28,7 @@ fn double_tma_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleTmaCmma(Default::default()),
+        MultiLevel::DoubleTmaCmma(Default::default()).into(),
     );
 }
 
@@ -37,7 +37,7 @@ fn double_tma_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::DoubleTmaMma(Default::default()),
+        MultiLevel::DoubleTmaMma(Default::default()).into(),
     );
 }
 
@@ -46,7 +46,7 @@ fn specialized_tma_cmma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SpecializedTmaCmma(Default::default()),
+        MultiLevel::SpecializedTmaCmma(Default::default()).into(),
     );
 }
 
@@ -55,6 +55,6 @@ fn specialized_tma_mma() {
     test_matmul_strategy(
         client(),
         square(256, f16_elems()),
-        Strategy::SpecializedTmaMma(Default::default()),
+        MultiLevel::SpecializedTmaMma(Default::default()).into(),
     );
 }

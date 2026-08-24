@@ -47,13 +47,16 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Leaf, MemoryMmaConfig, Space, TileArg, TileArgLaunch, Tiling,
-    WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Space, TileArg, TileArgLaunch,
+    Tiling, WalkOrder,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
-/// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the leaf.
-const LEAF: Leaf = Leaf::memory(MemoryMmaConfig::new(64, false, false));
+/// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
+/// instruction; bound on the accumulator at the kernel top.
+const INSTRUCTION: Instruction = Instruction::Registers {
+    config: RegisterBlock::new(64, false, false),
+};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -208,7 +211,7 @@ fn rhs_input(
         RhsLayout::NContiguous => &[K, N],
         RhsLayout::KContiguous => &[N, K],
     };
-    fill(TileInput::builder(client, space.project(axes), LEAF).untiled())
+    fill(TileInput::builder(client, space.project(axes)).untiled())
 }
 
 /// The launch arg for [`rhs_input`]'s tensor: as-is, or the `[N, K]` buffer presented as shape
@@ -242,11 +245,11 @@ fn run(
 ) -> TileInput {
     let space = mapping.space(problem, lanes);
     let dtype = f32::elem_type_native();
-    let a = TileInput::builder(client, space.project(&[M, K]), LEAF)
+    let a = TileInput::builder(client, space.project(&[M, K]))
         .untiled()
         .arange();
     let b = rhs_input(client, mapping, &space, TileInputBuilder::arange);
-    let c = TileInput::builder(client, space.project(&[M, N]), LEAF)
+    let c = TileInput::builder(client, space.project(&[M, N]))
         .untiled()
         .zeros();
 
@@ -257,7 +260,7 @@ fn run(
         TileArgLaunch::new(a.tensor_arg(1), a.spec()),
         TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
         TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-        space,
+        space.with_instruction(INSTRUCTION),
         dtype,
     );
     c
@@ -421,11 +424,11 @@ pub fn bench(
     let cube_dim = mapping.cube_dim(&space, &client);
     let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
 
-    let a = TileInput::builder(&client, space.project(&[M, K]), LEAF)
+    let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
         .uniform(0, 0.0, 1.0);
     let b = rhs_input(&client, mapping, &space, |bld| bld.uniform(1, 0.0, 1.0));
-    let c = TileInput::builder(&client, space.project(&[M, N]), LEAF)
+    let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
         .zeros();
 
@@ -465,7 +468,7 @@ const SHAPES: &[(&str, &str, usize, usize, usize)] = &[
     ),
 ];
 
-/// The width ladder: `c1` is each mapping's naive form, the wider entries buy cache-line
+/// The width stages: `c1` is each mapping's naive form, the wider entries buy cache-line
 /// utilization with register-block width (all stay within the leaf's 64-cell unroll budget).
 /// `n_spread` also gets a widened form so the comparison stays honest if widening helps everyone.
 const MAPPINGS: &[Mapping] = &[

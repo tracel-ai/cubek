@@ -6,6 +6,7 @@
 use cubecl::{ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulGlobalElems, MatmulProblem},
+    multi_level::Strategy as MultiLevel,
     strategy::Strategy,
 };
 use cubek_std::MatrixLayout;
@@ -36,7 +37,7 @@ fn simple_vecmat() {
     test_matmul_strategy(
         client(),
         vecmat_problem(128, 128, f16_elems()),
-        Strategy::SimpleVecMat(Default::default()),
+        MultiLevel::SimpleVecMat(Default::default()).into(),
     );
 }
 
@@ -45,6 +46,6 @@ fn double_vecmat() {
     test_matmul_strategy(
         client(),
         vecmat_problem(128, 128, f16_elems()),
-        Strategy::DoubleVecMat(Default::default()),
+        MultiLevel::DoubleVecMat(Default::default()).into(),
     );
 }

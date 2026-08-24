@@ -1,6 +1,6 @@
 pub mod pb1 {
     use super::*;
-    use cubek_matmul::components::stage::PartitionBuffering;
+    use cubek_matmul::multi_level::components::stage::PartitionBuffering;
 
     fn partition_buffering() -> PartitionBuffering {
         PartitionBuffering::Single
@@ -11,7 +11,7 @@ pub mod pb1 {
 
 pub mod pb2 {
     use super::*;
-    use cubek_matmul::components::stage::PartitionBuffering;
+    use cubek_matmul::multi_level::components::stage::PartitionBuffering;
 
     fn partition_buffering() -> PartitionBuffering {
         PartitionBuffering::Double

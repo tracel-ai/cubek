@@ -1,7 +1,7 @@
 //! The [`Partitioner`]: a recursive descent strategy for a [`Space`](crate::Space),
 //! one decomposition level plus the partitioner for the subspaces it produces.
 
-use crate::{Axis, ByAxis, MemoryMmaConfig, MmaIOConfig};
+use crate::{Axis, ByAxis};
 
 use super::{ComputeScope, Distribution, WalkOrder};
 
@@ -43,34 +43,10 @@ impl Default for Buffering {
     }
 }
 
-/// What an operand *is* at the instruction: a memory window, or a plane fragment in one of the two
-/// encodings. Pure format, no shape — `m`/`n`/`k` belong to the contraction, not to any one operand,
-/// so every allocation site is handed them by whoever holds enough spaces to know them.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Leaf {
-    /// A memory window contracted by the software microkernel.
-    Memory {
-        config: MemoryMmaConfig,
-    },
-    Cmma,
-    /// The manual/raw-mma rung: `MmaDefinition::execute` over register fragments. `io` rides the
-    /// leaf because it comes from a device query, which cannot run in-kernel.
-    Mma {
-        io: MmaIOConfig,
-    },
-}
-
-impl Leaf {
-    /// Memory leaf with explicit execution configuration.
-    pub const fn memory(config: MemoryMmaConfig) -> Self {
-        Self::Memory { config }
-    }
-}
-
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
 /// hands [`next`](Partitioner::next) down. A `Level` carries how deeply its walk buffers
-/// ([`Buffering`]); `Final` carries nothing, since how the terminal tile contracts ([`Leaf`]) is
-/// each operand's own statement.
+/// ([`Buffering`]); `Final` carries nothing, since what the terminal tile contracts through
+/// ([`Instruction`](crate::Instruction)) is each operand's own operand.s statement.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
     Final,

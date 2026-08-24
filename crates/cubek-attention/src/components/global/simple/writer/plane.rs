@@ -3,7 +3,7 @@ use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},
 };
-use cubek_matmul::components::global::{
+use cubek_matmul::multi_level::components::global::{
     GlobalWriterConfig, PartitionedStage, WriteEvent, WriteEventExpand, WriteEventListener,
     plane_write,
     read::tiled::{TiledCoords, TiledLayout},

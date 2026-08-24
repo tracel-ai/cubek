@@ -1,28 +1,26 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::{
+use cubek_matmul::multi_level::components::{
     global::{WriteEvent, WriteEventListener},
     stage::Stage,
 };
 use cubek_std::tile::{RowWise, SharedTile, Tile};
 use std::marker::PhantomData;
 
-use crate::components::stage::partition::init_running_state;
-use crate::components::stage::{QueryPartition, SoftmaxPartition};
-use crate::components::tile::MaskConfig;
-use crate::components::{
-    global::simple::{MaskReader, QueryReader},
-    stage::{MaskPartition, OutputPartition, partitioner::AttentionPartitioner},
-};
 use crate::{
-    components::stage::KeyPartition,
-    components::stage::ValuePartition,
-    components::stage::base::StageAttentionConfig,
-    {components::stage::StageAttention, forward::definition::AttentionPrecision},
-};
-use crate::{
-    components::{global::GlobalAttentionConfig, stage::PartitionAttentionConfig},
-    forward::definition::attention_types::*,
+    components::{
+        global::{
+            GlobalAttentionConfig,
+            simple::{MaskReader, QueryReader},
+        },
+        stage::{
+            KeyPartition, MaskPartition, OutputPartition, PartitionAttentionConfig, QueryPartition,
+            SoftmaxPartition, StageAttention, ValuePartition, base::StageAttentionConfig,
+            partition::init_running_state, partitioner::AttentionPartitioner,
+        },
+        tile::MaskConfig,
+    },
+    forward::definition::{AttentionPrecision, attention_types::*},
 };
 use cubecl::std::tensor::layout::Coords2d;
 

@@ -14,9 +14,7 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{
-    HostData, HostDataType, MEMORY_LEAF, TestInput, TestOutcome, ValidationResult,
-};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use cubek_tile::*;
 
@@ -80,6 +78,7 @@ fn run(
     out_spec: TileSpec,
     space: Space,
     in_v: usize,
+    instruction: Instruction,
 ) -> (HostData, Vec<f32>, Vec<f32>) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
@@ -108,7 +107,7 @@ fn run(
     let w_binding = w_handle.binding();
     // The two inputs of one contraction stage at the same levels here, so the weight follows the
     // gathered input's plan rather than repeating it at every call site.
-    let w_spec = TileSpec::direct(w_axes, MEMORY_LEAF).residence(&in_spec.residence);
+    let w_spec = TileSpec::direct(w_axes).residence(&in_spec.residence);
     let out_binding = out_handle.clone().binding();
     match in_v {
         1 => conv_kernel::launch::<TestRuntime>(
@@ -118,7 +117,7 @@ fn run(
             TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
-            space,
+            space.with_instruction(instruction),
             f32_ty,
         ),
         2 => conv_kernel_lined::launch::<TestRuntime>(
@@ -128,7 +127,7 @@ fn run(
             TileArgLaunch::new(in_binding.into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
-            space,
+            space.with_instruction(instruction),
             f32_ty,
         ),
         other => panic!("conv: no kernel at input width {other}"),
@@ -196,22 +195,21 @@ impl Conv1d {
         buffering: Buffering,
         residence: &[Residence],
     ) {
-        self.check_at_with_leaf(
+        self.check_at_with_instruction(
             tile_oh,
             tile_co,
             in_v,
             checked,
             buffering,
             residence,
-            MEMORY_LEAF,
+            Instruction::registers(16),
         )
     }
 
-    /// `check_at` with an explicit memory-leaf configuration. Kept separate so the fan-out path
-    /// can be traced on the CPU test runtime even though production CPU launches select the flat
-    /// walk.
+    /// `check_at` with an explicit instruction. Kept separate so the fan-out path can be traced
+    /// on the CPU test runtime even though production CPU launches select the flat walk.
     #[allow(clippy::too_many_arguments)]
-    fn check_at_with_leaf(
+    fn check_at_with_instruction(
         &self,
         tile_oh: usize,
         tile_co: usize,
@@ -219,7 +217,7 @@ impl Conv1d {
         checked: bool,
         buffering: Buffering,
         residence: &[Residence],
-        leaf: Leaf,
+        instruction: Instruction,
     ) {
         let space = Tiling::new()
             .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
@@ -233,16 +231,13 @@ impl Conv1d {
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
-        let in_spec = TileSpec::new(
-            Projection::new(
-                &[OH, RH, CI],
-                &[
-                    PhysicalAxisMap::affine(&[(OH, self.stride), (RH, self.dilation)]),
-                    PhysicalAxisMap::of(CI),
-                ],
-            ),
-            leaf,
-        )
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, self.stride), (RH, self.dilation)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        ))
         .checked(checked)
         .residence(residence);
 
@@ -252,9 +247,10 @@ impl Conv1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO], leaf).checked(checked),
+            TileSpec::direct(&[OH, CO]).checked(checked),
             space,
             in_v,
+            instruction,
         );
 
         let want = self.reference(&input, &weight);
@@ -379,19 +375,16 @@ fn conv1d_padded_underflow_masks_to_zero() {
         })
         .build();
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OH, stride), (RH, dilation)],
-                    -(padding as isize),
-                ),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        MEMORY_LEAF,
-    )
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
     .checked(true);
 
     let (got, input, weight) = run(
@@ -400,9 +393,10 @@ fn conv1d_padded_underflow_masks_to_zero() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+        TileSpec::direct(&[OH, CO]).checked(true),
         space,
         1,
+        Instruction::registers(16),
     );
 
     // Reference with zero padding:
@@ -460,19 +454,16 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         })
         .build();
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OH, stride), (RH, dilation)],
-                    -(padding as isize),
-                ),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        MEMORY_LEAF,
-    )
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
     .with_boundary(Some(Boundary::Clamp));
 
     let (got, input, weight) = run(
@@ -481,9 +472,10 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+        TileSpec::direct(&[OH, CO]).checked(true),
         space,
         1,
+        Instruction::registers(16),
     );
 
     // Reference clamping the tap to the input's edge row instead of masking to zero:
@@ -537,19 +529,16 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         })
         .build();
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OH, stride), (RH, dilation)],
-                    -(padding as isize),
-                ),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        MEMORY_LEAF,
-    )
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
     .checked(true)
     .residence(&[Residence::Smem]);
 
@@ -559,9 +548,10 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+        TileSpec::direct(&[OH, CO]).checked(true),
         space,
         1,
+        Instruction::registers(16),
     );
 
     let mut want = vec![0.0f32; oh * co];
@@ -623,14 +613,16 @@ fn conv1d_vectorized_input_fanout() {
         stride: 1,
         dilation: 1,
     }
-    .check_at_with_leaf(
+    .check_at_with_instruction(
         4,
         4,
         2,
         false,
         Buffering::SINGLE,
         &[],
-        Leaf::memory(MemoryMmaConfig::new(16, false, true)),
+        Instruction::Registers {
+            config: RegisterBlock::new(16, false, true),
+        },
     );
 }
 
@@ -739,9 +731,15 @@ impl Conv1d {
             Some(axes) => space.launcher_over(&client, axes),
             None => space.launcher(&client),
         };
+        let mut in_operand = Operand::new(&[OH, RH, CI], f32_ty);
+        let mut w_operand = Operand::new(&[RH, CI, CO], f32_ty);
+        for &r in residence {
+            in_operand.stage(r);
+            w_operand.stage(r);
+        }
         let in_arg = launch
-            .arg(in_handle.binding(), MEMORY_LEAF)
-            .residence(residence)
+            .arg(in_handle.binding())
+            .operand(&in_operand)
             .gathered(Projection::new(
                 &[OH, RH, CI],
                 &[
@@ -754,12 +752,12 @@ impl Conv1d {
             ))
             .build();
         let w_arg = launch
-            .arg(w_handle.binding(), MEMORY_LEAF)
-            .residence(residence)
+            .arg(w_handle.binding())
             .subspace(&[RH, CI, CO])
+            .operand(&w_operand)
             .build();
         let out_arg = launch
-            .arg(out_handle.clone().binding(), MEMORY_LEAF)
+            .arg(out_handle.clone().binding())
             .subspace(&[OH, CO])
             .build();
 
@@ -770,7 +768,10 @@ impl Conv1d {
             in_arg.arg(),
             w_arg.arg(),
             out_arg.arg(),
-            launch.space().clone(),
+            launch
+                .space()
+                .clone()
+                .with_instruction(Instruction::registers(16)),
             f32_ty,
         );
 
@@ -938,19 +939,16 @@ impl Conv1d {
             })
             .build();
 
-        let in_spec = TileSpec::new(
-            Projection::new(
-                &[OH, RH, CI],
-                &[
-                    PhysicalAxisMap::scaled(&[
-                        (OH, Scale::Dynamic { max: self.stride }),
-                        (RH, Scale::Dynamic { max: self.dilation }),
-                    ]),
-                    PhysicalAxisMap::of(CI),
-                ],
-            ),
-            MEMORY_LEAF,
-        );
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::scaled(&[
+                    (OH, Scale::Dynamic { max: self.stride }),
+                    (RH, Scale::Dynamic { max: self.dilation }),
+                ]),
+                PhysicalAxisMap::of(CI),
+            ],
+        ));
 
         let in_shape = shape![self.in_len(), self.ci];
         let w_shape = shape![self.rh, self.ci, self.co];
@@ -977,15 +975,15 @@ impl Conv1d {
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(
                 w_handle.binding().into_tensor_arg(),
-                TileSpec::direct(&[RH, CI, CO], MEMORY_LEAF),
+                TileSpec::direct(&[RH, CI, CO]),
             ),
             TileArgLaunch::new(
                 out_handle.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[OH, CO], MEMORY_LEAF),
+                TileSpec::direct(&[OH, CO]),
             ),
             self.stride as u32,
             self.dilation as u32,
-            space,
+            space.with_instruction(Instruction::registers(16)),
             f32_ty,
         );
 
@@ -1154,13 +1152,13 @@ impl Conv1d {
                 Offset::Dynamic,
             )
         };
-        let in_spec = TileSpec::new(
-            Projection::new(&[OH, RH, CI], &[gathered, PhysicalAxisMap::of(CI)]),
-            MEMORY_LEAF,
-        )
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[gathered, PhysicalAxisMap::of(CI)],
+        ))
         .checked(true)
         .residence(residence);
-        let w_spec = TileSpec::direct(&[RH, CI, CO], MEMORY_LEAF).residence(residence);
+        let w_spec = TileSpec::direct(&[RH, CI, CO]).residence(residence);
 
         let in_shape = shape![in_len, self.ci];
         let w_shape = shape![self.rh, self.ci, self.co];
@@ -1193,12 +1191,12 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(
                     out_binding.into_tensor_arg(),
-                    TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+                    TileSpec::direct(&[OH, CO]).checked(true),
                 ),
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                space,
+                space.with_instruction(Instruction::registers(16)),
                 f32_ty,
             );
         } else {
@@ -1210,10 +1208,10 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(
                     out_binding.into_tensor_arg(),
-                    TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+                    TileSpec::direct(&[OH, CO]).checked(true),
                 ),
                 offset,
-                space,
+                space.with_instruction(Instruction::registers(16)),
                 f32_ty,
             );
         }
@@ -1375,17 +1373,14 @@ impl Conv2d {
             .build();
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
-        let in_spec = TileSpec::new(
-            Projection::new(
-                &[OH, OW, RH, RW, CI],
-                &[
-                    PhysicalAxisMap::affine(&[(OH, self.sh), (RH, self.dh)]),
-                    PhysicalAxisMap::affine(&[(OW, self.sw), (RW, self.dw)]),
-                    PhysicalAxisMap::of(CI),
-                ],
-            ),
-            MEMORY_LEAF,
-        )
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, OW, RH, RW, CI],
+            &[
+                PhysicalAxisMap::affine(&[(OH, self.sh), (RH, self.dh)]),
+                PhysicalAxisMap::affine(&[(OW, self.sw), (RW, self.dw)]),
+                PhysicalAxisMap::of(CI),
+            ],
+        ))
         .residence(residence);
 
         let (got, input, weight) = run(
@@ -1394,9 +1389,10 @@ impl Conv2d {
             shape![self.oh, self.ow, self.co],
             in_spec,
             &[RH, RW, CI, CO],
-            TileSpec::direct(&[OH, OW, CO], MEMORY_LEAF),
+            TileSpec::direct(&[OH, OW, CO]),
             space,
             1,
+            Instruction::registers(16),
         );
 
         let want = self.reference(&input, &weight);
@@ -1763,17 +1759,14 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         })
         .build();
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, OW, RH, RW, CI],
-            &[
-                PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]),
-                PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        MEMORY_LEAF,
-    );
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, OW, RH, RW, CI],
+        &[
+            PhysicalAxisMap::affine(&[(OH, sh), (RH, dh)]),
+            PhysicalAxisMap::affine(&[(OW, sw), (RW, dw)]),
+            PhysicalAxisMap::of(CI),
+        ],
+    ));
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
@@ -1939,7 +1932,7 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
-    let mut acc = out.promote(&input);
+    let mut acc = out.accumulate(&input, LeafOp::Sum);
     acc.zero();
     acc.mma(&input, &weight);
     out.copy_from(&acc);
@@ -1972,7 +1965,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (oh, co, rh, ci) = (8usize, 8usize, 2usize, 4usize);
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
-    let leaf = Leaf::Mma { io };
+    let instruction = Instruction::Mma { io };
 
     let space = Tiling::new()
         .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
@@ -1984,16 +1977,13 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         })
         .build();
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        leaf,
-    )
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine(&[(OH, stride), (RH, dilation)]),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
     .residence(&[Residence::Smem]);
 
     let f32_ty = f32::elem_type_native();
@@ -2020,13 +2010,13 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[RH, CI, CO], leaf).residence(&[Residence::Smem]),
+            TileSpec::direct(&[RH, CI, CO]).residence(&[Residence::Smem]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[OH, CO], leaf),
+            TileSpec::direct(&[OH, CO]),
         ),
-        space,
+        space.with_instruction(instruction),
         f32_ty,
     );
 
@@ -2125,20 +2115,17 @@ impl Resize1d {
         vector_size: usize,
         residence: &[Residence],
     ) {
-        let in_spec = TileSpec::new(
-            Projection::new(
-                &[OH, RH, CI],
-                &[
-                    PhysicalAxisMap::affine_with_offset(
-                        &[(OH, self.scale), (RH, self.tap)],
-                        self.offset,
-                    )
-                    .over(self.divisor),
-                    PhysicalAxisMap::of(CI),
-                ],
-            ),
-            MEMORY_LEAF,
-        )
+        let in_spec = TileSpec::new(Projection::new(
+            &[OH, RH, CI],
+            &[
+                PhysicalAxisMap::affine_with_offset(
+                    &[(OH, self.scale), (RH, self.tap)],
+                    self.offset,
+                )
+                .over(self.divisor),
+                PhysicalAxisMap::of(CI),
+            ],
+        ))
         .checked(true)
         .residence(residence);
 
@@ -2148,9 +2135,10 @@ impl Resize1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+            TileSpec::direct(&[OH, CO]).checked(true),
             self.space_with_buffering(oh_edges, buffering),
             vector_size,
+            Instruction::registers(16),
         );
 
         let want = self.reference(&input, &weight);
@@ -2322,22 +2310,19 @@ fn resize1d_rational_dynamic() {
     };
     let space = resize.space(&[2]);
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::scaled_with_offset(
-                    &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
-                    Offset::Dynamic,
-                )
-                .over(Divisor::Dynamic {
-                    min: resize.divisor,
-                }),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        MEMORY_LEAF,
-    )
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
+                Offset::Dynamic,
+            )
+            .over(Divisor::Dynamic {
+                min: resize.divisor,
+            }),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
     .checked(true);
 
     let in_data = ramp(resize.in_len * resize.ci, 7);
@@ -2363,15 +2348,15 @@ fn resize1d_rational_dynamic() {
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[RH, CI, CO], MEMORY_LEAF),
+            TileSpec::direct(&[RH, CI, CO]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[OH, CO], MEMORY_LEAF).checked(true),
+            TileSpec::direct(&[OH, CO]).checked(true),
         ),
         resize.divisor as u32,
         resize.offset as i32,
-        space,
+        space.with_instruction(Instruction::registers(16)),
         f32_ty,
     );
 
@@ -2426,22 +2411,19 @@ fn resize1d_dynamic_stage_read_before_fill() {
     };
     let space = resize.space(&[2]);
 
-    let in_spec = TileSpec::new(
-        Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::scaled_with_offset(
-                    &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
-                    Offset::Dynamic,
-                )
-                .over(Divisor::Dynamic {
-                    min: resize.divisor,
-                }),
-                PhysicalAxisMap::of(CI),
-            ],
-        ),
-        MEMORY_LEAF,
-    )
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::scaled_with_offset(
+                &[(OH, Scale::Static(4)), (RH, Scale::Static(6))],
+                Offset::Dynamic,
+            )
+            .over(Divisor::Dynamic {
+                min: resize.divisor,
+            }),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
     .checked(true);
 
     let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])

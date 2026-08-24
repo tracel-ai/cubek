@@ -1,6 +1,6 @@
 use super::*;
 use cubecl::{Runtime, TestRuntime};
-use cubek_matmul::definition::{BatchMatmulBlueprint, TilingScheme};
+use cubek_matmul::multi_level::definition::{BatchMatmulBlueprint, TilingScheme};
 
 #[test]
 pub fn test() {

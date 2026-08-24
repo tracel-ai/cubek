@@ -1,12 +1,14 @@
 use crate::matmul::test_matmul_strategy;
 use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
-use cubek_matmul::{routines::BlueprintStrategy, strategy::Strategy};
-
 use cubek_matmul::{
-    definition::MatmulGlobalElems,
-    definition::{MatmulElems, MatmulProblem},
-    routines::gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
+    multi_level::{
+        Strategy as MultiLevel, routines::gemv_unit_perpendicular::GemvUnitPerpendicularStrategy,
+    },
+    routine::BlueprintStrategy,
+    strategy::Strategy,
 };
+
 use cubek_std::MatrixLayout;
 
 type TestRuntime = cubecl::TestRuntime;

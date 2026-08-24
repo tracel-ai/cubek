@@ -1,10 +1,17 @@
 use cubecl::{Runtime, TestRuntime, prelude::Scalar};
-use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulPrecision, MatrixPrecision};
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulGlobalElems},
+    multi_level::definition::{MatmulPrecision, MatrixPrecision},
+};
 use cubek_test_utils::{HostData, Progress};
 
-use crate::Strategy;
-use crate::eval::benchmarks::problem::Conv2dProblem;
-use crate::eval::cpu_reference::{ConvSpec, cpu_reference_result, strategy_result};
+use crate::{
+    Strategy,
+    eval::{
+        benchmarks::problem::Conv2dProblem,
+        cpu_reference::{ConvSpec, cpu_reference_result, strategy_result},
+    },
+};
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
 type RhsG<MP> = <<MP as MatmulPrecision>::Rhs as MatrixPrecision>::Global;

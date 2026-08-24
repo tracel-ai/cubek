@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, Buffering, ByAxis, DequantAt, Distribution, Leaf, MemoryMmaConfig, Partitioner,
-    QuantTileArg, Space, StridedOperand, TileArg,
+    Axis, Buffering, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space,
+    StridedOperand, TileArg,
 };
 
 // Input axes
@@ -56,18 +56,15 @@ pub fn launch_ref<R: Runtime>(
     let input_dtype = ElemType::from_quant_value(scheme.value);
     // Both operands through the source builder, which derives the storage from the binding's own
     // dims and validates the scheme against this space. One tile covers each axis, so nothing
-    // overhangs and the checks stay off.
-    // A pure copy: no contraction runs on these tiles, so the leaf's unroll and K-walk knobs
-    // never come up. Both operands read as memory windows.
-    let leaf = Leaf::memory(MemoryMmaConfig::new(0, false, false));
-    let input_op = StridedOperand::source(input, leaf)
+    // overhangs and the checks stay off. Both operands read as memory windows.
+    let input_op = StridedOperand::source(input)
         .space(&space)
         .subspace(&[M, N])
         .checked(false)
         // Nothing stages this operand, so its read is what decodes it.
         .quantized(&[scales], *scheme, DequantAt::Read)
         .build();
-    let output_op = StridedOperand::source(output, leaf)
+    let output_op = StridedOperand::source(output)
         .space(&space)
         .subspace(&[M, N])
         .checked(false)

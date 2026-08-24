@@ -19,7 +19,7 @@ use cubecl::quant::scheme::QuantScheme;
 
 use crate::{Axis, Residence};
 
-/// One rung of an operand's ladder: where the cells sit while the level below runs, and the
+/// One stage of an operand: where the cells sit while the level below runs, and the
 /// element type they hold there.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Stage {
@@ -114,6 +114,12 @@ impl Operand {
         self.stages.last().map_or(self.dtype, |stage| stage.dtype)
     }
 
+    /// The residence column of the operand, one entry per level coarse to fine: what a
+    /// [`TileSpec`](crate::TileSpec) stamps as its per-level residences.
+    pub fn residences(&self) -> Vec<Residence> {
+        self.stages.iter().map(|stage| stage.residence).collect()
+    }
+
     /// Seal level `index`: reject a double statement, pad an omission to an
     /// [`InPlace`](Residence::InPlace) move. Run by the builder as each level closure returns.
     pub(crate) fn close_level(&mut self, index: usize) {
@@ -135,6 +141,32 @@ impl Operand {
     /// stages cannot drift from the space they were stated against.
     pub(crate) fn seal(&mut self) {
         self.sealed = true;
+    }
+}
+
+// Small tuples of operands as an [`OperandSet`], for callers (tests foremost) whose set has
+// no name of its own: `Tiling::over((a, b, out), …)` with `o.0`/`o.1`/`o.2` in the closures.
+impl OperandSet for (Operand,) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0].into_iter()
+    }
+}
+
+impl OperandSet for (Operand, Operand) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0, &mut self.1].into_iter()
+    }
+}
+
+impl OperandSet for (Operand, Operand, Operand) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0, &mut self.1, &mut self.2].into_iter()
+    }
+}
+
+impl OperandSet for (Operand, Operand, Operand, Operand) {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        [&mut self.0, &mut self.1, &mut self.2, &mut self.3].into_iter()
     }
 }
 

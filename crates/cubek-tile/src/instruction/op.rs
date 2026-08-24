@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 
 /// The arithmetic a leaf folds under. One vocabulary for the three layers that need it: the
 /// plane instructions ([`plane`](super::plane)), the register nests
-/// ([`microkernel`](crate::microkernel)), and the verb that schedules them
+/// ([`instruction`](crate::instruction::registers)), and the verb that schedules them
 /// ([`Tile::reduce_axis`](crate::Tile::reduce_axis)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LeafOp {

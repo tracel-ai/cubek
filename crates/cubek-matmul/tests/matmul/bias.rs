@@ -13,21 +13,23 @@ use cubecl::{
     std::tensor::{TensorHandle, launch::ViewArg, layout::VirtualLayoutLaunch},
 };
 use cubek_matmul::{
-    args::{TensorArgs, TensorInputsLaunch, TensorOutputLaunch},
-    components::global::memory::{
-        BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutLaunch,
+    definition::{AvailableVectorSizes, MatmulElems, MatmulProblem},
+    eval::cpu_reference::matmul_cpu_reference,
+    multi_level::{
+        BatchMatmulRoutine,
+        args::{TensorArgs, TensorInputsLaunch, TensorOutputLaunch},
+        components::global::memory::{
+            BatchLayout, BatchLayoutLaunch, GlobalLayout, GlobalLayoutLaunch,
+        },
+        definition::{Blueprint as _, cube_mapping_launch},
+        routines::batch::simple_unit::SimpleUnitAlgorithm,
     },
-    definition::{
-        AvailableVectorSizes, Blueprint as _, MatmulElems, MatmulProblem, cube_mapping_launch,
-    },
-    routines::{BatchMatmulRoutine, BlueprintStrategy, batch::simple_unit::SimpleUnitAlgorithm},
+    routine::BlueprintStrategy,
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{
     HostData, HostDataType, HostDataVec, TestInput, TestOutcome, assert_equals_approx,
 };
-
-use cubek_matmul::eval::cpu_reference::matmul_cpu_reference;
 
 #[test]
 pub fn test_matmul_with_bias_simple_unit_f32() {

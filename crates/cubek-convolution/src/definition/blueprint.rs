@@ -1,4 +1,4 @@
-use cubek_matmul::definition::BatchMatmulBlueprint;
+use cubek_matmul::multi_level::definition::BatchMatmulBlueprint;
 
 use crate::components::Dimensionality;
 

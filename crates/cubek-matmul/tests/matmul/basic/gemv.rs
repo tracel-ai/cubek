@@ -1,6 +1,6 @@
 //! Inferred-blueprint smoke tests for the GEMV routines.
 
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::multi_level::Strategy as MultiLevel;
 use cubek_std::MatrixLayout;
 
 use super::common::{client, f16_elems, rect_with_layouts};
@@ -20,7 +20,7 @@ fn gemm_vecmat() {
             MatrixLayout::ColMajor,
             f16_elems(),
         ),
-        Strategy::Gemm(Default::default()),
+        MultiLevel::Gemm(Default::default()).into(),
     );
 }
 
@@ -37,6 +37,6 @@ fn gemv_unit_perpendicular_vecmat() {
             MatrixLayout::RowMajor,
             f16_elems(),
         ),
-        Strategy::GemvUnitPerpendicular(Default::default()),
+        MultiLevel::GemvUnitPerpendicular(Default::default()).into(),
     );
 }

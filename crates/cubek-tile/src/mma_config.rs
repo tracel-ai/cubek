@@ -1,10 +1,11 @@
-//! Host-side load/store method selection for the manual-mma leaf ([`Leaf::Mma`](crate::Leaf))
-//! and execution configuration for the software mma leaf ([`Leaf::Memory`](crate::Leaf)).
+//! Host-side load/store method selection for the manual-mma form
+//! ([`Instruction::Mma`](crate::Instruction)) and execution configuration for the software
+//! mma instruction ([`Space::instruction`](crate::Space::instruction)).
 //!
 //! Ported from cubek-std's `MmaIOConfig`: which fragment transport each role uses is a
 //! `(device, storage-type)` decision that queries [`DeviceProperties`], so it is built host-side
-//! and carried into the kernel as a comptime value on the [`Leaf`](crate::Leaf) (exactly as the
-//! contraction depth `k` is). Both [`space::Leaf`](crate::Leaf) and the instruction leaf
+//! and carried into the kernel as a comptime value on the operand.s register stage (exactly as
+//! the contraction depth `k` is). Both the stage statement and the instruction
 //! ([`MmaData::mma`](crate::MmaData)) read it, so it lives at the crate root rather than beside
 //! either.
 
@@ -14,8 +15,8 @@ use cubecl::{
 };
 
 /// Hardware-capability-driven choice of load/store methods for a manual-mma tile, fixed once per
-/// `(device, operand storage types)` and carried by [`Leaf::Mma`](crate::Leaf) because the
-/// fragment readers/writers branch on it.
+/// `(device, operand storage types)` and carried by [`Instruction::Mma`](crate::Instruction)
+/// because the fragment readers/writers branch on it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIOConfig {
     pub lhs_load_method: LoadMethod,
@@ -93,14 +94,15 @@ fn store_method(device_props: &DeviceProperties, dtype: ElemType) -> StoreMethod
     }
 }
 
-/// Execution and unrolling configuration for the software (memory/register) MMA leaf. Every
+/// Execution and unrolling configuration for the software instruction. Every
 /// field is stated by the caller: nothing here reads the device, so the same config compiles the
 /// same kernel everywhere.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct MemoryMmaConfig {
-    /// Maximum number of vector accumulator cells (mr × nr) to fully inline into registers.
-    /// Blocks larger than this remain rolled in loops to avoid register spilling.
-    pub unroll_limit: usize,
+pub struct RegisterBlock {
+    /// Scalar register budget for the accumulator block. The leaf inlines `mr × nr` vector
+    /// cells only while they fit in it; wider lines therefore buy fewer cells, not more
+    /// registers. Blocks over budget stay rolled, to avoid spilling.
+    pub budget: usize,
     /// Whether to generate a dual-path specialization for masked/edge tiles (fast in-bounds path
     /// plus checked fallback).
     pub split_edge: bool,
@@ -109,11 +111,11 @@ pub struct MemoryMmaConfig {
     pub lane_fanout: bool,
 }
 
-impl MemoryMmaConfig {
+impl RegisterBlock {
     /// The only way to build one: every knob stated, none inferred.
-    pub const fn new(unroll_limit: usize, split_edge: bool, lane_fanout: bool) -> Self {
+    pub const fn new(budget: usize, split_edge: bool, lane_fanout: bool) -> Self {
         Self {
-            unroll_limit,
+            budget,
             split_edge,
             lane_fanout,
         }

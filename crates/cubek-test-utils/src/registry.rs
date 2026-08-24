@@ -54,12 +54,24 @@ impl<T> CatalogEntry<T> {
     }
 }
 
+/// Achieved bandwidth for a bench row, alongside the device's measured write
+/// peak it is judged against. `peak_bytes_per_s` is `None` when the category
+/// couldn't get a peak measurement for this access.
+#[derive(Debug, Clone, Copy)]
+pub struct Bandwidth {
+    pub achieved_bytes_per_s: f64,
+    pub peak_bytes_per_s: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RunSamples {
     pub durations: Vec<Duration>,
     /// Optional throughput, e.g. TFLOPS for matmul/attention. `None` when the
     /// category doesn't have a meaningful FLOP count (memcpy, contiguous, ...).
     pub tflops: Option<f64>,
+    /// Optional achieved bandwidth, e.g. for store-bound kernels like random.
+    /// `None` when the category doesn't have a meaningful byte count.
+    pub bandwidth: Option<Bandwidth>,
 }
 
 impl RunSamples {
@@ -67,6 +79,7 @@ impl RunSamples {
         Self {
             durations,
             tflops: None,
+            bandwidth: None,
         }
     }
 
@@ -75,20 +88,46 @@ impl RunSamples {
         self
     }
 
+    pub fn with_bandwidth(mut self, bandwidth: Bandwidth) -> Self {
+        self.bandwidth = Some(bandwidth);
+        self
+    }
+
     /// Convenience for matmul-style benches: turn a flop count into TFLOPS using
     /// the median sample duration. Returns `self` unchanged if there are no
     /// samples or the median is zero (avoiding NaN/inf in the dashboard).
     pub fn with_flops(self, flops: f64) -> Self {
-        if self.durations.is_empty() {
+        let Some(median_secs) = self.median_secs() else {
             return self;
+        };
+        self.with_tflops(flops / median_secs / 1e12)
+    }
+
+    /// Convenience for store/load-bound benches: turn a byte count into an
+    /// achieved bytes/s using the median sample duration, alongside the
+    /// device's measured peak for the same access. Returns `self` unchanged
+    /// if there are no samples or the median is zero (avoiding NaN/inf in the
+    /// dashboard).
+    pub fn with_bytes(self, bytes: usize, peak_bytes_per_s: Option<f64>) -> Self {
+        let Some(median_secs) = self.median_secs() else {
+            return self;
+        };
+        self.with_bandwidth(Bandwidth {
+            achieved_bytes_per_s: bytes as f64 / median_secs,
+            peak_bytes_per_s,
+        })
+    }
+
+    /// Median sample duration in seconds, or `None` when there are no samples
+    /// or the median is zero (which would divide a throughput into NaN/inf).
+    fn median_secs(&self) -> Option<f64> {
+        if self.durations.is_empty() {
+            return None;
         }
         let mut ns: Vec<u128> = self.durations.iter().map(|d| d.as_nanos()).collect();
         ns.sort_unstable();
         let median_secs = ns[ns.len() / 2] as f64 / 1e9;
-        if median_secs <= 0.0 {
-            return self;
-        }
-        self.with_tflops(flops / median_secs / 1e12)
+        (median_secs > 0.0).then_some(median_secs)
     }
 }
 

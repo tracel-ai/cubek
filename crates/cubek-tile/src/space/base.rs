@@ -4,7 +4,10 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ComputeScope, Distribution, LaneShare, LevelRole, MAX_AXES, Partitioner};
+use crate::{
+    Axis, ComputeScope, Distribution, Instruction, LaneShare, LevelRole, MAX_AXES, Partitioner,
+    join_lane_share,
+};
 
 use super::ByAxis;
 
@@ -93,12 +96,22 @@ pub struct Space {
     pub(crate) extents: Extents,
     #[cube(comptime)]
     partitioner: Partitioner,
+    /// What runs at the last level, once the levels are exhausted. Stated by the space's terminal
+    /// level and read by [`mma_leaf`](crate::mma_leaf); `None` for a space nothing contracts
+    /// in (a plain copy), and for one whose accumulator is promoted to a hardware form that
+    /// answers for itself.
+    #[cube(comptime)]
+    instruction: Option<Instruction>,
 }
 
 // Identity is the comptime tiling spec only; the `Extents` sizes are runtime, never a key.
+// The instruction is part of it: it picks the leaf's codegen, so two spaces that differ only
+// there must not share a compiled kernel.
 impl PartialEq for Space {
     fn eq(&self, other: &Self) -> bool {
-        self.extents.kinds == other.extents.kinds && self.partitioner == other.partitioner
+        self.extents.kinds == other.extents.kinds
+            && self.partitioner == other.partitioner
+            && self.instruction == other.instruction
     }
 }
 impl Eq for Space {}
@@ -106,6 +119,7 @@ impl std::hash::Hash for Space {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.extents.kinds.hash(state);
         self.partitioner.hash(state);
+        self.instruction.hash(state);
     }
 }
 
@@ -118,6 +132,7 @@ impl SpaceExpand {
         Space {
             extents: Extents::fixed(self.extents.kinds.clone()),
             partitioner: self.partitioner.clone(),
+            instruction: self.instruction,
         }
     }
 
@@ -151,6 +166,7 @@ impl Space {
                 sizes,
             },
             partitioner: comptime!(space.partitioner.clone()),
+            instruction: comptime!(space.instruction),
         }
     }
 }
@@ -169,7 +185,21 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
             partitioner: Partitioner::Final,
+            instruction: None,
         }
+    }
+
+    /// State what runs at the last level. Said once, by the routine that owns the contraction;
+    /// every space derived from this one ([`divide`](Space::divide),
+    /// [`project`](Space::project)) carries it down to the leaf.
+    pub fn with_instruction(mut self, instruction: Instruction) -> Self {
+        self.instruction = Some(instruction);
+        self
+    }
+
+    /// What runs at the last level, if this space states it.
+    pub fn instruction(&self) -> Option<Instruction> {
+        self.instruction
     }
 
     /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), keeping the partitioner. The
@@ -330,9 +360,13 @@ impl Space {
             .cloned()
             .unwrap_or(Partitioner::Final);
 
+        // Same reasoning for the floor: the operands of one operation share it.
+        let instruction = parts.iter().find_map(|p| p.instruction);
+
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner,
+            instruction,
         }
     }
 
@@ -344,6 +378,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
+            instruction: self.instruction,
         }
     }
 
@@ -394,6 +429,20 @@ impl Space {
     /// of bits; the folded axes' runs are exactly the bits a cell's partials differ in. Fold
     /// everything and that mask is the whole plane ([`LaneShare::Plane`]); fold under a carry and
     /// it is a [`LaneShare::Group`], whatever order the axes sit in.
+    /// The share a tile ends up with at the leaf: every level's own share joined, the way
+    /// [`MemData::at`](crate::MemData) joins them one at a time on the way down. A block built
+    /// before the walk descends cannot read the stamped value, but it can compute the value that
+    /// stamping would arrive at, because every level is already known here.
+    pub(crate) fn leaf_lane_share(&self) -> LaneShare {
+        let mut share = LaneShare::Whole;
+        let mut level = self.clone();
+        while !level.is_final() {
+            share = join_lane_share(share, level.lane_share());
+            level = level.divide();
+        }
+        share
+    }
+
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
@@ -441,9 +490,24 @@ impl Space {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
+    /// How many contracted values one step consumes off a `width`-wide line of this operand.
+    ///
+    /// A line folds into one accumulator cell only where it runs along the fastest of
+    /// `contracted`, which is absent from the accumulator, so its lanes are partials of one cell
+    /// rather than cells that must stay apart. Skipping the test merges cells that must stay
+    /// separate: wrong numbers, no crash. The width must divide the axis, which is why a folded
+    /// walk needs no masked tail.
+    pub fn served(&self, contracted: &[Axis], width: usize) -> usize {
+        let lined = self.axis_at(self.rank() - 1);
+        let folds = width > 1
+            && contracted.last() == Some(&lined)
+            && self.extent(lined).is_multiple_of(width);
+        if folds { width } else { 1 }
+    }
+
     /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
     /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
-    /// there are is what picks a leaf's microkernel, so every site that deduces a 2-D single-`K`
+    /// there are is what picks a leaf's instruction, so every site that deduces a 2-D single-`K`
     /// shape asks here rather than reading an operand's rank.
     pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         Space::merge(operands).contracting(output)
@@ -500,6 +564,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.next().clone(),
+            instruction: self.instruction,
         }
     }
 
@@ -528,6 +593,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
+            instruction: self.instruction,
         }
     }
 

@@ -1,19 +1,20 @@
 use crate::{
     backward_data::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
-    components::global::args::RuntimeArgs,
+    components::{ConvSetupError, ConvolutionProblem, global::args::RuntimeArgs},
 };
 use cubecl::{
     prelude::TensorBinding,
     {Runtime, client::ComputeClient},
 };
 use cubek_matmul::{
-    args::{InputArg, OutputArg},
     definition::{MatmulElems, MatmulVectorSizes},
-    routines::{BatchMatmulRoutine, BlueprintStrategy},
+    multi_level::{
+        BatchMatmulRoutine,
+        args::{InputArg, OutputArg},
+    },
+    routine::BlueprintStrategy,
 };
 use cubek_std::InputBinding;
-
-use crate::components::{ConvSetupError, ConvolutionProblem};
 
 /// Select which kernel to launch for the given Algorithm.
 ///
@@ -65,7 +66,7 @@ pub fn launch_kernel_concrete<
         &problem,
     );
 
-    let result = cubek_matmul::strategy::launch_kernel::<Args, R, A>(
+    let result = cubek_matmul::multi_level::launch_kernel::<Args, R, A>(
         client,
         input,
         output,

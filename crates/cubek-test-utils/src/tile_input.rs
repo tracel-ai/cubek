@@ -18,16 +18,11 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Leaf, MemoryMmaConfig, Projection, QuantTileArgLaunch, Residence, Space,
-    StorageTiling, TileArgLaunch, TileSpec as CubekTileSpec,
+    DequantAt, Operand, Projection, QuantTileArgLaunch, Residence, Space, StorageTiling,
+    TileArgLaunch, TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
-
-/// The memory leaf tests contract through: a modest unroll budget, no edge specialization, no
-/// lane fan-out. Named once here so a test that does not exercise the microkernel's shape has
-/// something to state without inventing one.
-pub const MEMORY_LEAF: Leaf = Leaf::memory(MemoryMmaConfig::new(16, false, false));
 
 /// A tile-shaped test input: the device buffer plus the logical [`Space`] it's
 /// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view
@@ -36,7 +31,6 @@ pub struct TileInput {
     handle: TensorHandle<TestRuntime>,
     space: Space,
     levels: usize,
-    leaf: Leaf,
     residence: Vec<Residence>,
 }
 
@@ -47,16 +41,11 @@ impl TileInput {
     /// recursion, or [`untiled`](TileInputBuilder::untiled) for none — then a data
     /// finalizer ([`arange`](TileInputBuilder::arange) /
     /// [`zeros`](TileInputBuilder::zeros)).
-    pub fn builder(
-        client: &ComputeClient<TestRuntime>,
-        space: Space,
-        leaf: Leaf,
-    ) -> TileInputBuilder {
+    pub fn builder(client: &ComputeClient<TestRuntime>, space: Space) -> TileInputBuilder {
         TileInputBuilder {
             client: client.clone(),
             space,
             levels: None,
-            leaf,
             residence: Vec::new(),
         }
     }
@@ -156,7 +145,7 @@ impl TileInput {
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
         let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling), self.leaf).residence(&self.residence)
+        CubekTileSpec::new(Projection::tiled(&axes, tiling)).residence(&self.residence)
     }
 
     /// The semantic space the tile lives in.
@@ -187,15 +176,15 @@ pub struct TileInputBuilder {
     client: ComputeClient<TestRuntime>,
     space: Space,
     levels: Option<Vec<TileLevel>>,
-    leaf: Leaf,
     residence: Vec<Residence>,
 }
 
 impl TileInputBuilder {
-    /// Where this operand lives at each level of the space, coarse to fine (default: every level
-    /// [`Residence::InPlace`], staging nothing).
-    pub fn residence(mut self, residence: &[Residence]) -> Self {
-        self.residence = residence.to_vec();
+    /// Take the per-level residences from `operand`'s stages, stated where the levels were
+    /// declared ([`Operand::stage`](cubek_tile::Operand::stage)). Default: every level
+    /// [`Residence::InPlace`], staging nothing.
+    pub fn operand(mut self, operand: &Operand) -> Self {
+        self.residence = operand.residences();
         self
     }
 
@@ -260,7 +249,6 @@ impl TileInputBuilder {
             client: self.client,
             space: self.space,
             scheme: *scheme,
-            leaf: self.leaf,
             residence: self.residence,
             dequant_at,
         }
@@ -320,7 +308,6 @@ impl TileInputBuilder {
             handle: fill(builder).generate_without_host_data(),
             space: self.space,
             levels: levels.len(),
-            leaf: self.leaf,
             residence: self.residence,
         }
     }
@@ -331,7 +318,6 @@ impl TileInputBuilder {
 /// finalizer fills it and mints the values tile and its scales together — a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
-    leaf: Leaf,
     residence: Vec<Residence>,
     dequant_at: DequantAt,
     client: ComputeClient<TestRuntime>,
@@ -373,7 +359,6 @@ impl QuantizedTileInputBuilder {
                 handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
-                leaf: self.leaf,
                 residence: self.residence,
             },
             scales,
@@ -433,7 +418,6 @@ impl QuantizedTileInputBuilder {
                 handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
-                leaf: self.leaf,
                 residence: self.residence,
             },
             scales,
