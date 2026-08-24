@@ -4,6 +4,7 @@
 
 use cubecl::prelude::*;
 
+use super::lower::lower_reduce;
 use crate::*;
 
 /// One level's reduction as a [`Pipelined`] operation: the accumulator it writes and the single
@@ -62,7 +63,8 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         }
         slot.consume(|staged| {
             let input = read_operand(staged, region, payload);
-            self.acc.at(region).reduce_axis(&input, fold);
+            let mut acc = self.acc.at(region);
+            lower_reduce(&mut acc, &input, fold);
         });
     }
 }

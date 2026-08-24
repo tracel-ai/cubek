@@ -1533,7 +1533,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
-    /// [`LaneShare`] these cells carry.
+    /// [`LaneShare`] and [`sink_identity`](MemData::sink_identity) these cells carry.
     pub(crate) fn flat_accumulate<W: Size>(&mut self) -> AccumulateView<'_, T, W, Coords1d> {
         // A flat logical scan only agrees with this physical window under the direct,
         // non-storage-tiled mapping. Otherwise the reduction's logical accumulator index would
@@ -1547,9 +1547,8 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        // The reduce walk has no is_contracted_at_leaf check to prove sound replacement, so the
-        // sink must always be carried.
-        AccumulateView::new(self.flat_mut::<W>(), lane_share, None)
+        let sink_identity = comptime!(self.sink_identity);
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, sink_identity)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the

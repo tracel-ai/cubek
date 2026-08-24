@@ -12,20 +12,28 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `c.reduce_axis(input, fold)`: reduce `input` into `self` across contracted axes, folding
     /// each contracted cell into whatever `self` already holds there.
     ///
-    /// Under `LaneShare::Whole` (a register or memory accumulator, not a lane-shared plane
-    /// fragment) that existing value is the fold's literal starting point: nothing seeds it on
-    /// `self`'s behalf. The caller must pre-seed `self` with `fold`'s identity ([`Tile::zero`] for
-    /// `Sum`, [`Tile::init`] with `E::min_value()`/`E::max_value()` for `Max`/`Min`) before the
-    /// first call, or an uninitialized/stale accumulator folds against garbage.
+    /// When `self` has been explicitly seeded with `fold`'s identity ([`Tile::init_identity`] or
+    /// [`Tile::zero`] for `Sum`) and every contracted axis is spanned whole at the leaf level,
+    /// the initial sink read is safely replaced by `fold`'s identity. If `self` was not seeded with
+    /// `fold`'s identity, or if the reduction spans multiple levels, it preserves the existing sink
+    /// and accumulates onto it.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
-        let partitioner = comptime!(self.space.partitioner().clone());
-        match comptime!(partitioner) {
-            Partitioner::Final => reduce_leaf(self, input, fold),
-            Partitioner::Level(level) => {
-                let op_space = self.reduce_op_space(input);
-                self.reduce_buffered(input, fold, op_space, comptime!(level.buffering().depth()));
-            }
-        }
+        let replaces = self.replaces_sink(input, fold);
+        self.set_sink_identity(if replaces { Some(fold) } else { None });
+        lower_reduce(self, input, fold);
+        self.set_sink_identity(None);
+    }
+
+    /// Whether this reduction may seed from the identity instead of reading the sink: the buffer
+    /// must be known to hold `fold`'s identity, and the final tile must span every contracted axis whole,
+    /// so the walk above the leaf never returns to a cell it has already written.
+    fn replaces_sink<In: Numeric>(
+        &self,
+        input: &Tile<In>,
+        #[comptime] fold: LeafOp,
+    ) -> comptime_type!(bool) {
+        let sink_is_fold = self.sink_identity() == Some(fold);
+        comptime!(sink_is_fold && is_reduced_at_leaf(&self.space, &input.space))
     }
 
     /// The level's operation space: the input operand's space, sized by whichever operand
@@ -41,6 +49,26 @@ impl<Acc: Numeric> Tile<Acc> {
             merged
         });
         witnessed_space(merged, self, input, input)
+    }
+}
+
+/// Lower one operation-scoped accumulator handle to its leaf. `sink_identity` is derived before
+/// this recursion from the undivided operand spaces. When set to `Some(fold)`, every contracted axis already
+/// fits in the final space, so no ancestor visits an output cell for multiple contracted regions;
+/// child handles preserve the stamp unchanged and never recompute it from their smaller spaces.
+#[cube]
+pub(super) fn lower_reduce<Acc: Numeric, In: Numeric>(
+    acc: &mut Tile<Acc>,
+    input: &Tile<In>,
+    #[comptime] fold: LeafOp,
+) {
+    let partitioner = comptime!(acc.space.partitioner().clone());
+    match comptime!(partitioner) {
+        Partitioner::Final => reduce_leaf(acc, input, fold),
+        Partitioner::Level(level) => {
+            let op_space = acc.reduce_op_space(input);
+            acc.reduce_buffered(input, fold, op_space, comptime!(level.buffering().depth()));
+        }
     }
 }
 
@@ -100,4 +128,18 @@ fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
             );
         }
     }
+}
+
+/// Whether the final tile spans every contracted axis whole.
+fn is_reduced_at_leaf(out: &Space, input: &Space) -> bool {
+    let leaf = input.final_space();
+    for axis in input.contracting(out).iter() {
+        // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
+        // settled here. Seeding from the sink is the answer that is right either way.
+        match (input.extent_raw(*axis), leaf.extent_raw(*axis)) {
+            (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf => {}
+            _ => return false,
+        }
+    }
+    true
 }
