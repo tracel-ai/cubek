@@ -130,12 +130,13 @@ fn setup<R: Runtime>(
     Ok((problem, blueprint, out_batches.to_vec()))
 }
 
-/// The routine's 4-level space with its operands' operands stated in place: the cube grid
+/// The routine's 4-level space with its operands' residences stated in place: the cube grid
 /// (double-buffered along `K`) stages both inputs into shared memory; one partition per
 /// plane; the contraction-step walk moves them into cmma fragments; the fragment grid the
-/// step contracts is walked statically. The accumulator stages nothing: it is promoted by
-/// the kernel, not staged by a walk. `batch` lists the surviving (extent > 1) output batch
-/// axes, one per cube on `Z`.
+/// step contracts is walked statically. The accumulator states its own residence at the cube
+/// grid: `out` spans no contracted axis, so that level holds one region per cube, and a
+/// register-resident accumulator there spans the whole `K` walk below it. `batch` lists the
+/// surviving (extent > 1) output batch axes, one per cube on `Z`.
 fn tile_space(
     blueprint: &CmmaBlueprint,
     (m, n, k): (usize, usize, usize),
@@ -143,6 +144,7 @@ fn tile_space(
     dtypes: &MatmulElems,
 ) -> (Space, MatmulOperands) {
     let (i, c) = (blueprint.instruction, blueprint.partition);
+    let acc = mandated_acc(dtypes);
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
 
@@ -162,6 +164,13 @@ fn tile_space(
                 .axis(K, Cut::sequential(stage_k));
             o.a.stage(Residence::Smem);
             o.b.stage(Residence::Smem);
+            // Same residence, one type or two: tensor cores accumulate `f16`/`bf16` in `f32`,
+            // and that upgrade is the conversion `stage_as` states. Under an `f32` output there
+            // is no upgrade, so the move is all there is to say.
+            match acc == dtypes.acc_global {
+                true => o.out.stage(Residence::Register),
+                false => o.out.stage_as(Residence::Register, acc),
+            }
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batch_axes, Cut::sequential(1))

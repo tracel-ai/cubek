@@ -1199,11 +1199,10 @@ fn resident_fold_kernel<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
-    let mut out = output.tile(space);
+    let out = output.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, op);
-    acc.init(LeafOp::identity::<E>(op));
+    acc.init(op);
     acc.reduce_axis(&input, op);
-    out.copy_from(&acc);
 }
 
 #[test]
@@ -1244,7 +1243,9 @@ fn resident_max_over_lane_split_k() {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            // The lane-split fold joins its partials in registers, so the output states that it
+            // lives there for the one level it has.
+            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         ),
         space,
         LeafOp::Max,

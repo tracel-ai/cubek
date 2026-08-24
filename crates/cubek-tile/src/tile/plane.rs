@@ -191,7 +191,7 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// The plane-resident form of an accumulator over `space`: a partition mirroring its grid,
-    /// tiles uninitialized. `promote` is purely structural; the caller states the init.
+    /// tiles uninitialized. Opening the scope is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
         #[comptime] form: Instruction,

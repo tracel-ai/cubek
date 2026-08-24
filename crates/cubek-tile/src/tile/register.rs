@@ -21,7 +21,7 @@ define_size!(pub(crate) RA);
 /// to allocate its own inside the instruction, which meant the accumulator could not outlive a
 /// single call: a `K` walk that visits the leaf repeatedly round-tripped its partials through
 /// the output's element between visits, so a deep contraction into `f16` lost precision it did
-/// not have to. Created by [`promote`](Tile::promote) and passed in, it survives the whole walk
+/// not have to. Created by [`accumulate`](Tile::accumulate) and passed in, it survives the whole walk
 /// and only meets memory at [`drain_cast_into`](Tile::drain_cast_into).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]

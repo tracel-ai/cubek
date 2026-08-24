@@ -1047,6 +1047,9 @@ fn cmma_matmul_staged_n_walk_partition() {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
+            // The output spans no contracted axis, so L0 holds one region for it: the
+            // accumulator opened here lives across the whole K walk below.
+            o.2.stage(Residence::Register);
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
@@ -1079,6 +1082,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .operand(&ops.2)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1137,6 +1141,9 @@ fn cmma_matmul_double_buffered_plane_stage() {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
+            // The output spans no contracted axis, so L0 holds one region for it: the
+            // accumulator opened here lives across the whole K walk below.
+            o.2.stage(Residence::Register);
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
@@ -1169,6 +1176,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .operand(&ops.2)
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1428,11 +1436,10 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.accumulate(&a, LeafOp::Sum);
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    c.copy_from(&acc);
 }
 
 /// Quantized `A` through the resident K walk: `A` is served via its quant arg, so `acc.mma`
@@ -1450,16 +1457,14 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.accumulate(&a, LeafOp::Sum);
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    c.copy_from(&acc);
 }
 
-/// The CPU kernel: `c.zero()` then `c.mma(a, b)` (the production cpu_gemm body — the
-/// register leaf accumulates in place, so the routine zeroes first); the default
-/// `InPlace` residence selects the no-staging move. Operands are size-free —
+/// The CPU kernel: `c.zero()` then `c.mma(a, b)` straight on the output, with no accumulator
+/// scope around it — what an `InPlace` scope lowers to, spelled by hand. Operands are size-free:
 /// vectorization is a launch concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
@@ -1489,11 +1494,10 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    acc.drain_cast_into(&mut c);
 }
 
 /// The register leaf contracts through a promoted block rather than through the output, so a
@@ -1524,6 +1528,7 @@ fn register_matmul_promoted_accumulator() {
         .arange();
     // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1590,6 +1595,7 @@ fn register_matmul_promoted_cube_plane() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1656,11 +1662,10 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    acc.drain_cast_into(&mut c);
 }
 
 /// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
@@ -1744,6 +1749,7 @@ fn register_matmul_promoted_lined_lhs() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -2382,6 +2388,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2458,6 +2465,7 @@ fn mma_matmul_8x8x8() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2535,6 +2543,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2616,6 +2625,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -3037,6 +3047,7 @@ fn mma_matmul_quant_until_read() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3129,6 +3140,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3225,6 +3237,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3321,6 +3334,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3417,6 +3431,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3538,6 +3553,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&register_accumulator(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -3738,6 +3754,19 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.mma(&a, &b);
+}
+
+/// The output operand of a promoting plan: [`Residence::Register`] at the top level, in place
+/// below it. The output spans no contracted axis, so its top level already holds one region per
+/// instance, and stating `Register` there is what opens an accumulator living across everything
+/// under it. The column is one entry per level, so the space's depth sizes it.
+fn register_accumulator(space: &Space) -> Operand {
+    let mut out = Operand::new(&[M, N], f32::elem_type_native());
+    out.stage(Residence::Register);
+    for _ in 1..space.partitioner().depth() {
+        out.stage(Residence::InPlace);
+    }
+    out
 }
 
 /// One staged level cutting `tm×tn×tk` register-leaf tiles — the shape `check_matmul`

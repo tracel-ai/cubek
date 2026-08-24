@@ -902,7 +902,10 @@ impl<T: Numeric> Tile<T> {
     /// type. [`copy_from`](Self::copy_from) can't: its transports move bytes so stay same-type,
     /// but a register accumulator (`f32`) is wider than the output it writes (`f16`). Only a
     /// fragment partition drains this way.
-    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+    ///
+    /// Crate-internal: what closes an accumulator's scope is the scope's own business
+    /// ([`Accumulator`](crate::Accumulator)), not a call site's.
+    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::PlanePartition(s) => s.drain_cast_into(dst),
             TileKind::Gmem(_)
