@@ -39,6 +39,20 @@ pub(crate) fn handle_command(
             None,
             &format!("Test on backend {backend:?}"),
         )?;
+
+        // The seam: cubek-matmul must pass with either family alone, or the cfg
+        // attributes rot. The tiled-only pass is the one that proves the goal; the
+        // multi-level-only pass proves multi-level never grew a tile-DSL dependency.
+        for family in ["tiled", "multi-level"] {
+            let features = format!("std,{family},{backend}");
+            build_helpers::custom_crates_tests(
+                vec!["cubek-matmul"],
+                vec!["--no-default-features", "--features", &features],
+                None,
+                None,
+                &format!("Test cubek-matmul on {family:?} alone, backend {backend:?}"),
+            )?;
+        }
     }
     Ok(())
 }
