@@ -4,15 +4,14 @@ use cubecl::{
     std::tensor::{into_contiguous_pitched, is_contiguous_pitched},
 };
 use cubek_matmul::{
-    args::MatmulArgs,
-    definition::{AvailableVectorSizes, Blueprint},
-    routines::BatchMatmulRoutine as MatmulRoutine,
+    definition::AvailableVectorSizes,
+    multi_level::{BatchMatmulRoutine as MatmulRoutine, args::MatmulArgs, definition::Blueprint},
 };
 use std::fmt::Display;
 
 /// Specifications for a convolution routine.
 ///
-/// A `Routine` is the convolution-side counterpart of `cubek_matmul::routines::Routine`:
+/// A `Routine` is the convolution-side counterpart of `cubek_matmul::routine::Routine`:
 /// it pairs a per-operation matmul routine with the metadata needed to wire the
 /// kernel up (input args, optional layout fixups, vector-size filtering).
 ///

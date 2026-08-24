@@ -6,13 +6,14 @@
 
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_matmul::{
-    components::tile::TileMatmulKind,
-    definition::{BatchMatmulBlueprint, MatmulElems},
-    routines::{BlueprintStrategy, Routine as MatmulRoutine, TilingArgs},
+    definition::MatmulElems,
+    multi_level::{
+        components::tile::TileMatmulKind, definition::BatchMatmulBlueprint, routines::TilingArgs,
+    },
+    routine::{BlueprintStrategy, Routine as MatmulRoutine},
 };
 
-use crate::components::ConvolutionOperation;
-use crate::definition::ConvBlueprint;
+use crate::{components::ConvolutionOperation, definition::ConvBlueprint};
 
 fn blueprint_operation(blueprint: &ConvBlueprint) -> ConvolutionOperation {
     match blueprint {

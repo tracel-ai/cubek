@@ -1,15 +1,17 @@
-use crate::components::{ConvolutionProblem, Dimensionality};
-use crate::kernels::backward_weight::selector::launch_kernel_concrete;
-use crate::launch::ConvolutionArgs;
-use crate::{backward_weight::args::ConcreteArgs, components::ConvSetupError};
 use crate::{
-    components::{ConvolutionOperation, global::args::RuntimeArgs},
+    backward_weight::args::ConcreteArgs,
+    components::{
+        ConvSetupError, ConvolutionOperation, ConvolutionProblem, Dimensionality,
+        global::args::RuntimeArgs,
+    },
+    kernels::backward_weight::selector::launch_kernel_concrete,
+    launch::ConvolutionArgs,
     routines::Routine,
 };
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},
-    routines::BlueprintStrategy,
+    routine::BlueprintStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
 

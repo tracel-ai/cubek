@@ -1,9 +1,6 @@
 use std::cmp::max;
 
-use crate::{
-    components::global::memory::ViewDirection,
-    definition::{MatmulGlobalElems, MatmulSetupError},
-};
+use crate::definition::{MatmulGlobalElems, MatmulSetupError};
 use cubecl::{
     prelude::*,
     quant::scheme::QuantScheme,
@@ -273,14 +270,6 @@ impl MatmulIdent {
     /// Equivalent to into, but type inference works better within Cube functions
     pub fn into_stage(self) -> StageIdent {
         self.into()
-    }
-
-    pub fn view_direction(&self) -> ViewDirection {
-        match self {
-            MatmulIdent::Lhs => ViewDirection::Col,
-            MatmulIdent::Rhs => ViewDirection::Row,
-            MatmulIdent::Out => ViewDirection::None,
-        }
     }
 }
 

@@ -5,7 +5,7 @@
 //! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
 //! closure, so an operand states where it lives at the level that cuts it.
 
-use crate::{Axis, ByAxis, Space};
+use crate::{Axis, ByAxis, Instruction, Space};
 
 use super::{Buffering, CubeAxis, Distribution, OperandSet, Partitioner, WalkOrder};
 
@@ -66,6 +66,7 @@ impl Tiling {
         LeveledTiling {
             extents: extents.to_vec(),
             levels: Vec::new(),
+            instruction: None,
         }
     }
 
@@ -75,7 +76,10 @@ impl Tiling {
     /// declared ([`Operand::stage`](crate::Operand::stage)); a level that states nothing for an
     /// operand leaves it in place. [`build`](OperandTiling::build) returns the space and the
     /// operands, sealed.
-    pub fn over<O: OperandSet>(operands: O, extents: &[(Axis, usize)]) -> OperandTiling<O> {
+    pub fn over<'o, O: OperandSet>(
+        operands: &'o mut O,
+        extents: &[(Axis, usize)],
+    ) -> OperandTiling<'o, O> {
         OperandTiling {
             tiling: Tiling::new().extents(extents),
             operands,
@@ -84,12 +88,12 @@ impl Tiling {
 }
 
 /// [`LeveledTiling`] threading an [`OperandSet`] through its level closures.
-pub struct OperandTiling<O> {
+pub struct OperandTiling<'o, O> {
     tiling: LeveledTiling,
-    operands: O,
+    operands: &'o mut O,
 }
 
-impl<O: OperandSet> OperandTiling<O> {
+impl<O: OperandSet> OperandTiling<'_, O> {
     /// Add a decomposition level (coarse to fine): `f` hangs the per-axis [`Cut`]s off the
     /// collector and states, per operand it materializes, where it lives here
     /// ([`Operand::stage`](crate::Operand::stage)).
@@ -101,7 +105,7 @@ impl<O: OperandSet> OperandTiling<O> {
     ) -> Self {
         let mut cuts = LevelCuts { cuts: Vec::new() };
         let index = self.tiling.levels.len();
-        f(&mut cuts, &mut self.operands);
+        f(&mut cuts, self.operands);
         for operand in self.operands.each() {
             operand.close_level(index);
         }
@@ -109,13 +113,25 @@ impl<O: OperandSet> OperandTiling<O> {
         self
     }
 
-    /// Build the [`Space`] and hand the operands back, sealed: one residence per level, and
-    /// every later [`stage`](crate::Operand::stage) panics.
-    pub fn build(mut self) -> (Space, O) {
+    /// The last level, and what runs on the cells it cuts out. Walk order and buffering are
+    /// fixed: one cell has nothing below it to double-buffer and no siblings to order. A space
+    /// nothing contracts in ends with [`level`](Self::level) instead and states no instruction.
+    pub fn instruction(
+        mut self,
+        instruction: Instruction,
+        f: impl FnOnce(&mut LevelCuts, &mut O),
+    ) -> Self {
+        self.tiling = self.tiling.state_instruction(instruction);
+        self.level(WalkOrder::RowMajor, Buffering::SINGLE, f)
+    }
+
+    /// Build the [`Space`]. The operands are the caller's own and stay theirs; this seals them,
+    /// so one residence per level stands and every later [`stage`](crate::Operand::stage) panics.
+    pub fn build(self) -> Space {
         for operand in self.operands.each() {
             operand.seal();
         }
-        (self.tiling.build(), self.operands)
+        self.tiling.build()
     }
 }
 
@@ -125,25 +141,27 @@ impl Default for Tiling {
     }
 }
 
-/// Builds a [`Space`] one level at a time. Add levels with [`level`](LeveledTiling::level),
-/// each configured by a closure that hangs the per-axis [`Cut`]s off a [`LevelBuilder`],
-/// then end the chain with [`leaf`](LeveledTiling::leaf).
+/// Builds a [`Space`] one level at a time: add levels with [`level`](LeveledTiling::level),
+/// each configured by a closure that hangs the per-axis [`Cut`]s off a [`LevelCuts`], then
+/// end the chain with [`build`](LeveledTiling::build).
 pub struct LeveledTiling {
     extents: Vec<(Axis, usize)>,
     levels: Vec<LevelSpec>,
+    instruction: Option<Instruction>,
 }
 
 impl LeveledTiling {
     /// Add a decomposition level (coarse to fine) with its walk order and buffering; `cuts`
-    /// hangs the per-axis [`Cut`]s off the [`LevelBuilder`]. Where each operand *lives* at this
+    /// hangs the per-axis [`Cut`]s off the [`LevelCuts`]. Where each operand *lives* at this
     /// level is stated by the operand, not here ([`Residence`](crate::Residence)).
     pub fn level(
         mut self,
         order: WalkOrder,
         buffering: Buffering,
-        cuts: impl FnOnce(LevelBuilder) -> LevelBuilder,
+        cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
     ) -> Self {
-        let level = cuts(LevelBuilder { cuts: Vec::new() });
+        let mut level = LevelCuts { cuts: Vec::new() };
+        cuts(&mut level);
         self.push(order, buffering, level.cuts);
         self
     }
@@ -171,8 +189,30 @@ impl LeveledTiling {
         });
     }
 
-    /// Build the [`Space`]: the extents plus the stack of levels, and nothing about what the
-    /// pieces become. Formats are the operands' ([`TileSpec::leaf`](crate::TileSpec::leaf)).
+    /// The last level, and what runs on the cells it cuts out. See
+    /// [`OperandTiling::instruction`].
+    pub fn instruction(
+        self,
+        instruction: Instruction,
+        cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
+    ) -> Self {
+        self.state_instruction(instruction)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, cuts)
+    }
+
+    /// Record what runs at the last level, without adding one.
+    fn state_instruction(mut self, instruction: Instruction) -> Self {
+        assert!(
+            self.instruction.is_none(),
+            "Tiling::instruction: stated once, already {:?}",
+            self.instruction
+        );
+        self.instruction = Some(instruction);
+        self
+    }
+
+    /// Build the [`Space`]: the extents, the stack of levels, and what runs once they are
+    /// exhausted. Where each operand *lives* is the operands' own statement.
     pub fn build(self) -> Space {
         let mut space = Space::new(&self.extents);
         for level in &self.levels {
@@ -206,32 +246,17 @@ impl LeveledTiling {
             let partitioner = builder.buffered(level.buffering);
             space = space.with_partitioner(partitioner);
         }
-        space
+        match self.instruction {
+            Some(instruction) => space.with_instruction(instruction),
+            None => space,
+        }
     }
 }
 
 /// Collects one level's per-axis [`Cut`]s, via [`axis`](Self::axis) for a single axis and
-/// [`axes`](Self::axes) to hand a whole group the same cut.
-pub struct LevelBuilder {
-    cuts: Vec<(Axis, Cut)>,
-}
-
-impl LevelBuilder {
-    /// One axis gets `cut`.
-    pub fn axis(mut self, axis: Axis, cut: Cut) -> Self {
-        self.cuts.push((axis, cut));
-        self
-    }
-
-    /// Every axis in `axes` gets the same `cut` (e.g. all batch axes pinned alike).
-    pub fn axes(mut self, axes: &[Axis], cut: Cut) -> Self {
-        self.cuts.extend(axes.iter().map(|&a| (a, cut)));
-        self
-    }
-}
-
-/// [`LevelBuilder`]'s statement form for [`Tiling::over`] closures: `&mut` receivers, so the
-/// cuts and the operands' [`stage`](crate::Operand::stage) statements read as peer lines.
+/// [`axes`](Self::axes) to hand a whole group the same cut. `&mut` receivers, so in a
+/// [`Tiling::over`] closure the cuts and the operands' [`stage`](crate::Operand::stage)
+/// statements read as peer lines.
 pub struct LevelCuts {
     cuts: Vec<(Axis, Cut)>,
 }

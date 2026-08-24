@@ -2,8 +2,8 @@ use std::ops::Deref;
 
 use cubecl::CubeDim;
 use cubek_matmul::{
-    components::global::{GlobalConfig, memory::GlobalMemoryConfig},
     definition::{MatmulSetupError, MatmulVectorSizes},
+    multi_level::components::global::{GlobalConfig, memory::GlobalMemoryConfig},
 };
 use std::{fmt::Debug, hash::Hash};
 

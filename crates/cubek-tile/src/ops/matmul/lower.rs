@@ -6,7 +6,7 @@
 
 use cubecl::prelude::*;
 
-use crate::microkernel::contract;
+use crate::instruction::registers::contract;
 use crate::*;
 
 #[cube]
@@ -18,10 +18,8 @@ impl<Acc: Numeric> Tile<Acc> {
     /// leaf level. If the contraction spans multiple levels or outer reduction loops,
     /// it preserves the existing sink and accumulates onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replace = comptime!(
-            matches!(self.leaf, Leaf::Memory { .. })
-                && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space)
-        );
+        let replace =
+            comptime!(is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space));
         self.mma_with(lhs, rhs, replace);
     }
 
@@ -86,22 +84,12 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        TileKind::PlaneTile(t) => {
-            comptime!(assert!(
-                !replace,
-                "mma_leaf: a promoted accumulator states its own init (`zero` for `c = a·b`, \
-                 `copy_from` to accumulate), so it has no sink read to replace"
-            ));
-            t.mma(lhs, rhs, space)
-        }
+        // A promoted accumulator states its own init (`zero` for `c = a·b`, `copy_from` to
+        // accumulate), so it has no sink read for `replace` to skip.
+        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.
         TileKind::PlanePartition(p) => {
-            comptime!(assert!(
-                !replace,
-                "mma_leaf: a promoted accumulator states its own init (`zero` for `c = a·b`, \
-                 `copy_from` to accumulate), so it has no sink read to replace"
-            ));
             comptime!(assert!(
                 p.m_tiles == 1 && p.n_tiles == 1,
                 "mma_leaf: a multi-tile partition must be contracted at its partition level"
@@ -109,13 +97,23 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs, space)
         }
-        // A memory accumulator runs the software microkernel. A plane-form accumulator that was
-        // never promoted lands in the arms above and meets their kind-pairing panics; there is no
-        // second declaration left to check this one against.
+        // A memory accumulator runs the software instruction, under the config the kernel bound
+        // on it. A plane-form accumulator that was never promoted lands in the arms above and
+        // meets their kind-pairing panics; there is no second declaration left to check this one
+        // against.
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            let config = comptime!(match acc.leaf {
-                Leaf::Memory { config } => config,
-                _ => panic!("mma_leaf: unpromoted Gmem/Smem accumulator must carry Leaf::Memory"),
+            let config = comptime!(match space.instruction() {
+                Some(Instruction::Registers { config }) => config,
+                Some(other) => panic!(
+                    "mma_leaf: a Gmem/Smem accumulator contracts in place through the software \
+                     instruction, but the space's instruction is {other:?}; promote the accumulator for \
+                     a hardware instruction"
+                ),
+                None => panic!(
+                    "mma_leaf: a Gmem/Smem accumulator contracts through the software \
+                     instruction; state it on the space with \
+                     `.instruction(Instruction::Registers {{ config }})`"
+                ),
             });
             contract::memory::<E, EL, ER>(g, lhs, rhs, space, config, replace)
         }
@@ -156,9 +154,11 @@ fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
     let merged = Space::merge(&[lhs, rhs]);
     let leaf = merged.final_space();
     for axis in Space::contracted(&[lhs, rhs], out).iter() {
-        let (whole, at_leaf) = (merged.extent(*axis), leaf.extent(*axis));
-        if whole != at_leaf {
-            return false;
+        // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
+        // settled here. Seeding from the sink is the answer that is right either way.
+        match (merged.extent_raw(*axis), leaf.extent_raw(*axis)) {
+            (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf => {}
+            _ => return false,
         }
     }
     true
@@ -175,7 +175,7 @@ fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compti
             && Space::contracted(&[&lhs.space, &rhs.space], &out).len() == 1,
         "mma: a cmma or plane-register fragment reads one contracted axis off a directly \
          addressed operand; a gather or a wider reduce needs the manual-mma leaf, or an \
-         unpromoted Gmem/Smem accumulator, whose software microkernel is the \
+         unpromoted Gmem/Smem accumulator, whose software instruction is the \
          `contract::memory` arm of `mma_leaf`"
     ));
 }

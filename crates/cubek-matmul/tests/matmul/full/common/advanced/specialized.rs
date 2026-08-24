@@ -1,6 +1,6 @@
 mod mm {
     use super::*;
-    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
+    use cubek_matmul::multi_level::components::global::{InputLoadFlow, LoadFlows};
 
     fn specialization() -> LoadFlows {
         LoadFlows {
@@ -14,7 +14,7 @@ mod mm {
 
 mod ml {
     use super::*;
-    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
+    use cubek_matmul::multi_level::components::global::{InputLoadFlow, LoadFlows};
 
     fn specialization() -> LoadFlows {
         LoadFlows {
@@ -28,7 +28,7 @@ mod ml {
 
 mod lm {
     use super::*;
-    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
+    use cubek_matmul::multi_level::components::global::{InputLoadFlow, LoadFlows};
 
     fn specialization() -> LoadFlows {
         LoadFlows {
@@ -42,7 +42,7 @@ mod lm {
 
 mod ll {
     use super::*;
-    use cubek_matmul::components::global::{InputLoadFlow, LoadFlows};
+    use cubek_matmul::multi_level::components::global::{InputLoadFlow, LoadFlows};
 
     fn specialization() -> LoadFlows {
         LoadFlows {

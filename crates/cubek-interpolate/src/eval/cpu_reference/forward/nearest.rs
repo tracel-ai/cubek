@@ -17,19 +17,16 @@ pub fn reference_nearest(
     for_each_output_coord(output_shape, |linear, out_coord| {
         let b = out_coord[0];
 
-        let y;
-        let x;
-
-        match nearest_mode {
-            NearestMode::Exact => {
-                y = std::cmp::min(((out_coord[1] * 2 + 1) * h_in) / (h_out * 2), h_in - 1);
-                x = std::cmp::min(((out_coord[2] * 2 + 1) * w_in) / (w_out * 2), w_in - 1);
-            }
-            NearestMode::Floor => {
-                y = std::cmp::min((out_coord[1] * h_in) / h_out, h_in - 1);
-                x = std::cmp::min((out_coord[2] * w_in) / w_out, w_in - 1);
-            }
-        }
+        let (y, x) = match nearest_mode {
+            NearestMode::Exact => (
+                std::cmp::min(((out_coord[1] * 2 + 1) * h_in) / (h_out * 2), h_in - 1),
+                std::cmp::min(((out_coord[2] * 2 + 1) * w_in) / (w_out * 2), w_in - 1),
+            ),
+            NearestMode::Floor => (
+                std::cmp::min((out_coord[1] * h_in) / h_out, h_in - 1),
+                std::cmp::min((out_coord[2] * w_in) / w_out, w_in - 1),
+            ),
+        };
 
         let c = out_coord[3];
 

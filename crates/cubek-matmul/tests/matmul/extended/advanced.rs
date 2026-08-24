@@ -8,11 +8,14 @@
 //! cases live in `full/` with the platform-specific routines instead.
 
 use cubek_matmul::{
-    components::{
-        global::{InputLoadFlow, LoadFlows},
-        stage::PartitionBuffering,
+    multi_level::{
+        Strategy as MultiLevel,
+        components::{
+            global::{InputLoadFlow, LoadFlows},
+            stage::PartitionBuffering,
+        },
     },
-    routines::BlueprintStrategy,
+    routine::BlueprintStrategy,
     strategy::Strategy,
 };
 use cubek_std::{
@@ -33,7 +36,7 @@ fn run_with(
     hypercube: HypercubeBlueprint,
     buffering: PartitionBuffering,
     specialization: LoadFlows,
-    strategy: impl FnOnce(cubek_matmul::definition::BatchMatmulBlueprint) -> Strategy,
+    strategy: impl FnOnce(cubek_matmul::multi_level::definition::BatchMatmulBlueprint) -> Strategy,
 ) {
     let c = client();
     let p = problem(256, 256, 256, row_row(), f16_elems());
@@ -100,7 +103,7 @@ fn hypercube_swizzle_col() {
             .build(),
         PartitionBuffering::Single,
         both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -116,7 +119,7 @@ fn hypercube_col_flattened() {
             .build(),
         PartitionBuffering::Single,
         both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -136,7 +139,7 @@ fn hypercube_sm_exact() {
             .build(),
         PartitionBuffering::Single,
         both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -152,7 +155,7 @@ fn hypercube_spread() {
             .build(),
         PartitionBuffering::Single,
         both_main(),
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -175,7 +178,7 @@ fn specialization_main_load() {
             lhs: InputLoadFlow::MainOnly,
             rhs: InputLoadFlow::LoadOnly,
         },
-        |bp| Strategy::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -191,7 +194,7 @@ fn specialization_load_main() {
             lhs: InputLoadFlow::LoadOnly,
             rhs: InputLoadFlow::MainOnly,
         },
-        |bp| Strategy::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -207,7 +210,7 @@ fn specialization_load_load() {
             lhs: InputLoadFlow::LoadOnly,
             rhs: InputLoadFlow::LoadOnly,
         },
-        |bp| Strategy::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }
 
@@ -225,6 +228,6 @@ fn partition_buffering_double() {
         default_hypercube(),
         PartitionBuffering::Double,
         both_main(),
-        |bp| Strategy::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
     );
 }

@@ -1,7 +1,7 @@
 //! Plane-cooperative instructions: the hardware plane reduction, and the shuffle butterfly that
 //! folds a lane group. Each is one fixed instruction sequence over a value already in a register,
 //! with no loop over data; the nests that call them repeatedly live in
-//! [`microkernel`](crate::microkernel).
+//! [`instruction`](crate::instruction::registers).
 //!
 //! All three take scalars and lines alike, since the hardware plane ops are themselves generic
 //! over a vectorized element.

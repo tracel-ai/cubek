@@ -16,11 +16,14 @@ use cubek_quant::{
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::definition::{MatmulElems, MatmulGlobalElems};
-use crate::eval::benchmarks::quantized_matmul::problem::{
-    Layout, Mode, QuantSide, QuantizedMatmulProblem,
+use crate::{
+    definition::{MatmulElems, MatmulGlobalElems},
+    eval::benchmarks::quantized_matmul::problem::{
+        Layout, Mode, QuantSide, QuantizedMatmulProblem,
+    },
+    launch::launch_ref as matmul_launch_ref,
+    strategy::Strategy,
 };
-use crate::{launch::launch_ref as matmul_launch_ref, strategy::Strategy};
 
 pub fn bench(
     strategy: &Strategy,

@@ -14,8 +14,11 @@ use cubek_tile::*;
 use super::problem::TileQuantStageProblem;
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
-/// fan-out. Every operand shares it so the numbers measure the staging, not the leaf.
-const LEAF: Leaf = Leaf::memory(MemoryMmaConfig::new(64, false, false));
+/// fan-out. Bound on the accumulator at the kernel top so the numbers measure the staging, not
+/// the instruction.
+const INSTRUCTION: Instruction = Instruction::Registers {
+    config: RegisterBlock::new(64, false, false),
+};
 use super::strategy::StageDepth;
 
 const M: Axis = Axis(0);
@@ -99,24 +102,34 @@ struct TileQuantStageBench {
 impl TileQuantStageBench {
     /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's lanes,
     /// one served line each, so the leaf is `mr = m`, `nr = 1` — unrolled while `m <= 64` (the
-    /// `mr·nr` cliff), keeping the unroll state constant as depth varies.
-    fn space(&self) -> Space {
+    /// `mr·nr` cliff), keeping the unroll state constant as depth varies. Both inputs state
+    /// their shared stage where L0 is declared: L0 fills it, L1 reads windows of it, which is
+    /// the staging this bench measures. The output stages nothing.
+    fn space(&self) -> (Space, (Operand, Operand, Operand)) {
         let lanes = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
         let tn = lanes * un;
-        Tiling::new()
-            .extents(&[(M, self.m), (N, self.n), (K, self.k)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let f32t = f32::elem_type_native();
+        let mut operands = (
+            Operand::new(&[M, K], f32t),
+            Operand::new(&[K, N], f32t),
+            Operand::new(&[M, N], f32t),
+        );
+        let space = Tiling::over(&mut operands, &[(M, self.m), (N, self.n), (K, self.k)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::cube(CubeAxis::X, tn))
-                    .axis(K, Cut::sequential(self.tk))
+                    .axis(K, Cut::sequential(self.tk));
+                o.0.stage(Residence::Smem);
+                o.1.stage(Residence::Smem);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(self.m))
                     .axis(N, Cut::unit(un))
-                    .axis(K, Cut::sequential(self.tk))
+                    .axis(K, Cut::sequential(self.tk));
             })
-            .build()
+            .build();
+        (space, operands)
     }
 }
 
@@ -126,15 +139,15 @@ impl Benchmark for TileQuantStageBench {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let space = self.space();
-        let a = TileInput::builder(&self.client, space.project(&[M, K]), LEAF)
+        let (space, _) = self.space();
+        let a = TileInput::builder(&self.client, space.project(&[M, K]))
             .untiled()
             .arange();
-        let b = TileInput::builder(&self.client, space.project(&[K, N]), LEAF)
+        let b = TileInput::builder(&self.client, space.project(&[K, N]))
             .untiled()
             .packed(&self.scheme, DequantAt::Read)
             .arange();
-        let c = TileInput::builder(&self.client, space.project(&[M, N]), LEAF)
+        let c = TileInput::builder(&self.client, space.project(&[M, N]))
             .untiled()
             .zeros();
         Arc::new((a, b, c))
@@ -142,26 +155,17 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let space = self.space();
+        let (space, ops) = self.space();
         let launcher = space.launcher(&self.client);
-        // L0 takes a shared stage, L1 reads windows of it: the staging this bench measures.
-        let staged = [Residence::Smem, Residence::InPlace];
-        let a = launcher
-            .arg(a.handle().binding(), LEAF)
-            .subspace(&[M, K])
-            .residence(&staged)
-            .build();
+        let a = launcher.bind(&ops.0, a.handle().binding()).build();
         let b = launcher
-            .arg(b.tile.handle().binding(), LEAF)
-            .subspace(&[K, N])
+            .bind(&ops.1, b.tile.handle().binding())
             .vectorize(self.pack)
-            .residence(&staged)
             .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
             .build();
-        // The register microkernel lines the accumulator at the RHS's served width.
+        // The register instruction lines the accumulator at the RHS's served width.
         let c = launcher
-            .arg(c.handle().binding(), LEAF)
-            .subspace(&[M, N])
+            .bind(&ops.2, c.handle().binding())
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
@@ -175,7 +179,7 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.arg(),
             c.arg(),
-            launcher.space().clone(),
+            launcher.space().clone().with_instruction(INSTRUCTION),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

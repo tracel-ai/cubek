@@ -3,20 +3,22 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_matmul::components::{
-    global::{
-        GlobalReaderConfig, PlaneFlowPartition,
-        memory::GlobalIterator,
-        multi_stage::LoadMaxRoundPlaneCount,
-        read::{
-            FullLoadingStrategy, LoadingJob, LoadingValidation, async_barrier::AsyncCopy,
-            async_full_strided::AsyncFullStridedLoading as MatmulStridedLoading,
-            stage::FullStageLayout,
+use cubek_matmul::{
+    definition::{MatmulElems, MatmulProblem},
+    multi_level::components::{
+        global::{
+            GlobalReaderConfig, PlaneFlowPartition,
+            memory::GlobalIterator,
+            multi_stage::LoadMaxRoundPlaneCount,
+            read::{
+                FullLoadingStrategy, LoadingJob, LoadingValidation, async_barrier::AsyncCopy,
+                async_full_strided::AsyncFullStridedLoading as MatmulStridedLoading,
+                stage::FullStageLayout,
+            },
         },
+        stage::{StridedStageFamily, StridedStageMemory},
     },
-    stage::{StridedStageFamily, StridedStageMemory},
 };
-use cubek_matmul::definition::{MatmulElems, MatmulProblem};
 use cubek_std::{InvalidConfigError, StageIdent, tile::StridedTilingLayout};
 
 use crate::components::global::{

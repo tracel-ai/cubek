@@ -6,6 +6,7 @@
 mod cmma;
 mod mem;
 mod mma;
+mod packing;
 mod plane;
 mod procedural;
 mod register;
@@ -15,6 +16,7 @@ mod view;
 pub use cmma::*;
 pub use mem::*;
 pub use mma::*;
+pub use packing::*;
 pub use plane::*;
 pub use procedural::*;
 pub use register::*;
@@ -36,9 +38,8 @@ use crate::*;
 
 impl<T: Numeric> Tile<T> {
     /// Create a coordinate-backed tile from an arbitrary procedural recipe. The concrete recipe
-    /// is erased only while CubeCL expands this call. `leaf` is what will consume the tile, which
-    /// a recipe has no spec to carry: it is the leaf the peer operands state.
-    pub fn procedural<R: Recipe<T> + 'static>(_space: Space, _recipe: R, _leaf: Leaf) -> Self {
+    /// is erased only while CubeCL expands this call.
+    pub fn procedural<R: Recipe<T> + 'static>(_space: Space, _recipe: R) -> Self {
         unexpanded!()
     }
 
@@ -46,9 +47,8 @@ impl<T: Numeric> Tile<T> {
         scope: &Scope,
         space: Space,
         recipe: R::ExpandType,
-        leaf: Leaf,
     ) -> TileExpand<T> {
-        Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place(), leaf)
+        Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place())
     }
 
     /// Create a procedural tile while preserving the recipe's factorization for contraction: the
@@ -56,7 +56,6 @@ impl<T: Numeric> Tile<T> {
     pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(
         _space: Space,
         _recipe: R,
-        _leaf: Leaf,
     ) -> Self {
         unexpanded!()
     }
@@ -65,25 +64,22 @@ impl<T: Numeric> Tile<T> {
         scope: &Scope,
         space: Space,
         recipe: R::ExpandType,
-        leaf: Leaf,
     ) -> TileExpand<T> {
         Self::__expand_procedural_virtual(
             scope,
             space,
             VirtualRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
             StagePlan::in_place(),
-            leaf,
         )
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
     /// cooperatively materializes the recipe into it, which is how a source with no bytes reaches
-    /// a leaf that cannot evaluate one.
+    /// a reader that cannot evaluate one.
     pub fn procedural_resident<R: Recipe<T> + 'static>(
         _space: Space,
         _recipe: R,
         _stage: StagePlan,
-        _leaf: Leaf,
     ) -> Self {
         unexpanded!()
     }
@@ -93,47 +89,40 @@ impl<T: Numeric> Tile<T> {
         space: Space,
         recipe: R::ExpandType,
         stage: StagePlan,
-        leaf: Leaf,
     ) -> TileExpand<T> {
         Self::__expand_procedural_virtual(
             scope,
             space,
             VirtualRecipe::<T>::__expand_new::<R>(scope, recipe),
             stage,
-            leaf,
         )
     }
 
     /// Create a coordinate-backed tile yielding constant zero.
-    pub fn zeros(_space: Space, _leaf: Leaf) -> Self {
+    pub fn zeros(_space: Space) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_zeros(scope: &Scope, space: Space, leaf: Leaf) -> TileExpand<T> {
-        Self::__expand_procedural::<Zeros>(scope, space, ZerosExpand {}, leaf)
+    pub fn __expand_zeros(scope: &Scope, space: Space) -> TileExpand<T> {
+        Self::__expand_procedural::<Zeros>(scope, space, ZerosExpand {})
     }
 
     /// Create a coordinate-backed tile yielding constant one.
-    pub fn ones(_space: Space, _leaf: Leaf) -> Self {
+    pub fn ones(_space: Space) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_ones(scope: &Scope, space: Space, leaf: Leaf) -> TileExpand<T> {
-        Self::__expand_procedural::<Ones>(scope, space, OnesExpand {}, leaf)
+    pub fn __expand_ones(scope: &Scope, space: Space) -> TileExpand<T> {
+        Self::__expand_procedural::<Ones>(scope, space, OnesExpand {})
     }
 
     /// Create a coordinate-backed tile yielding a constant value.
-    pub fn constant(_space: Space, _value: T, _leaf: Leaf) -> Self {
+    pub fn constant(_space: Space, _value: T) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_constant(
-        scope: &Scope,
-        space: Space,
-        value: NativeExpand<T>,
-        leaf: Leaf,
-    ) -> TileExpand<T> {
-        Self::__expand_procedural::<Constant<T>>(scope, space, ConstantExpand::<T> { value }, leaf)
+    pub fn __expand_constant(scope: &Scope, space: Space, value: NativeExpand<T>) -> TileExpand<T> {
+        Self::__expand_procedural::<Constant<T>>(scope, space, ConstantExpand::<T> { value })
     }
 }
 
@@ -150,7 +139,7 @@ pub enum TileKind<T: Numeric> {
     Gmem(MemData<T>),
     Smem(MemData<T>),
     /// One plane-level tile: owned by a plane and sliced across its lanes, so never addressable
-    /// (no memory view). The [`Leaf`] picks the encoding; the contraction is its own.
+    /// (no memory view). The [`Instruction`] picks the encoding; the contraction is its own.
     PlaneTile(PlaneTile<T>),
     /// The grid of plane tiles one plane owns, `m_tiles × n_tiles`, comptime-indexed; only a
     /// static walk's regions (constant coordinates) can select through it.
@@ -393,23 +382,20 @@ impl QuantInfo {
     }
 }
 
-/// One operand's data: a runtime [`TileKind`] backing store, the comptime [`Space`] it projects,
-/// and what it is at the instruction ([`Leaf`]). `T` is the element the tile serves and computes in;
-/// its physical vector width is a storage detail inside the [`TileKind`], read back with
-/// [`vector_size`](Tile::vector_size).
+/// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it
+/// projects. `T` is the element the tile serves and computes in; its physical vector width is a
+/// storage detail inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
 ///
-/// The leaf rides here, not on the [`Space`]: it is a format decision, and formats belong to the
-/// operand whose format they are. The partitioning says how the problem is cut and nothing about
-/// what the pieces become. Operands that disagree meet the kind-pairing panics at the instruction,
-/// which is the same way every other mismatched pair is caught.
+/// What an operand is at the instruction is its operand.s own statement (the finest
+/// [`Residence::Register`] stage); no tile carries a second copy of it, and operands that
+/// disagree meet the kind-pairing panics at the instruction, which is the same way every other
+/// mismatched pair is caught.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
-    #[cube(comptime)]
-    pub leaf: Leaf,
 }
 
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
@@ -437,22 +423,25 @@ fn bound_position(projection: &Projection, axis: Axis) -> usize {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Whether the leaf can consume this operand in its current physical form. Opaque fragment
-    /// transports require shared memory or an already materialized fragment; scalar and manual
-    /// readers can address their source directly.
+    /// Whether the instruction can consume this operand in its current physical form, read off
+    /// the register stages still ahead of it. Opaque fragment transports require shared memory
+    /// or an already materialized fragment; scalar and manual readers can address their source
+    /// directly.
     fn reads_in_place(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
             TileKind::Smem(_) | TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 comptime!(true)
             }
             TileKind::Gmem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
-                comptime!(match self.leaf {
-                    Leaf::Memory { .. } => true,
-                    Leaf::Mma { io } => {
+                let plan = self.stage_plan();
+                let staged = comptime!(plan.stages_to_registers());
+                comptime!(match self.space.instruction().filter(|_| staged) {
+                    None | Some(Instruction::Registers { .. }) => true,
+                    Some(Instruction::Mma { io }) => {
                         matches!(io.lhs_load_method, LoadMethod::Manual)
                             && matches!(io.rhs_load_method, LoadMethod::Manual)
                     }
-                    Leaf::Cmma => false,
+                    Some(Instruction::Cmma) => false,
                 })
             }
         }
@@ -460,13 +449,11 @@ impl<T: Numeric> Tile<T> {
 
     /// Create a scalar, memory-free tile over a logical space, evaluated where it is read at every
     /// level. Dynamic extents are supplied by another operand when an operation is walked; a
-    /// procedural tile never witnesses them. `leaf` is what will consume it, stated here like
-    /// every other operand states it.
+    /// procedural tile never witnesses them.
     fn procedural_virtual(
         #[comptime] space: Space,
         recipe: VirtualRecipe<T>,
         #[comptime] stage: StagePlan,
-        #[comptime] leaf: Leaf,
     ) -> Self {
         Tile::<T> {
             tile_kind: TileKind::new_Procedural(ProceduralData::<T>::new_virtual(
@@ -475,7 +462,6 @@ impl<T: Numeric> Tile<T> {
                 stage,
             )),
             space,
-            leaf,
         }
     }
 
@@ -562,24 +548,22 @@ impl<T: Numeric> Tile<T> {
             let reads_in_place = self.reads_in_place();
             comptime!(if out.partitioner().next().is_final() && !reads_in_place {
                 panic!(
-                    "Tile::residence: a {:?} leaf cannot read this operand's current physical \
-                     form in place; materialize it with Residence::Smem at \
-                     some level above the leaf",
-                    self.leaf
+                    "Tile::residence: a {:?} register stage cannot read this operand's current \
+                     physical form in place; materialize it with Residence::Smem at \
+                     some level above the instruction",
+                    self.space.instruction()
                 );
             });
             comptime!(Residence::InPlace)
         } else {
             let procedural = self.is_procedural();
-            comptime!(
-                if procedural && matches!(requested, Residence::Register(_)) {
-                    panic!(
-                        "Tile::residence: a procedural source has no plane-fragment transport; state \
+            comptime!(if procedural && matches!(requested, Residence::Register) {
+                panic!(
+                    "Tile::residence: a procedural source has no plane-fragment transport; state \
                      Residence::Smem to materialize it into shared memory, or Residence::InPlace \
                      to evaluate it at the leaf"
-                    );
-                }
-            );
+                );
+            });
             comptime!(requested)
         }
     }
@@ -630,16 +614,16 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Comptime quant dispatch for a leaf read (`0` = plain, `1` = native i8, `>1` = packed u32);
-    /// see [`MemData::quant_pack`]. A resident fragment and a tma source are never quantized.
-    pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
+    /// How this tile's values sit in memory; see [`MemData::packing`]. A resident fragment, a tma
+    /// source and a procedural tile are never quantized.
+    pub(crate) fn packing(&self) -> comptime_type!(Packing) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.packing(),
             TileKind::TmaGmem(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::Procedural(_) => {
-                comptime!(0usize)
+                comptime!(Packing::Plain)
             }
         }
     }
@@ -812,7 +796,6 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
-            leaf: comptime!(self.leaf),
         }
     }
 

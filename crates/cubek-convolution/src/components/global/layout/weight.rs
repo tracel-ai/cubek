@@ -3,7 +3,7 @@ use cubecl::std::{
     FastDivmod,
     tensor::layout::{Layout, LayoutExpand},
 };
-use cubek_matmul::{
+use cubek_matmul::multi_level::{
     args::BatchedCoords,
     components::global::{GlobalConfig, memory::GlobalLayoutConfig},
 };

@@ -1,8 +1,5 @@
 use cubecl::{Runtime, ir::AddressType, zspace::shape};
-use cubek_matmul::{
-    definition::{MatmulGlobalElems, MatmulProblem},
-    strategy::Strategy,
-};
+use cubek_matmul::{definition::{MatmulGlobalElems, MatmulProblem}, multi_level::Strategy as MultiLevel, strategy::Strategy};
 use cubek_std::MatrixLayout;
 
 use crate::matmul::test_matmul_strategy;
@@ -132,5 +129,5 @@ pub fn test_with_batches() {
 fn test_naive(case: MatmulTestCase) {
     let client = TestRuntime::client(&Default::default());
     let problem = case.into_problem();
-    test_matmul_strategy(client, problem, Strategy::Naive);
+    test_matmul_strategy(client, problem, MultiLevel::Naive.into());
 }

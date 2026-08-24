@@ -25,13 +25,15 @@ use cubecl::{
 use cubek_std::InputBinding;
 use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 
-use crate::definition::MatmulElems;
-use crate::routines::BlueprintStrategy;
-use crate::routines::cpu_gemm::{CpuGemmBlueprint, Instruction, PlaneGrid, WithLayout, launch_ref};
+use crate::{
+    definition::MatmulElems,
+    routine::BlueprintStrategy,
+    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
+};
 
-/// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` microkernel (no
+/// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` instruction (no
 /// spill), so the only variable across a `strided_pN`/`tiled_pN` pair is the storage packing.
-const LEAF: Instruction = Instruction { m: 2, n: 32, k: 64 };
+const LEAF: InstructionShape = InstructionShape { m: 2, n: 32, k: 64 };
 
 /// Storage-tile edge for the packed variants: square `64 × 64` blocks (16 KiB in f32, L1-resident)
 /// that divide every benchmarked shape. A sweep of 16²→256² was flat, so one representative edge is
@@ -220,8 +222,8 @@ const SHAPES: &[(&str, &str, usize, usize, usize, usize)] = &[
     ("square_1x1536", "1536³", 1, 1536, 1536, 1536),
 ];
 
-/// Worker-thread grids, 1 → 16, mirroring the `gemm_cpu` fast-core ladder.
-const PLANE_LADDER: &[(&str, PlaneGrid)] = &[
+/// Worker-thread grids, 1 → 16, mirroring the `gemm_cpu` fast-core stages.
+const PLANE_GRIDS: &[(&str, PlaneGrid)] = &[
     ("p1", PlaneGrid { m: 1, n: 1 }),
     ("p4", PlaneGrid { m: 2, n: 2 }),
     ("p8", PlaneGrid { m: 4, n: 2 }),
@@ -239,7 +241,7 @@ pub fn problems() -> Vec<CatalogEntry<TiledProblem>> {
 /// same leaf/planes, so `strided_pN` vs `tiled_pN` isolates the storage packing.
 pub fn strategies() -> Vec<CatalogEntry<TiledStrategy>> {
     let mut out = Vec::new();
-    for &(tag, planes) in PLANE_LADDER {
+    for &(tag, planes) in PLANE_GRIDS {
         out.push(CatalogEntry::new(
             format!("strided_{tag}"),
             format!("Strided (row-major, {tag})"),

@@ -1,5 +1,5 @@
 use crate::{
-    components::global::args::RuntimeArgs,
+    components::{ConvSetupError, ConvolutionProblem, global::args::RuntimeArgs},
     forward::args::{ConcreteArgs, ConcreteInputsFactory, ConcreteOutputFactory},
 };
 use cubecl::{
@@ -7,16 +7,14 @@ use cubecl::{
     {Runtime, client::ComputeClient},
 };
 use cubek_matmul::{
-    args::{InputArg, OutputArg},
-    routines::BlueprintStrategy,
-};
-use cubek_matmul::{
     definition::{MatmulElems, MatmulVectorSizes},
-    routines::BatchMatmulRoutine,
+    multi_level::{
+        BatchMatmulRoutine,
+        args::{InputArg, OutputArg},
+    },
+    routine::BlueprintStrategy,
 };
 use cubek_std::InputBinding;
-
-use crate::components::{ConvSetupError, ConvolutionProblem};
 
 /// Select which kernel to launch for the given Algorithm.
 ///
@@ -71,7 +69,7 @@ pub fn launch_kernel_concrete<
         dtypes,
     );
 
-    cubek_matmul::strategy::launch_kernel::<Args, R, A>(
+    cubek_matmul::multi_level::launch_kernel::<Args, R, A>(
         client,
         input,
         output,

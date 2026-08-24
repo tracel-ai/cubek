@@ -4,6 +4,7 @@ use crate::{
     components::{
         stage::{
             AttentionTilingLayout, PartitionAttentionConfig, SharedPartitionAttentionConfig,
+            StageAttentionFamily,
             unit::{UnitPartitionAttention, UnitPartitionStageConfig},
         },
         tile::TileAttentionKind,
@@ -14,13 +15,11 @@ use crate::{
     },
 };
 use cubecl::ir::DeviceProperties;
-use cubek_matmul::components::stage::StageFamily;
+use cubek_matmul::multi_level::components::stage::StageFamily;
 use cubek_std::{
     CubeDimResource, MatrixLayout,
     stage::{StageMemoryConfig, SwizzleMode},
 };
-
-use crate::components::stage::StageAttentionFamily;
 
 pub struct UnitPartitionStageAttentionFamily<SK: StageFamily, SV: StageFamily, SO: StageFamily> {
     _phantom: PhantomData<(SK, SV, SO)>,

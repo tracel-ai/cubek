@@ -9,12 +9,14 @@ use cubecl::{
     std::tensor::TensorHandle,
     zspace::Shape,
 };
-use cubek_matmul::definition::{MatmulElems, MatmulPrecision, MatrixPrecision};
+use cubek_matmul::{
+    definition::MatmulElems,
+    multi_level::definition::{MatmulPrecision, MatrixPrecision},
+};
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::eval::benchmarks::problem::Conv2dProblem;
-use crate::{ConvolutionInputs, Strategy, launch_ref};
+use crate::{ConvolutionInputs, Strategy, eval::benchmarks::problem::Conv2dProblem, launch_ref};
 
 type LhsG<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Global;
 type LhsS<MP> = <<MP as MatmulPrecision>::Lhs as MatrixPrecision>::Stage;

@@ -5,7 +5,7 @@
 //! every routine.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::components::stage::PartitionBuffering;
+use cubek_matmul::multi_level::components::stage::PartitionBuffering;
 use cubek_std::{PartitionSize, StageSize, SwizzleModes};
 
 use super::common::{default_tile_size, f16_dtypes, tiling_scheme};

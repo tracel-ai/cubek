@@ -1,12 +1,12 @@
 //! Unit tests for the leaf instructions in `instruction/` and the 1-D register folds in
-//! `microkernel/horizontal.rs`.
+//! `instruction/registers/horizontal.rs`.
 
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     LeafOp,
+    instruction::registers::horizontal,
     instruction::{logsumexp, plane},
-    microkernel::horizontal,
 };
 
 #[cube(launch)]

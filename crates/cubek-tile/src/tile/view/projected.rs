@@ -384,10 +384,31 @@ impl Layout for StepUp {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// This tile's whole logical box as a quantization-transparent read view, one coordinate per
-    /// axis of its [`Space`](crate::Space) (the innermost a line index). The N-D counterpart of
-    /// [`matrix_transparent`](Tile::matrix_transparent), and the only read surface a gathered
-    /// operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
+    /// The whole logical box, read through whatever [`Packing`] this tile carries. The N-D twin
+    /// of [`matrix_packed`](Tile::matrix_packed).
+    pub fn nd_packed<W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        let served = self.vector_size();
+        let packing = self.packing();
+        let physical = comptime!(packing.physical(served));
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(WP) = physical;
+                self.nd::<T, WP, W>()
+            }
+            Packing::Native => {
+                let size!(WP) = physical;
+                self.nd::<i8, WP, W>()
+            }
+            Packing::Packed { factor: _ } => {
+                let size!(WP) = physical;
+                self.nd::<u32, WP, W>()
+            }
+        }
+    }
+
+    /// [`nd_packed`](Tile::nd_packed) at a stated storage element, one coordinate per axis of the
+    /// tile's [`Space`](crate::Space) (the innermost a line index). The only read surface a
+    /// gathered operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
     pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
@@ -443,6 +464,28 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 panic!("Tile::nd_map: only a memory operand carries a projection to fold")
+            }
+        }
+    }
+
+    /// [`nd_physical`](Tile::nd_physical) with the operand's quant packing resolved, as
+    /// [`nd_packed`](Tile::nd_packed) does for [`nd`](Tile::nd).
+    pub fn nd_physical_packed<W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        let served = self.vector_size();
+        let packing = self.packing();
+        let physical = comptime!(packing.physical(served));
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(WP) = physical;
+                self.nd_physical::<T, WP, W>()
+            }
+            Packing::Native => {
+                let size!(WP) = physical;
+                self.nd_physical::<i8, WP, W>()
+            }
+            Packing::Packed { factor: _ } => {
+                let size!(WP) = physical;
+                self.nd_physical::<u32, WP, W>()
             }
         }
     }

@@ -18,6 +18,10 @@ mod interval {
     include!("interval.rs");
 }
 
+mod polynomial {
+    include!("polynomial.rs");
+}
+
 mod uniform {
     type TestDType = f32;
 

@@ -1,21 +1,26 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
-use cubek_matmul::{
-    components::global::PartitionedStage, components::global::read::FullStageGlobalReader,
-    components::stage::StridedStageMemory,
+use cubek_matmul::multi_level::components::{
+    global::{PartitionedStage, read::FullStageGlobalReader},
+    stage::StridedStageMemory,
 };
 use std::marker::PhantomData;
 
-use crate::components::stage::{
-    AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
-    StageAttentionConfig as _,
-};
-use crate::forward::definition::{AttentionPrecision, attention_types::*};
 use crate::{
-    components::global::AttentionGlobalLayout,
-    components::global::simple::QueryReader,
-    components::global::simple::{AttentionWriter, AttentionWriterExpand, MaskReader},
-    components::global::{GlobalAttention, simple::config::SimpleGlobalAttentionConfig},
+    components::{
+        global::{
+            AttentionGlobalLayout, GlobalAttention,
+            simple::{
+                AttentionWriter, AttentionWriterExpand, MaskReader, QueryReader,
+                config::SimpleGlobalAttentionConfig,
+            },
+        },
+        stage::{
+            AttentionLoadingStrategy, AttentionPartitioner, AttentionTilingLayout, StageAttention,
+            StageAttentionConfig as _,
+        },
+    },
+    forward::definition::{AttentionPrecision, attention_types::*},
 };
 
 pub struct SimpleGlobalAttention<AP: AttentionPrecision, SA: StageAttention<AP>> {

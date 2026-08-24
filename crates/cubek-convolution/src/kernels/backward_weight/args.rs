@@ -12,10 +12,13 @@ use cubecl::{
     zspace::{metadata::Metadata, shape, strides},
 };
 use cubek_matmul::{
-    args::*,
-    components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
-    definition::{BatchMatmulBlueprint, Blueprint, MatmulElems},
-    routines::BatchMatmulRoutine,
+    definition::MatmulElems,
+    multi_level::{
+        BatchMatmulRoutine,
+        args::*,
+        components::global::memory::{NoopLayout, NoopLayoutLaunch, Transpose, TransposeLaunch},
+        definition::{BatchMatmulBlueprint, Blueprint},
+    },
 };
 use cubek_std::launch::tma::{remap_storage_for_tma, tma_meta_tiled};
 use cubek_std::{InputBinding, stage::SwizzleMode};

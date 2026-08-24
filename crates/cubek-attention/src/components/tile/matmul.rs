@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::components::tile::{CmmaMatmul, RegisterMatmul};
+use cubek_matmul::multi_level::components::tile::{CmmaMatmul, RegisterMatmul};
 use cubek_std::{
     MatrixLayout, SwizzleModes,
     tile::{

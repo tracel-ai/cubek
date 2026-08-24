@@ -6,7 +6,7 @@
 //! `q_rows` maps rows back to query positions for the causal predicate.
 
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     Axis, Buffering, Cut, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold, TileArg,
     TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
@@ -50,7 +50,6 @@ fn attention_fold_kernel<W: Size>(
     // score leaf), score/p/factors/acc the fold's working set.
     let mut q_s = MemData::<f32>::smem(
         comptime!(q.space.clone()),
-        comptime!(q.leaf),
         q.vector_size(),
         comptime!(StagePlan::in_place()),
     );
@@ -58,30 +57,15 @@ fn attention_fold_kernel<W: Size>(
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
     let mut score = MemData::<f32>::smem(
         score_space.clone(),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
-    let mut p = MemData::<f32>::smem(
-        score_space,
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut p = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::in_place()));
     let row_space = comptime!(Space::new(&[(R, rows)]));
-    let mut factors = MemData::<f32>::smem(
-        row_space.clone(),
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut factors =
+        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(
-        acc_space,
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
     let rpu = comptime!(state.rows_per_unit);
@@ -209,19 +193,19 @@ fn run(
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[G, QP, D], MEMORY_LEAF),
+            TileSpec::direct(&[G, QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, D], MEMORY_LEAF),
+            TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, V], MEMORY_LEAF),
+            TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[R, C], MEMORY_LEAF),
+            TileSpec::direct(&[R, C]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
@@ -327,7 +311,6 @@ fn attention_fold_split_kernel<W: Size>(
 
     let mut q_s = MemData::<f32>::smem(
         comptime!(q.space.clone()),
-        comptime!(q.leaf),
         q.vector_size(),
         comptime!(StagePlan::in_place()),
     );
@@ -364,43 +347,17 @@ fn attention_fold_split_kernel<W: Size>(
     );
     let score_all = MemData::<f32>::smem(
         score_space.clone(),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
-    let p_all = MemData::<f32>::smem(
-        score_space,
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
-    let mut factors_all = MemData::<f32>::smem(
-        row_space.clone(),
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
-    let m_all = MemData::<f32>::smem(
-        row_space.clone(),
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
-    let l_all = MemData::<f32>::smem(
-        row_space.clone(),
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
-    let mut acc_all = MemData::<f32>::smem(
-        acc_space,
-        MEMORY_LEAF,
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let p_all = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::in_place()));
+    let mut factors_all =
+        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
+    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
+    let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
+    let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     let mut recip = MemData::<f32>::smem(
         comptime!(Space::new(&[(R, rows)])),
-        MEMORY_LEAF,
         1usize,
         comptime!(StagePlan::in_place()),
     );
@@ -574,19 +531,19 @@ fn run_split(
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[G, QP, D], MEMORY_LEAF),
+            TileSpec::direct(&[G, QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, D], MEMORY_LEAF),
+            TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, V], MEMORY_LEAF),
+            TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[R, C], MEMORY_LEAF),
+            TileSpec::direct(&[R, C]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
         scale,
@@ -773,19 +730,19 @@ fn run_stream(
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[G, QP, D], MEMORY_LEAF),
+            TileSpec::direct(&[G, QP, D]),
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, D], MEMORY_LEAF),
+            TileSpec::direct(&[S, D]),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, V], MEMORY_LEAF),
+            TileSpec::direct(&[S, V]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[G, QP, V], MEMORY_LEAF),
+            TileSpec::direct(&[G, QP, V]),
         ),
         scale,
         bound_s as u32,

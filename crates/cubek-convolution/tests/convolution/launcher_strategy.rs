@@ -16,15 +16,16 @@ use cubek_convolution::{
     definition::{ConvBlueprint, ForwardBlueprint},
 };
 use cubek_matmul::{
-    components::{
-        global::{InputLoadFlow, LoadFlows},
-        stage::PartitionBuffering,
-        tile::TileMatmulKind,
+    definition::{AvailableVectorSizes, MatmulElems, MatmulGlobalElems},
+    multi_level::{
+        components::{
+            global::{InputLoadFlow, LoadFlows},
+            stage::PartitionBuffering,
+            tile::TileMatmulKind,
+        },
+        definition::{BatchMatmulBlueprint, TilingScheme},
     },
-    definition::{
-        AvailableVectorSizes, BatchMatmulBlueprint, MatmulElems, MatmulGlobalElems, TilingScheme,
-    },
-    routines::{BlueprintStrategy, Routine},
+    routine::{BlueprintStrategy, Routine},
 };
 use cubek_std::{InputBinding, MatrixLayout, SwizzleModes};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};

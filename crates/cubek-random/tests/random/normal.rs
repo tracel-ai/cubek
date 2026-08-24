@@ -33,18 +33,18 @@ fn normal_respects_68_95_99_rule() {
 }
 
 fn get_random_normal_data(shape: &[usize], mean: f32, std: f32) -> Vec<TestDType> {
-    seed(0);
-
     let client = TestRuntime::client(&Default::default());
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
-    random_normal(
-        &client,
-        mean,
-        std,
-        output.clone().binding(),
-        TestDType::elem_type_native(),
-    )
+    with_seed(0, || {
+        random_normal(
+            &client,
+            mean,
+            std,
+            output.clone().binding(),
+            TestDType::elem_type_native(),
+        )
+    })
     .unwrap();
 
     let output_data = client.read_one_unchecked_tensor(output.into_copy_descriptor());

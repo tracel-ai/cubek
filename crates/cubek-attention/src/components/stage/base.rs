@@ -2,7 +2,7 @@ use cubecl::{
     prelude::*,
     {self, ir::DeviceProperties},
 };
-use cubek_matmul::components::{
+use cubek_matmul::multi_level::components::{
     global::{WriteEventListener, WriteTiling, read::sync_full_cyclic::SyncFullCyclicLoading},
     stage::StageFamily,
 };
@@ -10,22 +10,21 @@ use cubek_std::stage::StageMemoryConfig;
 use cubek_std::tile::{ContiguousTilingLayout, RowMajorTilingOrder};
 use std::{fmt::Debug, hash::Hash};
 
-use crate::components::tile::TileAttention;
-use crate::forward::definition::{
-    AttentionElems, AttentionPartitionSize, AttentionPrecision, AttentionStageSize,
-    AttentionTileSize,
-};
-use crate::{components::global::GlobalAttentionConfig, forward::definition::attention_types::*};
-use crate::{
-    components::{global::simple::MaskReader, stage::AttentionPartitioner},
-    forward::definition::AttentionSetupError,
-};
 use crate::{
     components::{
-        global::simple::QueryReader,
-        stage::{plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig},
+        global::{
+            GlobalAttentionConfig,
+            simple::{MaskReader, QueryReader},
+        },
+        stage::{
+            AttentionPartitioner, plane::PlanePartitionStageConfig, unit::UnitPartitionStageConfig,
+        },
+        tile::TileAttention,
     },
-    forward::definition::AttentionBlueprint,
+    forward::definition::{
+        AttentionBlueprint, AttentionElems, AttentionPartitionSize, AttentionPrecision,
+        AttentionSetupError, AttentionStageSize, AttentionTileSize, attention_types::*,
+    },
 };
 use cubecl::std::tensor::layout::Coords2d;
 

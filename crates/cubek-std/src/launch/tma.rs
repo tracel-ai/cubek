@@ -9,6 +9,22 @@ use cubecl::zspace::{Shape, Strides, shape, strides};
 
 use crate::MatrixLayout;
 
+/// Defines the non-contiguous stride alignment in terms of powers of two
+pub fn stride_align_bits(strides: &[usize], layout: &MatrixLayout, dtype: &ElemType) -> u32 {
+    let exclude_dim = match layout {
+        MatrixLayout::RowMajor => strides.len() - 1,
+        MatrixLayout::ColMajor => strides.len() - 2,
+    };
+    strides
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != exclude_dim)
+        .map(|(_, it)| (*it * dtype.size_bits()) / 8)
+        .map(|it| it.trailing_zeros())
+        .min()
+        .unwrap_or(31)
+}
+
 /// CUDA's TMA loads f32 as tf32 internally; remap explicitly so the descriptor matches.
 pub fn remap_storage_for_tma(ty: ElemType) -> ElemType {
     if ty == f32::elem_type_native() {

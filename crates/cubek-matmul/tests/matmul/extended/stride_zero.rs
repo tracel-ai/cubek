@@ -14,8 +14,10 @@
 use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
-    routines::BlueprintStrategy,
+    multi_level::Strategy as MultiLevel,
+    routine::BlueprintStrategy,
     strategy::Strategy,
+    tiled::Strategy as Tiled,
 };
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{TestOutcome, ValidationResult};
@@ -139,208 +141,202 @@ fn assert_batch_broadcast(strategy: Strategy) {
 // One independent test per public strategy: a failure names the strategy.
 #[test]
 fn batch_broadcast_simple_cyclic_cmma() {
-    assert_batch_broadcast(Strategy::SimpleCyclicCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleCyclicCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_cyclic_mma() {
-    assert_batch_broadcast(Strategy::SimpleCyclicMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleCyclicMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_strided_cmma() {
-    assert_batch_broadcast(Strategy::SimpleStridedCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleStridedCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_strided_mma() {
-    assert_batch_broadcast(Strategy::SimpleStridedMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleStridedMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_tilewise_cmma() {
-    assert_batch_broadcast(Strategy::SimpleTilewiseCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleTilewiseCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_tilewise_mma() {
-    assert_batch_broadcast(Strategy::SimpleTilewiseMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleTilewiseMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_async_strided_cmma() {
-    assert_batch_broadcast(Strategy::SimpleAsyncStridedCmma(
-        BlueprintStrategy::default(),
-    ));
+    assert_batch_broadcast(MultiLevel::SimpleAsyncStridedCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_async_strided_mma() {
-    assert_batch_broadcast(Strategy::SimpleAsyncStridedMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleAsyncStridedMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_async_cyclic_cmma() {
-    assert_batch_broadcast(Strategy::SimpleAsyncCyclicCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleAsyncCyclicCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_async_cyclic_mma() {
-    assert_batch_broadcast(Strategy::SimpleAsyncCyclicMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleAsyncCyclicMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_tma_cmma() {
-    assert_batch_broadcast(Strategy::SimpleTmaCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleTmaCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_tma_mma() {
-    assert_batch_broadcast(Strategy::SimpleTmaMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleTmaMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_cyclic_cmma() {
-    assert_batch_broadcast(Strategy::DoubleCyclicCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleCyclicCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_cyclic_mma() {
-    assert_batch_broadcast(Strategy::DoubleCyclicMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleCyclicMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_tilewise_cmma() {
-    assert_batch_broadcast(Strategy::DoubleTilewiseCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleTilewiseCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_tilewise_mma() {
-    assert_batch_broadcast(Strategy::DoubleTilewiseMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleTilewiseMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_hybrid_cmma() {
-    assert_batch_broadcast(Strategy::DoubleHybridCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleHybridCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_hybrid_mma() {
-    assert_batch_broadcast(Strategy::DoubleHybridMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleHybridMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_async_cyclic_cmma() {
-    assert_batch_broadcast(Strategy::DoubleAsyncCyclicCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleAsyncCyclicCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_async_cyclic_mma() {
-    assert_batch_broadcast(Strategy::DoubleAsyncCyclicMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleAsyncCyclicMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_async_strided_cmma() {
-    assert_batch_broadcast(Strategy::DoubleAsyncStridedCmma(
-        BlueprintStrategy::default(),
-    ));
+    assert_batch_broadcast(MultiLevel::DoubleAsyncStridedCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_async_strided_mma() {
-    assert_batch_broadcast(Strategy::DoubleAsyncStridedMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleAsyncStridedMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_tma_cmma() {
-    assert_batch_broadcast(Strategy::DoubleTmaCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleTmaCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_tma_mma() {
-    assert_batch_broadcast(Strategy::DoubleTmaMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleTmaMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_specialized_cyclic_cmma() {
-    assert_batch_broadcast(Strategy::SpecializedCyclicCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_specialized_cyclic_mma() {
-    assert_batch_broadcast(Strategy::SpecializedCyclicMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SpecializedCyclicMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_specialized_strided_cmma() {
-    assert_batch_broadcast(Strategy::SpecializedStridedCmma(
-        BlueprintStrategy::default(),
-    ));
+    assert_batch_broadcast(MultiLevel::SpecializedStridedCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_specialized_strided_mma() {
-    assert_batch_broadcast(Strategy::SpecializedStridedMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SpecializedStridedMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_specialized_tma_cmma() {
-    assert_batch_broadcast(Strategy::SpecializedTmaCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SpecializedTmaCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_specialized_tma_mma() {
-    assert_batch_broadcast(Strategy::SpecializedTmaMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SpecializedTmaMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_ordered_double_cmma() {
-    assert_batch_broadcast(Strategy::OrderedDoubleCmma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::OrderedDoubleCmma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_ordered_double_mma() {
-    assert_batch_broadcast(Strategy::OrderedDoubleMma(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::OrderedDoubleMma(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_unit() {
-    assert_batch_broadcast(Strategy::SimpleUnit(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleUnit(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_unit() {
-    assert_batch_broadcast(Strategy::DoubleUnit(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleUnit(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_simple_vecmat() {
-    assert_batch_broadcast(Strategy::SimpleVecMat(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::SimpleVecMat(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_double_vecmat() {
-    assert_batch_broadcast(Strategy::DoubleVecMat(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::DoubleVecMat(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_gemv_unit_perpendicular() {
-    assert_batch_broadcast(Strategy::GemvUnitPerpendicular(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::GemvUnitPerpendicular(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_gemm() {
-    assert_batch_broadcast(Strategy::Gemm(BlueprintStrategy::default()));
+    assert_batch_broadcast(MultiLevel::Gemm(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_cpu_gemm() {
-    assert_batch_broadcast(Strategy::CpuGemm(BlueprintStrategy::default()));
+    assert_batch_broadcast(Tiled::CpuGemm(BlueprintStrategy::default()).into());
 }
 
 #[test]
 fn batch_broadcast_naive() {
-    assert_batch_broadcast(Strategy::Naive);
+    assert_batch_broadcast(MultiLevel::Naive.into());
 }
 
 #[test]
@@ -386,7 +382,7 @@ fn gemm_broadcast_outcome(
     rhs_layout: MatrixLayout,
 ) -> Option<TestOutcome> {
     let client = TestRuntime::client(&Default::default());
-    let gemm = || Strategy::Gemm(BlueprintStrategy::default());
+    let gemm = || MultiLevel::Gemm(BlueprintStrategy::default()).into();
     let baseline = run_with_strides(
         client.clone(),
         make_problem(broadcast, false, lhs_layout, rhs_layout),

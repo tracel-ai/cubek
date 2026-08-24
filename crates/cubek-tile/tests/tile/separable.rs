@@ -9,7 +9,7 @@
 use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
-    HostData, HostDataType, MEMORY_LEAF, TestInput, TestOutcome, TileInput, ValidationResult,
+    HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
 };
 use cubek_tile::*;
 
@@ -69,19 +69,16 @@ fn separable_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
-    let leaf = comptime!(output.spec.leaf);
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = if comptime!(separable) {
         Tile::<E>::procedural_separable::<Weights<E>>(
             comptime!(space.project(&weight_axes)),
             weights::<E>(),
-            leaf,
         )
     } else {
         Tile::<E>::procedural::<Weights<E>>(
             comptime!(space.project(&weight_axes)),
             weights::<E>(),
-            leaf,
         )
     };
 
@@ -140,7 +137,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(ROW, Cut::sequential(ROWS))
                 .axis(COL, Cut::sequential(COLS))
                 .axis(TAP[0], Cut::sequential(TAPS[0]))
@@ -155,11 +152,11 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         space.cube_dim(&client),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL], MEMORY_LEAF),
+            TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]),
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
+            TileSpec::direct(&[ROW, COL]),
         ),
         separable,
         space,
@@ -220,12 +217,10 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile::<E>(comptime!(space.clone()));
-    let leaf = comptime!(output.spec.leaf);
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
         comptime!(space.project(&weight_axes)),
         weights::<E>(),
-        leaf,
     );
 
     let mut output = output.tile(space);
@@ -280,7 +275,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(ROW, Cut::sequential(ROWS))
                 .axis(COL, Cut::sequential(QCOLS))
                 .axis(TAP[0], Cut::sequential(TAPS[0]))
@@ -291,7 +286,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
 
     let launcher = space.launcher_over(&client, &[]);
     let input_op = launcher
-        .arg(in_handle.binding(), MEMORY_LEAF)
+        .arg(in_handle.binding())
         .subspace(&[TAP[0], TAP[1], TAP[2], COL])
         .vectorize(QV)
         .quantized(&[scales.binding()], scheme, DequantAt::Read)
@@ -312,7 +307,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         input_op.arg(),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
+            TileSpec::direct(&[ROW, COL]),
         ),
         launcher.space().clone(),
         in_dtype,
@@ -371,7 +366,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .instruction(Instruction::registers(16), |l| {
             l.axis(ROW, Cut::sequential(ROWS))
                 .axis(COL, Cut::sequential(pack))
                 .axis(TAP[0], Cut::sequential(TAPS[0]))
@@ -380,11 +375,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         })
         .build();
 
-    let input = TileInput::builder(
-        &client,
-        space.project(&[TAP[0], TAP[1], TAP[2], COL]),
-        MEMORY_LEAF,
-    )
+    let input = TileInput::builder(&client, space.project(&[TAP[0], TAP[1], TAP[2], COL]))
     .untiled()
     .packed(&scheme, DequantAt::Read)
     .arange();
@@ -397,7 +388,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
 
     let launcher = space.launcher_over(&client, &[]);
     let input_op = launcher
-        .arg(input.tile.handle().binding(), MEMORY_LEAF)
+        .arg(input.tile.handle().binding())
         .subspace(&[TAP[0], TAP[1], TAP[2], COL])
         .vectorize(pack)
         .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
@@ -412,7 +403,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         input_op.arg(),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
+            TileSpec::direct(&[ROW, COL]),
         ),
         launcher.space().clone(),
         u32::elem_type_native(),

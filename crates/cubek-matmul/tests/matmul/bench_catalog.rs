@@ -3,9 +3,15 @@
 #![cfg(feature = "benchmarks")]
 
 use cubecl::Runtime;
-use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, GemmProblem};
-use cubek_matmul::eval::benchmarks::gemv::{GemvCorrectness, GemvProblem};
-use cubek_matmul::strategy::Strategy;
+use cubek_matmul::{
+    eval::benchmarks::{
+        gemm::{GemmCorrectness, GemmProblem},
+        gemv::{GemvCorrectness, GemvProblem},
+    },
+    multi_level::Strategy as MultiLevel,
+    strategy::Strategy,
+    tiled::Strategy as Tiled,
+};
 use cubek_test_utils::{
     CatalogEntry, Correctness, TestOutcome, assert_equals_approx, skip_unless_cpu,
 };
@@ -127,20 +133,25 @@ fn gemm_cmma_timing_vs_legacy() {
 #[test]
 #[ignore = "crosspoint probe guard, run manually"]
 fn gemm_cyclic_cmma_forced_point_correctness() {
-    use cubek_matmul::eval::benchmarks::gemm::{GemmCorrectness, problems};
-    use cubek_matmul::routines::BlueprintStrategy;
-    use cubek_matmul::routines::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::routines::cpu_gemm::{Instruction, PlaneGrid};
+    use cubek_matmul::{
+        eval::benchmarks::gemm::{GemmCorrectness, problems},
+        routine::BlueprintStrategy,
+        tiled::{
+            cmma::{CmmaBlueprint, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
     use cubek_test_utils::Correctness;
 
     let problem: GemmProblem = lookup(problems(), "rect_1x512x512x512_rr_f16");
-    let forced = Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-        instruction: Instruction { m: 8, n: 8, k: 8 },
+    let forced = Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
-        delivery: cubek_matmul::routines::cmma::CmmaDelivery::Copy,
-    }));
+        delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+    }))
+    .into();
     let actual = GemmCorrectness
         .kernel_result(&forced, &problem, &SEEDS)
         .unwrap();
@@ -159,26 +170,33 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
 #[ignore = "timing probe, run manually"]
 fn gemm_cyclic_cmma_crosspoint_timing() {
     use cubecl::ir::AddressType;
-    use cubek_matmul::components::stage::PartitionBuffering;
-    use cubek_matmul::components::tile::TileMatmulKind;
-    use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem, TilingScheme};
-    use cubek_matmul::eval::benchmarks::gemm::{bench, problems};
-    use cubek_matmul::routines::BlueprintStrategy;
-    use cubek_matmul::routines::cmma::{CmmaBlueprint, Partition};
-    use cubek_matmul::routines::cpu_gemm::{Instruction, PlaneGrid};
+    use cubek_matmul::{
+        definition::{MatmulGlobalElems, MatmulProblem},
+        eval::benchmarks::gemm::{bench, problems},
+        multi_level::{
+            components::{stage::PartitionBuffering, tile::TileMatmulKind},
+            definition::TilingScheme,
+        },
+        routine::BlueprintStrategy,
+        tiled::{
+            cmma::{CmmaBlueprint, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
     use cubek_std::MatrixLayout;
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
 
     // The tile DSL forced to the legacy selector's point: 8x8x8 instruction, each plane
     // 1x4 tiles, 4x1 planes (128 units), stage 32x32, stage_k 32.
-    let dsl_at_legacy_point = Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-        instruction: Instruction { m: 8, n: 8, k: 8 },
+    let dsl_at_legacy_point = Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
-        delivery: cubek_matmul::routines::cmma::CmmaDelivery::Copy,
-    }));
+        delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+    }))
+    .into();
 
     // The legacy engine forced to the DSL selector's point: partition 2x8x4 per plane,
     // 4x2 planes (256 units), stage 64x128, stage_k 32.
@@ -207,8 +225,8 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         .with_stage_size((4, 2, 1).into())
         .build()
         .unwrap();
-    let legacy_at_dsl_point = Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(
-        cubek_matmul::definition::BatchMatmulBlueprint::builder(
+    let legacy_at_dsl_point = MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(
+        cubek_matmul::multi_level::definition::BatchMatmulBlueprint::builder(
             TileMatmulKind::Cmma,
             tiling_scheme,
             32,
@@ -216,7 +234,8 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         )
         .partition_buffering(PartitionBuffering::Single)
         .build(),
-    ));
+    ))
+    .into();
 
     // Legacy at its own tiling but WITHOUT the swizzled cube order (builder default),
     // to isolate how much of legacy's edge is the SwizzleRow(4) dispatch order.
@@ -226,8 +245,8 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         .with_stage_size((4, 1, 1).into())
         .build()
         .unwrap();
-    let legacy_no_swizzle = Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(
-        cubek_matmul::definition::BatchMatmulBlueprint::builder(
+    let legacy_no_swizzle = MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(
+        cubek_matmul::multi_level::definition::BatchMatmulBlueprint::builder(
             TileMatmulKind::Cmma,
             legacy_tiling,
             32,
@@ -235,18 +254,20 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         )
         .partition_buffering(PartitionBuffering::Single)
         .build(),
-    ));
+    ))
+    .into();
 
     // Thin tiling with deeper stages: the DSL fill phase is stage-count-bound, not
     // byte-bound, so fewer/deeper stages should shrink it at unchanged compute.
     let thin_deep = |stage_k: usize| {
-        Strategy::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
-            instruction: Instruction { m: 8, n: 8, k: 8 },
+        Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
+            instruction: InstructionShape { m: 8, n: 8, k: 8 },
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,
-            delivery: cubek_matmul::routines::cmma::CmmaDelivery::Copy,
+            delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
         }))
+        .into()
     };
 
     use cubek_matmul::eval::benchmarks::gemm::strategies;

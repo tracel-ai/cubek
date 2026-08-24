@@ -13,7 +13,7 @@ use crate::{MatmulProblemSize, TileSize};
 /// This is a heuristic over *shapes*, and takes nothing else: `is_supported` answers
 /// whether one `m×n×k` may be used, `fallback_sizes` lists what to fall back to.
 /// Element types, a compute client, a device — whatever a caller needs to answer
-/// that, it closes over. Which is what lets the ladder live beside the size types it
+/// that, it closes over. Which is what lets the operand live beside the size types it
 /// returns rather than inside a routine crate: matmul, convolution and attention all
 /// pick an instruction the same way, and none of them needs the others to do it, nor
 /// does a selector that plans against a hardware snapshot with no runtime in hand.
@@ -21,7 +21,7 @@ use crate::{MatmulProblemSize, TileSize};
 /// "Supported" is the caller's word, not the device's. A selector that also requires
 /// the shape to divide its problem folds that into `is_supported` and into what
 /// `fallback_sizes` lists, and the preference order then applies to exactly the
-/// shapes it would accept — the ladder never returns one the caller would reject.
+/// shapes it would accept — the operand never returns one the caller would reject.
 ///
 /// `None` means no candidate was both supported and consistent with the forced
 /// axes. Callers with a richer error map it to their own.

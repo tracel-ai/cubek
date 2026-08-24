@@ -33,7 +33,6 @@ impl<T: Numeric> TmaData<T> {
     pub fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
-        #[comptime] leaf: Leaf,
         #[comptime] stage: StagePlan,
     ) -> Tile<T> {
         let bound = view.shape();
@@ -50,7 +49,6 @@ impl<T: Numeric> TmaData<T> {
                 stage,
             }),
             space: comptime!(space),
-            leaf: comptime!(leaf),
         }
     }
 }

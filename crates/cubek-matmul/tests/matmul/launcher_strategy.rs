@@ -1,7 +1,6 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_matmul::{
-    definition::MatmulElems,
-    definition::{MatmulProblem, MatmulSetupError},
+    definition::{MatmulElems, MatmulProblem, MatmulSetupError},
     launch::launch_ref,
     strategy::Strategy,
 };

@@ -1,8 +1,9 @@
 mod matmul_plane_vecmat {
     use cubecl::{TestRuntime, client::ComputeClient};
     use cubek_matmul::{
-        definition::{BatchMatmulBlueprint, MatmulProblem},
-        routines::BlueprintStrategy,
+        definition::MatmulProblem,
+        multi_level::{Strategy as MultiLevel, definition::BatchMatmulBlueprint},
+        routine::BlueprintStrategy,
         strategy::Strategy,
     };
 
@@ -16,7 +17,7 @@ mod matmul_plane_vecmat {
         test_matmul_strategy(
             client,
             problem,
-            Strategy::SimpleVecMat(BlueprintStrategy::Forced(bp)),
+            MultiLevel::SimpleVecMat(BlueprintStrategy::Forced(bp)).into(),
         );
     }
 
@@ -28,7 +29,7 @@ mod matmul_plane_vecmat {
         test_matmul_strategy(
             client,
             problem,
-            Strategy::DoubleVecMat(BlueprintStrategy::Forced(bp)),
+            MultiLevel::DoubleVecMat(BlueprintStrategy::Forced(bp)).into(),
         );
     }
 

@@ -2,8 +2,8 @@
 
 use cubecl::prelude::{CubePrimitive, Scalar};
 use cubek_matmul::{
-    components::stage::PartitionBuffering,
-    definition::{MatmulElems, MatmulGlobalElems, TilingScheme},
+    definition::{MatmulElems, MatmulGlobalElems},
+    multi_level::{components::stage::PartitionBuffering, definition::TilingScheme},
 };
 use cubek_std::{PartitionSize, StageSize, SwizzleModes, TileSize};
 

@@ -1,6 +1,6 @@
 mod t1x1x1 {
     use super::*;
-    use cubek_matmul::definition::{TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::multi_level::definition::{TilingScheme, TilingSchemeBuilder};
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -12,7 +12,7 @@ mod t1x1x1 {
 
 mod t8x1x4 {
     use super::*;
-    use cubek_matmul::definition::{TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::multi_level::definition::{TilingScheme, TilingSchemeBuilder};
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -24,7 +24,7 @@ mod t8x1x4 {
 
 mod t2x4x1 {
     use super::*;
-    use cubek_matmul::definition::{TilingScheme, TilingSchemeBuilder};
+    use cubek_matmul::multi_level::definition::{TilingScheme, TilingSchemeBuilder};
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -36,7 +36,7 @@ mod t2x4x1 {
 
 mod t1x8x8 {
     use super::*;
-    use cubek_matmul::definition::TilingSchemeBuilder;
+    use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -48,7 +48,7 @@ mod t1x8x8 {
 
 mod t4x4x4 {
     use super::*;
-    use cubek_matmul::definition::TilingSchemeBuilder;
+    use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -60,7 +60,7 @@ mod t4x4x4 {
 
 mod t8x8x8 {
     use super::*;
-    use cubek_matmul::definition::TilingSchemeBuilder;
+    use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {
@@ -72,7 +72,7 @@ mod t8x8x8 {
 
 mod t4x4x32 {
     use super::*;
-    use cubek_matmul::definition::TilingSchemeBuilder;
+    use cubek_matmul::multi_level::definition::TilingSchemeBuilder;
     use cubek_std::TileSize;
 
     fn tile_size(builder: TilingSchemeBuilder) -> TilingSchemeBuilder {

@@ -5,7 +5,7 @@ mod tile;
 #[macro_export]
 macro_rules! testgen_convolution_accelerated_tiling_scheme {
     ($algorithm: expr, $dtypes: expr) => {
-        use cubek_matmul::definition::TilingScheme;
+        use cubek_matmul::multi_level::definition::TilingScheme;
 
         use super::*;
 

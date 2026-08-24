@@ -1,6 +1,8 @@
 use cubecl::{self as cubecl, prelude::*, std::tensor::ViewMut};
 
-use cubek_matmul::components::global::{GlobalWriterConfig, PartitionedStage, WriteEventListener};
+use cubek_matmul::multi_level::components::global::{
+    GlobalWriterConfig, PartitionedStage, WriteEventListener,
+};
 
 mod plane;
 mod unit;

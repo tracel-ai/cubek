@@ -4,7 +4,7 @@ use core::f32::consts::PI;
 
 use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubecl_common::{ComptimeFloat, Ratio};
-use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -105,7 +105,6 @@ fn product_kernel<E: Float>(
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
         stage,
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -118,7 +117,6 @@ fn affine_plus_phase<E: Float>(
     scale: u32,
     offset: i32,
     divisor: u32,
-    #[comptime] leaf: Leaf,
 ) -> Tile<E> {
     Tile::<E>::procedural::<Sum<AffineCoordinate<E>, Phase<E>>>(
         space,
@@ -132,7 +130,6 @@ fn affine_plus_phase<E: Float>(
                 divisor,
             },
         ),
-        leaf,
     )
 }
 
@@ -152,16 +149,9 @@ fn phase_kernel<E: Float>(
             SCALE.runtime(),
             OFFSET.runtime(),
             DIVISOR.runtime(),
-            comptime!(output.spec.leaf),
         )
     } else {
-        affine_plus_phase::<E>(
-            comptime!(space.clone()),
-            SCALE,
-            OFFSET,
-            DIVISOR,
-            comptime!(output.spec.leaf),
-        )
+        affine_plus_phase::<E>(comptime!(space.clone()), SCALE, OFFSET, DIVISOR)
     };
     materialize(&source, output, space);
 }
@@ -178,7 +168,6 @@ fn rebase_kernel<E: Float>(
             axis: ROW,
             scale: 2.0,
         },
-        comptime!(output.spec.leaf),
     );
     // The second region starts at (2, 3), so its first logical coordinate reads row 2.
     let region = Region::trailing(comptime!(space.clone()), 1usize, 1usize);
@@ -201,7 +190,6 @@ fn constant_kernel<E: Float>(
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(-1.25_f32)),
         },
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -216,7 +204,6 @@ fn affine_kernel<E: Float>(
     let source = Tile::<E>::procedural::<AffineCoordinate<E>>(
         comptime!(space.clone()),
         along_col::<E>(offset),
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -235,7 +222,6 @@ fn linear_kernel<E: Float>(
             runtime_scalar::<E>(E::new(comptime!(offset.get()))),
             runtime_scalar::<E>(E::new(1.0_f32)),
         ),
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -256,7 +242,6 @@ fn cubic_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0_f32)),
             a,
         ),
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -277,7 +262,6 @@ fn lanczos_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0_f32)),
             lobes,
         ),
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -298,7 +282,6 @@ fn linear_over_axis_value_kernel<E: Float>(
                 scale: 0.5,
             },
         },
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -316,7 +299,6 @@ fn integer_kernel<E: Int>(
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(7)),
         },
-        comptime!(output.spec.leaf),
     );
     materialize(&source, output, space);
 }
@@ -333,7 +315,6 @@ fn direct_copy_kernel<E: Float>(
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
-        comptime!(output.spec.leaf),
     );
     let mut output = output.tile(space);
     output.copy_from(&source);
@@ -351,7 +332,6 @@ fn divided_direct_copy_kernel<E: Float>(
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
-        comptime!(output.spec.leaf),
     );
     let region = Region::trailing(comptime!(space.clone()), 0usize, 0usize);
     let source = source.at(&region);
@@ -400,7 +380,7 @@ macro_rules! output_arg {
     ($output:expr) => {
         TileArgLaunch::new(
             $output.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[ROW, COL], MEMORY_LEAF),
+            TileSpec::direct(&[ROW, COL]),
         )
     };
 }

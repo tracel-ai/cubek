@@ -9,8 +9,9 @@
 
 use cubek_matmul::{
     definition::MatmulProblem,
-    routines::BlueprintStrategy,
-    strategy::{Strategy, test_only::TestStrategy},
+    multi_level::{Strategy as MultiLevel, test_only::TestStrategy},
+    routine::BlueprintStrategy,
+    strategy::Strategy,
 };
 use cubek_std::{MatrixLayout, PartitionSize, StageSize, TileSize};
 
@@ -18,7 +19,7 @@ use super::common::{client, default_tile_size, f16_elems, plane_blueprint, probl
 use crate::matmul::{extended::test_matmul_test_strategy, test_matmul_strategy};
 
 fn run_plane(
-    strategy: impl FnOnce(cubek_matmul::definition::BatchMatmulBlueprint) -> Strategy,
+    strategy: impl FnOnce(cubek_matmul::multi_level::definition::BatchMatmulBlueprint) -> Strategy,
     partition: PartitionSize,
     stage: StageSize,
 ) {
@@ -29,7 +30,7 @@ fn run_plane(
 }
 
 fn run_plane_test_only(
-    strategy: impl FnOnce(cubek_matmul::definition::BatchMatmulBlueprint) -> TestStrategy,
+    strategy: impl FnOnce(cubek_matmul::multi_level::definition::BatchMatmulBlueprint) -> TestStrategy,
     partition: PartitionSize,
     stage: StageSize,
 ) {
@@ -60,7 +61,7 @@ fn unit_problem() -> MatmulProblem {
 #[test]
 fn simple_cyclic_cmma_partition_1x1x1_stage_1x1x1() {
     run_plane(
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 1, n: 1, k: 1 },
     );
@@ -69,7 +70,7 @@ fn simple_cyclic_cmma_partition_1x1x1_stage_1x1x1() {
 #[test]
 fn simple_cyclic_cmma_partition_1x1x4_stage_1x1x1() {
     run_plane(
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 4 },
         StageSize { m: 1, n: 1, k: 1 },
     );
@@ -78,7 +79,7 @@ fn simple_cyclic_cmma_partition_1x1x4_stage_1x1x1() {
 #[test]
 fn simple_cyclic_cmma_partition_2x1x4_stage_2x2x1() {
     run_plane(
-        |bp| Strategy::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 2, n: 1, k: 4 },
         StageSize { m: 2, n: 2, k: 1 },
     );
@@ -89,7 +90,7 @@ fn simple_cyclic_cmma_partition_2x1x4_stage_2x2x1() {
 #[test]
 fn double_cyclic_cmma_stage_2x2x1() {
     run_plane(
-        |bp| Strategy::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
@@ -98,7 +99,7 @@ fn double_cyclic_cmma_stage_2x2x1() {
 #[test]
 fn double_cyclic_cmma_partition_1x1x4_stage_1x1x1() {
     run_plane(
-        |bp| Strategy::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::DoubleCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 4 },
         StageSize { m: 1, n: 1, k: 1 },
     );
@@ -112,7 +113,7 @@ fn double_cyclic_cmma_partition_1x1x4_stage_1x1x1() {
 #[test]
 fn ordered_double_cmma_stage_4x1x1() {
     run_plane(
-        |bp| Strategy::OrderedDoubleCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::OrderedDoubleCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 4, n: 1, k: 1 },
     );
@@ -123,7 +124,7 @@ fn ordered_double_cmma_stage_4x1x1() {
 #[test]
 fn specialized_cyclic_cmma_stage_2x2x1() {
     run_plane(
-        |bp| Strategy::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SpecializedCyclicCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
@@ -142,7 +143,11 @@ fn simple_unit_partition_1x1x1() {
         PartitionSize { m: 1, n: 1, k: 1 },
         unit_stage(),
     );
-    test_matmul_strategy(c, p, Strategy::SimpleUnit(BlueprintStrategy::Forced(bp)));
+    test_matmul_strategy(
+        c,
+        p,
+        MultiLevel::SimpleUnit(BlueprintStrategy::Forced(bp)).into(),
+    );
 }
 
 #[test]
@@ -156,7 +161,11 @@ fn simple_unit_partition_2x2x1() {
         PartitionSize { m: 2, n: 2, k: 1 },
         unit_stage(),
     );
-    test_matmul_strategy(c, p, Strategy::SimpleUnit(BlueprintStrategy::Forced(bp)));
+    test_matmul_strategy(
+        c,
+        p,
+        MultiLevel::SimpleUnit(BlueprintStrategy::Forced(bp)).into(),
+    );
 }
 
 // -- Double unit -------------------------------------------------------------
@@ -173,7 +182,11 @@ fn double_unit_partition_1x2x1() {
         PartitionSize { m: 1, n: 2, k: 1 },
         unit_stage(),
     );
-    test_matmul_strategy(c, p, Strategy::DoubleUnit(BlueprintStrategy::Forced(bp)));
+    test_matmul_strategy(
+        c,
+        p,
+        MultiLevel::DoubleUnit(BlueprintStrategy::Forced(bp)).into(),
+    );
 }
 
 // -- Interleaved (test-only) -------------------------------------------------
@@ -228,7 +241,7 @@ fn simple_barrier_cyclic_cmma_stage_2x2x1() {
 #[test]
 fn simple_tma_cmma_stage_2x2x1() {
     run_plane(
-        |bp| Strategy::SimpleTmaCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::SimpleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
@@ -237,7 +250,7 @@ fn simple_tma_cmma_stage_2x2x1() {
 #[test]
 fn double_tma_cmma_stage_2x2x1() {
     run_plane(
-        |bp| Strategy::DoubleTmaCmma(BlueprintStrategy::Forced(bp)),
+        |bp| MultiLevel::DoubleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
         PartitionSize { m: 1, n: 1, k: 1 },
         StageSize { m: 2, n: 2, k: 1 },
     );
@@ -265,5 +278,9 @@ fn simple_vecmat_partition_1x1x2() {
         PartitionSize { m: 1, n: 1, k: 2 },
         StageSize { m: 1, n: 1, k: 1 },
     );
-    test_matmul_strategy(c, p, Strategy::SimpleVecMat(BlueprintStrategy::Forced(bp)));
+    test_matmul_strategy(
+        c,
+        p,
+        MultiLevel::SimpleVecMat(BlueprintStrategy::Forced(bp)).into(),
+    );
 }

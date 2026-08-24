@@ -1,6 +1,9 @@
 use crate::{
-    forward::definition::attention_types::{MSK, MSKS},
-    forward::definition::{AttentionPrecision, AttentionTileSize},
+    components::stage::{AttentionPartitioner, StageAttentionConfig},
+    forward::definition::{
+        AttentionPrecision, AttentionTileSize,
+        attention_types::{MSK, MSKS},
+    },
 };
 use cubecl;
 use cubecl::{
@@ -8,10 +11,8 @@ use cubecl::{
     std::tensor::{View, layout::Coords2d},
     std::{Swizzle, tensor::layout::Coordinates},
 };
-use cubek_matmul::components::global::memory::{GlobalIterator, GlobalMemoryConfig};
+use cubek_matmul::multi_level::components::global::memory::{GlobalIterator, GlobalMemoryConfig};
 use cubek_std::tile::StridedTile;
-
-use crate::components::stage::{AttentionPartitioner, StageAttentionConfig};
 
 #[derive(CubeType)]
 pub struct LogicalIterator {

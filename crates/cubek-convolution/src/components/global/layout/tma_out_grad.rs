@@ -2,7 +2,7 @@ use cubecl::{
     prelude::*,
     std::tensor::layout::{Coords2d, Layout, LayoutExpand},
 };
-use cubek_matmul::args::BatchedCoords;
+use cubek_matmul::multi_level::args::BatchedCoords;
 
 use crate::components::ConvolutionProblem;
 

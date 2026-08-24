@@ -1,13 +1,12 @@
-use crate::matmul::launcher_strategy::run_with_strides;
-use crate::matmul::test_matmul_strategy;
+use crate::matmul::{launcher_strategy::run_with_strides, test_matmul_strategy};
 use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
-use cubek_matmul::{routines::BlueprintStrategy, strategy::Strategy};
-
 use cubek_matmul::{
-    definition::MatmulGlobalElems,
-    definition::{MatmulElems, MatmulProblem},
-    routines::gemm::GemmStrategy,
+    definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
+    multi_level::{Strategy as MultiLevel, routines::gemm::GemmStrategy},
+    routine::BlueprintStrategy,
+    strategy::Strategy,
 };
+
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{TestOutcome, ValidationResult};
 
@@ -15,7 +14,7 @@ type TestRuntime = cubecl::TestRuntime;
 
 /// Unified harness for the gemm family. Drives full GEMM (all 4 layout
 /// combinations), vec-mat (m = 1), and mat-vec (n = 1) through the same case
-/// struct and `Strategy::Gemm`. `plane_parallel.rs` covers the Row-Col (Dot)
+/// struct and `MultiLevel::Gemm.into()`. `plane_parallel.rs` covers the Row-Col (Dot)
 /// variant. `outer_product.rs` covers Row-Row, Col-Row, and Col-Col, which run
 /// on CPU directly and on GPU after `launch_ref` normalizes them to Dot.
 struct GemmTestCase {
@@ -70,9 +69,10 @@ impl GemmTestCase {
 }
 
 fn gemm() -> Strategy {
-    Strategy::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
+    MultiLevel::Gemm(BlueprintStrategy::Inferred(GemmStrategy {
         target_num_planes: None,
     }))
+    .into()
 }
 
 // Legacy strategy-helper aliases — the test bodies were authored against

@@ -1,16 +1,18 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
 use cubek_matmul::{
-    args::RuntimeConfig,
-    components::global::{
-        GlobalReaderConfig, PlaneFlowPartition,
-        memory::GlobalIterator,
-        multi_stage::LoadMaxRoundPlaneCount,
-        read::{
-            FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
-            validate_swizzle_atom_size,
+    definition::{MatmulElems, MatmulProblem},
+    multi_level::{
+        args::RuntimeConfig,
+        components::global::{
+            GlobalReaderConfig, PlaneFlowPartition,
+            memory::GlobalIterator,
+            multi_stage::LoadMaxRoundPlaneCount,
+            read::{
+                FullLoadingStrategy, LoadingJob, LoadingValidation, sync::Synchronous,
+                validate_swizzle_atom_size,
+            },
         },
     },
-    definition::{MatmulElems, MatmulProblem},
 };
 use cubek_std::{
     InvalidConfigError, StageIdent,

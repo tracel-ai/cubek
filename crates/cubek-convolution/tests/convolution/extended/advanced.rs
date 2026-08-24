@@ -3,7 +3,7 @@
 //! per-routine combinations live in `full/`.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::components::stage::PartitionBuffering;
+use cubek_matmul::multi_level::components::stage::PartitionBuffering;
 use cubek_std::{PartitionSize, StageSize, SwizzleModes, stage::SwizzleMode};
 
 use super::common::{default_size, default_tile_size, f16_dtypes, tiling_scheme};
