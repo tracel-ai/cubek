@@ -1,7 +1,7 @@
 //! The Cmma kernel: promote the accumulator, contract, copy back.
 
 use cubecl::prelude::*;
-use cubek_tile::{DeliveryFamily, Space, TileArg};
+use cubek_tile::{DeliveryFamily, LeafOp, Space, TileArg};
 
 /// The classic global matmul, spelled in tiles, one body for both delivery families
 /// (strided cooperative copy or TMA bulk copy; the output is always strided). Each
@@ -33,7 +33,7 @@ pub fn cmma_kernel<
     let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.promote::<EA, _>(&a);
+    let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     // The matmul contract is `out = A·B` and `mma` accumulates, so start at zero.
     acc.zero();
     acc.mma(&a, &b);

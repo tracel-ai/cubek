@@ -32,17 +32,17 @@ fn wald_wolfowitz_runs_test() {
 }
 
 fn get_random_bernoulli_data(shape: &[usize], prob: f32) -> Vec<TestDType> {
-    seed(0);
-
     let client = TestRuntime::client(&Default::default());
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
-    random_bernoulli(
-        &client,
-        prob,
-        output.clone().binding(),
-        TestDType::elem_type_native(),
-    )
+    with_seed(0, || {
+        random_bernoulli(
+            &client,
+            prob,
+            output.clone().binding(),
+            TestDType::elem_type_native(),
+        )
+    })
     .unwrap();
 
     let output_data = client.read_one_unchecked_tensor(output.into_copy_descriptor());

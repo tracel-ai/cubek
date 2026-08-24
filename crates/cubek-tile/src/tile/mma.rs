@@ -230,7 +230,10 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
         io.load_method(ident)
     });
     match method {
-        LoadMethod::Manual => load_manual_dispatch(src, fragment, def, ident, layout, edges),
+        LoadMethod::Manual => {
+            let size!(W) = src.vector_size();
+            load_manual::<T, W, N, A, B, CD>(src, fragment, def, ident, layout, edges)
+        }
         LoadMethod::LoadMatrix => {
             comptime!(panic!(
                 "MmaData::load: the ldmatrix fast path is not yet wired for MemData windows; \
@@ -240,44 +243,9 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     }
 }
 
-/// Manual load, over the operand's storage element: `0` plain, `1` native i8, `>1` the packed-u32
-/// factor. The stages is spelled out per call site because `#[cube]` takes neither a macro nor a
-/// closure to factor it (see the twin in `contract::memory`).
-#[cube]
-fn load_manual_dispatch<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
-    src: &Tile<T>,
-    fragment: &mut Array<Vector<T, N>>,
-    def: &MmaDefinition<A, B, CD>,
-    #[comptime] ident: MatrixIdent,
-    #[comptime] layout: MatrixLayout,
-    #[comptime] edges: (usize, usize),
-) {
-    let pack = src.quant_pack();
-    let served = src.vector_size();
-    let size!(W) = served;
-    if comptime!(pack == 1) {
-        let size!(WP) = served;
-        load_manual::<T, i8, WP, W, N, A, B, CD>(src, fragment, def, ident, layout, edges);
-    } else if comptime!(pack > 1) {
-        let size!(WP) = comptime!(served / pack);
-        load_manual::<T, u32, WP, W, N, A, B, CD>(src, fragment, def, ident, layout, edges);
-    } else {
-        load_manual::<T, T, W, W, N, A, B, CD>(src, fragment, def, ident, layout, edges);
-    }
-}
-
 /// Manual load: reads elements for each register from `src` using the matrix view.
 #[cube]
-fn load_manual<
-    T: Numeric,
-    I: Numeric,
-    WP: Size,
-    W: Size,
-    N: Size,
-    A: Numeric,
-    B: Numeric,
-    CD: Numeric,
->(
+fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
     src: &Tile<T>,
     fragment: &mut Array<Vector<T, N>>,
     def: &MmaDefinition<A, B, CD>,
@@ -298,7 +266,7 @@ fn load_manual<
     ));
 
     let (rows, cols) = comptime!(edges);
-    let view = src.fragment_matrix::<I, WP, W>(rows, cols);
+    let view = src.fragment_matrix_packed::<W>(rows, cols);
 
     #[unroll]
     for i in 0..num_vectors {

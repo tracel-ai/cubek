@@ -16,12 +16,19 @@ std = ["cubecl/std"]
 
 heavy = []
 extended = ["heavy"]
-full = ["extended"]
+full = ["extended", "benchmarks"]
+
+# Enables `pub mod benchmarks`: catalogue of random benchmark problems,
+# strategies, and the bench harness.
+benchmarks = ["dep:cubek-test-utils", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
 cubecl-environment = { workspace = true }
+cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.2", default-features = false }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.2", default-features = false, optional = true }
+
 num-traits = "0.2.19"
 pretty_assertions = { workspace = true, optional = true }
 rand = { workspace = true }

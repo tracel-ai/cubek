@@ -6,6 +6,7 @@ use cubecl::zspace::SmallVec;
 
 use crate::{
     Axis, ComputeScope, Distribution, Instruction, LaneShare, LevelRole, MAX_AXES, Partitioner,
+    join_lane_share,
 };
 
 use super::ByAxis;
@@ -428,6 +429,20 @@ impl Space {
     /// of bits; the folded axes' runs are exactly the bits a cell's partials differ in. Fold
     /// everything and that mask is the whole plane ([`LaneShare::Plane`]); fold under a carry and
     /// it is a [`LaneShare::Group`], whatever order the axes sit in.
+    /// The share a tile ends up with at the leaf: every level's own share joined, the way
+    /// [`MemData::at`](crate::MemData) joins them one at a time on the way down. A block built
+    /// before the walk descends cannot read the stamped value, but it can compute the value that
+    /// stamping would arrive at, because every level is already known here.
+    pub(crate) fn leaf_lane_share(&self) -> LaneShare {
+        let mut share = LaneShare::Whole;
+        let mut level = self.clone();
+        while !level.is_final() {
+            share = join_lane_share(share, level.lane_share());
+            level = level.divide();
+        }
+        share
+    }
+
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
@@ -473,6 +488,21 @@ impl Space {
     /// The axes in this space but not in `output`, i.e. those contracted.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
+    }
+
+    /// How many contracted values one step consumes off a `width`-wide line of this operand.
+    ///
+    /// A line folds into one accumulator cell only where it runs along the fastest of
+    /// `contracted`, which is absent from the accumulator, so its lanes are partials of one cell
+    /// rather than cells that must stay apart. Skipping the test merges cells that must stay
+    /// separate: wrong numbers, no crash. The width must divide the axis, which is why a folded
+    /// walk needs no masked tail.
+    pub fn served(&self, contracted: &[Axis], width: usize) -> usize {
+        let lined = self.axis_at(self.rank() - 1);
+        let folds = width > 1
+            && contracted.last() == Some(&lined)
+            && self.extent(lined).is_multiple_of(width);
+        if folds { width } else { 1 }
     }
 
     /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)

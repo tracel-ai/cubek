@@ -13,6 +13,7 @@ pub use cubek_matmul::eval::benchmarks::quantized_matmul;
 pub use cubek_matmul::eval::benchmarks::split_k;
 pub use cubek_matmul::eval::benchmarks::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
+pub use cubek_random::eval::benchmarks as random;
 pub use cubek_reduce::eval::benchmarks as reduce;
 pub use cubek_std::eval::benchmarks::contiguous;
 pub use cubek_std::eval::benchmarks::memcpy_async;
@@ -39,6 +40,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::memcpy_async::Category,
         &crate::pool::Category,
         &crate::quantized_matmul::Category,
+        &crate::random::Category,
         &crate::reduce::Category,
         &crate::split_k::Category,
         &crate::tile_quant_stage::Category,
@@ -70,6 +72,16 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                 Ok(samples) => {
                     if let Some(tflops) = samples.tflops {
                         println!("{tflops:.3} TFLOPS");
+                    }
+                    if let Some(bandwidth) = &samples.bandwidth {
+                        let achieved_gb_s = bandwidth.achieved_bytes_per_s / 1e9;
+                        match bandwidth.peak_bytes_per_s {
+                            Some(peak) if peak > 0.0 => {
+                                let pct = 100.0 * bandwidth.achieved_bytes_per_s / peak;
+                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of write peak)");
+                            }
+                            _ => println!("{achieved_gb_s:.1} GB/s (write peak unavailable)"),
+                        }
                     }
                     let durations = BenchmarkDurations {
                         timing_method: category.timing_method(),

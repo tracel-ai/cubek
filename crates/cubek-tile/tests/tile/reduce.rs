@@ -642,6 +642,37 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     }
 }
 
+/// [`test_reduce_axis_sum_inner_axis_reduced_v4`] under `Max`, whose identity the memory system
+/// does not hand back out of bounds: the substitution has to happen a whole line at a time.
+#[test]
+fn test_reduce_axis_max_inner_axis_reduced_v4() {
+    let (m, k, tm, tk) = (8, 16, 4, 16);
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+
+    let got = run_reduce_with_vw(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        space,
+        LeafOp::Max,
+        4,
+        &[],
+    );
+
+    for i in 0..m {
+        let want = (0..k)
+            .map(|j| ((i * k + j) % 7) as f32)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(got.get_f32(&[i]), want, "Line-folded max mismatch at row {i}");
+    }
+}
+
 /// [`run_reduce`], but the input is `checked(true)`: a non-divisible reduced axis leaves an
 /// overhang past the operand's real data, and only a checked operand masks it instead of reading
 /// garbage.
@@ -985,7 +1016,8 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     }
 }
 
-/// Reduction over innermost axis with vector_size = 4.
+/// Reduction over the innermost axis with vector_size = 4: the line runs along the axis being
+/// reduced, so a step folds the whole line into one cell and the lanes collapse once at the end.
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
@@ -1141,5 +1173,87 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
             want,
             "Spatial Unit min mismatch at index {i}"
         );
+    }
+}
+
+/// A `Max` reduce whose accumulator lives in registers while the reduced axis is split across the
+/// plane's lanes: each lane folds its own `K` slice, so each holds a partial maximum, and the drain
+/// combines them under the same fold the accumulator was built with.
+///
+/// Two things had to be true for this to work, and neither was. The drain combined lanes with a
+/// hardcoded sum, and a promoted block read its `LaneShare` from the tile, which is only stamped on
+/// the way down — so it saw `Whole` and every lane wrote its partial over the last.
+///
+/// The data is all negative, so any identity leaking in — a zero from a sum-shaped combine, or from
+/// an out-of-bounds read — wins the maximum and the assert catches it.
+#[cube(launch)]
+fn resident_fold_kernel<E: Numeric>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] op: LeafOp,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let mut out = output.tile(space);
+    let mut acc = out.accumulate::<E, _>(&input, op);
+    acc.init(LeafOp::identity::<E>(op));
+    acc.reduce_axis(&input, op);
+    out.copy_from(&acc);
+}
+
+#[test]
+fn resident_max_over_lane_split_k() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let (m, n, kr) = (4usize, 4usize, 2usize);
+    let k = lanes * kr;
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::unit(kr))
+        })
+        .build()
+        .resolve_lanes(lanes);
+
+    let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
+    let f32_ty = f32::elem_type_native();
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![m, n, k])
+        .dtype(f32_ty)
+        .custom(values.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    resident_fold_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            in_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N, K]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        LeafOp::Max,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for i in 0..m {
+        for j in 0..n {
+            let want = (0..k)
+                .map(|p| values[(i * n + j) * k + p])
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert_eq!(got.get_f32(&[i, j]), want, "max mismatch at ({i}, {j})");
+        }
     }
 }

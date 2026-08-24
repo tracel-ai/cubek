@@ -20,9 +20,9 @@ version = "0.3.0-pre.2"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "48348968468e433235be3db6e7c344c34bc446c0", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "48348968468e433235be3db6e7c344c34bc446c0", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "48348968468e433235be3db6e7c344c34bc446c0", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "4057f39e7fe025323e032bab8fc7600d16414f5e", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "4057f39e7fe025323e032bab8fc7600d16414f5e", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "4057f39e7fe025323e032bab8fc7600d16414f5e", default-features = false }
 ### For releases ###
 # cubecl = { version = "=0.11.0-pre.2", default-features = false }
 # cubecl-common = { version = "=0.11.0-pre.2", default-features = false }
@@ -58,7 +58,7 @@ thiserror = { version = "2", default-features = false }
 
 ### For xtask crate ###
 strum = { version = "0.28", features = ["derive"] }
-tracel-xtask = { version = "=5.0.0"  }
+tracel-xtask = { version = "=5.0.0" }
 pretty_assertions = "1.4"
 
 [profile.dev]

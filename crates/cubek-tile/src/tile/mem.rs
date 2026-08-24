@@ -1099,20 +1099,21 @@ impl<T: Numeric> MemData<T> {
         dequant_at
     }
 
-    /// Comptime quant dispatch for a leaf read, mirroring [`fill_from`](MemData::fill_from)'s
-    /// storage-element choice: `0` = plain (serve `T` directly); `1` = native (one storage element
-    /// per value, `i8`); `>1` = packed `u32`, the packing factor (values per word). The physical
-    /// line narrows the served line by exactly this factor.
+    /// How this store's values sit in memory, mirroring [`fill_from`](MemData::fill_from)'s
+    /// storage-element choice.
     // The `let`-then-return is load-bearing: a bare `#[comptime] match` as the method body does not
     // generate the `#[cube]` expand (the value must bind first).
     #[allow(clippy::let_and_return)]
-    pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
-        let pack = #[comptime]
+    pub(crate) fn packing(&self) -> comptime_type!(Packing) {
+        let packing = #[comptime]
         match &self.store.quant {
-            ComptimeOption::Some(info) => comptime!(info.scheme.num_quants()),
-            ComptimeOption::None => 0usize,
+            ComptimeOption::Some(info) => comptime!(match info.scheme.num_quants() {
+                1 => Packing::Native,
+                factor => Packing::Packed { factor },
+            }),
+            ComptimeOption::None => Packing::Plain,
         };
-        pack
+        packing
     }
 
     /// This buffer's byte length (its length is in native lines, so widened by the physical width):

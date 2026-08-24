@@ -324,11 +324,33 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The `i`-th batch matrix as a quantization-transparent view: a plain tile is read as it
-    /// stands, a quantized one dequantizes each `(row, col)` per its scheme (`I`/`WP` the
-    /// storage element and physical line, as [`copy_from`](Tile::copy_from) recovers them). The
-    /// dequant-at-read twin of [`matrix`](Tile::matrix); a leaf reads a quantized operand with no
-    /// dequantize-into-`f32` fill.
+    /// The `i`-th batch matrix, read through whatever [`Packing`] this tile carries.
+    ///
+    /// The one place a packing becomes a storage element: every leaf used to re-derive the
+    /// `i8`/`u32` choice from a bare factor, and the return type never mentions it.
+    pub fn matrix_packed<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
+        let served = self.vector_size();
+        let packing = self.packing();
+        let physical = comptime!(packing.physical(served));
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(WP) = physical;
+                self.matrix_transparent::<T, WP, W>(i)
+            }
+            Packing::Native => {
+                let size!(WP) = physical;
+                self.matrix_transparent::<i8, WP, W>(i)
+            }
+            Packing::Packed { factor: _ } => {
+                let size!(WP) = physical;
+                self.matrix_transparent::<u32, WP, W>(i)
+            }
+        }
+    }
+
+    /// [`matrix_packed`](Tile::matrix_packed) at a stated storage element `I` and physical line
+    /// `WP`: a plain tile is read as it stands, a quantized one dequantizes each `(row, col)` per
+    /// its scheme, with no dequantize-into-`f32` fill.
     pub fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         i: usize,
@@ -359,13 +381,38 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// This tile's whole logical box as the `rows x cols` matrix a fragment of that shape reads,
-    /// quantization-transparent. The [`GroupedMatrix`] twin of
-    /// [`matrix_transparent`](Tile::matrix_transparent): several logical axes may flatten into one
-    /// edge, so an operand whose contraction spans its taps *and* its channels still has a `k`
-    /// edge, and a gathered one reads it straight out of its compacted stage.
+    /// The fragment's grouped matrix, read through whatever [`Packing`] this tile carries. The
+    /// manual-mma twin of [`matrix_packed`](Tile::matrix_packed).
     ///
     /// `cols` is scalar, as an mma definition states it; the view serves lines.
+    pub fn fragment_matrix_packed<W: Size>(
+        &self,
+        #[comptime] rows: usize,
+        #[comptime] cols: usize,
+    ) -> MatrixView<'_, Vector<T, W>> {
+        let served = self.vector_size();
+        let packing = self.packing();
+        let physical = comptime!(packing.physical(served));
+        match comptime!(packing) {
+            Packing::Plain => {
+                let size!(WP) = physical;
+                self.fragment_matrix::<T, WP, W>(rows, cols)
+            }
+            Packing::Native => {
+                let size!(WP) = physical;
+                self.fragment_matrix::<i8, WP, W>(rows, cols)
+            }
+            Packing::Packed { factor: _ } => {
+                let size!(WP) = physical;
+                self.fragment_matrix::<u32, WP, W>(rows, cols)
+            }
+        }
+    }
+
+    /// [`fragment_matrix_packed`](Tile::fragment_matrix_packed) at a stated storage element:
+    /// several logical axes may flatten into one edge, so an operand whose contraction spans its
+    /// taps *and* its channels still has a `k` edge, and a gathered one reads it straight out of
+    /// its compacted stage.
     pub fn fragment_matrix<I: Numeric, WP: Size, W: Size>(
         &self,
         #[comptime] rows: usize,

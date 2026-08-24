@@ -63,6 +63,9 @@ cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.2", feat
 cubek-pool = { path = "../crates/cubek-pool", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
+cubek-random = { path = "../crates/cubek-random", version = "=0.3.0-pre.2", features = [
+    "benchmarks",
+] }
 cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.3.0-pre.2", features = [
     "benchmarks",
 ] }
@@ -139,3 +142,7 @@ name = "fft"
 [[bench]]
 harness = false
 name = "quantized_matmul"
+
+[[bench]]
+harness = false
+name = "random"
