@@ -893,11 +893,25 @@ impl<T: Numeric> MemData<T> {
             .fcast::<usize>();
         let projection = comptime!(self.layout.projection.clone());
         let src_rank = comptime!(src.projection.physical_rank());
+        // The fill reads whole source lines, so the innermost extent has to be a whole number of
+        // them. Only the *destination* may hold a partial one: that is what a padded stage is, and
+        // its spare lanes hold zero. Without this the two boxes silently disagree, the stage
+        // rounding its line count up ([`storage_extents`], [`Compaction::line_extents`]) where the
+        // source truncated its own.
         let lanes = comptime!(match space.extent_raw(space.axis_at(space.rank() - 1)) {
-            Extent::Static(e) => Some(e),
+            Extent::Static(e) => {
+                assert!(
+                    e.is_multiple_of(sw),
+                    "MemData::fill_straight: the innermost extent {e} is not a whole number of \
+                     the source's {sw}-wide lines, so the stage holds cells the source cannot \
+                     hand it"
+                );
+                Some(e)
+            }
+            // Padding is the only reader of `lanes`, so an equal-width fill owes nothing here.
             Extent::Dynamic => {
                 assert!(
-                    check,
+                    sw == w || check,
                     "MemData::fill_straight: a padded stage over a Dynamic innermost extent \
                      cannot know at comptime which lanes are padding, so its source must be \
                      bounds-checked for them to read as zero"
@@ -2181,6 +2195,9 @@ fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<
     for p in 0..rank {
         extents.push(outer.extent_at(p));
     }
+    // Rounded up, not truncated: a padded stage's innermost extent need not fill whole lines, and
+    // the spare lanes of the last one are its padding. `fill_straight` refuses the case where the
+    // rounding would instead mean the stage and its source disagree.
     let last = extents.len() - 1;
     extents[last] = extents[last].div_ceil(vector_size);
     extents
@@ -2304,8 +2321,9 @@ fn widen_line<T: Numeric, W: Size, SW: Size>(
         "widen_line: a padded stage is filled from a scalar source, got width {sw}"
     ));
     comptime!(assert!(
-        width > 1,
-        "widen_line: widening fill expects destination width > 1, got {width}"
+        W::try_value_const().is_none_or(|n| n == width),
+        "widen_line: assembles {width} lanes into a {:?}-wide destination line",
+        W::try_value_const()
     ));
     let last = comptime!(rank - 1);
     let line = pos[last];

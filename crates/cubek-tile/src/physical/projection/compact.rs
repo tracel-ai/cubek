@@ -181,7 +181,12 @@ impl Compaction {
     /// The innermost physical axis is one logical axis at coefficient `1`
     /// ([`Projection::validate`]), so it is never gathered: its step is `1`, its window has no
     /// holes, and its extent is the logical edge itself. A stage therefore keeps the store's full
-    /// line width whatever the outer axes do, and compaction pads the innermost axis out to whole lines.
+    /// line width whatever the outer axes do, and compaction pads the innermost axis out to whole
+    /// lines.
+    ///
+    /// That rounding is only sound for a *padded* stage, one served wider than the source it is
+    /// filled from. `MemData::fill_straight` is where the two boxes meet, so it is what refuses an
+    /// extent that is not a whole number of source lines.
     pub fn line_extents(&self, vector_size: usize) -> Vec<usize> {
         let last = self.extents.len() - 1;
         assert!(
