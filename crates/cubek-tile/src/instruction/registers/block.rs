@@ -175,26 +175,50 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 ///
 /// At `served > 1` the block's lanes are partials of one cell, so the accumulator's value seeds
 /// lane 0 alone and the rest start at the identity.
+///
+/// At `spread > 1` they instead hold neighbouring cells of a scalar sink. A padded shared-memory
+/// operand serves whole lines even when its global source and sink are scalar, so each block
+/// column gathers `spread` sink cells into its lanes.
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
     #[comptime] served: usize,
+    #[comptime] spread: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
 ) -> Array<Vector<E, V>> {
+    comptime!(assert!(
+        served == 1 || spread == 1,
+        "block::seed: lanes cannot hold contracted partials (served {served}) and neighbouring \
+         sink cells (spread {spread}) at once"
+    ));
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
     #[unroll(unroll)]
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            let cell = acc.seed((i as u32, n as u32), LeafOp::Sum);
-            if comptime!(served > 1) {
-                let mut lanes = Vector::<E, V>::cast_from(LeafOp::identity::<E>(LeafOp::Sum));
-                lanes.insert(0usize, cell.extract(0usize));
+            if comptime!(spread > 1) {
+                let base = (n as u32).fmul(comptime!(spread as u32));
+                let mut lanes = Vector::<E, V>::cast_from(E::from_int(0));
+                #[unroll]
+                for l in 0..spread {
+                    lanes.insert(
+                        l,
+                        acc.seed((i as u32, base.fadd(comptime!(l as u32))), LeafOp::Sum)
+                            .extract(0usize),
+                    );
+                }
                 c[i * nr + n] = lanes;
             } else {
-                c[i * nr + n] = Vector::<E, V>::cast_from(cell);
+                let cell = acc.seed((i as u32, n as u32), LeafOp::Sum);
+                if comptime!(served > 1) {
+                    let mut lanes = Vector::<E, V>::cast_from(LeafOp::identity::<E>(LeafOp::Sum));
+                    lanes.insert(0usize, cell.extract(0usize));
+                    c[i * nr + n] = lanes;
+                } else {
+                    c[i * nr + n] = Vector::<E, V>::cast_from(cell);
+                }
             }
         }
     }
@@ -202,7 +226,8 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
 }
 
 /// The twin of [`seed`]: commit the block back once the whole contraction is folded into it,
-/// collapsing the block's lanes first where they hold partials of one cell (`served > 1`).
+/// collapsing the block's lanes first where they hold partials of one cell (`served > 1`), or
+/// scattering them across scalar sink cells where they hold neighbours (`spread > 1`).
 /// Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
 /// rather than the leaf knowing it was split.
 #[cube]
@@ -210,6 +235,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
     c: Array<Vector<E, V>>,
     #[comptime] served: usize,
+    #[comptime] spread: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
@@ -219,7 +245,17 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
         #[unroll(unroll)]
         for n in 0..nr {
             let cell = c[i * nr + n];
-            if comptime!(served > 1) {
+            if comptime!(spread > 1) {
+                let base = (n as u32).fmul(comptime!(spread as u32));
+                #[unroll]
+                for l in 0..spread {
+                    acc.commit(
+                        (i as u32, base.fadd(comptime!(l as u32))),
+                        Vector::<E, A>::cast_from(cell.extract(l)),
+                        LeafOp::Sum,
+                    );
+                }
+            } else if comptime!(served > 1) {
                 let total = horizontal::vector::<E, V>(cell, served, LeafOp::Sum);
                 acc.commit(
                     (i as u32, n as u32),

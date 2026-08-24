@@ -164,6 +164,9 @@ pub struct StagePlan {
     /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
     /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
     pub units: usize,
+    /// The line width a materialized stage is served at, `None` to serve it at the source
+    /// operand's own. A wider stage is padded to whole lines. Only Smem reads this.
+    pub stage_width: Option<usize>,
 }
 
 impl StagePlan {
@@ -179,7 +182,21 @@ impl StagePlan {
             residence: SmallVec::from_slice(residence),
             storage,
             units,
+            stage_width: None,
         }
+    }
+
+    /// Serve this plan's stages at `width` rather than at the source operand's own line width.
+    /// See [`stage_width`](StagePlan::stage_width).
+    pub fn staged_at(mut self, width: Option<usize>) -> Self {
+        self.stage_width = width;
+        self
+    }
+
+    /// The line width this plan's stage is served in: the padded
+    /// [`stage_width`](StagePlan::stage_width) when one is stated, else `source` unchanged.
+    pub fn effective_width(&self, source: usize) -> usize {
+        self.stage_width.unwrap_or(source)
     }
 
     /// The finest register stage still ahead of this operand: what it is at the instruction
@@ -203,6 +220,7 @@ impl StagePlan {
             residence: self.residence.iter().skip(1).copied().collect(),
             storage: self.storage,
             units: self.units,
+            stage_width: None,
         }
     }
 }
@@ -281,6 +299,30 @@ mod tests {
         assert_eq!(plan.descend().head(), Residence::InPlace);
         assert_eq!(plan.descend().descend().head(), Residence::InPlace);
         assert_eq!(StagePlan::in_place().head(), Residence::InPlace);
+    }
+
+    #[test]
+    fn an_unstated_stage_width_is_the_operands_own() {
+        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0);
+        assert_eq!(plan.effective_width(1), 1);
+        assert_eq!(plan.effective_width(4), 4);
+    }
+
+    #[test]
+    fn a_padded_stage_widens_its_source() {
+        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0).staged_at(Some(4));
+        assert_eq!(plan.effective_width(1), 4);
+    }
+
+    #[test]
+    fn a_stage_width_clears_on_descent() {
+        let plan = StagePlan::new(
+            &[Residence::Smem, Residence::Smem],
+            StageStorage::Strided,
+            0,
+        )
+        .staged_at(Some(4));
+        assert_eq!(plan.descend().effective_width(1), 1);
     }
 
     /// The layout and worker count are facts about the operand, not about one level, so they

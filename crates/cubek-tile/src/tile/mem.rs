@@ -436,11 +436,15 @@ impl<T: Numeric> MemData<T> {
             DequantAt::Load => {
                 let space = comptime!(operand.space.divide());
                 let projection = operand.projection();
-                let vector_size = operand.vector_size();
                 // The stage is one level down, so it takes the operand's plan from the next level
                 // on: its own residence was consumed by the decision to build it.
                 let source_plan = operand.stage_plan();
                 let stage = comptime!(source_plan.descend());
+                // A padded stage is served wider than the operand it is filled from: the buffer
+                // owns its own layout, so an axis global memory could not vectorize still reaches
+                // the leaf in lines. `fill_straight` widens across the two.
+                let source_width = operand.vector_size();
+                let vector_size = comptime!(source_plan.effective_width(source_width));
 
                 if comptime!(projection.is_direct()) {
                     MemData::smem(space, vector_size, stage)
@@ -778,6 +782,16 @@ impl<T: Numeric> MemData<T> {
         ) {
             // Plain → plain, whole destination: fill in destination-physical order (the write is
             // linear and only the source decodes, once per line by constants on a static store).
+            // A padded stage is served in lines its source cannot hand out whole, so assemble each
+            // destination line lane by lane.
+            if comptime!(self.store.vector_size != src.store.vector_size) {
+                comptime!(assert!(
+                    src.store.vector_size == 1,
+                    "MemData::fill_from: a padded stage is filled from a plain scalar operand, \
+                     but its source serves {}-wide lines",
+                    src.store.vector_size
+                ));
+            }
             self.fill_straight::<T, W>(src, comptime!(space.clone()));
         } else {
             // The general path reads the source as a flat run of its *window* and writes the
@@ -797,7 +811,14 @@ impl<T: Numeric> MemData<T> {
             // threads `I`.
             #[comptime]
             match &src.store.quant {
-                ComptimeOption::None => self.scan_transparent::<T, W, W>(src),
+                ComptimeOption::None => {
+                    comptime!(assert!(
+                        self.store.vector_size == src.store.vector_size,
+                        "MemData::fill_from: a plain source is scanned at the destination's width, \
+                         so a padded stage has to take the straight fill"
+                    ));
+                    self.scan_transparent::<T, W, W>(src)
+                }
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                     QuantStore::Native => match comptime!(info.scheme.value) {
                         QuantValue::Q8F | QuantValue::Q8S => self.scan_transparent::<i8, W, W>(src),
@@ -827,10 +848,11 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The straight-line half of [`fill_from`](MemData::fill_from): a whole destination filled in
-    /// destination-physical order, whole `Vector<I2, WP2>` lines, only the source decoding (once per
-    /// line, by constants on a static store; half the address math of a logical-order scan). `I2` /
-    /// `WP2` are the *storage* element and physical width: the served `(T, self.store.vector_size)` for a
-    /// plain copy, the packed storage `(u32, served/pack)` (or native `i8`) for a quant stage.
+    /// destination-physical order, whole `Vector<I2, WP2>` lines (read whole for 1:1 copies, or
+    /// assembled lane-by-lane from scalar sources for a padded stage), only the source decoding
+    /// (once per line, by constants on a static store; half the address math of a logical-order scan).
+    /// `I2` / `WP2` are the *storage* element and physical width: the served `(T, self.store.vector_size)`
+    /// for a plain copy, the packed storage `(u32, served/pack)` (or native `i8`) for a quant stage.
     ///
     /// Both sides are physical boxes of the same rank here, whatever they are logically: the
     /// destination's coordinate is decoded once per line ([`physical_pos`]) and lands on the source
@@ -850,6 +872,7 @@ impl<T: Numeric> MemData<T> {
             self.map.store_from(&src.map);
         }
         let check = comptime!(src.access.overhang.masks());
+        let sw = comptime!(src.store.vector_size);
         let w = comptime!(self.store.vector_size);
         let compaction = comptime!(stage_compaction(
             &src.projection,
@@ -864,27 +887,24 @@ impl<T: Numeric> MemData<T> {
             _ => Vec::new(),
         });
         let shape = self.layout.physical_shape.clone();
-        let s = if comptime!(steps.is_empty()) {
-            MaskedView::new(
-                src.lines_storage::<I2, WP2>()
-                    .view(src.base())
-                    .view(src.window()),
-                check,
-            )
-        } else {
-            MaskedView::new(
-                src.lines_storage::<I2, WP2>()
-                    .view(src.base())
-                    .view(src.window())
-                    .view(StepUp::new(shape.clone(), comptime!(steps))),
-                check,
-            )
-        };
         let plen = shape.len().comptime();
         let total = shape
             .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
             .fcast::<usize>();
         let projection = comptime!(self.layout.projection.clone());
+        let src_rank = comptime!(src.projection.physical_rank());
+        let lanes = comptime!(match space.extent_raw(space.axis_at(space.rank() - 1)) {
+            Extent::Static(e) => Some(e),
+            Extent::Dynamic => {
+                assert!(
+                    check,
+                    "MemData::fill_straight: a padded stage over a Dynamic innermost extent \
+                     cannot know at comptime which lanes are padding, so its source must be \
+                     bounds-checked for them to read as zero"
+                );
+                None
+            }
+        });
         // A comptime worker count emits the tasks straight-line: a rolled loop's runtime `CUBE_DIM`
         // stride blocks unrolling, and on Metal's in-order pipe each line's store then stalls the
         // next line's read. Only a spilling last task needs its guard; unknown or tiny cubes take
@@ -907,26 +927,49 @@ impl<T: Numeric> MemData<T> {
         let straight =
             comptime!(matches!(total_c, Some(t) if units > 0 && (t as usize).div_ceil(units) <= 8));
         let d = self.lines_storage_mut::<I2, WP2>();
-        if comptime!(straight) {
-            let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
-            #[unroll]
-            for t in 0..tasks {
-                let i = UNIT_POS as usize + comptime!(t * units);
-                if comptime!((t + 1) * units > total_c.unwrap() as usize) {
-                    if i < total {
-                        d[i] = s.read(physical_pos(comptime!(projection.clone()), i, &shape));
-                    }
-                } else {
-                    d[i] = s.read(physical_pos(comptime!(projection.clone()), i, &shape));
-                }
-            }
+        if comptime!(sw == w) {
+            let s = if comptime!(steps.is_empty()) {
+                MaskedView::new(
+                    src.lines_storage::<I2, WP2>()
+                        .view(src.base())
+                        .view(src.window()),
+                    check,
+                )
+            } else {
+                MaskedView::new(
+                    src.lines_storage::<I2, WP2>()
+                        .view(src.base())
+                        .view(src.window())
+                        .view(StepUp::new(shape.clone(), comptime!(steps))),
+                    check,
+                )
+            };
+            fill_lines::<I2, WP2, WP2>(
+                d, &s, projection, &shape, total, total_c, units, straight, src_rank, sw, w, lanes,
+            );
         } else {
-            let workers = CUBE_DIM as usize;
-            let mut i = UNIT_POS as usize;
-            while i < total {
-                d[i] = s.read(physical_pos(comptime!(projection.clone()), i, &shape));
-                i += workers;
-            }
+            let s = if comptime!(steps.is_empty()) {
+                MaskedView::new(
+                    src.lines_storage::<I2, Const<1>>()
+                        .view(src.base())
+                        .view(src.window()),
+                    check,
+                )
+            } else {
+                MaskedView::new(
+                    src.lines_storage::<I2, Const<1>>()
+                        .view(src.base())
+                        .view(src.window())
+                        .view(StepUp::new(
+                            widened_shape(&shape, comptime!(plen), comptime!(w)),
+                            comptime!(steps),
+                        )),
+                    check,
+                )
+            };
+            fill_lines::<I2, WP2, Const<1>>(
+                d, &s, projection, &shape, total, total_c, units, straight, src_rank, sw, w, lanes,
+            );
         }
     }
 
@@ -1562,7 +1605,7 @@ impl<T: Numeric> MemData<T> {
                 let axis = space.axis_at(p);
                 // The innermost (vectorized) axis's edge is a line count, so `/ width`.
                 let edge = comptime!(if p == last {
-                    space.partitioner().edge(axis) / w
+                    space.partitioner().edge(axis).div_ceil(w)
                 } else {
                     space.partitioner().edge(axis)
                 });
@@ -2012,7 +2055,7 @@ fn stage_compaction(
     let compaction = Compaction::of(src, vector_size, |axis| space.extent(axis));
     assert!(
         compaction.projection() == dst,
-        "MemData::fill_straight: a gathered source fills the compacted stage of its own \
+        "stage_compaction: a gathered source fills the compacted stage of its own \
          projection, addressed by {:?}, but the destination is addressed by {dst:?}",
         compaction.projection()
     );
@@ -2139,8 +2182,92 @@ fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<
         extents.push(outer.extent_at(p));
     }
     let last = extents.len() - 1;
-    extents[last] /= vector_size;
+    extents[last] = extents[last].div_ceil(vector_size);
     extents
+}
+
+/// Schedule cooperative cyclic writing of destination stage lines across cube units.
+///
+/// Dispatches line reads via [`read_stage_line`], taking an unrolled loop when the task count
+/// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
+#[cube]
+fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
+    d: &mut [Vector<I2, WP2>],
+    s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
+    #[comptime] projection: Projection,
+    shape: &Coords<u32>,
+    total: usize,
+    #[comptime] total_c: Option<u64>,
+    #[comptime] units: usize,
+    #[comptime] straight: bool,
+    #[comptime] src_rank: usize,
+    #[comptime] sw: usize,
+    #[comptime] w: usize,
+    #[comptime] lanes: Option<usize>,
+) {
+    if comptime!(straight) {
+        let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
+        #[unroll]
+        for t in 0..tasks {
+            let i = UNIT_POS as usize + comptime!(t * units);
+            if comptime!((t + 1) * units > total_c.unwrap() as usize) {
+                if i < total {
+                    d[i] = read_stage_line::<I2, WP2, SW>(
+                        s,
+                        &physical_pos(comptime!(projection.clone()), i, shape),
+                        comptime!(src_rank),
+                        comptime!(sw),
+                        comptime!(w),
+                        comptime!(lanes),
+                    );
+                }
+            } else {
+                d[i] = read_stage_line::<I2, WP2, SW>(
+                    s,
+                    &physical_pos(comptime!(projection.clone()), i, shape),
+                    comptime!(src_rank),
+                    comptime!(sw),
+                    comptime!(w),
+                    comptime!(lanes),
+                );
+            }
+        }
+    } else {
+        let workers = CUBE_DIM as usize;
+        let mut i = UNIT_POS as usize;
+        while i < total {
+            d[i] = read_stage_line::<I2, WP2, SW>(
+                s,
+                &physical_pos(comptime!(projection.clone()), i, shape),
+                comptime!(src_rank),
+                comptime!(sw),
+                comptime!(w),
+                comptime!(lanes),
+            );
+            i += workers;
+        }
+    }
+}
+
+/// Read one destination line from the masked source view at `pos`.
+///
+/// When the source served width `sw` matches the destination width `width`, reads the line
+/// directly and casts to storage width `WP2`. When the stage is wider than its source (`sw != width`),
+/// assembles the line lane-by-lane from scalar source cells via [`widen_line`].
+#[cube]
+fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
+    s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
+    pos: &CoordsDyn,
+    #[comptime] rank: usize,
+    #[comptime] sw: usize,
+    #[comptime] width: usize,
+    #[comptime] lanes: Option<usize>,
+) -> Vector<I2, WP2> {
+    if comptime!(sw == width) {
+        Vector::<I2, WP2>::cast_from(s.read(pos.clone()))
+    } else {
+        widen_line::<I2, WP2, SW>(s, pos, rank, sw, width, lanes)
+    }
 }
 
 /// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
@@ -2156,6 +2283,88 @@ fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32
         digits.push(line_digit(x, shape, j));
     }
     fold_physical(comptime!(projection), &digits, shape)
+}
+
+/// Assemble one padded destination line from adjacent scalar source cells.
+///
+/// When `lanes` is `None` (a dynamic innermost extent), the source window must be
+/// bounds-checked so that reads past the extent return zero. When `lanes` is `Some(n)`,
+/// reads past `n` are masked off explicitly so the padding lanes zero out.
+#[cube]
+fn widen_line<T: Numeric, W: Size, SW: Size>(
+    s: &MaskedView<'_, Vector<T, SW>, CoordsDyn>,
+    pos: &CoordsDyn,
+    #[comptime] rank: usize,
+    #[comptime] sw: usize,
+    #[comptime] width: usize,
+    #[comptime] lanes: Option<usize>,
+) -> Vector<T, W> {
+    comptime!(assert!(
+        sw == 1,
+        "widen_line: a padded stage is filled from a scalar source, got width {sw}"
+    ));
+    comptime!(assert!(
+        width > 1,
+        "widen_line: widening fill expects destination width > 1, got {width}"
+    ));
+    let last = comptime!(rank - 1);
+    let line = pos[last];
+    let mut out = Vector::<T, W>::cast_from(T::from_int(0));
+    let guarded = comptime!(match lanes {
+        Some(n) => !n.is_multiple_of(width),
+        None => false,
+    });
+    #[unroll]
+    for l in 0..width {
+        let cell = line.fmul(comptime!(width as u32)).fadd(comptime!(l as u32));
+        let valid = if comptime!(guarded) {
+            cell < comptime!(lanes.unwrap() as u32)
+        } else {
+            true.runtime()
+        };
+        if valid {
+            out.insert(
+                l,
+                s.read(source_lane(pos, comptime!(rank), cell))
+                    .extract(0usize),
+            );
+        }
+    }
+    out
+}
+
+/// Replace the destination line coordinate with its scalar source-cell coordinate.
+#[cube]
+fn source_lane(pos: &CoordsDyn, #[comptime] rank: usize, cell: u32) -> CoordsDyn {
+    let mut out = CoordsDyn::new();
+    #[unroll]
+    for p in 0..rank {
+        if comptime!(p == rank - 1) {
+            out.push(cell);
+        } else {
+            out.push(pos[p]);
+        }
+    }
+    out
+}
+
+/// Express a padded destination's innermost physical extent in scalar source elements.
+#[cube]
+fn widened_shape(
+    shape: &Coords<u32>,
+    #[comptime] rank: usize,
+    #[comptime] width: usize,
+) -> Coords<u32> {
+    let mut out = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..rank {
+        if comptime!(p == rank - 1) {
+            out.push(shape.at(p).fmul(comptime!(width as u32)));
+        } else {
+            out.push(shape.at(p));
+        }
+    }
+    out
 }
 
 /// Digit `j` of flat line `x` under `shape`'s row-major suffix strides.

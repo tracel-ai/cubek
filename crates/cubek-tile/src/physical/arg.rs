@@ -39,13 +39,17 @@ pub struct TileSpec {
     /// the instruction ([`Instruction::at_instruction`]), and operands that disagree meet the
     /// kind-pairing panics there.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
+    /// The line width this operand's shared-memory stages are served at; `None` serves them at the
+    /// operand's own. See [`StagePlan::stage_width`](crate::StagePlan::stage_width).
+    pub stage_width: Option<usize>,
 }
 
 impl TileSpec {
     /// An operand's spec from its mapping; the optional halves are the safe defaults
     /// (unchecked, cube size unknown, nothing staged) and are set by
     /// [`with_boundary`](Self::with_boundary), [`checked`](Self::checked), [`units`](Self::units),
-    /// [`storage`](Self::storage), and [`residence`](Self::residence).
+    /// [`storage`](Self::storage), [`residence`](Self::residence), and
+    /// [`stage_width`](Self::stage_width).
     ///
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
     /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
@@ -57,6 +61,7 @@ impl TileSpec {
             units: 0,
             storage: None,
             residence: SmallVec::new(),
+            stage_width: None,
         }
     }
 
@@ -98,6 +103,14 @@ impl TileSpec {
                 .unwrap_or_else(|| StageStorage::for_stages(&self.residence, instruction)),
             self.units,
         )
+        .staged_at(self.stage_width)
+    }
+
+    /// Serve this operand's shared-memory stages at `width`-wide lines rather than at the width it
+    /// is read from global memory in. See [`StagePlan::stage_width`](crate::StagePlan::stage_width).
+    pub fn stage_width(mut self, width: usize) -> Self {
+        self.stage_width = Some(width);
+        self
     }
 
     /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. A boolean

@@ -33,6 +33,11 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
 
     let lw = lhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
+    let rw = rhs.vector_size();
+    comptime!(assert!(
+        rw == aw || served > 1,
+        "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
+    ));
 
     // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
     // `aw`-wide neighbouring cells otherwise.
@@ -177,7 +182,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
 ) {
-    let mut c = block::seed::<E, V, A>(acc, served, mr, nr, unroll);
+    let mut c = block::seed::<E, V, A>(acc, served, 1usize, mr, nr, unroll);
     block::contract::<E, EL, L, ER, V>(
         lhs,
         rhs,
@@ -190,5 +195,5 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         unroll,
         lane_fanout,
     );
-    block::commit::<E, V, A>(acc, c, served, mr, nr, unroll);
+    block::commit::<E, V, A>(acc, c, served, 1usize, mr, nr, unroll);
 }

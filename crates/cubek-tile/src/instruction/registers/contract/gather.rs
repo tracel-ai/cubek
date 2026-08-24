@@ -26,18 +26,23 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] config: RegisterBlock,
 ) {
     let lw = lhs.vector_size();
+    let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
+    let spread = comptime!(if served > 1 { 1usize } else { rw / aw });
 
     // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
     // `aw`-wide neighbouring cells otherwise.
     if comptime!(served > 1) {
         let size!(W) = served;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, served, 1usize, config);
+        nest::<E, EL, W, ER, W, A>(
+            acc, lhs, rhs, space, served, spread, lw, served, 1usize, config,
+        );
     } else {
         let size!(W) = lw;
+        let size!(V) = rw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, aw, config);
+        nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, space, served, spread, lw, rw, aw, config);
     }
 }
 
@@ -51,13 +56,17 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     rhs: &Tile<ER>,
     #[comptime] space: Space,
     #[comptime] served: usize,
+    #[comptime] spread: usize,
     #[comptime] lw: usize,
     #[comptime] vw: usize,
     #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
 ) {
     let rank = comptime!(space.rank());
-    let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / aw));
+    let (mr, nr) = comptime!((
+        space.extent_at(rank - 2),
+        space.extent_at(rank - 1).div_ceil(aw * spread)
+    ));
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
 
     // The reduce axes' extents come off the operands' merged space, not the accumulator's: a
@@ -120,15 +129,25 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         // The budget is scalars, and the block holds `mr * nr` lines of `served * aw` (exactly
         // one of the two exceeds 1).
         let unroll = comptime!(
-            mr * nr * served * aw <= config.budget && !lhs_check && !rhs_check && !acc_check
+            mr * nr * served * aw * spread <= config.budget
+                && !lhs_check
+                && !rhs_check
+                && !acc_check
         );
-        let mut c = block::seed::<E, V, A>(&mut acc, served, comptime!(mr), comptime!(nr), unroll);
+        let mut c = block::seed::<E, V, A>(
+            &mut acc,
+            served,
+            spread,
+            comptime!(mr),
+            comptime!(nr),
+            unroll,
+        );
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
         // across the whole K walk rather than re-declared per step, so the trace allocates it once
         // however many lane bodies the fan-out below emits. An rhs varying down the rows has no
         // such per-column value, and leaves this unwritten for the trace to fold away.
-        let mut b = Array::<Vector<E, V>>::new(nr);
+        let mut b = Array::<Vector<E, V>>::new(comptime!(nr));
 
         if comptime!(served > 1) {
             for step in 0..comptime!(kc / served) {
@@ -242,13 +261,21 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             }
         }
 
-        block::commit::<E, V, A>(&mut acc, c, served, comptime!(mr), comptime!(nr), unroll);
+        block::commit::<E, V, A>(
+            &mut acc,
+            c,
+            served,
+            spread,
+            comptime!(mr),
+            comptime!(nr),
+            unroll,
+        );
     }
 }
 
 /// One gathered rank-1 update. `lane` names the component to take when the caller walks `K` as
 /// (line, lane), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
-/// the component from `p` instead.
+/// the component from `reduce_coords` on the fastest contracted axis instead.
 ///
 /// The span flags say which operand reads hoist out of the cell loop: each read is taken at the
 /// coarsest cell the operand is invariant over, so the plain outer product still reads one lhs
@@ -282,6 +309,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 
     // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
     // down the `i` loop.
+    let k_axis_idx = comptime!(reduce.len() - 1);
     if comptime!(!rhs_spans_row) {
         #[unroll(unroll)]
         for n in 0..nr {
@@ -317,7 +345,8 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 comptime!(reduce.clone()),
                 lw,
             );
-            a_row = lane_component::<E, EL, L, V>(line, p, lane, served, lw);
+            a_row =
+                lane_component::<E, EL, L, V>(line, &reduce_coords, lane, served, lw, k_axis_idx);
         }
         let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
         if comptime!(rhs_spans_row && !rhs_spans_col) {
@@ -347,7 +376,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     comptime!(reduce.clone()),
                     lw,
                 );
-                lane_component::<E, EL, L, V>(line, p, lane, served, lw)
+                lane_component::<E, EL, L, V>(line, &reduce_coords, lane, served, lw, k_axis_idx)
             } else {
                 a_row
             };
@@ -402,15 +431,16 @@ fn cell_read<T: Numeric, W: Size>(
 }
 
 /// The `K` component of one lhs line, widened into the accumulate element. The whole line at a
-/// folded step, fixed when the caller walks `K` as (line, lane), resolved from `p` on the flat
-/// walk.
+/// folded step, fixed when the caller walks `K` as (line, lane), resolved from the fastest
+/// contracted coordinate in `reduce_coords` on the flat walk.
 #[cube]
 fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     line: Vector<EL, L>,
-    p: usize,
+    reduce_coords: &Coords<u32>,
     #[comptime] lane: Option<usize>,
     #[comptime] served: usize,
     #[comptime] lw: usize,
+    #[comptime] k_axis_idx: usize,
 ) -> Vector<E, V> {
     if comptime!(served > 1) {
         Vector::<E, V>::cast_from(line)
@@ -419,7 +449,10 @@ fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     } else if comptime!(lw == 1) {
         Vector::<E, V>::cast_from(line.extract(0usize))
     } else {
-        Vector::<E, V>::cast_from(line.extract_dynamic(p % lw))
+        let last_k = reduce_coords.at(comptime!(k_axis_idx));
+        Vector::<E, V>::cast_from(
+            line.extract_dynamic((last_k % comptime!(lw as u32)).fcast::<usize>()),
+        )
     }
 }
 
