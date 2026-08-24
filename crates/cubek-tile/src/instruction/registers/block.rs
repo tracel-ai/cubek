@@ -176,8 +176,8 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 /// At `served > 1` the block's lanes are partials of one cell, so the accumulator's value seeds
 /// lane 0 alone and the rest start at the identity.
 ///
-/// `replace` discards the sink's current value instead of carrying it forward: the contraction
-/// spans every contracted axis at this leaf, so nothing it overwrites had been accumulated yet.
+/// Whether the sink is carried forward belongs to [`AccumulateView`], which knows whether this
+/// contraction replaces cells that have not been accumulated yet.
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
@@ -185,14 +185,13 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
-    #[comptime] replace: bool,
 ) -> Array<Vector<E, V>> {
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
     #[unroll(unroll)]
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            let cell = acc.seed((i as u32, n as u32), LeafOp::Sum, replace);
+            let cell = acc.seed((i as u32, n as u32), LeafOp::Sum);
             if comptime!(served > 1) {
                 let mut lanes = Vector::<E, V>::cast_from(LeafOp::identity::<E>(LeafOp::Sum));
                 lanes.insert(0usize, cell.extract(0usize));

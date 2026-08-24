@@ -5,6 +5,8 @@ use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::*;
 
+use super::GatherProblem;
+
 /// One operand read at the accumulator cell `(row, col)` of the batch matrix `batch` names.
 /// `width` is the operand's own line width, since only its innermost axis is addressed in lines.
 #[cube]
@@ -15,8 +17,7 @@ pub(super) fn cell_read<T: Numeric, W: Size>(
     col: u32,
     reduce_coords: &Coords<u32>,
     #[comptime] operand: Space,
-    #[comptime] acc: Space,
-    #[comptime] reduce: Vec<Axis>,
+    #[comptime] problem: GatherProblem,
     #[comptime] width: usize,
 ) -> Vector<T, W> {
     view.read(cell_position(
@@ -25,8 +26,7 @@ pub(super) fn cell_read<T: Numeric, W: Size>(
         col,
         reduce_coords,
         operand,
-        acc,
-        reduce,
+        problem,
         width,
     ))
 }
@@ -39,20 +39,34 @@ pub(super) fn cell_position(
     col: u32,
     reduce_coords: &Coords<u32>,
     #[comptime] operand: Space,
-    #[comptime] acc: Space,
-    #[comptime] reduce: Vec<Axis>,
+    #[comptime] problem: GatherProblem,
     #[comptime] width: usize,
 ) -> CoordsDyn {
     let acc_coords = acc_cell_coords(batch, row, col);
     resolve_nd_coords(
         operand,
-        acc,
-        reduce,
+        comptime!(problem.space.clone()),
+        comptime!(problem.reduce.clone()),
         &acc_coords,
         reduce_coords,
         width,
         false,
     )
+}
+
+/// `coords` with its last entry offset by `delta`.
+#[cube]
+pub(super) fn offset_last(coords: &CoordsDyn, #[comptime] rank: usize, delta: u32) -> CoordsDyn {
+    let mut out = CoordsDyn::new();
+    #[unroll]
+    for p in 0..rank {
+        out.push(if comptime!(p == rank - 1) {
+            coords[p].fadd(delta)
+        } else {
+            coords[p]
+        });
+    }
+    out
 }
 
 /// Assembles the accumulator cell coordinate [`resolve_nd_coords`] reads on its acc branch:

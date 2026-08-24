@@ -215,16 +215,13 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// [`vectorize`](Self::vectorize) width it is read from global memory in, padding its
     /// innermost axis out to whole lines.
     ///
-    /// This is the one width a global buffer's own layout does not get to veto. An `NHWC` tensor
-    /// at `C = 3` has no 4-aligned row start, so it must be *read* scalar; once its cells are in
-    /// shared memory the stage owns the layout, and rounding that axis up to one 4-wide line lets
-    /// the leaf contract in lines instead of in scalars. The lanes past the operand's extent hold
-    /// zero, and the contraction's own bound is what keeps them out of the result.
+    /// See [`StagePlan::stage_width`](crate::StagePlan::stage_width) for the padded stage layout
+    /// and its motivation.
     ///
     /// Must be a multiple of the [`vectorize`](Self::vectorize) width, and the operand must
     /// actually be [`Smem`](Residence::Smem)-resident somewhere: there is nothing to widen
     /// otherwise.
-    pub fn stage_vectorize(mut self, width: usize) -> Self {
+    pub fn stage_width(mut self, width: usize) -> Self {
         self.data.stage_width = Some(width);
         self
     }
@@ -539,7 +536,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 
         assert!(
             stage_width.is_none() || residence.contains(&Residence::Smem),
-            "StridedTileSource::stage_vectorize: a padded stage width was stated for an operand \
+            "StridedTileSource::stage_width: a padded stage width was stated for an operand \
              that is never Smem-resident, so no stage would ever be served at it"
         );
         let mut spec = TileSpec::new(projection)

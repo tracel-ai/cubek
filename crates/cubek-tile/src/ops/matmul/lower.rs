@@ -18,8 +18,7 @@ impl<Acc: Numeric> Tile<Acc> {
     /// leaf level. If the contraction spans multiple levels or outer reduction loops,
     /// it preserves the existing sink and accumulates onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replace =
-            comptime!(is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space));
+        let replace = comptime!(is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space));
         self.mma_with(lhs, rhs, replace);
     }
 

@@ -114,7 +114,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
     let in_view = input.nd_packed::<V>();
 
     for line_idx in 0..total_lines {
-        let seed_vec = acc_view.seed(line_idx, fold, comptime!(false));
+        let seed_vec = acc_view.seed(line_idx, fold);
         let mut result = seed_vec;
 
         #[unroll]

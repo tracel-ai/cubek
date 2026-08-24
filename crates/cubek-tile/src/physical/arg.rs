@@ -40,7 +40,7 @@ pub struct TileSpec {
     /// kind-pairing panics there.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
     /// The line width this operand's shared-memory stages are served at; `None` serves them at the
-    /// operand's own. See [`StagePlan::width`](crate::StagePlan::width).
+    /// operand's own. See [`StagePlan::stage_width`](crate::StagePlan::stage_width).
     pub stage_width: Option<usize>,
 }
 
@@ -106,7 +106,7 @@ impl TileSpec {
     }
 
     /// Serve this operand's shared-memory stages at `width`-wide lines rather than at the width it
-    /// is read from global memory in. See [`StagePlan::width`](crate::StagePlan::width).
+    /// is read from global memory in. See [`StagePlan::stage_width`](crate::StagePlan::stage_width).
     pub fn stage_width(mut self, width: Option<usize>) -> Self {
         self.stage_width = width;
         self

@@ -7,8 +7,7 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use crate::instruction::registers::block;
 use crate::*;
 
-use super::coords::{assert_operand_shapes, cell_read};
-
+use super::{GatherProblem, coords::cell_read};
 
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
@@ -18,41 +17,22 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    #[comptime] space: Space,
+    #[comptime] problem: GatherProblem,
     #[comptime] served: usize,
     #[comptime] lw: usize,
-    #[comptime] vw: usize,
     #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
     #[comptime] replace: bool,
 ) {
-    let rank = comptime!(space.rank());
-    let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / aw));
-    let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
-
-    // The reduce axes' extents come off the operands' merged space, not the accumulator's: a
-    // contracted axis is by definition absent from the accumulator, and an axis only one operand
-    // spans still has to be walked.
-    let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-    let reduce = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space).to_vec());
-    let reduce_extents = comptime!(reduce.iter().map(|&a| merged.extent(a)).collect::<Vec<_>>());
-    let kc = comptime!(reduce_extents.iter().product::<usize>());
-
-    // Whether either operand varies along the axis the outer product assumes it is free of.
-    // `rhs_spans_col` separates an rhs that merely varies down the rows, and so still holds for a
-    // whole row of cells, from one that varies cell by cell.
-    let lhs_spans_col = comptime!(lhs.space.contains(space.axis_at(rank - 1)));
-    let rhs_spans_row = comptime!(rhs.space.contains(space.axis_at(rank - 2)));
-    let rhs_spans_col = comptime!(rhs.space.contains(space.axis_at(rank - 1)));
-
-    comptime!(assert_operand_shapes(
-        &lhs.space,
-        &rhs.space,
-        &space,
-        &reduce,
-        vw,
-        lhs_spans_col
-    ));
+    let rank = comptime!(problem.space.rank());
+    let mr = comptime!(problem.mr);
+    let nr = comptime!(problem.nr);
+    let matrices = comptime!(
+        (0..rank - 2)
+            .map(|p| problem.space.extent_at(p))
+            .product::<usize>()
+    );
+    let kc = comptime!(problem.kc);
 
     let lhs_view = lhs.nd_packed::<L>();
     let rhs_view = rhs.nd_packed::<V>();
@@ -73,13 +53,13 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         let batch = unravel(
             &const_coords(comptime!(
                 (0..rank - 2)
-                    .map(|p| space.extent_at(p))
+                    .map(|p| problem.space.extent_at(p))
                     .collect::<Vec<_>>()
             )),
             mat.fcast::<u32>(),
         );
 
-        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
+        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(problem.space.clone()), replace);
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
@@ -88,14 +68,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         let unroll = comptime!(
             mr * nr * served * aw <= config.budget && !lhs_check && !rhs_check && !acc_check
         );
-        let mut c = block::seed::<E, V, A>(
-            &mut acc,
-            served,
-            comptime!(mr),
-            comptime!(nr),
-            unroll,
-            replace,
-        );
+        let mut c = block::seed::<E, V, A>(&mut acc, served, comptime!(mr), comptime!(nr), unroll);
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
         // across the whole K walk rather than re-declared per step, so the trace allocates it once
@@ -117,16 +90,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     mr,
                     nr,
                     unroll,
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    comptime!(reduce_extents.clone()),
-                    comptime!(lhs.space.clone()),
-                    comptime!(rhs.space.clone()),
+                    comptime!(problem.clone()),
                     lw,
-                    vw,
-                    lhs_spans_col,
-                    rhs_spans_row,
-                    rhs_spans_col,
                 );
             }
         } else if comptime!(lane_fanout && lw > 1) {
@@ -145,16 +110,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                         mr,
                         nr,
                         unroll,
-                        comptime!(space.clone()),
-                        comptime!(reduce.clone()),
-                        comptime!(reduce_extents.clone()),
-                        comptime!(lhs.space.clone()),
-                        comptime!(rhs.space.clone()),
+                        comptime!(problem.clone()),
                         lw,
-                        vw,
-                        lhs_spans_col,
-                        rhs_spans_row,
-                        rhs_spans_col,
                     );
                 }
             }
@@ -172,16 +129,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     mr,
                     nr,
                     unroll,
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    comptime!(reduce_extents.clone()),
-                    comptime!(lhs.space.clone()),
-                    comptime!(rhs.space.clone()),
+                    comptime!(problem.clone()),
                     lw,
-                    vw,
-                    lhs_spans_col,
-                    rhs_spans_row,
-                    rhs_spans_col,
                 );
             }
         } else {
@@ -201,16 +150,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     mr,
                     nr,
                     unroll,
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    comptime!(reduce_extents.clone()),
-                    comptime!(lhs.space.clone()),
-                    comptime!(rhs.space.clone()),
+                    comptime!(problem.clone()),
                     lw,
-                    vw,
-                    lhs_spans_col,
-                    rhs_spans_row,
-                    rhs_spans_col,
                 );
             }
         }
@@ -240,22 +181,17 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
-    #[comptime] space: Space,
-    #[comptime] reduce: Vec<Axis>,
-    #[comptime] reduce_extents: Vec<usize>,
-    #[comptime] lhs_space: Space,
-    #[comptime] rhs_space: Space,
+    #[comptime] problem: GatherProblem,
     #[comptime] lw: usize,
-    #[comptime] vw: usize,
-    #[comptime] lhs_spans_col: bool,
-    #[comptime] rhs_spans_row: bool,
-    #[comptime] rhs_spans_col: bool,
 ) {
-    let reduce_coords = unravel(&const_coords(reduce_extents), p.fcast::<u32>());
+    let reduce_coords = unravel(
+        &const_coords(comptime!(problem.reduce_extents.clone())),
+        p.fcast::<u32>(),
+    );
 
     // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
     // down the `i` loop.
-    if comptime!(!rhs_spans_row) {
+    if comptime!(!problem.rhs_spans_row) {
         #[unroll(unroll)]
         for n in 0..nr {
             b[n] = Vector::<E, V>::cast_from(cell_read::<ER, V>(
@@ -264,10 +200,9 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 0u32,
                 n as u32,
                 &reduce_coords,
-                comptime!(rhs_space.clone()),
-                comptime!(space.clone()),
-                comptime!(reduce.clone()),
-                vw,
+                comptime!(problem.rhs_space.clone()),
+                comptime!(problem.clone()),
+                comptime!(problem.vw),
             ));
         }
     }
@@ -276,7 +211,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         // Whatever is invariant across the row's cells is read once here. Each stays at zero, and
         // folds away, when the cell loop reads that operand for itself.
         let mut a_row = Vector::<E, V>::cast_from(E::from_int(0));
-        if comptime!(!lhs_spans_col) {
+        if comptime!(!problem.lhs_spans_col) {
             // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line
             // index, so this is the same position for every lane of one line.
             let line = cell_read::<EL, L>(
@@ -285,48 +220,45 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 i as u32,
                 0u32,
                 &reduce_coords,
-                comptime!(lhs_space.clone()),
-                comptime!(space.clone()),
-                comptime!(reduce.clone()),
+                comptime!(problem.lhs_space.clone()),
+                comptime!(problem.clone()),
                 lw,
             );
             a_row = lane_component::<E, EL, L, V>(line, p, lane, served, lw);
         }
         let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
-        if comptime!(rhs_spans_row && !rhs_spans_col) {
+        if comptime!(problem.rhs_spans_row && !problem.rhs_spans_col) {
             b_row = Vector::<E, V>::cast_from(cell_read::<ER, V>(
                 rhs_view,
                 batch,
                 i as u32,
                 0u32,
                 &reduce_coords,
-                comptime!(rhs_space.clone()),
-                comptime!(space.clone()),
-                comptime!(reduce.clone()),
-                vw,
+                comptime!(problem.rhs_space.clone()),
+                comptime!(problem.clone()),
+                comptime!(problem.vw),
             ));
         }
         #[unroll(unroll)]
         for n in 0..nr {
-            let a = if comptime!(lhs_spans_col) {
+            let a = if comptime!(problem.lhs_spans_col) {
                 let line = cell_read::<EL, L>(
                     lhs_view,
                     batch,
                     i as u32,
                     n as u32,
                     &reduce_coords,
-                    comptime!(lhs_space.clone()),
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
+                    comptime!(problem.lhs_space.clone()),
+                    comptime!(problem.clone()),
                     lw,
                 );
                 lane_component::<E, EL, L, V>(line, p, lane, served, lw)
             } else {
                 a_row
             };
-            let v = if comptime!(!rhs_spans_row) {
+            let v = if comptime!(!problem.rhs_spans_row) {
                 b[n]
-            } else if comptime!(!rhs_spans_col) {
+            } else if comptime!(!problem.rhs_spans_col) {
                 b_row
             } else {
                 Vector::<E, V>::cast_from(cell_read::<ER, V>(
@@ -335,10 +267,9 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     i as u32,
                     n as u32,
                     &reduce_coords,
-                    comptime!(rhs_space.clone()),
-                    comptime!(space.clone()),
-                    comptime!(reduce.clone()),
-                    vw,
+                    comptime!(problem.rhs_space.clone()),
+                    comptime!(problem.clone()),
+                    comptime!(problem.vw),
                 ))
             };
             // Explicit `fma`, for the reason [`block::rank1_update`] gives.
@@ -346,7 +277,6 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         }
     }
 }
-
 
 /// The `K` component of one lhs line, widened into the accumulate element. The whole line at a
 /// folded step, fixed when the caller walks `K` as (line, lane), resolved from `p` on the flat

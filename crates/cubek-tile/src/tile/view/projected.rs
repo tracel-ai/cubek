@@ -186,12 +186,6 @@ impl AxisProjection {
     /// point of such a walk, so a gather takes one floor per accumulator cell where folding the
     /// whole map takes one per tap.
     pub fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
-        self.fold(pos, moving)
-    }
-
-    /// [`to_source_pos`](Layout::to_source_pos) over the terms `moving` does not name, the whole
-    /// map when it names none.
-    fn fold(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
         let mut out = CoordsDyn::new();
 
         #[unroll]
@@ -303,7 +297,7 @@ impl Layout for AxisProjection {
     type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        self.fold(pos, comptime!(Vec::new()))
+        self.anchor(pos, comptime!(Vec::new()))
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -442,79 +436,68 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
+/// A gathered operand split into the map folded once per run and the physical view it addresses.
+#[derive(CubeType)]
+pub struct NdReader<'a, T: Numeric, W: Size> {
+    pub map: AxisProjection,
+    pub view: MaskedView<'a, Vector<T, W>, CoordsDyn>,
+    #[cube(comptime)]
+    pub rank: usize,
+}
+
+#[cube]
+impl<'a, T: Numeric, W: Size> NdReader<'a, T, W> {
+    fn new(
+        map: AxisProjection,
+        view: MaskedView<'a, Vector<T, W>, CoordsDyn>,
+        #[comptime] rank: usize,
+    ) -> Self {
+        NdReader::<'a, T, W> { map, view, rank }
+    }
+}
+
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The map [`nd`](Tile::nd) folds on every read, and the physical box beneath it, so a caller
-    /// reading a run of adjacent innermost cells folds the map once and steps the result.
-    ///
-    /// The innermost physical axis is one logical axis at coefficient `1`
-    /// ([`Projection::validate`](crate::Projection::validate)), so a run along it lands on source
-    /// coordinates that differ only in that axis and by one cell each. Folding the map per cell
-    /// instead re-runs every term, and under a rational axis a divide with them.
-    pub fn nd_map(&self) -> AxisProjection {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => axis_projection(
-                comptime!(self.space.clone()),
-                comptime!(g.projection.clone()),
-                g.map.clone(),
-                self.vector_size(),
-            ),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("Tile::nd_map: only a memory operand carries a projection to fold")
-            }
-        }
-    }
-
-    /// [`nd_physical`](Tile::nd_physical) with the operand's quant packing resolved, as
-    /// [`nd_packed`](Tile::nd_packed) does for [`nd`](Tile::nd).
-    pub fn nd_physical_packed<W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+    /// [`nd_split`](Tile::nd_split) with this tile's quant packing resolved.
+    pub fn nd_split_packed<W: Size>(&self) -> NdReader<'_, T, W> {
         let served = self.vector_size();
         let packing = self.packing();
         let physical = comptime!(packing.physical(served));
         match comptime!(packing) {
             Packing::Plain => {
                 let size!(WP) = physical;
-                self.nd_physical::<T, WP, W>()
+                self.nd_split::<T, WP, W>()
             }
             Packing::Native => {
                 let size!(WP) = physical;
-                self.nd_physical::<i8, WP, W>()
+                self.nd_split::<i8, WP, W>()
             }
             Packing::Packed { factor: _ } => {
                 let size!(WP) = physical;
-                self.nd_physical::<u32, WP, W>()
+                self.nd_split::<u32, WP, W>()
             }
         }
     }
 
-    /// The read surface [`nd_map`](Tile::nd_map)'s output addresses: [`nd`](Tile::nd) without the
-    /// map, masking identically.
-    pub fn nd_physical<I: Numeric, WP: Size, W: Size>(
-        &self,
-    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+    /// The map, physical read surface, and physical rank needed to step a gathered operand by
+    /// hand. Constructed together so all three describe the same memory operand.
+    pub fn nd_split<I: Numeric, WP: Size, W: Size>(&self) -> NdReader<'_, T, W> {
         match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.nd_physical::<I, WP, W>(),
+            TileKind::Gmem(g) | TileKind::Smem(g) => NdReader::new(
+                axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    g.map.clone(),
+                    self.vector_size(),
+                ),
+                g.nd_physical::<I, WP, W>(),
+                comptime!(g.projection.physical_rank()),
+            ),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                panic!("Tile::nd_physical: only a memory operand has a physical box")
-            }
-        }
-    }
-
-    /// How many axes [`nd_map`](Tile::nd_map) resolves a coordinate onto.
-    pub fn physical_rank(&self) -> comptime_type!(usize) {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => comptime!(g.projection.physical_rank()),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("Tile::physical_rank: only a memory operand has physical axes")
+                panic!("Tile::nd_split: only a memory operand has a projection and physical box")
             }
         }
     }

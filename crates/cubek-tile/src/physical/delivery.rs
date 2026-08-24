@@ -171,7 +171,7 @@ pub struct StagePlan {
     /// [`Launcher::vector_size`](crate::Launcher) rightly refuses it) is still served in lines
     /// once it reaches shared memory. Only [`Smem`](Residence::Smem) reads this: an in-place
     /// operand has no stage to widen.
-    pub width: Option<usize>,
+    pub stage_width: Option<usize>,
 }
 
 impl StagePlan {
@@ -187,21 +187,21 @@ impl StagePlan {
             residence: SmallVec::from_slice(residence),
             storage,
             units,
-            width: None,
+            stage_width: None,
         }
     }
 
     /// Serve this plan's stages at `width` rather than at the source operand's own line width.
-    /// See [`width`](StagePlan::width).
+    /// See [`stage_width`](StagePlan::stage_width).
     pub fn staged_at(mut self, width: Option<usize>) -> Self {
-        self.width = width;
+        self.stage_width = width;
         self
     }
 
     /// The width a stage of an operand served at `source` lines takes: the padded
-    /// [`width`](StagePlan::width) when one is stated, else `source` unchanged.
+    /// [`stage_width`](StagePlan::stage_width) when one is stated, else `source` unchanged.
     pub fn stage_width(&self, source: usize) -> usize {
-        match self.width {
+        match self.stage_width {
             Some(width) => {
                 assert!(
                     width >= source && width.is_multiple_of(source),
@@ -235,7 +235,7 @@ impl StagePlan {
             residence: self.residence.iter().skip(1).copied().collect(),
             storage: self.storage,
             units: self.units,
-            width: self.width,
+            stage_width: self.stage_width,
         }
     }
 }

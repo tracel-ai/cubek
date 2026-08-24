@@ -14,6 +14,8 @@ pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2
     values: MaskedViewMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
     lane_share: LaneShare,
+    #[cube(comptime)]
+    replace: bool,
 }
 
 #[cube]
@@ -21,8 +23,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
+        #[comptime] replace: bool,
     ) -> Self {
-        AccumulateView::<'a, E, V, C> { values, lane_share }
+        AccumulateView::<'a, E, V, C> {
+            values,
+            lane_share,
+            replace,
+        }
     }
 
     /// The underlying overhang-mask flag, so a leaf makes the same unroll decision it makes on a
@@ -39,15 +46,10 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// A block's starting value for an `fold` fold. A partial starts at `fold`'s identity: the
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
     /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.
-    pub fn seed(
-        &self,
-        pos: C,
-        #[comptime] fold: LeafOp,
-        #[comptime] replace: bool,
-    ) -> Vector<E, V> {
+    pub fn seed(&self, pos: C, #[comptime] fold: LeafOp) -> Vector<E, V> {
         // A folded share holds no whole cell to carry forward, and a replacing contraction is
         // discarding whatever is there anyway: both start from the identity and skip the read.
-        let carries = comptime!(matches!(self.lane_share, LaneShare::Whole) && !replace);
+        let carries = comptime!(matches!(self.lane_share, LaneShare::Whole) && !self.replace);
         if comptime!(carries) {
             self.values.read(pos)
         } else {

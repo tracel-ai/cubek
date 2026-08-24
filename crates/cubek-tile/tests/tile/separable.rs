@@ -76,10 +76,7 @@ fn separable_kernel<E: Float>(
             weights::<E>(),
         )
     } else {
-        Tile::<E>::procedural::<Weights<E>>(
-            comptime!(space.project(&weight_axes)),
-            weights::<E>(),
-        )
+        Tile::<E>::procedural::<Weights<E>>(comptime!(space.project(&weight_axes)), weights::<E>())
     };
 
     let mut output = output.tile(space);
@@ -376,9 +373,9 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         .build();
 
     let input = TileInput::builder(&client, space.project(&[TAP[0], TAP[1], TAP[2], COL]))
-    .untiled()
-    .packed(&scheme, DequantAt::Read)
-    .arange();
+        .untiled()
+        .packed(&scheme, DequantAt::Read)
+        .arange();
 
     let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![ROWS, pack])

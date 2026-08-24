@@ -783,7 +783,7 @@ impl<T: Numeric> MemData<T> {
             // Plain → plain, whole destination: fill in destination-physical order (the write is
             // linear and only the source decodes, once per line by constants on a static store).
             // A *padded* stage is served in lines its source has no way to hand it whole
-            // ([`StagePlan::width`]), so it assembles each one lane by lane instead.
+            // ([`StagePlan::stage_width`]), so it assembles each one lane by lane instead.
             if comptime!(self.store.vector_size == src.store.vector_size) {
                 self.fill_straight::<T, W>(src, comptime!(space.clone()));
             } else {
@@ -941,14 +941,11 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// [`fill_straight`](MemData::fill_straight) across a width change: a *padded* stage, served
-    /// in lines wider than the source it is filled from ([`StagePlan::width`]), assembling each
+    /// in lines wider than the source it is filled from ([`StagePlan::stage_width`]), assembling each
     /// destination line out of `W` scalar source reads.
     ///
-    /// The source is scalar, and that is the only source there is: an operand already wide enough
-    /// to serve lines has nothing to gain from a stage that regroups them, so the one reason to
-    /// widen is an axis global memory cannot vectorize at all (an `NHWC` tensor at `C = 3` has no
-    /// 4-aligned row start). Its cells are contiguous either way, so the reads a line is built
-    /// from are adjacent and the backend still coalesces them.
+    /// See [`StagePlan::stage_width`] for the padded stage layout and its motivation. The source
+    /// cells remain adjacent, so the backend can still coalesce the scalar reads.
     ///
     /// The lanes past the operand's innermost extent are the padding. Where that extent fills
     /// whole lines they do not exist and nothing is emitted for them; otherwise they are skipped
@@ -1455,7 +1452,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(layout),
-            self.read_check(),
+            self.needs_boundary_mask(),
         )
     }
 
@@ -1473,10 +1470,9 @@ impl<T: Numeric> MemData<T> {
     /// tests the [`Boundary::Zero`] ones and only those. Where none is `Zero` its result is
     /// unconditionally `true`, and with it the whole composed check, so the view is built
     /// unchecked and the reads address the clamped cell directly.
-    fn read_check(&self) -> comptime_type!(bool) {
+    fn needs_boundary_mask(&self) -> comptime_type!(bool) {
         comptime!(
-            self.access.overhang.masks()
-                && self.window.boundaries.contains(&Some(Boundary::Zero))
+            self.access.overhang.masks() && self.window.boundaries.contains(&Some(Boundary::Zero))
         )
     }
 
@@ -1525,7 +1521,7 @@ impl<T: Numeric> MemData<T> {
                 .view(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
-            self.read_check(),
+            self.needs_boundary_mask(),
         )
     }
 
@@ -1556,7 +1552,7 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(FlatLayout::new(self.window.extent.clone()));
                 let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
-                FlatView::new(dequant.view(), self.read_check())
+                FlatView::new(dequant.view(), self.needs_boundary_mask())
             }
             ComptimeOption::None => self.flat::<W>(),
         }
@@ -1604,7 +1600,7 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(layout);
                 let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
-                MaskedView::new(dequant.view(), self.read_check())
+                MaskedView::new(dequant.view(), self.needs_boundary_mask())
             }
             ComptimeOption::None => self.masked::<W, C, L>(layout),
         }
@@ -1694,9 +1690,10 @@ impl<T: Numeric> MemData<T> {
         &mut self,
         i: usize,
         #[comptime] space: Space,
+        #[comptime] replace: bool,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share)
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, replace)
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
@@ -1714,7 +1711,7 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share)
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, false)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -2367,15 +2364,12 @@ fn widen_line<T: Numeric, W: Size>(
     #[unroll]
     for l in 0..width {
         let cell = line.fmul(comptime!(width as u32)).fadd(comptime!(l as u32));
-        if comptime!(guarded) {
-            if cell < comptime!(lanes.unwrap() as u32) {
-                out.insert(
-                    l,
-                    s.read(source_lane(pos, comptime!(rank), cell))
-                        .extract(0usize),
-                );
-            }
+        let valid = if comptime!(guarded) {
+            cell < comptime!(lanes.unwrap() as u32)
         } else {
+            true.runtime()
+        };
+        if valid {
             out.insert(
                 l,
                 s.read(source_lane(pos, comptime!(rank), cell))
