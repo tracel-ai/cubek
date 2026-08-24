@@ -904,7 +904,7 @@ impl<T: Numeric> Tile<T> {
     /// fragment partition drains this way.
     ///
     /// Crate-internal: what closes an accumulator's scope is the scope's own business
-    /// ([`Accumulator`](crate::Accumulator)), not a call site's.
+    /// ([`AccumulatorScope`](crate::AccumulatorScope)), not a call site's.
     pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::PlanePartition(s) => s.drain_cast_into(dst),

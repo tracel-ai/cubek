@@ -1528,7 +1528,7 @@ fn register_matmul_promoted_accumulator() {
         .arange();
     // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1595,7 +1595,7 @@ fn register_matmul_promoted_cube_plane() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1749,7 +1749,7 @@ fn register_matmul_promoted_lined_lhs() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -2388,7 +2388,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2465,7 +2465,7 @@ fn mma_matmul_8x8x8() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2543,7 +2543,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2625,7 +2625,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -3047,7 +3047,7 @@ fn mma_matmul_quant_until_read() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3140,7 +3140,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3237,7 +3237,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3334,7 +3334,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3431,7 +3431,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3553,7 +3553,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&register_accumulator(&space))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -3760,7 +3760,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
 /// below it. The output spans no contracted axis, so its top level already holds one region per
 /// instance, and stating `Register` there is what opens an accumulator living across everything
 /// under it. The column is one entry per level, so the space's depth sizes it.
-fn register_accumulator(space: &Space) -> Operand {
+fn accumulator_in_registers(space: &Space) -> Operand {
     let mut out = Operand::new(&[M, N], f32::elem_type_native());
     out.stage(Residence::Register);
     for _ in 1..space.partitioner().depth() {

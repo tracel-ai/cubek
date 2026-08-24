@@ -26,8 +26,8 @@ use crate::*;
 /// An accumulator's scope, opened by [`Tile::accumulate`] and closed by whichever op exhausts it.
 ///
 /// The variants are the output's [`Residence`] at the level the scope opens, not a choice made
-/// here: [`Register`](Accumulator::Register) contracts in a plane-resident partition and drains
-/// into the output on the way out, [`InPlace`](Accumulator::InPlace) contracts in the output
+/// here: [`Register`](AccumulatorScope::Register) contracts in a plane-resident partition and drains
+/// into the output on the way out, [`InPlace`](AccumulatorScope::InPlace) contracts in the output
 /// itself and has nothing to drain. `EA` is the register accumulate element, distinct from the
 /// stored `Out` (`f32` accumulate under an `f16` output); an `InPlace` scope has no second
 /// element, so it never reads `EA`.
@@ -36,29 +36,29 @@ use crate::*;
 #[allow(clippy::large_enum_variant)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum Accumulator<EA: Numeric, Out: Numeric> {
+pub enum AccumulatorScope<EA: Numeric, Out: Numeric> {
     Register { tile: Tile<EA>, sink: Tile<Out> },
     InPlace { sink: Tile<Out> },
 }
 
 #[cube]
-impl<EA: Numeric, Out: Numeric> Accumulator<EA, Out> {
+impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
     /// Zero the accumulator: the init a contraction wants, since `out = a·b` over an op that
     /// accumulates starts from the additive identity.
     pub fn zero(&mut self) {
         match self {
-            Accumulator::Register { tile, sink: _ } => tile.zero(),
-            Accumulator::InPlace { sink } => sink.zero(),
+            AccumulatorScope::Register { tile, sink: _ } => tile.zero(),
+            AccumulatorScope::InPlace { sink } => sink.zero(),
         }
     }
 
     /// Seed the accumulator with `fold`'s identity, for the reductions `zero` is wrong for
     /// (`Max` wants the lowest value, not `0`). The identity is minted in whichever element the
     /// accumulator actually holds, which is the element the caller cannot name here.
-    pub fn init(&mut self, #[comptime] fold: LeafOp) {
+    pub fn seed(&mut self, #[comptime] fold: LeafOp) {
         match self {
-            Accumulator::Register { tile, sink: _ } => tile.init(LeafOp::identity::<EA>(fold)),
-            Accumulator::InPlace { sink } => sink.init(LeafOp::identity::<Out>(fold)),
+            AccumulatorScope::Register { tile, sink: _ } => tile.init(LeafOp::identity::<EA>(fold)),
+            AccumulatorScope::InPlace { sink } => sink.init(LeafOp::identity::<Out>(fold)),
         }
     }
 
@@ -66,22 +66,23 @@ impl<EA: Numeric, Out: Numeric> Accumulator<EA, Out> {
     /// the accumulator was opened for, so leaving it is what writes the result back.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         match self {
-            Accumulator::Register { tile, sink } => {
+            AccumulatorScope::Register { tile, sink } => {
                 tile.mma(lhs, rhs);
                 tile.drain_cast_into(sink);
             }
-            Accumulator::InPlace { sink } => sink.mma(lhs, rhs),
+            AccumulatorScope::InPlace { sink } => sink.mma(lhs, rhs),
         }
     }
 
-    /// Fold `input` along the axes the accumulator does not span, then drain, as [`mma`](Self::mma).
+    /// Fold `input` along the axes the accumulator does not span, then drain, as
+    /// [`mma`](AccumulatorScope::mma) does.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
         match self {
-            Accumulator::Register { tile, sink } => {
+            AccumulatorScope::Register { tile, sink } => {
                 tile.reduce_axis(input, fold);
                 tile.drain_cast_into(sink);
             }
-            Accumulator::InPlace { sink } => sink.reduce_axis(input, fold),
+            AccumulatorScope::InPlace { sink } => sink.reduce_axis(input, fold),
         }
     }
 }
@@ -91,8 +92,8 @@ impl<Acc: Numeric> Tile<Acc> {
     /// Open this output's accumulator scope, uninitialized, folding under `op`: `Sum` for a
     /// matmul, whichever fold a reduce asked for. `op` is stated here because it is read on drain,
     /// when the plane's lanes are combined, and comptime state cannot be set after a thing is
-    /// built. The caller states the init ([`zero`](Accumulator::zero), or
-    /// [`init`](Accumulator::init) for a fold's identity); the op that closes the scope drains it.
+    /// built. The caller states the init ([`zero`](AccumulatorScope::zero), or
+    /// [`seed`](AccumulatorScope::seed) for a fold's identity); the op that closes the scope drains it.
     ///
     /// Where the accumulator lives is the output operand's own statement, read off the residence
     /// it stated at this level ([`Operand::stage`]). `EA` is the register accumulate type, read
@@ -110,7 +111,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &self,
         lhs: &Tile<EL>,
         #[comptime] op: LeafOp,
-    ) -> Accumulator<EA, Acc> {
+    ) -> AccumulatorScope<EA, Acc> {
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
@@ -137,9 +138,9 @@ impl<Acc: Numeric> Tile<Acc> {
                     lane_share,
                     op,
                 );
-                Accumulator::<EA, Acc>::new_Register(tile, self.clone())
+                AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone())
             }
-            Residence::InPlace => Accumulator::<EA, Acc>::new_InPlace(self.clone()),
+            Residence::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone()),
             Residence::Smem => panic!(
                 "Tile::accumulate: an accumulator has no shared-memory form; state \
                  Residence::Register to contract in registers, or nothing to contract in place"
