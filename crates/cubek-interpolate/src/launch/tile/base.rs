@@ -138,6 +138,7 @@ fn launch_with<R: Runtime, F: SeparableFilterFamily>(
         lanes,
         F::TAPS,
         geometry,
+        space::instruction(client),
     );
     let launch = space.launcher_over(client, &[]);
 
@@ -188,20 +189,34 @@ fn launch_with<R: Runtime, F: SeparableFilterFamily>(
             available: max_smem,
         });
     }
-    let leaf = space::leaf(client);
+    let mut in_operand = Operand::new(
+        &[
+            space::BATCH,
+            space::OUTPUT_H,
+            space::OUTPUT_W,
+            space::TAP_H,
+            space::TAP_W,
+            space::CHANNEL,
+        ],
+        dtype,
+    );
+    in_operand.stage(residence);
+    in_operand.stage(Residence::InPlace);
+    in_operand.stage(Residence::InPlace);
+
     let mut input_arg = launch
-        .arg(input, leaf)
+        .arg(input)
+        .operand(&in_operand)
         .gathered(space::input_projection(row, col, F::radius()))
         .checked(checked)
         .with_boundary(checked.then_some(F::BOUNDARY))
-        .vectorize(vector_size)
-        .residence(&[residence, Residence::InPlace, Residence::InPlace]);
+        .vectorize(vector_size);
     if let Some(width) = stage_width {
         input_arg = input_arg.stage_vectorize(width);
     }
     let input_arg = input_arg.build();
     let output_arg = launch
-        .arg(output, leaf)
+        .arg(output)
         .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
         .build();

@@ -28,10 +28,14 @@ pub const CHANNEL: Axis = Axis(5);
 /// The tap bodies answer to a separate budget, which stays wide: a CPU's instruction cache is the
 /// larger of the two, and folding the contraction at comptime is what resolves a tap's coordinate
 /// once instead of per read.
-pub fn leaf<R: Runtime>(client: &ComputeClient<R>) -> Leaf {
+pub fn instruction<R: Runtime>(client: &ComputeClient<R>) -> Instruction {
     match client.properties().hardware.num_cpu_cores {
-        Some(_) => Leaf::memory(MemoryMmaConfig::new(64, 256, true, false)),
-        None => Leaf::memory(MemoryMmaConfig::new(64, 64, false, true)),
+        Some(_) => Instruction::Registers {
+            config: RegisterBlock::new(256, true, false),
+        },
+        None => Instruction::Registers {
+            config: RegisterBlock::new(64, false, true),
+        },
     }
 }
 
@@ -46,6 +50,7 @@ pub fn interpolate_space(
     lanes: usize,
     taps: usize,
     geometry: TileGeometry,
+    instruction: Instruction,
 ) -> Space {
     assert!(
         geometry.lane_cols * geometry.lane_channels == lanes,
@@ -80,7 +85,7 @@ pub fn interpolate_space(
                 .axis(TAP_W, Cut::sequential(taps))
                 .axis(CHANNEL, Cut::sequential(channels_per_cube))
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+        .instruction(instruction, |level| {
             level
                 .axis(BATCH, Cut::sequential(1))
                 .axis(OUTPUT_H, Cut::sequential(geometry.rows_per_plane))

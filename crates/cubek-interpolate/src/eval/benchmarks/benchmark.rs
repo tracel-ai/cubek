@@ -37,7 +37,7 @@ pub fn bench(
             InterpolateBenchmarkStrategy::Tile(config) if config.input_residence == Residence::Smem
         ))
     {
-        return Err("interpolation shared memory strategy is not supported on CPU".to_string());
+        return Err("interpolation shared memory strategy is not used on CPU".to_string());
     }
 
     let dtype = f32::elem_type_native();
@@ -51,10 +51,6 @@ pub fn bench(
                 "tile units per cube ({units_per_cube}) exceeds device max ({})",
                 hardware.max_units_per_cube
             ));
-        }
-
-        if !is_cpu && config.cols_per_lane > 1 {
-            return Err("tile interpolation with c > 1 is inefficient on GPU devices".to_string());
         }
     }
 

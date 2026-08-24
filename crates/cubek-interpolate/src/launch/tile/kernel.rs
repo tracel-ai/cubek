@@ -57,7 +57,6 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     let weights = Tile::<E>::procedural_separable::<SeparableWeights<E, F::Filter<E>>>(
         comptime!(space.project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])),
         separable_product(factors),
-        comptime!(output.spec.leaf),
     );
 
     let mut output = output.tile(space);
