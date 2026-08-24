@@ -12,34 +12,13 @@ use crate::*;
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// `c.mma(a, b)`: contract at a final tile, else walk this level.
-    ///
-    /// Automatically seeds memory accumulator cells from the contraction identity (`0`)
-    /// and skips the initial sink read when every contracted axis is spanned whole at the
-    /// leaf level. If the contraction spans multiple levels or outer reduction loops,
-    /// it preserves the existing sink and accumulates onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replace = comptime!(is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space));
-        self.mma_with(lhs, rhs, replace);
-    }
-
-    pub(crate) fn mma_with<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        #[comptime] replace: bool,
-    ) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
-            Partitioner::Final => mma_leaf(self, lhs, rhs, replace),
+            Partitioner::Final => mma_leaf(self, lhs, rhs),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                self.mma_buffered(
-                    lhs,
-                    rhs,
-                    op_space,
-                    comptime!(level.buffering().depth()),
-                    replace,
-                );
+                self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
             }
         }
     }
@@ -78,13 +57,10 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    #[comptime] replace: bool,
 ) {
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        // A promoted accumulator states its own init (`zero` for `c = a·b`, `copy_from` to
-        // accumulate), so it has no sink read for `replace` to skip.
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.
@@ -114,7 +90,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                      `.instruction(Instruction::Registers {{ config }})`"
                 ),
             });
-            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config, replace)
+            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
@@ -145,22 +121,6 @@ impl<E: Numeric> PlaneTile<E> {
             }
         }
     }
-}
-
-/// Whether the final tile spans every contracted axis whole, which is what makes a replacing
-/// seed sound: the walk above the leaf never returns to a cell it has already written.
-fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
-    let merged = Space::merge(&[lhs, rhs]);
-    let leaf = merged.final_space();
-    for axis in Space::contracted(&[lhs, rhs], out).iter() {
-        // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
-        // settled here. Seeding from the sink is the answer that is right either way.
-        match (merged.extent_raw(*axis), leaf.extent_raw(*axis)) {
-            (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf => {}
-            _ => return false,
-        }
-    }
-    true
 }
 
 /// Asserts that operands are not gathered and have a single contracted axis.

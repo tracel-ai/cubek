@@ -118,7 +118,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] space: Space,
     #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
-    #[comptime] replace: bool,
 ) {
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
@@ -138,18 +137,18 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
             "contract gather: a separable lhs needs scalar weights served one value a step"
         ));
         let size!(V) = rw;
-        separable::contract::<E, EL, ER, V>(acc, lhs, rhs, problem, config, replace);
+        separable::contract::<E, EL, ER, V>(acc, lhs, rhs, problem, config);
     } else if comptime!(served > 1) {
         // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.
         let size!(W) = served;
         let size!(A) = 1usize;
-        nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, served, lw, 1usize, config, replace);
+        nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, served, lw, 1usize, config);
     } else {
         let size!(W) = lw;
         let size!(V) = rw;
         let size!(A) = aw;
-        nd::nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, problem, served, lw, aw, config, replace);
+        nd::nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, problem, served, lw, aw, config);
     }
 }
 

@@ -38,7 +38,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
     #[comptime] config: RegisterBlock,
-    #[comptime] replace: bool,
 ) {
     let rank = comptime!(problem.space.rank());
     let mr = comptime!(problem.mr);
@@ -62,7 +61,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
 
     for mat in 0..matrices {
         let batch = unravel(&batch_extents, mat.fcast::<u32>());
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(problem.space.clone()), replace);
+        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(problem.space.clone()));
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
         // `kc` bodies per cell, so the taps unroll on their own budget: the whole nest only when

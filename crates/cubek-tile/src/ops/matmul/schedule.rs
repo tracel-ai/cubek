@@ -14,9 +14,6 @@ pub(crate) struct MmaWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> {
     acc: Tile<Acc>,
     lhs: Tile<Lhs>,
     rhs: Tile<Rhs>,
-    /// Whether the leaf seeds from the contraction's identity rather than from the sink.
-    #[cube(comptime)]
-    replace: bool,
 }
 
 #[cube]
@@ -68,9 +65,7 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, R
         slot.consume(|staged_lhs, staged_rhs| {
             let lhs = read_operand(staged_lhs, region, lhs_payload);
             let rhs = read_operand(staged_rhs, region, rhs_payload);
-            self.acc
-                .at(region)
-                .mma_with(&lhs, &rhs, comptime!(self.replace))
+            self.acc.at(region).mma(&lhs, &rhs)
         });
     }
 }
@@ -86,14 +81,12 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         op_space: Space,
         #[comptime] depth: usize,
-        #[comptime] replace: bool,
     ) {
         let out = comptime!(self.space.clone());
         let mut walk = MmaWalk::<Acc, Lhs, Rhs> {
             acc: self.clone(),
             lhs: lhs.clone(),
             rhs: rhs.clone(),
-            replace,
         };
         pipelined_walk::<MmaWalk<Acc, Lhs, Rhs>>(&mut walk, op_space, out, depth);
     }

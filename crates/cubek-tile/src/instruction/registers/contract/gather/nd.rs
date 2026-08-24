@@ -22,7 +22,6 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     #[comptime] lw: usize,
     #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
-    #[comptime] replace: bool,
 ) {
     let rank = comptime!(problem.space.rank());
     let mr = comptime!(problem.mr);
@@ -59,7 +58,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
             mat.fcast::<u32>(),
         );
 
-        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(problem.space.clone()), replace);
+        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(problem.space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();

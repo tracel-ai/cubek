@@ -19,7 +19,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] space: Space,
     #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
-    #[comptime] replace: bool,
 ) {
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
@@ -40,11 +39,11 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     if comptime!(served > 1) {
         let size!(W) = served;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, 1usize, config, replace);
+        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, 1usize, config);
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, config, replace);
+        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, config);
     }
 }
 
@@ -61,7 +60,6 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] lw: usize,
     #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
-    #[comptime] replace: bool,
 ) {
     let rank = comptime!(space.rank());
     let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
@@ -80,7 +78,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     for mat in 0..matrices {
         let lhs_mat = lhs.matrix_packed::<L>(mat);
         let rhs_mat = rhs.matrix_packed::<V>(mat);
-        let mut acc_view = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), replace);
+        let mut acc_view = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
 
         // A checked edge normally rolls every local array access. When enabled, split the leaf
         // into two comptime-specialized bodies: interior instances prove their complete operand

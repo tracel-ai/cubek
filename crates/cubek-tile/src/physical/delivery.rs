@@ -164,14 +164,6 @@ pub struct StagePlan {
     /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
     /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
     pub units: usize,
-    /// The line width a materialized stage is served at, `None` to serve it at the source
-    /// operand's own. A wider stage is a *padded* one: its innermost axis is rounded up to whole
-    /// lines and the lanes past the operand's extent hold zero, which is how an axis a global
-    /// buffer cannot vectorize (an `NHWC` tensor at `C = 3` has no 4-aligned row start, so
-    /// [`Launcher::vector_size`](crate::Launcher) rightly refuses it) is still served in lines
-    /// once it reaches shared memory. Only [`Smem`](Residence::Smem) reads this: an in-place
-    /// operand has no stage to widen.
-    pub stage_width: Option<usize>,
 }
 
 impl StagePlan {
@@ -187,30 +179,6 @@ impl StagePlan {
             residence: SmallVec::from_slice(residence),
             storage,
             units,
-            stage_width: None,
-        }
-    }
-
-    /// Serve this plan's stages at `width` rather than at the source operand's own line width.
-    /// See [`stage_width`](StagePlan::stage_width).
-    pub fn staged_at(mut self, width: Option<usize>) -> Self {
-        self.stage_width = width;
-        self
-    }
-
-    /// The width a stage of an operand served at `source` lines takes: the padded
-    /// [`stage_width`](StagePlan::stage_width) when one is stated, else `source` unchanged.
-    pub fn stage_width(&self, source: usize) -> usize {
-        match self.stage_width {
-            Some(width) => {
-                assert!(
-                    width >= source && width.is_multiple_of(source),
-                    "StagePlan: a stage served at {width}-wide lines must be a whole number of \
-                     the operand's own {source}-wide ones"
-                );
-                width
-            }
-            None => source,
         }
     }
 
@@ -235,7 +203,6 @@ impl StagePlan {
             residence: self.residence.iter().skip(1).copied().collect(),
             storage: self.storage,
             units: self.units,
-            stage_width: self.stage_width,
         }
     }
 }
@@ -304,55 +271,6 @@ mod tests {
         assert_eq!(plan.head(), Residence::Smem);
         assert_eq!(plan.descend().head(), Residence::InPlace);
         assert_eq!(plan.descend().descend().head(), Residence::Register);
-    }
-
-    /// An operand that states no stage width is staged at its own: the padded path costs a plan
-    /// that never asks for it nothing.
-    #[test]
-    fn an_unstated_stage_width_is_the_operands_own() {
-        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0);
-        assert_eq!(plan.stage_width(1), 1);
-        assert_eq!(plan.stage_width(4), 4);
-    }
-
-    /// The width a padded stage is served at, over an operand global memory can only hand it
-    /// scalars: the `C = 3` line every `NHWC` image carries.
-    #[test]
-    fn a_padded_stage_widens_its_source() {
-        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0).staged_at(Some(4));
-        assert_eq!(plan.stage_width(1), 4);
-    }
-
-    /// The width survives the descent that consumes the residences: which level a stage is built
-    /// at does not change what its lines are.
-    #[test]
-    fn a_stage_width_survives_the_descent() {
-        let plan = StagePlan::new(
-            &[Residence::Smem, Residence::Smem],
-            StageStorage::Strided,
-            0,
-        )
-        .staged_at(Some(4));
-        assert_eq!(plan.descend().stage_width(1), 4);
-    }
-
-    /// A stage holds whole source lines or none: a width the operand's own does not divide would
-    /// split one across two stage lanes, which no coordinate names.
-    #[test]
-    #[should_panic(expected = "whole number of the operand's own")]
-    fn a_stage_width_must_hold_whole_source_lines() {
-        StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0)
-            .staged_at(Some(4))
-            .stage_width(3);
-    }
-
-    /// Narrowing is not padding: a stage cannot serve less than the operand it is filled from.
-    #[test]
-    #[should_panic(expected = "whole number of the operand's own")]
-    fn a_stage_width_never_narrows() {
-        StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0)
-            .staged_at(Some(2))
-            .stage_width(4);
     }
 
     /// Below the last level there is only the leaf, which reads its operands where they are, so an

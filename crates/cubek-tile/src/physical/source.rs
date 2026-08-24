@@ -39,8 +39,6 @@ struct TileSourceData<'a, R: Runtime> {
     storage: Option<StageStorage>,
     /// Where the operand lives at each level of `space`, coarse to fine; empty stages nothing.
     residence: Vec<Residence>,
-    /// The width the operand's smem stages are served at; `None` serves them at `v`.
-    stage_width: Option<usize>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -75,7 +73,6 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 boundary: None,
                 storage: None,
                 residence: Vec::new(),
-                stage_width: None,
                 units: 0,
                 quant: None,
             },
@@ -208,21 +205,6 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// [`operand`](Self::operand)'s raw form, for the bridges that already hold the column.
     pub(crate) fn residence(mut self, residence: &[Residence]) -> Self {
         self.data.residence = residence.to_vec();
-        self
-    }
-
-    /// Serve this operand's shared-memory stages in `width`-wide lines rather than in the
-    /// [`vectorize`](Self::vectorize) width it is read from global memory in, padding its
-    /// innermost axis out to whole lines.
-    ///
-    /// See [`StagePlan::stage_width`](crate::StagePlan::stage_width) for the padded stage layout
-    /// and its motivation.
-    ///
-    /// Must be a multiple of the [`vectorize`](Self::vectorize) width, and the operand must
-    /// actually be [`Smem`](Residence::Smem)-resident somewhere: there is nothing to widen
-    /// otherwise.
-    pub fn stage_width(mut self, width: usize) -> Self {
-        self.data.stage_width = Some(width);
         self
     }
 
@@ -451,7 +433,6 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             boundary,
             storage,
             residence,
-            stage_width,
             units,
             quant,
         } = self.data;
@@ -534,16 +515,10 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             residence.len()
         );
 
-        assert!(
-            stage_width.is_none() || residence.contains(&Residence::Smem),
-            "StridedTileSource::stage_width: a padded stage width was stated for an operand \
-             that is never Smem-resident, so no stage would ever be served at it"
-        );
         let mut spec = TileSpec::new(projection)
             .boundaries(&boundaries)
             .units(units)
-            .residence(&residence)
-            .stage_width(stage_width);
+            .residence(&residence);
         if let Some(storage) = storage {
             spec = spec.storage(storage);
         }
