@@ -240,7 +240,7 @@ impl LeveledTiling {
     /// Which levels [`build`](Self::build) keeps, one flag per declared level.
     ///
     /// A level whose edges are the extents handed to it cuts nothing: [`Space::count`] is 1 on
-    /// every axis. Drop it — the level is part of the [`Space`], and the [`Space`] is the
+    /// every axis. Drop it: the level is part of the [`Space`], and the [`Space`] is the
     /// kernel-cache key, so keeping it compiles the same program twice. Four things a level
     /// says that a cut does not, each keeping it: a deeper pipeline than its parent, an operand
     /// moving here, the instruction it carries, and being the only level left. That last one is

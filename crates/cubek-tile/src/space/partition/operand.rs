@@ -148,9 +148,19 @@ impl Operand {
     /// this removes is the [`InPlace`](Residence::InPlace) padding, and the column stays one
     /// entry per level of the space that was built.
     pub(crate) fn keep_levels(&mut self, kept: &[bool]) {
+        // A flag per stage, or the flags line up against the wrong levels and every residence
+        // below the first drop silently shifts a level.
+        assert_eq!(
+            kept.len(),
+            self.stages.len(),
+            "Operand::keep_levels: {:?} holds {} stages against {} levels",
+            self.axes,
+            self.stages.len(),
+            kept.len()
+        );
         let mut level = 0;
         self.stages.retain(|_| {
-            let keep = kept.get(level).copied().unwrap_or(true);
+            let keep = kept[level];
             level += 1;
             keep
         });

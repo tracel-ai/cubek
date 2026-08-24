@@ -1,23 +1,21 @@
-//! The output half of [`Residence`], and the one place an operand's residence is read as a
-//! *scope* rather than a refill. The two directions share the vocabulary and differ in which way
-//! values travel: an input is *filled* from its source into its residence, an output *drains*
-//! from its residence into its sink.
+//! The output half of [`Residence`], where a residence is read as a *scope* rather than a refill.
+//! Both directions share the vocabulary and differ in which way values travel: an input is
+//! *filled* from its source into its residence, an output *drains* from its residence into its
+//! sink.
 //!
 //! An output states its residence at the level whose region it lives across, the way an input
 //! does. The output's own space has no contracted axis, so its outermost level already holds one
 //! region per instance: stating [`Register`](Residence::Register) there opens a register-resident
-//! accumulator for that whole region, and every level below runs inside it. The op that exhausts
-//! the scope drains it, so no call site closes the bracket by hand.
+//! accumulator for that whole region, and every level below runs inside it.
 //!
 //! ```ignore
 //! let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);  // opens the scope, uninitialized
-//! acc.zero();                       // init (or acc.init(op) for a fold's identity)
+//! acc.zero();                       // init (or acc.seed(op) for a fold's identity)
 //! acc.mma(&a, &b);                  // the contraction, and the drain that closes the scope
 //! ```
 //!
 //! An output stating nothing is [`InPlace`](Residence::InPlace) and contracts where it already
-//! lies, which is the register leaf's own schedule. Both read as the three lines above: what
-//! differs is the operand's statement, not the kernel.
+//! lies. Both read as those three lines: what differs is the operand's statement, not the kernel.
 
 use cubecl::prelude::*;
 
@@ -26,18 +24,17 @@ use crate::*;
 /// An accumulator's scope, opened by [`Tile::accumulate`] and closed by whichever op exhausts it.
 ///
 /// The variants are the output's [`Residence`] at the level the scope opens, not a choice made
-/// here: [`Register`](AccumulatorScope::Register) contracts in a plane-resident partition and drains
-/// into the output on the way out, [`InPlace`](AccumulatorScope::InPlace) contracts in the output
-/// itself and has nothing to drain. `EA` is the register accumulate element, distinct from the
-/// stored `Out` (`f32` accumulate under an `f16` output); an `InPlace` scope has no second
-/// element, so it never reads `EA`.
+/// here. `EA` is the register accumulate element, distinct from the stored `Out` (`f32` accumulate
+/// under an `f16` output); an `InPlace` scope has no second element, so it never reads `EA`.
 // The register variant carries a second tile; both are expansion-time handles, so the size gap
 // costs nothing the kernel ever sees.
 #[allow(clippy::large_enum_variant)]
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum AccumulatorScope<EA: Numeric, Out: Numeric> {
+    /// Contracts in a plane-resident partition, draining into the output on the way out.
     Register { tile: Tile<EA>, sink: Tile<Out> },
+    /// Contracts in the output itself, so there is nothing to drain.
     InPlace { sink: Tile<Out> },
 }
 
@@ -115,29 +112,7 @@ impl<Acc: Numeric> Tile<Acc> {
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
-                // The contracted axes are those `lhs` spans and this accumulator does not, and the
-                // fragment is sized by their product. Off the leaf space: a caller holds a level
-                // above it, while the fragment's own reader (`Tile::fragment_matrix`) is handed the
-                // leaf tile directly, and the two edges have to be the same number.
-                let k = comptime!(lhs.space.final_space().contracted_extent(&self.space));
-                let form = comptime!(self.space.instruction().expect(
-                    "Tile::accumulate: the register form is the space's statement; add \
-                     `.instruction(...)` to its tiling"
-                ));
-                // The block's lines match the memory it drains back into; the hardware
-                // encodings ignore it.
-                let vector_size = self.vector_size();
-                // Not `self.lane_share()`: that is the stamped value, and stamping happens on the
-                // way down, after this runs. The space already knows every level, so ask it.
-                let lane_share = comptime!(self.space.leaf_lane_share());
-                let tile = PlanePartition::<EA>::mirror(
-                    comptime!(self.space.clone()),
-                    comptime!(form),
-                    comptime!(k),
-                    vector_size,
-                    lane_share,
-                    op,
-                );
+                let tile = self.register_partition::<EA, EL>(lhs, op);
                 AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone())
             }
             Residence::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone()),
@@ -146,5 +121,37 @@ impl<Acc: Numeric> Tile<Acc> {
                  Residence::Register to contract in registers, or nothing to contract in place"
             ),
         }
+    }
+
+    /// The plane-resident partition a [`Register`](Residence::Register) scope contracts in,
+    /// uninitialized and shaped to meet `lhs` at the instruction.
+    fn register_partition<EA: Numeric, EL: Numeric>(
+        &self,
+        lhs: &Tile<EL>,
+        #[comptime] op: LeafOp,
+    ) -> Tile<EA> {
+        // The contracted axes are those `lhs` spans and this accumulator does not, and the
+        // fragment is sized by their product. Off the leaf space: a caller holds a level above
+        // it, while the fragment's own reader (`Tile::fragment_matrix`) is handed the leaf tile
+        // directly, and the two edges have to be the same number.
+        let k = comptime!(lhs.space.final_space().contracted_extent(&self.space));
+        let form = comptime!(self.space.instruction().expect(
+            "Tile::accumulate: the register form is the space's statement; add \
+             `.instruction(...)` to its tiling"
+        ));
+        // The block's lines match the memory it drains back into; the hardware
+        // encodings ignore it.
+        let vector_size = self.vector_size();
+        // Not `self.lane_share()`: that is the stamped value, and stamping happens on the way
+        // down, after this runs. The space already knows every level, so ask it.
+        let lane_share = comptime!(self.space.leaf_lane_share());
+        PlanePartition::<EA>::mirror(
+            comptime!(self.space.clone()),
+            comptime!(form),
+            comptime!(k),
+            vector_size,
+            lane_share,
+            op,
+        )
     }
 }
