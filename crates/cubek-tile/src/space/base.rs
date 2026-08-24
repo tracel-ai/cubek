@@ -490,6 +490,21 @@ impl Space {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
+    /// How many contracted values one step consumes off a `width`-wide line of this operand.
+    ///
+    /// A line folds into one accumulator cell only where it runs along the fastest of
+    /// `contracted`, which is absent from the accumulator, so its lanes are partials of one cell
+    /// rather than cells that must stay apart. Skipping the test merges cells that must stay
+    /// separate: wrong numbers, no crash. The width must divide the axis, which is why a folded
+    /// walk needs no masked tail.
+    pub fn served(&self, contracted: &[Axis], width: usize) -> usize {
+        let lined = self.axis_at(self.rank() - 1);
+        let folds = width > 1
+            && contracted.last() == Some(&lined)
+            && self.extent(lined).is_multiple_of(width);
+        if folds { width } else { 1 }
+    }
+
     /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
     /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
     /// there are is what picks a leaf's instruction, so every site that deduces a 2-D single-`K`

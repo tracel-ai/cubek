@@ -642,6 +642,37 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     }
 }
 
+/// [`test_reduce_axis_sum_inner_axis_reduced_v4`] under `Max`, whose identity the memory system
+/// does not hand back out of bounds: the substitution has to happen a whole line at a time.
+#[test]
+fn test_reduce_axis_max_inner_axis_reduced_v4() {
+    let (m, k, tm, tk) = (8, 16, 4, 16);
+    let space = Tiling::new()
+        .extents(&[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+        })
+        .build();
+
+    let got = run_reduce_with_vw(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        space,
+        LeafOp::Max,
+        4,
+        &[],
+    );
+
+    for i in 0..m {
+        let want = (0..k)
+            .map(|j| ((i * k + j) % 7) as f32)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(got.get_f32(&[i]), want, "Line-folded max mismatch at row {i}");
+    }
+}
+
 /// [`run_reduce`], but the input is `checked(true)`: a non-divisible reduced axis leaves an
 /// overhang past the operand's real data, and only a checked operand masks it instead of reading
 /// garbage.
@@ -985,7 +1016,8 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     }
 }
 
-/// Reduction over innermost axis with vector_size = 4.
+/// Reduction over the innermost axis with vector_size = 4: the line runs along the axis being
+/// reduced, so a step folds the whole line into one cell and the lanes collapse once at the end.
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);

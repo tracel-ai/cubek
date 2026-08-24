@@ -6,6 +6,7 @@
 mod cmma;
 mod mem;
 mod mma;
+mod packing;
 mod plane;
 mod procedural;
 mod register;
@@ -15,6 +16,7 @@ mod view;
 pub use cmma::*;
 pub use mem::*;
 pub use mma::*;
+pub use packing::*;
 pub use plane::*;
 pub use procedural::*;
 pub use register::*;
@@ -587,16 +589,16 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Comptime quant dispatch for a leaf read (`0` = plain, `1` = native i8, `>1` = packed u32);
-    /// see [`MemData::quant_pack`]. A resident fragment and a tma source are never quantized.
-    pub(crate) fn quant_pack(&self) -> comptime_type!(usize) {
+    /// How this tile's values sit in memory; see [`MemData::packing`]. A resident fragment, a tma
+    /// source and a procedural tile are never quantized.
+    pub(crate) fn packing(&self) -> comptime_type!(Packing) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.quant_pack(),
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.packing(),
             TileKind::TmaGmem(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::Procedural(_) => {
-                comptime!(0usize)
+                comptime!(Packing::Plain)
             }
         }
     }

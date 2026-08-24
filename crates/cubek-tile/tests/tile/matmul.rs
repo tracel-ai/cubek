@@ -56,6 +56,9 @@ const B: Axis = Axis(3);
 const B0: Axis = Axis(4);
 const B1: Axis = Axis(5);
 
+// A second contracted axis, so a contraction that is otherwise a plain matmul takes the N-D nest.
+const K2: Axis = Axis(6);
+
 #[test]
 fn matmul_sequential_single_cube() {
     check_matmul(
@@ -1680,6 +1683,172 @@ fn register_matmul_promoted_lined_lhs() {
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let (_, expected) = TestInput::builder(client, shape![m, n])
         .custom(arange_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+// ---- folded step: both operands lined along K --------------------------------
+
+/// Both operands lined along `K` with a scalar output: a step consumes a whole line, the block's
+/// lanes are `K`-partials of one cell, and one horizontal fold collapses them. The rhs is declared
+/// `[N, K]`, which is what puts its line on the contracted axis.
+#[cube(launch)]
+fn launch_matmul_folded<E: Numeric, AV: Size, BV: Size, CV: Size>(
+    a: &TileArg<'_, E, AV>,
+    b: &TileArg<'_, E, BV>,
+    c: &TileArg<'_, E, CV>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.zero();
+    c.mma(&a, &b);
+}
+
+/// `A·Bᵀ` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(j, p) = j·k + p`.
+fn folded_matmul_reference(m: usize, n: usize, k: usize) -> Vec<f32> {
+    (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (j * k + p)) as f32).sum()
+        })
+        .collect()
+}
+
+/// The 2-D nest at a folded step: four contracted values per `fma` instead of one.
+#[test]
+fn register_matmul_folded_step() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let space = lined_lhs_space(m, n, k);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[N, K]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·Bᵀ` whatever the buffer held.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_matmul_folded::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        4,
+        4,
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(64)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(folded_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// [`register_matmul_folded_step`] with the block too big for the register budget: the same
+/// numbers off the rolled body, whose local arrays are indexed at runtime.
+#[test]
+fn register_matmul_folded_step_rolled() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let space = lined_lhs_space(m, n, k);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[N, K]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_matmul_folded::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        4,
+        4,
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(8)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(folded_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The N-D nest at a folded step: two contracted axes, both operands lined along the faster of
+/// them. The reduce nest steps by the served width, so each step lands on a line start.
+#[test]
+fn register_matmul_folded_step_two_contracted_axes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k1, k2) = (4usize, 4usize, 2usize, 4usize);
+    let k = k1 * k2;
+    let seq = |edge| Cut::sequential(edge);
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k1), (K2, k2)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, seq(m))
+                .axis(N, seq(n))
+                .axis(K, seq(k1))
+                .axis(K2, seq(k2))
+        })
+        .build();
+
+    let a = TileInput::builder(&client, space.project(&[M, K, K2]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[N, K, K2]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_matmul_folded::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        4,
+        4,
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(64)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(folded_matmul_reference(m, n, k))
         .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()

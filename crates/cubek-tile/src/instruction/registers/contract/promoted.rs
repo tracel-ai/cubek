@@ -21,27 +21,34 @@ impl<T: Numeric> RegisterData<T> {
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(&mut self, lhs: &Tile<EL>, rhs: &Tile<ER>) {
-        let pack_l = lhs.quant_pack();
-        let pack_r = rhs.quant_pack();
+        let lhs_packing = lhs.packing();
+        let rhs_packing = rhs.packing();
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
         comptime!(assert!(
-            pack_l == 0 && pack_r == 0,
+            lhs_packing == Packing::Plain && rhs_packing == Packing::Plain,
             "RegisterData::mma: a quantized operand against a promoted accumulator is not wired \
-             yet — the memory-backed leaf serves those (it dequantizes per read)"
+             yet; the memory-backed leaf serves those (it dequantizes per read)"
         ));
         comptime!(assert!(
             vw == self.vector_size,
             "RegisterData::mma: the block's lines must match the rhs's"
+        ));
+        // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
+        // A contracted axis is one both operands span, which is what this rules out.
+        comptime!(assert!(
+            !lhs.space.contains(rhs.space.axis_at(rhs.space.rank() - 1)),
+            "RegisterData::mma: the rhs lines along a contracted axis, which folds into one cell; \
+             the memory-backed leaf serves that step"
         ));
 
         let size!(L) = lw;
         let kc = comptime!(rhs.space.extent_at(rhs.space.rank() - 2));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
-        let lhs_mat = lhs.matrix_transparent::<EL, L, L>(0usize);
+        let lhs_mat = lhs.matrix_packed::<L>(0usize);
         // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
-        let rhs_mat = rhs.matrix_transparent::<ER, RA, RA>(0usize);
+        let rhs_mat = rhs.matrix_packed::<RA>(0usize);
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
@@ -52,6 +59,7 @@ impl<T: Numeric> RegisterData<T> {
             &rhs_mat,
             &mut self.data,
             lw,
+            1usize,
             mr,
             nr,
             kc,

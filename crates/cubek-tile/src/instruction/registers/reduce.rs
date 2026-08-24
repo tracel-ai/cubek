@@ -9,6 +9,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
+use crate::instruction::registers::horizontal;
 use crate::*;
 
 #[cube]
@@ -27,22 +28,12 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
         acc.fold
     ));
 
-    let vw = input.vector_size();
-    let size!(V) = vw;
-    let pack = input.quant_pack();
-    let size!(WP) = comptime!(vw / if pack > 0 { pack } else { 1 });
-
-    if comptime!(pack == 1) {
-        register_data_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, fold);
-    } else if comptime!(pack > 1) {
-        register_data_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, fold);
-    } else {
-        register_data_typed::<Acc, In, In, WP, V>(acc, input, acc_space, fold);
-    }
+    let size!(V) = input.vector_size();
+    register_data_body::<Acc, In, V>(acc, input, acc_space, fold);
 }
 
 #[cube]
-fn register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
+fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
     acc: &mut RegisterData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
@@ -58,7 +49,7 @@ fn register_data_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>
         total_acc == count * acc.vector_size,
         "reduce: RegisterData shape mismatch with accumulator space"
     ));
-    let in_view = input.nd::<I, WP, V>();
+    let in_view = input.nd_packed::<V>();
 
     #[unroll]
     for a in 0..total_acc {
@@ -95,22 +86,12 @@ pub(crate) fn memory<Acc: Numeric, In: Numeric>(
     #[comptime] acc_space: Space,
     #[comptime] fold: LeafOp,
 ) {
-    let vw = input.vector_size();
-    let size!(V) = vw;
-    let pack = input.quant_pack();
-    let size!(WP) = comptime!(vw / if pack > 0 { pack } else { 1 });
-
-    if comptime!(pack == 1) {
-        memory_typed::<Acc, In, i8, WP, V>(acc, input, acc_space, fold);
-    } else if comptime!(pack > 1) {
-        memory_typed::<Acc, In, u32, WP, V>(acc, input, acc_space, fold);
-    } else {
-        memory_typed::<Acc, In, In, WP, V>(acc, input, acc_space, fold);
-    }
+    let size!(V) = input.vector_size();
+    memory_body::<Acc, In, V>(acc, input, acc_space, fold);
 }
 
 #[cube]
-fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
+fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
@@ -130,7 +111,7 @@ fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
     ));
     let total_lines = comptime!(total_acc / ws);
     let mut acc_view = acc.flat_accumulate::<W>();
-    let in_view = input.nd::<I, WP, V>();
+    let in_view = input.nd_packed::<V>();
 
     for line_idx in 0..total_lines {
         let seed_vec = acc_view.seed(line_idx, fold);
@@ -164,11 +145,106 @@ fn memory_typed<Acc: Numeric, In: Numeric, I: Numeric, WP: Size, V: Size>(
 }
 
 /// The per-element inner reduction shared by both accumulator backings: fold `in_view` across the
-/// contracted axes (`layout.kc` steps) into `seed`, for the single accumulator cell at
-/// `acc_coords`. Only the seed/commit around this loop differ between a register block (draining
-/// through `RegisterData`'s own lanes) and a memory accumulator (through [`AccumulateView`]).
+/// contracted axes into `seed`, for the single accumulator cell at `acc_coords`.
+///
+/// A step consumes [`Space::served`] values: past one the input's line runs along the fastest
+/// contracted axis, so the whole line folds into this one cell ([`element_lines`]) instead of one
+/// scalar at a time ([`element_scalars`]).
 #[cube]
 fn element<Acc: Numeric, In: Numeric, V: Size>(
+    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+    #[comptime] in_space: Space,
+    #[comptime] acc_space: Space,
+    #[comptime] layout: ReduceLayout,
+    acc_coords: &Coords<u32>,
+    #[comptime] vw: usize,
+    seed: Acc,
+    #[comptime] fold: LeafOp,
+) -> Acc {
+    let served = comptime!(in_space.served(&layout.reduce_axes, vw));
+    if comptime!(served > 1) {
+        element_lines::<Acc, In, V>(
+            in_view,
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.clone()),
+            acc_coords,
+            served,
+            seed,
+            fold,
+        )
+    } else {
+        element_scalars::<Acc, In, V>(
+            in_view,
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.clone()),
+            acc_coords,
+            vw,
+            seed,
+            fold,
+        )
+    }
+}
+
+/// [`element`]'s line path: the flat reduce index steps by `served`, so each step lands on a line
+/// start and one read serves `served` folds. The lanes accumulate in parallel and collapse
+/// through [`horizontal::vector`] once, after the walk.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
+    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+    #[comptime] in_space: Space,
+    #[comptime] acc_space: Space,
+    #[comptime] layout: ReduceLayout,
+    acc_coords: &Coords<u32>,
+    #[comptime] served: usize,
+    seed: Acc,
+    #[comptime] fold: LeafOp,
+) -> Acc {
+    let mut acc_vec = Vector::<Acc, V>::cast_from(LeafOp::identity::<Acc>(fold));
+    for p in 0..comptime!(layout.kc / served) {
+        let reduce_coords = unravel(
+            &const_coords(comptime!(layout.reduce_extents.clone())),
+            (p * comptime!(served)).fcast::<u32>(),
+        );
+
+        let in_coords = resolve_nd_coords(
+            comptime!(in_space.clone()),
+            comptime!(acc_space.clone()),
+            comptime!(layout.reduce_axes.clone()),
+            acc_coords,
+            &reduce_coords,
+            served,
+            true,
+        );
+
+        // Same masking as the scalar path, a whole line at a time.
+        let in_vec = match comptime!(fold) {
+            LeafOp::Sum => in_view.read(in_coords),
+            LeafOp::Max | LeafOp::Min => {
+                let valid = in_view.is_in_bounds(in_coords.clone());
+                select(
+                    valid,
+                    in_view.read(in_coords),
+                    Vector::<In, V>::cast_from(LeafOp::identity::<In>(fold)),
+                )
+            }
+        };
+        acc_vec =
+            LeafOp::combine::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec), fold);
+    }
+    LeafOp::combine::<Acc>(
+        seed,
+        horizontal::vector::<Acc, V>(acc_vec, served, fold),
+        fold,
+    )
+}
+
+/// [`element`]'s scalar path: one extract per contracted element.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
     in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,

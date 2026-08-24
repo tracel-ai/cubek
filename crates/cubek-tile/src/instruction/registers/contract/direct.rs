@@ -5,33 +5,19 @@ use cubecl::prelude::*;
 use crate::instruction::registers::block;
 use crate::*;
 
-/// The contraction nest for a fixed lhs (`IL`) and rhs (`IR`) storage element: over each batch
-/// matrix, the `mr × nr` block of `V`-wide accumulators lives in registers (load once, `kc` rank-1
-/// updates, store once). `pack_l`/`pack_r` narrow each operand's physical line (`served / pack`,
-/// `1` for plain/native). The storage element per operand is the price of a typed quant view
-/// (`#[cube]` takes no `impl Trait`, so the view can't be erased behind a `read` trait); `#[cube]`
-/// inlines at trace time, so folding the rank-1 step in here costs nothing over a separate fn.
+/// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
+/// of accumulators lives in registers (load once, `kc / served` steps, store once).
 ///
-/// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` address
-/// the operands. [`memory`](super::memory) routes anything else to
-/// [`gather::contract`](super::gather::contract), so the two conditions below are
-/// re-asserted rather than re-decided.
+/// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` (or
+/// `(col, k)` at a folded step) address the operands. [`memory`](super::memory) routes anything
+/// else to the N-D nest, so the conditions below are re-asserted rather than re-decided.
 #[cube]
-pub(super) fn contract<
-    E: Numeric,
-    EL: Numeric,
-    IL: Numeric,
-    L: Size,
-    ER: Numeric,
-    IR: Numeric,
-    V: Size,
->(
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] pack_l: usize,
-    #[comptime] pack_r: usize,
+    #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
 ) {
     comptime!(assert!(
@@ -45,47 +31,65 @@ pub(super) fn contract<
         "contract: a gathered operand has no 2-D matrix view; it needs the N-D nest"
     ));
 
-    // `nr` is a line count (spans `N` in `V`-wide lines); `mr` (rows) and `kc` (scalar `K`, off
-    // `rhs`) are unvectorized. A packed operand's physical line is `served / pack` narrower.
     let lw = lhs.vector_size();
-    let vw = rhs.vector_size();
-    let (mr, nr, kc) = comptime! {
-        (
-            space.extent_at(space.rank() - 2),
-            space.extent_at(space.rank() - 1) / vw,
-            rhs.space.extent_at(rhs.space.rank() - 2)
-        )
-    };
-    let size!(WPL) = comptime!(lw / pack_l);
-    let size!(WPR) = comptime!(vw / pack_r);
+    let aw = comptime!(acc.store.vector_size);
 
-    let matrices = comptime! {
-        let mut count = 1;
-        for p in 0..space.rank() - 2 {
-            count *= space.extent_at(p);
-        }
-        count
-    };
+    // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
+    // `aw`-wide neighbouring cells otherwise.
+    if comptime!(served > 1) {
+        let size!(W) = served;
+        let size!(A) = 1usize;
+        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, 1usize, config);
+    } else {
+        let size!(W) = lw;
+        let size!(A) = aw;
+        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, config);
+    }
+}
+
+/// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
+/// accumulator's.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] space: Space,
+    #[comptime] served: usize,
+    #[comptime] lw: usize,
+    #[comptime] aw: usize,
+    #[comptime] config: RegisterBlock,
+) {
+    let rank = comptime!(space.rank());
+    let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+    let k = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space)[0]);
+    let kc = comptime!(merged.extent(k));
+
+    // `nr` counts the accumulator's own lines along `N`; `mr` (rows) and `kc` (scalar `K`) are
+    // unvectorized.
+    let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / aw));
+    let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
-
-    // The budget is scalars; `nr` counts `vw`-wide lines, so compare in scalars.
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
-        let lhs = lhs.matrix_transparent::<IL, WPL, L>(mat);
-        let rhs = rhs.matrix_transparent::<IR, WPR, V>(mat);
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+        let lhs_mat = lhs.matrix_packed::<L>(mat);
+        let rhs_mat = rhs.matrix_packed::<V>(mat);
+        let mut acc_view = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
 
         // A checked edge normally rolls every local array access. When enabled, split the leaf
         // into two comptime-specialized bodies: interior instances prove their complete operand
         // and accumulator blocks in bounds once, then keep `c` and `b` in registers; only the
         // actual edge instance pays masked reads/writes and runtime local-array indexing.
-        let lhs_check = comptime!(lhs.check);
-        let rhs_check = comptime!(rhs.check);
-        let acc_check = acc.check();
-        let eligible = comptime!(mr * nr * vw <= config.budget);
+        let lhs_check = comptime!(lhs_mat.check);
+        let rhs_check = comptime!(rhs_mat.check);
+        let acc_check = acc_view.check();
+        // The budget is scalars, and the block holds `mr * nr` lines of `served * aw` (exactly one
+        // of the two exceeds 1).
+        let eligible = comptime!(mr * nr * served * aw <= config.budget);
         let split_edge =
             comptime!(eligible && config.split_edge && (lhs_check || rhs_check || acc_check));
         if comptime!(split_edge) {
@@ -94,23 +98,31 @@ pub(super) fn contract<
                 comptime!(mr as u32).runtime(),
                 comptime!(lhs_k_lines as u32).runtime(),
             );
-            let rhs_extent = (
-                comptime!(kc as u32).runtime(),
-                comptime!(nr as u32).runtime(),
-            );
+            let rhs_extent = if comptime!(served > 1) {
+                (
+                    comptime!(nr as u32).runtime(),
+                    comptime!((kc / served) as u32).runtime(),
+                )
+            } else {
+                (
+                    comptime!(kc as u32).runtime(),
+                    comptime!(nr as u32).runtime(),
+                )
+            };
             let acc_extent = (
                 comptime!(mr as u32).runtime(),
                 comptime!(nr as u32).runtime(),
             );
-            let in_bounds = lhs.block_in_bounds(origin, lhs_extent)
-                && rhs.block_in_bounds(origin, rhs_extent)
-                && acc.block_in_bounds(origin, acc_extent);
+            let in_bounds = lhs_mat.block_in_bounds(origin, lhs_extent)
+                && rhs_mat.block_in_bounds(origin, rhs_extent)
+                && acc_view.block_in_bounds(origin, acc_extent);
             if in_bounds {
-                contract_body::<E, EL, L, ER, V>(
-                    &mut acc,
-                    &lhs,
-                    &rhs,
+                body::<E, EL, L, ER, V, A>(
+                    &mut acc_view,
+                    &lhs_mat,
+                    &rhs_mat,
                     lw,
+                    served,
                     mr,
                     nr,
                     kc,
@@ -118,11 +130,12 @@ pub(super) fn contract<
                     lane_fanout,
                 );
             } else {
-                contract_body::<E, EL, L, ER, V>(
-                    &mut acc,
-                    &lhs,
-                    &rhs,
+                body::<E, EL, L, ER, V, A>(
+                    &mut acc_view,
+                    &lhs_mat,
+                    &rhs_mat,
                     lw,
+                    served,
                     mr,
                     nr,
                     kc,
@@ -132,11 +145,12 @@ pub(super) fn contract<
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
-            contract_body::<E, EL, L, ER, V>(
-                &mut acc,
-                &lhs,
-                &rhs,
+            body::<E, EL, L, ER, V, A>(
+                &mut acc_view,
+                &lhs_mat,
+                &rhs_mat,
                 lw,
+                served,
                 mr,
                 nr,
                 kc,
@@ -147,21 +161,34 @@ pub(super) fn contract<
     }
 }
 
-/// The complete 2-D nest body, specialized at trace time for either register-resident local
-/// arrays (`unroll = true`) or the checked edge fallback (`unroll = false`).
+/// The complete nest body, specialized at trace time for either register-resident local arrays
+/// (`unroll = true`) or the checked edge fallback (`unroll = false`).
 #[cube]
-fn contract_body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
-    acc: &mut AccumulateView<'_, E, V>,
+#[allow(clippy::too_many_arguments)]
+fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
+    acc: &mut AccumulateView<'_, E, A>,
     lhs: &MatrixView<'_, Vector<EL, L>>,
     rhs: &MatrixView<'_, Vector<ER, V>>,
     #[comptime] lw: usize,
+    #[comptime] served: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
 ) {
-    let mut c = block::seed(acc, mr, nr, unroll);
-    block::contract::<E, EL, L, ER, V>(lhs, rhs, &mut c, lw, mr, nr, kc, unroll, lane_fanout);
-    block::commit(acc, c, mr, nr, unroll);
+    let mut c = block::seed::<E, V, A>(acc, served, mr, nr, unroll);
+    block::contract::<E, EL, L, ER, V>(
+        lhs,
+        rhs,
+        &mut c,
+        lw,
+        served,
+        mr,
+        nr,
+        kc,
+        unroll,
+        lane_fanout,
+    );
+    block::commit::<E, V, A>(acc, c, served, mr, nr, unroll);
 }

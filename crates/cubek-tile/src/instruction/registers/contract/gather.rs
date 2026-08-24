@@ -17,30 +17,47 @@ use crate::*;
 /// and the rank-1 update degenerates to a per-cell `fma`. Only the reads change; what is
 /// contracted, and the accumulator block living in registers across `kc`, do not.
 #[cube]
-pub(super) fn contract<
-    E: Numeric,
-    EL: Numeric,
-    IL: Numeric,
-    L: Size,
-    ER: Numeric,
-    IR: Numeric,
-    V: Size,
->(
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] pack_l: usize,
-    #[comptime] pack_r: usize,
+    #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
 ) {
     let lw = lhs.vector_size();
-    let vw = rhs.vector_size();
-    let size!(WPL) = comptime!(lw / pack_l);
-    let size!(WPR) = comptime!(vw / pack_r);
+    let aw = comptime!(acc.store.vector_size);
 
+    // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
+    // `aw`-wide neighbouring cells otherwise.
+    if comptime!(served > 1) {
+        let size!(W) = served;
+        let size!(A) = 1usize;
+        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, served, 1usize, config);
+    } else {
+        let size!(W) = lw;
+        let size!(A) = aw;
+        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, aw, config);
+    }
+}
+
+/// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
+/// accumulator's.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] space: Space,
+    #[comptime] served: usize,
+    #[comptime] lw: usize,
+    #[comptime] vw: usize,
+    #[comptime] aw: usize,
+    #[comptime] config: RegisterBlock,
+) {
     let rank = comptime!(space.rank());
-    let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / vw));
+    let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / aw));
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
 
     // The reduce axes' extents come off the operands' merged space, not the accumulator's: a
@@ -67,8 +84,8 @@ pub(super) fn contract<
         lhs_spans_col
     ));
 
-    let lhs_view = lhs.nd::<IL, WPL, L>();
-    let rhs_view = rhs.nd::<IR, WPR, V>();
+    let lhs_view = lhs.nd_packed::<L>();
+    let rhs_view = rhs.nd_packed::<V>();
     // Loop-invariant, and `comptime!`-bound so the `unroll` flag below stays a comptime binding:
     // `#[unroll(flag)]` silently rolls the loop when the macro cannot see `flag` as one.
     let lhs_check = comptime!(lhs_view.check);
@@ -92,13 +109,16 @@ pub(super) fn contract<
             mat.fcast::<u32>(),
         );
 
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(space.clone()));
+        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
-        let unroll =
-            comptime!(mr * nr * vw <= config.budget && !lhs_check && !rhs_check && !acc_check);
-        let mut c = block::seed(&mut acc, comptime!(mr), comptime!(nr), unroll);
+        // The budget is scalars, and the block holds `mr * nr` lines of `served * aw` (exactly
+        // one of the two exceeds 1).
+        let unroll = comptime!(
+            mr * nr * served * aw <= config.budget && !lhs_check && !rhs_check && !acc_check
+        );
+        let mut c = block::seed::<E, V, A>(&mut acc, served, comptime!(mr), comptime!(nr), unroll);
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
         // across the whole K walk rather than re-declared per step, so the trace allocates it once
@@ -106,7 +126,33 @@ pub(super) fn contract<
         // such per-column value, and leaves this unwritten for the trace to fold away.
         let mut b = Array::<Vector<E, V>>::new(nr);
 
-        if comptime!(lane_fanout && lw > 1) {
+        if comptime!(served > 1) {
+            for step in 0..comptime!(kc / served) {
+                rank1_update::<E, EL, L, ER, V>(
+                    &lhs_view,
+                    &rhs_view,
+                    &mut c,
+                    &mut b,
+                    &batch,
+                    step * comptime!(served),
+                    comptime!(None),
+                    served,
+                    mr,
+                    nr,
+                    unroll,
+                    comptime!(space.clone()),
+                    comptime!(reduce.clone()),
+                    comptime!(reduce_extents.clone()),
+                    comptime!(lhs.space.clone()),
+                    comptime!(rhs.space.clone()),
+                    lw,
+                    vw,
+                    lhs_spans_col,
+                    rhs_spans_row,
+                    rhs_spans_col,
+                );
+            }
+        } else if comptime!(lane_fanout && lw > 1) {
             for line in 0..k_lines {
                 #[unroll]
                 for lane in 0..lw {
@@ -118,6 +164,7 @@ pub(super) fn contract<
                         &batch,
                         line * lw + lane,
                         comptime!(Some(lane)),
+                        served,
                         mr,
                         nr,
                         unroll,
@@ -144,6 +191,7 @@ pub(super) fn contract<
                     &batch,
                     comptime!(k_lines * lw + lane),
                     comptime!(Some(lane)),
+                    served,
                     mr,
                     nr,
                     unroll,
@@ -172,6 +220,7 @@ pub(super) fn contract<
                     &batch,
                     p,
                     comptime!(None),
+                    served,
                     mr,
                     nr,
                     unroll,
@@ -189,7 +238,7 @@ pub(super) fn contract<
             }
         }
 
-        block::commit(&mut acc, c, comptime!(mr), comptime!(nr), unroll);
+        block::commit::<E, V, A>(&mut acc, c, served, comptime!(mr), comptime!(nr), unroll);
     }
 }
 
@@ -210,6 +259,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     batch: &Coords<u32>,
     p: usize,
     #[comptime] lane: Option<usize>,
+    #[comptime] served: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
@@ -263,7 +313,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 comptime!(reduce.clone()),
                 lw,
             );
-            a_row = lane_component::<E, EL, L, V>(line, p, lane, lw);
+            a_row = lane_component::<E, EL, L, V>(line, p, lane, served, lw);
         }
         let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
         if comptime!(rhs_spans_row && !rhs_spans_col) {
@@ -293,7 +343,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     comptime!(reduce.clone()),
                     lw,
                 );
-                lane_component::<E, EL, L, V>(line, p, lane, lw)
+                lane_component::<E, EL, L, V>(line, p, lane, served, lw)
             } else {
                 a_row
             };
@@ -347,16 +397,20 @@ fn cell_read<T: Numeric, W: Size>(
     view.read(pos)
 }
 
-/// The `K` component of one lhs line, widened into the accumulate element. Fixed when the caller
-/// walks `K` as (line, lane), resolved from `p` on the flat walk.
+/// The `K` component of one lhs line, widened into the accumulate element. The whole line at a
+/// folded step, fixed when the caller walks `K` as (line, lane), resolved from `p` on the flat
+/// walk.
 #[cube]
 fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     line: Vector<EL, L>,
     p: usize,
     #[comptime] lane: Option<usize>,
+    #[comptime] served: usize,
     #[comptime] lw: usize,
 ) -> Vector<E, V> {
-    if comptime!(lane.is_some()) {
+    if comptime!(served > 1) {
+        Vector::<E, V>::cast_from(line)
+    } else if comptime!(lane.is_some()) {
         Vector::<E, V>::cast_from(line.extract(comptime!(lane.unwrap())))
     } else if comptime!(lw == 1) {
         Vector::<E, V>::cast_from(line.extract(0usize))
@@ -414,12 +468,15 @@ fn assert_operand_shapes(
         lhs.axis_at(lhs.rank() - 1) == fastest,
         "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
     );
-    // Only a vectorized rhs has to line along that axis; a scalar one is addressed in elements
-    // and so need not span it at all, which is what lets a weight shared by every column live in
-    // a space that simply omits it.
+    // A vectorized rhs lines along the accumulator's innermost axis (its lanes are cells) or the
+    // fastest contracted one (its lanes are partials of one cell); a scalar one is addressed in
+    // elements and need not span either, which is what lets a weight shared by every column live
+    // in a space that simply omits it.
+    let rhs_lined = rhs.axis_at(rhs.rank() - 1);
     assert!(
-        rhs_vec_len == 1 || rhs.axis_at(rhs.rank() - 1) == acc.axis_at(acc.rank() - 1),
-        "contract gather: a vectorized rhs must line along the accumulator's innermost axis"
+        rhs_vec_len == 1 || rhs_lined == acc.axis_at(acc.rank() - 1) || rhs_lined == fastest,
+        "contract gather: a vectorized rhs must line along the accumulator's innermost axis or \
+         the fastest contracted axis {fastest:?}"
     );
     // An lhs varying along the column is read once per cell, and a cell is `rhs_vec_len` columns
     // wide. The lhs lines along a contracted axis, not this one, so one read cannot cover them:
