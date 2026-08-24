@@ -6,6 +6,8 @@
 //! collects those into a single `all()` slice for harnesses (Cargo benches)
 //! and for the tuner-runner.
 
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use cubecl::benchmark::TimingMethod;
@@ -17,6 +19,36 @@ use cubecl::throughput::{
 use cubecl::{Runtime, TestRuntime, client::ComputeClient};
 
 use crate::{HostData, Progress};
+
+/// The client every category scores against: `measure_peak_throughput` is
+/// always run on `<TestRuntime as Runtime>::Device::default()`, so the
+/// process-wide peak memo below can key on [`ThroughputKey`] alone.
+fn client() -> ComputeClient<TestRuntime> {
+    let device = <TestRuntime as Runtime>::Device::default();
+    <TestRuntime as Runtime>::client(&device)
+}
+
+/// Process-wide memo of measured peaks, keyed by [`ThroughputKey`].
+///
+/// `measure_peak_throughput` allocates and primes a probe buffer before it
+/// consults its own per-device cache, so calling it between two timed rows
+/// moves real memory even when the peak is already known.
+static PEAKS: LazyLock<Mutex<HashMap<ThroughputKey, f64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Looks up `key`'s peak rate for `kind` in [`PEAKS`], measuring and caching
+/// it on a miss. Never re-enters itself, so holding the lock across the
+/// measurement cannot deadlock.
+fn peak_per_s(kind: ResourceKind, key: ThroughputKey) -> f64 {
+    let mut peaks = PEAKS.lock().expect("peaks mutex is not poisoned");
+    *peaks.entry(key).or_insert_with(|| {
+        let value = measure_peak_throughput(&client(), key);
+        match kind {
+            ResourceKind::Compute => value.ops_per_s(),
+            ResourceKind::Read | ResourceKind::Write => value.bytes_per_s(&key),
+        }
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct ItemDescriptor {
@@ -136,25 +168,17 @@ pub struct CategoryWork {
 }
 
 impl CategoryWork {
-    /// The declared resources as `(kind, bound)` pairs, peaks measured fresh
-    /// on `client`. `measure_peak_throughput` caches per `(device, key)`, so
-    /// repeated calls for the same working-set size cost nothing after the
-    /// first.
-    fn resources(&self, client: &ComputeClient<TestRuntime>) -> Vec<(ResourceKind, ResourceBound)> {
+    /// Every resource this work declares, one entry per non-zero field, as
+    /// `(kind, amount, key)` in the order the adapter scores them: Compute,
+    /// Read, Write.
+    fn declared_resources(&self) -> Vec<(ResourceKind, usize, ThroughputKey)> {
         let mut out = Vec::with_capacity(3);
 
         if self.compute_ops > 0 {
             let key = ThroughputKey {
                 mode: ThroughputMode::ComputeDirect { dtype: self.dtype },
             };
-            let peak = measure_peak_throughput(client, key).ops_per_s();
-            out.push((
-                ResourceKind::Compute,
-                ResourceBound {
-                    amount: self.compute_ops,
-                    peak_per_s: peak,
-                },
-            ));
+            out.push((ResourceKind::Compute, self.compute_ops, key));
         }
         if self.bytes_read > 0 {
             let key = ThroughputKey {
@@ -163,14 +187,7 @@ impl CategoryWork {
                     bytes: self.bytes_read as u64,
                 },
             };
-            let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
-            out.push((
-                ResourceKind::Read,
-                ResourceBound {
-                    amount: self.bytes_read,
-                    peak_per_s: peak,
-                },
-            ));
+            out.push((ResourceKind::Read, self.bytes_read, key));
         }
         if self.bytes_written > 0 {
             let key = ThroughputKey {
@@ -179,17 +196,27 @@ impl CategoryWork {
                     bytes: self.bytes_written as u64,
                 },
             };
-            let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
-            out.push((
-                ResourceKind::Write,
-                ResourceBound {
-                    amount: self.bytes_written,
-                    peak_per_s: peak,
-                },
-            ));
+            out.push((ResourceKind::Write, self.bytes_written, key));
         }
 
         out
+    }
+
+    /// The declared resources as `(kind, bound)` pairs, peaks pulled from the
+    /// process-wide memo (see [`peak_per_s`]).
+    fn resources(&self) -> Vec<(ResourceKind, ResourceBound)> {
+        self.declared_resources()
+            .into_iter()
+            .map(|(kind, amount, key)| {
+                (
+                    kind,
+                    ResourceBound {
+                        amount,
+                        peak_per_s: peak_per_s(kind, key),
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -202,9 +229,7 @@ fn score(mut samples: RunSamples, work: &CategoryWork) -> RunSamples {
         return samples;
     };
 
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
-    let resources = work.resources(&client);
+    let resources = work.resources();
     let (tflops, binding) = score_bounds(median_secs, &resources);
     samples.tflops = tflops;
     samples.binding = binding;
@@ -340,6 +365,12 @@ pub trait BenchmarkCategory: Sync {
     fn timing_method(&self) -> TimingMethod {
         TimingMethod::System
     }
+
+    /// Measures and memoizes every distinct peak this category declares, so
+    /// the first timed row never pays for a probe. Returns how many
+    /// distinct keys it warmed.
+    fn warm_peaks(&self) -> usize;
+
     fn run(
         &self,
         strategy_id: &str,
@@ -397,6 +428,21 @@ impl<C: Category> BenchmarkCategory for C {
 
     fn timing_method(&self) -> TimingMethod {
         Category::timing_method(self)
+    }
+
+    fn warm_peaks(&self) -> usize {
+        let mut seen = HashSet::new();
+        for problem in Category::problems(self) {
+            let Some(work) = Category::work(self, &problem.value) else {
+                continue;
+            };
+            for (kind, _, key) in work.declared_resources() {
+                if seen.insert(key) {
+                    peak_per_s(kind, key);
+                }
+            }
+        }
+        seen.len()
     }
 
     fn run(
@@ -473,16 +519,11 @@ mod tests {
         }
     }
 
-    fn client() -> ComputeClient<TestRuntime> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        <TestRuntime as Runtime>::client(&device)
-    }
-
     /// Zero-ops, zero-bytes work declares no resource: nothing to score, so the
     /// adapter's row falls back to plain durations.
     #[test]
     fn zero_work_declares_no_resources() {
-        let resources = work(0, 0, 0).resources(&client());
+        let resources = work(0, 0, 0).resources();
         assert!(resources.is_empty());
 
         let (tflops, binding) = score_bounds(1.0, &resources);
@@ -494,7 +535,7 @@ mod tests {
     /// declared byte count as its `amount`; no `Write` or `Compute` entry.
     #[test]
     fn read_only_work_declares_a_single_read_resource() {
-        let resources = work(0, 4096, 0).resources(&client());
+        let resources = work(0, 4096, 0).resources();
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].0, ResourceKind::Read);
         assert_eq!(resources[0].1.amount, 4096);
@@ -504,7 +545,7 @@ mod tests {
     /// the read-only case.
     #[test]
     fn write_only_work_declares_a_single_write_resource() {
-        let resources = work(0, 0, 2048).resources(&client());
+        let resources = work(0, 0, 2048).resources();
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].0, ResourceKind::Write);
         assert_eq!(resources[0].1.amount, 2048);
@@ -514,7 +555,7 @@ mod tests {
     /// field's amount, compute first.
     #[test]
     fn mixed_work_declares_compute_read_and_write_resources() {
-        let resources = work(1_000_000, 4096, 1024).resources(&client());
+        let resources = work(1_000_000, 4096, 1024).resources();
         assert_eq!(resources.len(), 3);
         assert_eq!(
             resources.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
@@ -527,6 +568,23 @@ mod tests {
         assert_eq!(resources[0].1.amount, 1_000_000);
         assert_eq!(resources[1].1.amount, 4096);
         assert_eq!(resources[2].1.amount, 1024);
+    }
+
+    /// Same-shaped work keys to the same `ThroughputKey`; a different shape does not.
+    #[test]
+    fn declared_resources_key_on_shape_not_identity() {
+        let a = work(0, 4096, 0).declared_resources();
+        let b = work(0, 4096, 0).declared_resources();
+        let c = work(0, 8192, 0).declared_resources();
+
+        assert_eq!(a[0].2, b[0].2);
+        assert_ne!(a[0].2, c[0].2);
+
+        let mut seen = HashSet::new();
+        seen.insert(a[0].2);
+        seen.insert(b[0].2);
+        seen.insert(c[0].2);
+        assert_eq!(seen.len(), 2);
     }
 
     /// No resources to score: `score_bounds` leaves both `tflops` and `binding`
