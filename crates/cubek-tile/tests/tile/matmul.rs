@@ -904,7 +904,7 @@ fn register_matmul_unit_spread_n() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        // K fits whole at the leaf, so MMA must replace this sink through the scoped stamp.
+        // Non-zero buffer initialized on host; `launch_staged_matmul` zeroes `c` before MMA.
         .uniform(4242, 10., 100.);
 
     launch_staged_matmul::launch::<TestRuntime>(
@@ -1512,7 +1512,7 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
     c.mma(&a, &b);
 }
 
-/// Drives `launch_staged_matmul` without zeroing first, accumulating directly into `c`.
+/// A staged matmul kernel that accumulates directly into `c` without zeroing first.
 #[cube(launch)]
 fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,

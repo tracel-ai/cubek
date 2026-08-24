@@ -373,42 +373,6 @@ pub struct Tile<T: Numeric> {
     pub space: Space,
 }
 
-impl<T: Numeric> Tile<T> {
-    /// Whether this tile is stamped to replace its sink on the next `mma` contraction.
-    pub(crate) fn is_replace(&self) -> bool {
-        match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.replace,
-            _ => false,
-        }
-    }
-
-    /// Set the replacement policy on this tile's memory handles.
-    pub(crate) fn set_replace(&mut self, replace: bool) {
-        match &mut self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.replace = replace,
-            _ => {}
-        }
-    }
-}
-
-impl<T: Numeric> TileExpand<T> {
-    /// Whether this tile is stamped to replace its sink on the next `mma` contraction.
-    pub(crate) fn is_replace(&self) -> bool {
-        match &self.tile_kind {
-            TileKindExpand::Gmem(d) | TileKindExpand::Smem(d) => d.replace,
-            _ => false,
-        }
-    }
-
-    /// Set the replacement policy on this tile's memory handles.
-    pub(crate) fn set_replace(&mut self, replace: bool) {
-        match &mut self.tile_kind {
-            TileKindExpand::Gmem(d) | TileKindExpand::Smem(d) => d.replace = replace,
-            _ => {}
-        }
-    }
-}
-
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
 /// coefficient `1`. `None` otherwise, which is either of the two ways a bound stops being that
 /// extent: a gather, where the dim holds the receptive field several axes reach over, and storage
@@ -609,21 +573,30 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Clone this tile's handle with an operation-scoped accumulator replacement policy. Memory
-    /// handles stamp the policy into their metadata; resident accumulators state their own
-    /// initialization and pass through unchanged.
-    pub(crate) fn with_replace(&self, #[comptime] replace: bool) -> Tile<T> {
-        let tile_kind = match &self.tile_kind {
-            TileKind::Gmem(data) => TileKind::new_Gmem(data.with_replace(comptime!(replace))),
-            TileKind::Smem(data) => TileKind::new_Smem(data.with_replace(comptime!(replace))),
-            TileKind::PlaneTile(data) => TileKind::new_PlaneTile(data.clone()),
-            TileKind::PlanePartition(data) => TileKind::new_PlanePartition(data.clone()),
-            TileKind::TmaGmem(data) => TileKind::new_TmaGmem(data.clone()),
-            TileKind::Procedural(data) => TileKind::new_Procedural(data.clone()),
-        };
-        Tile::<T> {
-            tile_kind,
-            space: comptime!(self.space.clone()),
+    /// Whether this tile is backed by memory known to hold zero, so a sum contraction can replace
+    /// the initial sink read. Comptime.
+    pub(crate) fn replaces_sink(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.sink_is_zero,
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(false)
+            }
+        }
+    }
+
+    /// Set whether this tile's memory handles are known to hold zero.
+    pub(crate) fn set_sink_is_zero(&mut self, #[comptime] is_zero: bool) {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => {
+                d.set_sink_is_zero(comptime!(is_zero));
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {}
         }
     }
 
@@ -866,7 +839,7 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
-        comptime!(self.set_replace(true));
+        self.set_sink_is_zero(true);
     }
 
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
@@ -887,6 +860,7 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
+        self.set_sink_is_zero(false);
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
@@ -906,6 +880,7 @@ impl<T: Numeric> Tile<T> {
 
     /// The mutable twin of [`dense`](Tile::dense).
     pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+        self.set_sink_is_zero(false);
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -953,6 +928,7 @@ impl<T: Numeric> Tile<T> {
                 _ => panic!("Tile::copy_from: unsupported kind pairing"),
             },
         }
+        self.set_sink_is_zero(false);
     }
 
     /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element

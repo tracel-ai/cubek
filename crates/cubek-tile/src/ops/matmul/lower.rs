@@ -15,15 +15,17 @@ impl<Acc: Numeric> Tile<Acc> {
     ///
     /// When `c` has been explicitly zeroed (`c.zero()`) and every contracted axis is spanned whole
     /// at the leaf level, the initial sink read is safely replaced by the contraction identity (`0`).
-    /// If `c` was not zeroed (e.g. pre-seeded or caller-owned loop) or if the contraction spans
-    /// multiple levels / outer reduction loops, it preserves the existing sink and accumulates onto it.
+    /// If `c` was not zeroed (e.g. pre-seeded or caller-owned loop), or if the contraction spans
+    /// multiple levels or outer reduction loops, it preserves the existing sink and accumulates
+    /// onto it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replace = comptime!(
-            self.is_replace() && is_contracted_at_leaf(&self.space, &lhs.space, &rhs.space)
-        );
-        let mut acc = self.with_replace(replace);
-        lower_mma(&mut acc, lhs, rhs);
-        comptime!(self.set_replace(false));
+        let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+        let is_contracted = comptime!(is_contracted_at_leaf(&self.space, &merged));
+        let replaces_sink = self.replaces_sink();
+        let replaces = comptime!(replaces_sink && is_contracted);
+        self.set_sink_is_zero(replaces);
+        lower_mma(self, lhs, rhs);
+        self.set_sink_is_zero(false);
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
@@ -53,10 +55,10 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// Lower one operation-scoped accumulator handle to its leaf. `replace` is derived before this
-/// recursion from the undivided operand spaces. When true, every contracted axis already fits in
-/// the final space, so no ancestor visits an output cell for multiple contracted regions; child
-/// handles preserve the stamp unchanged and never recompute it from their smaller spaces.
+/// Lower one operation-scoped accumulator handle to its leaf. `sink_is_zero` is derived before
+/// this recursion from the undivided operand spaces. When true, every contracted axis already
+/// fits in the final space, so no ancestor visits an output cell for multiple contracted regions;
+/// child handles preserve the stamp unchanged and never recompute it from their smaller spaces.
 #[cube]
 pub(super) fn lower_mma<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
     acc: &mut Tile<Acc>,
@@ -150,14 +152,9 @@ impl<E: Numeric> PlaneTile<E> {
 
 /// Whether the final tile spans every contracted axis whole, which is what makes a replacing
 /// seed sound: the walk above the leaf never returns to a cell it has already written.
-fn is_contracted_at_leaf(out: &Space, lhs: &Space, rhs: &Space) -> bool {
-    let merged = Space::merge(&[lhs, rhs]);
-    assert!(
-        out.partitioner().depth() == merged.partitioner().depth(),
-        "is_contracted_at_leaf: output and operand partitioner depth mismatch"
-    );
+fn is_contracted_at_leaf(out: &Space, merged: &Space) -> bool {
     let leaf = merged.final_space();
-    for axis in Space::contracted(&[lhs, rhs], out).iter() {
+    for axis in merged.contracting(out).iter() {
         // A Dynamic extent is only known at runtime, so whether the leaf spans it whole cannot be
         // settled here. Seeding from the sink is the answer that is right either way.
         match (merged.extent_raw(*axis), leaf.extent_raw(*axis)) {

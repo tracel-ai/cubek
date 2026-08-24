@@ -15,7 +15,7 @@ pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2
     #[cube(comptime)]
     lane_share: LaneShare,
     #[cube(comptime)]
-    replace: bool,
+    sink_is_zero: bool,
 }
 
 #[cube]
@@ -23,12 +23,12 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
-        #[comptime] replace: bool,
+        #[comptime] sink_is_zero: bool,
     ) -> Self {
         AccumulateView::<'a, E, V, C> {
             values,
             lane_share,
-            replace,
+            sink_is_zero,
         }
     }
 
@@ -43,13 +43,18 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         self.values.block_in_bounds(pos, extent)
     }
 
-    /// A block's starting value for an `fold` fold. A partial starts at `fold`'s identity: the
+    /// A block's starting value for a `fold` fold. A partial starts at `fold`'s identity: the
     /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
-    /// once per lane. Only `LaneShare::Whole`, which holds the cell outright, seeds from it.
+    /// once per lane. A `LaneShare::Whole` cell seeds from memory unless the buffer is known to
+    /// hold zero and `fold` is `Sum`, in which case it starts from the zero identity directly and
+    /// skips the read.
     pub fn seed(&self, pos: C, #[comptime] fold: LeafOp) -> Vector<E, V> {
-        // A folded share holds no whole cell to carry forward, and a replacing contraction is
-        // discarding whatever is there anyway: both start from the identity and skip the read.
-        let carries = comptime!(matches!(self.lane_share, LaneShare::Whole) && !self.replace);
+        // A folded share holds no whole cell to carry forward, and a zeroed buffer on a sum fold
+        // already holds the identity (0): both start from the identity and skip the read.
+        let carries = comptime!(
+            matches!(self.lane_share, LaneShare::Whole)
+                && !(self.sink_is_zero && matches!(fold, LeafOp::Sum))
+        );
         if comptime!(carries) {
             self.values.read(pos)
         } else {

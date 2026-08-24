@@ -57,10 +57,10 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
-    /// Whether accumulator views replace their sink instead of carrying it forward. Unlike
-    /// `lane_share`, this is stamped once for an operation and copied unchanged through `at`.
+    /// Whether accumulator views know this buffer holds zero, so a sum contraction can replace
+    /// the initial sink read. Stamped by `Tile::zero` and verified by `is_contracted_at_leaf`.
     #[cube(comptime)]
-    pub(crate) replace: bool,
+    pub(crate) sink_is_zero: bool,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -380,7 +380,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                replace: comptime!(false),
+                sink_is_zero: comptime!(false),
             }),
             space: comptime!(space),
         }
@@ -670,7 +670,7 @@ impl<T: Numeric> MemData<T> {
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                replace: comptime!(false),
+                sink_is_zero: comptime!(false),
             }),
             space: comptime!(meta.space),
         }
@@ -722,19 +722,10 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// Clone this memory handle with the replacement policy for one accumulator operation.
-    pub(crate) fn with_replace(&self, #[comptime] replace: bool) -> MemData<T> {
+    /// Set whether this memory handle is known to hold zero.
+    pub(crate) fn set_sink_is_zero(&mut self, #[comptime] sink_is_zero: bool) {
         comptime!({
-            let mut cloned = self.clone();
-            cloned.replace = replace;
-            cloned
-        })
-    }
-
-    /// Set the replacement policy on this memory handle.
-    pub(crate) fn set_replace(&mut self, #[comptime] replace: bool) {
-        comptime!({
-            self.replace = replace;
+            self.sink_is_zero = sink_is_zero;
         });
     }
 
@@ -1537,12 +1528,12 @@ impl<T: Numeric> MemData<T> {
         #[comptime] space: Space,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        let replace = comptime!(self.replace);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, replace)
+        let sink_is_zero = comptime!(self.sink_is_zero);
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, sink_is_zero)
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
-    /// [`LaneShare`] and replacement policy these cells carry.
+    /// [`LaneShare`] these cells carry.
     pub(crate) fn flat_accumulate<W: Size>(&mut self) -> AccumulateView<'_, T, W, Coords1d> {
         // A flat logical scan only agrees with this physical window under the direct,
         // non-storage-tiled mapping. Otherwise the reduction's logical accumulator index would
@@ -1556,8 +1547,7 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        let replace = comptime!(self.replace);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share, replace)
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, false)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -1704,7 +1694,7 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
-            replace: comptime!(self.replace),
+            sink_is_zero: comptime!(self.sink_is_zero),
         }
     }
 }
