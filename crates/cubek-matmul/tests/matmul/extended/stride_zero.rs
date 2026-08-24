@@ -415,7 +415,7 @@ fn gemm_handles_broadcast_batch_all_layouts() {
     }
 }
 
-/// gemm now supports a broadcast (stride-0) M dim — the reported case: the
+/// gemm now supports a broadcast (stride-0) M dim, the reported case: the
 /// launch materializes the operand via `into_contiguous`, so it computes
 /// correctly on both backends. N- and K-broadcast also materialize but then hit
 /// pre-existing, unrelated constraints (a materialized N flips the layout into

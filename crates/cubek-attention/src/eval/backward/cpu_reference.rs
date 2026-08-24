@@ -1,6 +1,6 @@
 //! CPU reference for the FlashAttention backward pass.
 //!
-//! Ground truth for the GPU backward kernels — naive `O(B·H·N²·d)`
+//! Ground truth for the GPU backward kernels: naive `O(B·H·N²·d)`
 //! materialization of `S`, `P`, `dP`, `dS`. Slow on bench-scale problems by
 //! design.
 
@@ -43,7 +43,7 @@ pub struct FlashAttentionBackwardDebug {
 
 /// Ground-truth FlashAttention backward.
 ///
-/// Materializes `S`, `P`, `dP`, `dS` explicitly — slow on bench-scale
+/// Materializes `S`, `P`, `dP`, `dS` explicitly: slow on bench-scale
 /// problems, intended only as a correctness oracle for the GPU kernels.
 ///
 /// `lse` and `d_prepass` are taken as inputs so per-kernel tests can swap

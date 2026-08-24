@@ -12,5 +12,5 @@ pub use elems::*;
 pub use error::*;
 pub use vectorization::*;
 
-// Internal-only — external crates import this directly from cubek-std.
+// Internal-only: external crates import this directly from cubek-std.
 pub(crate) use cubek_std::StageIdent;

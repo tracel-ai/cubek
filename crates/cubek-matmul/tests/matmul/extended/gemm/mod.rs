@@ -75,7 +75,7 @@ fn gemm() -> Strategy {
     .into()
 }
 
-// Legacy strategy-helper aliases — the test bodies were authored against
+// Legacy strategy-helper aliases: the test bodies were authored against
 // per-routine helpers (`plane_parallel()`, `outer_product()`); both now
 // resolve to the unified `gemm()` strategy.
 use gemm as plane_parallel;

@@ -1,6 +1,6 @@
 //! Per-routine `TilingScheme` sweep covering minimal/k-reduction/multi-plane
 //! configurations. Uses the simple sync-cyclic algorithm as the representative
-//! routine — the full cartesian across other algorithm families lives in `full/`.
+//! routine: the full cartesian across other algorithm families lives in `full/`.
 
 use cubek_convolution::ConvAlgorithm;
 use cubek_matmul::multi_level::{

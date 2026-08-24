@@ -641,7 +641,7 @@ fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSize) -
 ///
 /// Mirrors `requested_smem_bytes` in the batch setup: the lhs and rhs operand
 /// stages (each `num_stages = stage_buffering`) plus the output stage at the
-/// writer's allocation — each writer stages one tile per partition, so the out
+/// writer's allocation: each writer stages one tile per partition, so the out
 /// term is one tile per stage partition, independent of the partition size.
 /// Keeping this in step with the launch-time check is what lets [`selection`]
 /// cap the tiling to a blueprint the check will accept, without capping harder

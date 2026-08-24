@@ -382,8 +382,8 @@ impl<E: Float> ReduceOp<E> for FragmentRowSum {
 impl<Acc: Float> WhiteboxFragment<Acc> {
     /// Online softmax for a free-standing WhiteboxFragment score (the
     /// register-only variant of attention's softmax). Writes the post-softmax
-    /// values into `softmaxed` (which may be `Bounce` — routed through its
-    /// smem into its cmma fragment — or another `WhiteboxFragment`).
+    /// values into `softmaxed` (which may be `Bounce`: routed through its
+    /// smem into its cmma fragment, or another `WhiteboxFragment`).
     pub fn softmax<Lhs: Float, M: Mask>(
         &mut self,
         mask: &M,

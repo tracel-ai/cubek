@@ -318,7 +318,7 @@ fn many_tiles_inferred_size() {
     );
 }
 
-/// A col-major (transposed) lhs — the layout the gemm routine's Col-Row variant used to
+/// A col-major (transposed) lhs: the layout the gemm routine's Col-Row variant used to
 /// claim on CPU, and got wrong whenever `m` was not a multiple of the vector size
 /// (burn#5304, `a.transpose().matmul(b)`). `m` here divides nothing.
 #[test]
@@ -486,7 +486,7 @@ fn batched_rectangular() {
     );
 }
 
-/// No axis is a multiple of the tile, so every axis has a partial trailing tile —
+/// No axis is a multiple of the tile, so every axis has a partial trailing tile. This
 /// exercises edge masking (zero-padded input reads, predicated output writes).
 #[test]
 fn indivisible_all_axes() {
@@ -623,7 +623,7 @@ fn matvec_inferred() {
     );
 }
 
-/// Narrow `n` (smaller than the SIMD width but `> 1`) under the `Inferred` heuristic — the
+/// Narrow `n` (smaller than the SIMD width but `> 1`) under the `Inferred` heuristic: the
 /// other side of the `n < vw` boundary, with `n` not a clean vector multiple.
 #[test]
 fn narrow_n_inferred() {
@@ -653,7 +653,7 @@ fn narrow_n_inferred() {
     );
 }
 
-/// `rhs` unbatched (`[1]`) so it broadcasts across all of `lhs`'s batch — `rhs` omits the
+/// `rhs` unbatched (`[1]`) so it broadcasts across all of `lhs`'s batch: `rhs` omits the
 /// batch axis, every cube reads the same matrix. `rhs` row-major exercises broadcast + `N`
 /// vectorization together.
 #[test]
@@ -692,7 +692,7 @@ fn broadcast_rhs_unbatched() {
     );
 }
 
-/// `lhs` unbatched (`[1]`) broadcasts across `rhs`'s batch — the mirror case, so `lhs`
+/// `lhs` unbatched (`[1]`) broadcasts across `rhs`'s batch: the mirror case, so `lhs`
 /// omits the batch axis instead. `rhs` col-major keeps it on the scalar path.
 #[test]
 fn broadcast_lhs_unbatched() {

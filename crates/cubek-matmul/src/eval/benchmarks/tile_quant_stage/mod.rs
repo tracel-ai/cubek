@@ -3,7 +3,7 @@
 //! A quantized operand under the register leaf stages its *packed* storage words and unpacks at the
 //! read. At an equal depth that ties with the dequantized stage the cmma leaf needs (both stream the
 //! same bytes from global memory, and the unpack is off the reuse path). It pays by being ~4x
-//! smaller, which buys depth — so depth is the axis worth sweeping. Drives the DSL directly rather
+//! smaller, which buys depth, so depth is the axis worth sweeping. Drives the DSL directly rather
 //! than a routine: quantization has no tile-DSL matmul routine yet.
 
 mod benchmark;

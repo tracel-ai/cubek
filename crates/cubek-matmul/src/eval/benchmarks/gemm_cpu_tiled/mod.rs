@@ -8,7 +8,7 @@
 //! Finding: with tiled reads vectorized (`Launcher::vector_size` accepts tiled operands whose
 //! leaf tile is `N`-contiguous)
 //! the tiled path is ~10× faster than when it was scalar, but still ~1.5× *slower* than strided and
-//! **insensitive to block size** (a 16²→256² sweep was flat) — it is addressing-bound on the
+//! **insensitive to block size** (a 16²→256² sweep was flat): it is addressing-bound on the
 //! `TiledViewLayout` coord math, never reaching the memory wall. Storage packing buys no locality
 //! here; cache locality is a compute-tiling (schedule) matter, not a storage-reblocking one. Kept as
 //! the evidence for that + a regression guard on the vectorized tiled path.
@@ -43,9 +43,9 @@ const EDGE: usize = 64;
 /// How an operand's matrix axes are physically stored.
 #[derive(Clone, Copy)]
 enum Packing {
-    /// Plain row-major (`levels = 0`) — the vectorized reference path.
+    /// Plain row-major (`levels = 0`): the vectorized reference path.
     RowMajor,
-    /// One level of square `edge × edge` storage tiles (`levels = 1`) — the packed path under test.
+    /// One level of square `edge × edge` storage tiles (`levels = 1`): the packed path under test.
     Tiled { edge: usize },
 }
 

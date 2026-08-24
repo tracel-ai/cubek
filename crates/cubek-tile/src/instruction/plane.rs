@@ -40,8 +40,8 @@ pub fn reduce<T: CubePrimitive<Scalar: PlaneNumeric>>(
 /// group's total.
 ///
 /// One butterfly step per bit of `fold_mask`. A cell's partials sit on the lanes that agree
-/// outside the mask and differ inside it, so an xor by a single mask bit stays within the group
-/// — every group folds at once, each over its own cell, with no guard and no branch.
+/// outside the mask and differ inside it, so an xor by a single mask bit stays within the group:
+/// every group folds at once, each over its own cell, with no guard and no branch.
 ///
 /// If the whole plane shares one cell without carries ([`LaneShare::Plane`](crate::LaneShare::Plane)),
 /// [`broadcast()`] is the better instruction. The `fold_mask` bits must be the group's lane bits,

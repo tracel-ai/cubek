@@ -1186,10 +1186,10 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 ///
 /// Two things had to be true for this to work, and neither was. The drain combined lanes with a
 /// hardcoded sum, and a promoted block read its `LaneShare` from the tile, which is only stamped on
-/// the way down — so it saw `Whole` and every lane wrote its partial over the last.
+/// the way down, so it saw `Whole` and every lane wrote its partial over the last.
 ///
-/// The data is all negative, so any identity leaking in — a zero from a sum-shaped combine, or from
-/// an out-of-bounds read — wins the maximum and the assert catches it.
+/// The data is all negative, so any identity leaking in (a zero from a sum-shaped combine, or
+/// from an out-of-bounds read) wins the maximum and the assert catches it.
 #[cube(launch)]
 fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,

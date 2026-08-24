@@ -5,7 +5,7 @@
 //! is cached in a `OnceLock`, and every other module asks for the parts it
 //! needs through this module.
 //!
-//! The parser is intentionally tiny — `cubek.toml` is a flat schema (one
+//! The parser is intentionally tiny: `cubek.toml` is a flat schema (one
 //! `[section]` key per group, scalar values only). Anything more elaborate
 //! belongs in a real TOML library; for now we accept exactly what the
 //! example file documents and panic loudly on anything else.
@@ -354,7 +354,7 @@ filter = "0,1-2"
 
     #[test]
     fn rejects_show_delta_key() {
-        // We removed `show-delta`/`show-epsilon` — they should now be
+        // We removed `show-delta`/`show-epsilon`: they should now be
         // unknown keys, since lines view always shows them and table view
         // never does.
         let err = parse_cubek_toml("[print]\nshow-delta = true\n").unwrap_err();

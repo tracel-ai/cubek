@@ -29,7 +29,7 @@ use cubecl::{
 };
 use std::marker::PhantomData;
 
-// Per-flow Stage type aliases — keep call sites readable.
+// Per-flow Stage type aliases: keep call sites readable.
 type LhsStageFor<MP, RC> = FullLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
 type RhsStageFor<MP, RC, RL> = PartialLoaderStage<RC, RL, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
 type AccStageFor<MP, RC, AL> =
@@ -37,7 +37,7 @@ type AccStageFor<MP, RC, AL> =
 
 /// Performs matrix multiplication at the global level.
 /// Uses double buffering with two shared memory buffers for `Rhs`,
-/// but only one for `Lhs`—the second "buffer" for `Lhs` is the fragments themselves.
+/// but only one for `Lhs`: the second "buffer" for `Lhs` is the fragments themselves.
 /// For this to work, the `Lhs` reader planes must compute using
 /// only the data they have loaded themselves.
 pub struct OrderedDoubleBufferingMatmul<

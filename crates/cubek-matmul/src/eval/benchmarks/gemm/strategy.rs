@@ -203,7 +203,7 @@ pub fn strategies() -> Vec<CatalogEntry<Strategy>> {
         cpu_gemm_forced("cpu_gemm_p2", "CpuGemm (64³, 2 planes)", 64, 2, 1),
         cpu_gemm_forced("cpu_gemm_p4", "CpuGemm (64³, 4 planes)", 64, 2, 2),
         cpu_gemm_forced("cpu_gemm_p8", "CpuGemm (64³, 8 planes)", 64, 4, 2),
-        // Fast-core scaling: fix the register-fit leaf (2×32×64, no spill — the optimized
+        // Fast-core scaling: fix the register-fit leaf (2×32×64, no spill, the optimized
         // instruction) and scale the worker threads 1 → 16. Measures how the *fast* core spreads.
         cpu_gemm_leaf(
             "cpu_gemm_fast_p1",

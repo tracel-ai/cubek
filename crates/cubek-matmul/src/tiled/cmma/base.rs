@@ -308,10 +308,10 @@ impl CmmaRoutine {
         // Stage depth, snapped down to the deepest `d·ik` dividing `k`. The knee is set by
         // the double-buffered smem the cooperative fill must keep resident, so it scales by
         // a *byte* budget: an `f32` operand's stage is twice an `f16`'s at equal depth. An
-        // `f32` accumulator (always, now — tensor cores accumulate in `f32`) also spends
+        // `f32` accumulator (always now, since tensor cores accumulate in `f32`) also spends
         // twice the registers, tightening the budget vs the old `f16` accumulate. Measured
         // on square_4096 (f32 acc): f16 operands peak at sk32 (4.71 vs 4.53 at 64), f32 at
-        // sk16 (3.67 vs 3.26 at 32, 2.31 at 64) — both ~64 stage-K bytes per row. The old
+        // sk16 (3.67 vs 3.26 at 32, 2.31 at 64): both ~64 stage-K bytes per row. The old
         // f16-accumulate wanted twice that (sk64 at 4.87).
         let stage_k_bytes = if acc.size() >= 4 { 64 } else { 128 };
         let cap = (stage_k_bytes / d.lhs.size().max(1)).max(ik);

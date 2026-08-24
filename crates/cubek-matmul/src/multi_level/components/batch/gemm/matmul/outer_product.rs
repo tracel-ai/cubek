@@ -6,13 +6,13 @@ use crate::multi_level::components::batch::{
     gemm::io::{read, write},
 };
 
-/// Outer-product CPU kernel covering the two non-Dot variants —
-/// `OuterM` (Col-Col) and `OuterN` (Row-Row) — by one comptime knob:
+/// Outer-product CPU kernel covering the two non-Dot variants,
+/// `OuterM` (Col-Col) and `OuterN` (Row-Row): by one comptime knob:
 ///
 /// * `vec_axis_is_n`: which output axis the accumulator is vectorized along.
 ///   `true` → vec axis is N (`Vector<AccR, NR>` accumulator, vec-side is rhs,
 ///   K-side is lhs); `false` → vec axis is M (lhs is vec-side, rhs is K-side).
-///   The "scalar axis" is the other one — held fixed per plane.
+///   The "scalar axis" is the other one: held fixed per plane.
 ///
 /// The K-side operand is K-contig either way, so one K-vector load per tile
 /// yields the `vs` scalars.

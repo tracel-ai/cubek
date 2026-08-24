@@ -18,7 +18,7 @@ use cubek_tile::{Axis, Projection, Space, TileArg, TileArgLaunch, TileSpec};
 use super::Dims;
 use crate::matmul::assert_result;
 
-// `B` leads (batch), then the matrix axes — so `partition`'s trailing two are
+// `B` leads (batch), then the matrix axes, so `partition`'s trailing two are
 // the matrix and the batch is pinned.
 const B: Axis = Axis(0);
 const M: Axis = Axis(1);
@@ -26,7 +26,7 @@ const N: Axis = Axis(2);
 const K: Axis = Axis(3);
 
 /// Copy every logical `(d0, d1, d2)` element from `src` to `dst` through their
-/// views — the layout-agnostic scatter/gather. Whatever physical layout each
+/// views: the layout-agnostic scatter/gather. Whatever physical layout each
 /// view wraps, this moves data in logical order.
 #[cube(launch)]
 fn copy_logical<E: Numeric>(
@@ -122,7 +122,7 @@ impl Operand {
     }
 }
 
-/// Copy every logical element from `src` into `dst` through their views — moving
+/// Copy every logical element from `src` into `dst` through their views: moving
 /// data between two physical layouts in logical order.
 fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
     // src and dst are built over the same logical space; it is the kernel's one space.
@@ -168,7 +168,7 @@ fn gather(client: &ComputeClient<TestRuntime>, src: &Operand) -> TensorHandle<Te
 
 /// Run `lhs_batch × (m, k) @ rhs_batch × (k, n)` with each operand in its chosen layout
 /// and check it against the plain logical reference. When the batches differ (one side
-/// `1`) this exercises a tiled (or strided) operand whose batch axis is *omitted* — the
+/// `1`) this exercises a tiled (or strided) operand whose batch axis is *omitted*: the
 /// layout's physical buffer crossed with the broadcast path.
 fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout, dims: Dims) {
     let Dims {
@@ -228,7 +228,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
     );
 
     // Drive the production launch path, imposing each operand's inner layout via
-    // `WithLayout` — this is where tiled (higher-rank) operands flow through `launch_ref`.
+    // `WithLayout`: this is where tiled (higher-rank) operands flow through `launch_ref`.
     launch_ref::<TestRuntime>(
         &client,
         WithLayout {

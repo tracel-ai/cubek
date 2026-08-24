@@ -1,6 +1,6 @@
 //! Kernel 1: prepass `D = rowsum(dO ⊙ O)`, shape `[B, H, N]`, fp32.
 //!
-//! One program instance per row (or row-block). Output dtype must be fp32 —
+//! One program instance per row (or row-block). Output dtype must be fp32:
 //! `D` is subtracted from `dP` in the softmax Jacobian and that step is the
 //! most numerically sensitive part of the backward.
 
@@ -34,11 +34,11 @@ fn flash_attention_backward_prepass_kernel<E: Float>(
 /// Compute `D = rowsum(dO ⊙ O)` into a pre-allocated fp32 tensor.
 ///
 /// Inputs:
-/// - `o`:   `[B, H, N, d]` — output of the forward pass.
-/// - `do_`: `[B, H, N, d]` — upstream gradient.
+/// - `o`:   `[B, H, N, d]`: output of the forward pass.
+/// - `do_`: `[B, H, N, d]`: upstream gradient.
 ///
 /// Output:
-/// - `d`:   `[B, H, N]` fp32 — written cleanly.
+/// - `d`:   `[B, H, N]` fp32: written cleanly.
 pub fn flash_attention_backward_prepass<R: Runtime>(
     client: &ComputeClient<R>,
     o: TensorBinding<R>,

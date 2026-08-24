@@ -323,7 +323,7 @@ fn over_seals_stages_and_omission_is_in_place() {
 }
 
 /// The type column is the data flow: moves keep the operand's type, a conversion re-types it
-/// exactly where stated, and the padding below a conversion carries the converted type — so
+/// exactly where stated, and the padding below a conversion carries the converted type, so
 /// reading one operand's stages top to bottom is reading what its bytes are at every level.
 #[test]
 fn over_type_column_moves_then_converts() {
@@ -434,8 +434,8 @@ fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
 // ---- A level that cuts nothing --------------------------------------------
 
 /// A level whose edges are the extents handed to it has one instance on every axis, so it
-/// partitions nothing. The build drops it, and the plan compares equal to the plan without it
-/// — which is what stops the two from compiling as two kernels.
+/// partitions nothing. The build drops it, and the plan compares equal to the plan without it,
+/// which is what stops the two from compiling as two kernels.
 #[test]
 fn a_level_that_cuts_nothing_is_dropped() {
     let plain = Tiling::new()
@@ -482,7 +482,7 @@ fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
 
 /// The only level of a space stays even when its cuts take the whole extent: a space with a
 /// level is a tile walked in cells, and a space with none is the cell. A one-region walk is the
-/// degenerate case of the first, not the second — the shape a plan takes when the knob it splits
+/// degenerate case of the first, not the second: the shape a plan takes when the knob it splits
 /// on (attention's split count, a plane grid of one) lands on 1.
 #[test]
 fn the_only_level_stays_even_when_it_cuts_nothing() {
@@ -498,7 +498,7 @@ fn the_only_level_stays_even_when_it_cuts_nothing() {
 }
 
 /// An operand moving at a one-instance level is real staging and real traffic, so the level
-/// stays — and with it the residence column entry that names the move.
+/// stays, and with it the residence column entry that names the move.
 #[test]
 fn a_level_that_cuts_nothing_but_moves_an_operand_stays() {
     let mut ops = matmul_operands();

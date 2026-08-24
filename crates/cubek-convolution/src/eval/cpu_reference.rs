@@ -1,6 +1,6 @@
 //! CPU reference and seeded "produce a HostData" primitives for 2D convolution.
 //!
-//! Inputs are laid out NHWC (input) and OHWI (weight) — the same convention the
+//! Inputs are laid out NHWC (input) and OHWI (weight): the same convention the
 //! test suite uses.
 
 use cubecl::{
