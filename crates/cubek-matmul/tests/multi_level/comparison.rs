@@ -1,6 +1,6 @@
 //! Manual probes comparing the tile-DSL cmma routine against the multi-level
-//! SimpleCyclicCmma it ports. They exist only while both families do, and die
-//! with this island.
+//! SimpleCyclicCmma it ports. They mean nothing without both families, so they
+//! live under `multi_level` and are deleted with it.
 
 #![cfg(all(feature = "benchmarks", feature = "tiled"))]
 
@@ -25,11 +25,11 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
         .value
 }
 
-/// Timing probe: the tile-DSL cyclic cmma vs the legacy SimpleAlgorithm it ports.
+/// Timing probe: the tile-DSL cyclic cmma against the multi-level routine it ports.
 /// Run manually: `cargo test-metal-benchmark gemm_cmma_timing -- --ignored --nocapture`
 #[test]
 #[ignore = "timing probe, run manually"]
-fn gemm_cmma_timing_vs_legacy() {
+fn gemm_cmma_timing_vs_multi_level() {
     use cubek_matmul::eval::benchmarks::gemm::{bench, problems, strategies};
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
@@ -71,9 +71,9 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
 
     let problem: GemmProblem = lookup(problems(), "square_2x4096_rr_f16");
 
-    // The tile DSL forced to the legacy selector's point: 8x8x8 instruction, each plane
+    // The tile DSL forced to the multi-level selector's point: 8x8x8 instruction, each plane
     // 1x4 tiles, 4x1 planes (128 units), stage 32x32, stage_k 32.
-    let dsl_at_legacy_point = Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
+    let dsl_at_multi_level_point = Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
         instruction: InstructionShape { m: 8, n: 8, k: 8 },
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
@@ -82,7 +82,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     }))
     .into();
 
-    // The legacy engine forced to the DSL selector's point: partition 2x8x4 per plane,
+    // The multi-level engine forced to the DSL selector's point: partition 2x8x4 per plane,
     // 4x2 planes (256 units), stage 64x128, stage_k 32.
     let f16 = cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F16);
     let matmul_problem = MatmulProblem::from_parameters(
@@ -109,7 +109,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         .with_stage_size((4, 2, 1).into())
         .build()
         .unwrap();
-    let legacy_at_dsl_point = MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(
+    let multi_level_at_dsl_point = MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(
         cubek_matmul::multi_level::definition::BatchMatmulBlueprint::builder(
             TileMatmulKind::Cmma,
             tiling_scheme,
@@ -121,18 +121,18 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     ))
     .into();
 
-    // Legacy at its own tiling but WITHOUT the swizzled cube order (builder default),
-    // to isolate how much of legacy's edge is the SwizzleRow(4) dispatch order.
-    let legacy_tiling = TilingScheme::builder()
+    // Multi-level at its own tiling but WITHOUT the swizzled cube order (builder
+    // default), to isolate how much of its edge is the SwizzleRow(4) dispatch order.
+    let multi_level_tiling = TilingScheme::builder()
         .with_tile_size((8, 8, 8).into())
         .with_partition_size((1, 4, 4).into())
         .with_stage_size((4, 1, 1).into())
         .build()
         .unwrap();
-    let legacy_no_swizzle = MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(
+    let multi_level_no_swizzle = MultiLevel::SimpleCyclicCmma(BlueprintStrategy::Forced(
         cubek_matmul::multi_level::definition::BatchMatmulBlueprint::builder(
             TileMatmulKind::Cmma,
-            legacy_tiling,
+            multi_level_tiling,
             32,
             &matmul_problem,
         )
@@ -158,12 +158,12 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     for (id, strategy) in [
         ("dsl_at_own_point", lookup(strategies(), "cmma")),
         (
-            "legacy_at_own_point",
+            "multi_level_at_own_point",
             lookup(strategies(), "simple_cyclic_cmma"),
         ),
-        ("dsl_at_legacy_point", dsl_at_legacy_point),
-        ("legacy_at_dsl_point", legacy_at_dsl_point),
-        ("legacy_own_no_swizzle", legacy_no_swizzle),
+        ("dsl_at_multi_level_point", dsl_at_multi_level_point),
+        ("multi_level_at_dsl_point", multi_level_at_dsl_point),
+        ("multi_level_own_no_swizzle", multi_level_no_swizzle),
         ("dsl_thin_sk64", thin_deep(64)),
         ("dsl_thin_sk128", thin_deep(128)),
         ("dsl_thin_sk256", thin_deep(256)),
@@ -184,7 +184,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
     }
 }
 
-/// Timing sweep: the tile-DSL cyclic cmma vs legacy across the row-major catalog, each
+/// Timing sweep: the tile-DSL cyclic cmma against multi-level across the row-major catalog, each
 /// shape cross-checked (both engines must agree) so a broken kernel can't post a time.
 /// Run manually: `cargo test-metal-benchmark gemm_cyclic_cmma_sweep -- --ignored --nocapture`
 #[test]
@@ -207,7 +207,7 @@ fn gemm_cyclic_cmma_sweep() {
         "square_1x1536_rr_f32",
     ];
     let dsl: Strategy = lookup(strategies(), "cmma");
-    let legacy: Strategy = lookup(strategies(), "simple_cyclic_cmma");
+    let multi_level: Strategy = lookup(strategies(), "simple_cyclic_cmma");
 
     for tag in shapes {
         let problem: GemmProblem = lookup(problems(), tag);
@@ -227,33 +227,33 @@ fn gemm_cyclic_cmma_sweep() {
             (ds[ds.len() / 2], samples.tflops.unwrap_or(0.0))
         };
 
-        // Legacy flattens its cube count and wgpu rejects >= 65536 cubes (device-thread
+        // Multi-level flattens its cube count and wgpu rejects >= 65536 cubes (device-thread
         // panic, uncatchable), so those shapes report the DSL alone. Its stage is 32x32
         // at every catalog shape (8x8x8 instruction on Metal).
-        let legacy_cubes = problem.m.div_ceil(32) * problem.n.div_ceil(32) * problem.b;
-        if legacy_cubes >= 65536 {
+        let multi_level_cubes = problem.m.div_ceil(32) * problem.n.div_ceil(32) * problem.b;
+        if multi_level_cubes >= 65536 {
             let (dt, dtf) = t(&dsl);
-            println!("{tag}: dsl {dtf:.2} TFLOPS ({dt:?}); legacy exceeds its dispatch limit");
+            println!("{tag}: dsl {dtf:.2} TFLOPS ({dt:?}); multi-level exceeds its dispatch limit");
             continue;
         }
 
-        let legacy_out = GemmCorrectness
-            .kernel_result(&legacy, &problem, &SEEDS)
+        let multi_level_out = GemmCorrectness
+            .kernel_result(&multi_level, &problem, &SEEDS)
             .unwrap();
-        // The DSL accumulates in f16 where legacy upgrades to f32, so the drift between
+        // The DSL accumulates in f16 where multi-level upgrades to f32, so the drift between
         // them grows ~sqrt(k); scale the tolerance accordingly (0.5 at k = 512).
         let eps = F16_EPS * (problem.k as f32 / 512.0).sqrt().max(1.0) * 2.0;
         if let cubek_test_utils::ValidationResult::Fail(e) =
-            assert_equals_approx(&dsl_out, &legacy_out, eps)
+            assert_equals_approx(&dsl_out, &multi_level_out, eps)
         {
-            println!("{tag}: MISMATCH vs legacy: {e}");
+            println!("{tag}: MISMATCH vs multi-level: {e}");
             continue;
         }
 
         let (dt, dtf) = t(&dsl);
-        let (lt, ltf) = t(&legacy);
+        let (lt, ltf) = t(&multi_level);
         println!(
-            "{tag}: dsl {dtf:.2} TFLOPS ({dt:?}) vs legacy {ltf:.2} ({lt:?}) = {:.0}%",
+            "{tag}: dsl {dtf:.2} TFLOPS ({dt:?}) vs multi-level {ltf:.2} ({lt:?}) = {:.0}%",
             dtf / ltf * 100.0
         );
     }

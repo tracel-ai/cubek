@@ -3,8 +3,8 @@
 //! Each strategy gets its own `batch_broadcast_*` test so a failure names exactly
 //! which strategy regressed. Stride-0 on the actual matrix dims (m, n, k) is a
 //! separate story: the unit/naive path and gemm materialize it (via
-//! `into_contiguous`), while the plane strategies still reject it — the `gemm_*`
-//! tests pin that behaviour.
+//! `into_contiguous`), while the plane strategies reject it. The `gemm_*` tests
+//! pin that behaviour.
 
 use cubecl::{Runtime, TestRuntime};
 use cubek_matmul::{multi_level::Strategy as MultiLevel, routine::BlueprintStrategy};
