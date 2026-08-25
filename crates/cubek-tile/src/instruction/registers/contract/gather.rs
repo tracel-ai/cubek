@@ -28,6 +28,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
+    // `step_served` only returns 1 for an rhs lining along the accumulator, where it already
+    // refused anything but a matched pair or a scalar sink, so the division is exact.
+    comptime!(assert!(
+        rw == aw || aw == 1,
+        "contract gather: a rhs staged wider than its sink spreads its lanes across scalar cells, \
+         so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
+    ));
     let spread = comptime!(if served > 1 { 1usize } else { rw / aw });
 
     // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
@@ -63,10 +70,17 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] config: RegisterBlock,
 ) {
     let rank = comptime!(space.rank());
-    let (mr, nr) = comptime!((
-        space.extent_at(rank - 2),
-        space.extent_at(rank - 1).div_ceil(aw * spread)
-    ));
+    // `cols` is the sink's own innermost extent. Only a spread block rounds up: its lanes are
+    // scalar cells, so a last column overhanging `cols` is masked lane by lane in
+    // [`block::seed`]/[`block::commit`]. An `aw`-wide column has no such handle on a partial
+    // cell, and keeps counting whole lines.
+    let cols = comptime!(space.extent_at(rank - 1));
+    let nr = comptime!(if spread > 1 {
+        cols.div_ceil(spread)
+    } else {
+        cols / aw
+    });
+    let mr = comptime!(space.extent_at(rank - 2));
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
 
     // The reduce axes' extents come off the operands' merged space, not the accumulator's: a
@@ -140,6 +154,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             spread,
             comptime!(mr),
             comptime!(nr),
+            comptime!(cols),
             unroll,
         );
 
@@ -268,6 +283,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             spread,
             comptime!(mr),
             comptime!(nr),
+            comptime!(cols),
             unroll,
         );
     }

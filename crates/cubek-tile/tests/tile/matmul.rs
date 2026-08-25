@@ -292,6 +292,69 @@ fn matmul_padded_rhs_stage_into_scalar_sink() {
         .enforce()
 }
 
+/// The single-row shape, where a block column overhanging `N` has nowhere legal to land: with no
+/// row after it, `block::commit`'s masked lanes are all that keeps the write inside the output.
+#[test]
+fn matmul_padded_rhs_stage_single_row_sink() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (1usize, 3usize, 2usize);
+    let dtype = f32::elem_type_native();
+    let mut operands = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
+            level
+                .axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(k));
+            ops.1.stage(Residence::Smem);
+        })
+        .build();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let launcher = space.launcher(&client);
+    let a_op = launcher.bind(&operands.0, a.handle().binding()).build();
+    let b_op = launcher
+        .bind(&operands.1, b.handle().binding())
+        .stage_width(4)
+        .build();
+    let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        1,
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher
+            .space()
+            .clone()
+            .with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = vec![3.0, 4.0, 5.0];
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// A scalar `K×N` source with `N = 5` spanning two 4-wide shared-memory lines (total 8 lanes, 3
 /// padding). Exercises non-multiple tail across multi-line stages.
 #[test]

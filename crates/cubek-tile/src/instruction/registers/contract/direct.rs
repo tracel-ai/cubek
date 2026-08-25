@@ -72,8 +72,10 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let kc = comptime!(merged.extent(k));
 
     // `nr` counts the accumulator's own lines along `N`; `mr` (rows) and `kc` (scalar `K`) are
-    // unvectorized.
-    let (mr, nr) = comptime!((space.extent_at(rank - 2), space.extent_at(rank - 1) / aw));
+    // unvectorized. `cols` is the scalar extent behind `nr`, which the block only consults on the
+    // N-D nest's spread path.
+    let cols = comptime!(space.extent_at(rank - 1));
+    let (mr, nr) = comptime!((space.extent_at(rank - 2), cols / aw));
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
@@ -130,6 +132,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     served,
                     mr,
                     nr,
+                    cols,
                     kc,
                     true,
                     lane_fanout,
@@ -143,6 +146,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     served,
                     mr,
                     nr,
+                    cols,
                     kc,
                     false,
                     lane_fanout,
@@ -158,6 +162,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 served,
                 mr,
                 nr,
+                cols,
                 kc,
                 unroll,
                 lane_fanout,
@@ -178,11 +183,12 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] served: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
+    #[comptime] cols: usize,
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
 ) {
-    let mut c = block::seed::<E, V, A>(acc, served, 1usize, mr, nr, unroll);
+    let mut c = block::seed::<E, V, A>(acc, served, 1usize, mr, nr, cols, unroll);
     block::contract::<E, EL, L, ER, V>(
         lhs,
         rhs,
@@ -195,5 +201,5 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         unroll,
         lane_fanout,
     );
-    block::commit::<E, V, A>(acc, c, served, 1usize, mr, nr, unroll);
+    block::commit::<E, V, A>(acc, c, served, 1usize, mr, nr, cols, unroll);
 }

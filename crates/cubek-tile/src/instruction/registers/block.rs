@@ -170,6 +170,31 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     }
 }
 
+/// What [`seed`] and [`commit`] both need to hold before they spread a block column's lanes across
+/// several sink cells: the lanes mean one thing at a time, and a spread one addresses cells the
+/// accumulator serves singly.
+fn assert_spread<A: Size>(served: usize, spread: usize, who: &str) {
+    assert!(
+        served == 1 || spread == 1,
+        "{who}: lanes cannot hold contracted partials (served {served}) and neighbouring \
+         sink cells (spread {spread}) at once"
+    );
+    assert!(
+        spread == 1 || A::try_value_const() == Some(1),
+        "{who}: a spread block scatters one lane per sink cell, so the accumulator must be \
+         served scalar (it is {:?} wide)",
+        A::try_value_const()
+    );
+}
+
+/// Whether a spread block's lanes have to be tested against the sink's extent before they touch
+/// it. The N-D nest rounds `nr` up, so the last column's spare lanes address cells past `cols`
+/// exactly when `spread` does not divide it. Nothing masks them downstream: an unchecked
+/// [`AccumulateView`] writes straight through.
+fn spread_guard(spread: usize, cols: usize) -> bool {
+    spread > 1 && !cols.is_multiple_of(spread)
+}
+
 /// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the steps
 /// never touch memory. Always under `Sum`: a contraction accumulates by definition.
 ///
@@ -178,7 +203,9 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 ///
 /// At `spread > 1` they instead hold neighbouring cells of a scalar sink. A padded shared-memory
 /// operand serves whole lines even when its global source and sink are scalar, so each block
-/// column gathers `spread` sink cells into its lanes.
+/// column gathers `spread` sink cells into its lanes. `cols` is the sink's own innermost extent,
+/// which the block's `nr * spread` lanes overhang when `spread` does not divide it
+/// ([`spread_guard`]).
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
@@ -186,13 +213,11 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     #[comptime] spread: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
+    #[comptime] cols: usize,
     #[comptime] unroll: bool,
 ) -> Array<Vector<E, V>> {
-    comptime!(assert!(
-        served == 1 || spread == 1,
-        "block::seed: lanes cannot hold contracted partials (served {served}) and neighbouring \
-         sink cells (spread {spread}) at once"
-    ));
+    comptime!(assert_spread::<A>(served, spread, "block::seed"));
+    let guard = comptime!(spread_guard(spread, cols));
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
     #[unroll(unroll)]
     for i in 0..mr {
@@ -200,14 +225,20 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
         for n in 0..nr {
             if comptime!(spread > 1) {
                 let base = (n as u32).fmul(comptime!(spread as u32));
+                // The spare lanes of an overhanging last column have no cell to seed from, and
+                // the zero they keep is `Sum`'s identity, so they contribute nothing.
                 let mut lanes = Vector::<E, V>::cast_from(E::from_int(0));
                 #[unroll]
                 for l in 0..spread {
-                    lanes.insert(
-                        l,
-                        acc.seed((i as u32, base.fadd(comptime!(l as u32))), LeafOp::Sum)
-                            .extract(0usize),
-                    );
+                    let col = base.fadd(comptime!(l as u32));
+                    let live = if comptime!(guard) {
+                        col < comptime!(cols as u32)
+                    } else {
+                        true.runtime()
+                    };
+                    if live {
+                        lanes.insert(l, acc.seed((i as u32, col), LeafOp::Sum).extract(0usize));
+                    }
                 }
                 c[i * nr + n] = lanes;
             } else {
@@ -238,8 +269,18 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     #[comptime] spread: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
+    #[comptime] cols: usize,
     #[comptime] unroll: bool,
 ) {
+    comptime!(assert_spread::<A>(served, spread, "block::commit"));
+    let guard = comptime!(spread_guard(spread, cols));
+    let lane_share = acc.lane_share();
+    comptime!(assert!(
+        !guard || matches!(lane_share, LaneShare::Whole),
+        "block::commit: a spread block skips the lanes overhanging the sink, and a lane-split \
+         accumulator ({lane_share:?}) folds across the plane on the way out, which that skip \
+         would put under divergent control flow"
+    ));
     #[unroll(unroll)]
     for i in 0..mr {
         #[unroll(unroll)]
@@ -247,13 +288,23 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
             let cell = c[i * nr + n];
             if comptime!(spread > 1) {
                 let base = (n as u32).fmul(comptime!(spread as u32));
+                // One commit per lane, which the assert above holds to `LaneShare::Whole`: each
+                // is a bare write, not `spread` plane folds where the plain path does one.
                 #[unroll]
                 for l in 0..spread {
-                    acc.commit(
-                        (i as u32, base.fadd(comptime!(l as u32))),
-                        Vector::<E, A>::cast_from(cell.extract(l)),
-                        LeafOp::Sum,
-                    );
+                    let col = base.fadd(comptime!(l as u32));
+                    let live = if comptime!(guard) {
+                        col < comptime!(cols as u32)
+                    } else {
+                        true.runtime()
+                    };
+                    if live {
+                        acc.commit(
+                            (i as u32, col),
+                            Vector::<E, A>::cast_from(cell.extract(l)),
+                            LeafOp::Sum,
+                        );
+                    }
                 }
             } else if comptime!(served > 1) {
                 let total = horizontal::vector::<E, V>(cell, served, LeafOp::Sum);
