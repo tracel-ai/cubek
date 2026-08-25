@@ -29,10 +29,10 @@ cubecl = { workspace = true }
 cubecl-common = { workspace = true }
 half = { workspace = true }
 thiserror = { workspace = true }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.2", default-features = false, optional = true }
+cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.3", default-features = false, optional = true }
 serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-interpolate = { path = ".", features = ["cpu-reference"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }

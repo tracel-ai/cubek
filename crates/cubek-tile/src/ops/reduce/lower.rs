@@ -14,16 +14,21 @@ impl<Acc: Numeric> Tile<Acc> {
     ///
     /// Under `LaneShare::Whole` (a register or memory accumulator, not a lane-shared plane
     /// fragment) that existing value is the fold's literal starting point: nothing seeds it on
-    /// `self`'s behalf. The caller must pre-seed `self` with `fold`'s identity ([`Tile::zero`] for
-    /// `Sum`, [`Tile::init`] with `E::min_value()`/`E::max_value()` for `Max`/`Min`) before the
-    /// first call, or an uninitialized/stale accumulator folds against garbage.
-    pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
+    /// `self`'s behalf. The caller must pre-seed `self` with `monoid`'s identity
+    /// ([`Monoid::identity`]) before the first call, or an uninitialized accumulator folds
+    /// against garbage.
+    pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
-            Partitioner::Final => reduce_leaf(self, input, fold),
+            Partitioner::Final => reduce_leaf(self, input, monoid),
             Partitioner::Level(level) => {
                 let op_space = self.reduce_op_space(input);
-                self.reduce_buffered(input, fold, op_space, comptime!(level.buffering().depth()));
+                self.reduce_buffered(
+                    input,
+                    monoid,
+                    op_space,
+                    comptime!(level.buffering().depth()),
+                );
             }
         }
     }
@@ -49,7 +54,7 @@ impl<Acc: Numeric> Tile<Acc> {
 pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
     acc: &mut Tile<Acc>,
     input: &Tile<In>,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) {
     let input_space = comptime!(input.space.clone());
     let vector_size = input.vector_size();
@@ -63,10 +68,10 @@ pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
     let space = comptime!(acc.space.clone());
     match &mut acc.tile_kind {
         TileKind::Gmem(g) | TileKind::Smem(g) => {
-            reduce::memory(g, input, space, fold);
+            reduce::memory(g, input, space, monoid);
         }
         TileKind::PlaneTile(t) => {
-            reduce_plane_tile(t, input, space, fold);
+            reduce_plane_tile(t, input, space, monoid);
         }
         TileKind::PlanePartition(p) => {
             comptime!(assert!(
@@ -74,7 +79,7 @@ pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
                 "reduce_leaf: a multi-tile partition must be contracted at its partition level"
             ));
             let mut t = p.at(0usize, 0usize);
-            reduce_plane_tile(&mut t, input, space, fold);
+            reduce_plane_tile(&mut t, input, space, monoid);
         }
         TileKind::TmaGmem(_) => panic!("reduce: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("reduce: a procedural tile is not an accumulator sink"),
@@ -86,11 +91,11 @@ fn reduce_plane_tile<Acc: Numeric, In: Numeric>(
     tile: &mut PlaneTile<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) {
     match tile {
         PlaneTile::Register(d) => {
-            reduce::register_data(d, input, acc_space, fold);
+            reduce::register_data(d, input, acc_space, monoid);
         }
         PlaneTile::Cmma(_) | PlaneTile::Mma(_) => {
             panic!(

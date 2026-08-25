@@ -13,7 +13,7 @@ pub(crate) struct ReduceWalk<Acc: Numeric, In: Numeric> {
     acc: Tile<Acc>,
     input: Tile<In>,
     #[cube(comptime)]
-    fold: LeafOp,
+    monoid: Monoid,
 }
 
 #[cube]
@@ -54,7 +54,7 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         region: &Region,
         #[comptime] publish: bool,
     ) {
-        let fold = comptime!(self.fold);
+        let monoid = comptime!(self.monoid);
         let plan = slot.plan(LHS);
         let payload = comptime!(plan.payload);
         if comptime!(publish) {
@@ -62,7 +62,7 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         }
         slot.consume(|staged| {
             let input = read_operand(staged, region, payload);
-            self.acc.at(region).reduce_axis(&input, fold);
+            self.acc.at(region).reduce_axis(&input, monoid);
         });
     }
 }
@@ -75,7 +75,7 @@ impl<Acc: Numeric> Tile<Acc> {
     pub(crate) fn reduce_buffered<In: Numeric>(
         &mut self,
         input: &Tile<In>,
-        #[comptime] fold: LeafOp,
+        #[comptime] monoid: Monoid,
         op_space: Space,
         #[comptime] depth: usize,
     ) {
@@ -83,7 +83,7 @@ impl<Acc: Numeric> Tile<Acc> {
         let mut walk = ReduceWalk::<Acc, In> {
             acc: self.clone(),
             input: input.clone(),
-            fold,
+            monoid,
         };
         pipelined_walk::<ReduceWalk<Acc, In>>(&mut walk, op_space, out, depth);
     }

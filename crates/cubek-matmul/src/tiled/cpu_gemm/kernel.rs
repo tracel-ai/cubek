@@ -1,7 +1,7 @@
 //! The CpuGemm kernel: the whole body is the accumulator's scope.
 
 use cubecl::prelude::*;
-use cubek_tile::{LeafOp, Space, TileArg};
+use cubek_tile::{Monoid, Space, TileArg};
 
 /// The same three lines the tensor-core kernel runs.
 ///
@@ -35,9 +35,9 @@ pub fn cpu_gemm_kernel<
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
-    let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
-    // The matmul contract is `out = A·B` and `mma` accumulates, so start at zero.
-    acc.zero();
+    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
+    // The matmul contract is `out = A·B` and `mma` accumulates, so start at the identity.
+    acc.seed();
     // The contraction exhausts the scope `out` opened, so this drains it too.
     acc.mma(&a, &b);
 }

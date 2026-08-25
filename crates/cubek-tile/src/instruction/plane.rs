@@ -8,16 +8,17 @@
 
 use cubecl::prelude::*;
 
-use super::LeafOp;
+use super::Monoid;
 
-/// The plane instruction itself: fold `val` under `op` across the whole plane, leaving every lane
-/// holding the total. Unguarded, for callers that already know the plane carries real lanes.
+/// The plane instruction itself: fold `val` under `monoid` across the whole plane, leaving every
+/// lane holding the total. Unguarded, for callers that already know the plane carries real lanes.
 #[cube]
-pub fn broadcast<T: CubePrimitive<Scalar: PlaneNumeric>>(val: T, #[comptime] op: LeafOp) -> T {
-    match comptime!(op) {
-        LeafOp::Sum => plane_sum(val),
-        LeafOp::Max => plane_max(val),
-        LeafOp::Min => plane_min(val),
+pub fn broadcast<T: CubePrimitive<Scalar: PlaneNumeric>>(val: T, #[comptime] monoid: Monoid) -> T {
+    match comptime!(monoid) {
+        Monoid::Sum => plane_sum(val),
+        Monoid::Prod => plane_prod(val),
+        Monoid::Max => plane_max(val),
+        Monoid::Min => plane_min(val),
     }
 }
 
@@ -27,16 +28,16 @@ pub fn broadcast<T: CubePrimitive<Scalar: PlaneNumeric>>(val: T, #[comptime] op:
 pub fn reduce<T: CubePrimitive<Scalar: PlaneNumeric>>(
     val: T,
     #[comptime] lanes: usize,
-    #[comptime] op: LeafOp,
+    #[comptime] monoid: Monoid,
 ) -> T {
     if comptime!(lanes > 1) {
-        broadcast::<T>(val, op)
+        broadcast::<T>(val, monoid)
     } else {
         val
     }
 }
 
-/// Combine a lane group's partials under `op`, leaving every lane of the group holding the
+/// Combine a lane group's partials under `monoid`, leaving every lane of the group holding the
 /// group's total.
 ///
 /// One butterfly step per bit of `fold_mask`. A cell's partials sit on the lanes that agree
@@ -50,17 +51,14 @@ pub fn reduce<T: CubePrimitive<Scalar: PlaneNumeric>>(
 pub fn group<E: Numeric, V: Size>(
     value: Vector<E, V>,
     #[comptime] fold_mask: usize,
-    #[comptime] op: LeafOp,
+    #[comptime] monoid: Monoid,
 ) -> Vector<E, V> {
     let mut total = value;
     #[unroll]
     for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
         if comptime!(fold_mask & (1 << bit) != 0) {
-            total = LeafOp::combine::<Vector<E, V>>(
-                total,
-                plane_shuffle_xor(total, comptime!(1u32 << bit)),
-                op,
-            );
+            total = monoid
+                .fold::<Vector<E, V>>(total, plane_shuffle_xor(total, comptime!(1u32 << bit)));
         }
     }
     total

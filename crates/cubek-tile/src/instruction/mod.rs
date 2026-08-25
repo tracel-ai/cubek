@@ -7,10 +7,10 @@
 //! these repeatedly are one layer up, and the leaf dispatch that picks between a hardware leaf
 //! and a nest is the verb's, one layer above that.
 
+mod algebra;
 pub mod logsumexp;
 mod mma;
-mod op;
 pub mod plane;
 pub mod registers;
 
-pub use op::*;
+pub use algebra::*;
