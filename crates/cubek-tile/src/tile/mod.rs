@@ -812,6 +812,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Seed this tile with `monoid`'s identity, so a fold under it starts from a value folding
+    /// it in leaves unchanged.
+    ///
+    /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
+    /// fragments included; the other monoids need a real value and so reach only the forms
+    /// [`init`](Tile::init) serves.
+    pub fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+        match comptime!(monoid) {
+            Monoid::Sum => self.zero(),
+            Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
+        }
+    }
+
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
     pub fn init(&mut self, val: T) {
         match comptime!(self.space.partitioner().clone()) {

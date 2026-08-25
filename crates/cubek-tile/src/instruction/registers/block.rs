@@ -171,7 +171,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 }
 
 /// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the steps
-/// never touch memory. Always under `Sum`: a contraction accumulates by definition.
+/// never touch memory. The algebra is the view's, stated where it was built.
 ///
 /// At `served > 1` the block's lanes are partials of one cell, so the accumulator's value seeds
 /// lane 0 alone and the rest start at the identity.
@@ -188,7 +188,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            let cell = acc.seed((i as u32, n as u32), Monoid::Sum);
+            let cell = acc.seed((i as u32, n as u32));
             if comptime!(served > 1) {
                 let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(Monoid::Sum));
                 lanes.insert(0usize, cell.extract(0usize));
@@ -221,17 +221,9 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
             let cell = c[i * nr + n];
             if comptime!(served > 1) {
                 let total = horizontal::vector::<E, V>(cell, served, Monoid::Sum);
-                acc.commit(
-                    (i as u32, n as u32),
-                    Vector::<E, A>::cast_from(total),
-                    Monoid::Sum,
-                );
+                acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(total));
             } else {
-                acc.commit(
-                    (i as u32, n as u32),
-                    Vector::<E, A>::cast_from(cell),
-                    Monoid::Sum,
-                );
+                acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(cell));
             }
         }
     }

@@ -1207,8 +1207,8 @@ fn resident_fold_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let out = output.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, monoid);
-    acc.seed(monoid);
-    acc.reduce_axis(&input, monoid);
+    acc.seed();
+    acc.reduce_axis(&input);
 }
 
 #[test]

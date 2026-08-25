@@ -110,11 +110,11 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
         "reduce: MemData total_acc must be divisible by store.vector_size"
     ));
     let total_lines = comptime!(total_acc / ws);
-    let mut acc_view = acc.flat_accumulate::<W>();
+    let mut acc_view = acc.flat_accumulate::<W>(monoid);
     let in_view = input.nd_packed::<V>();
 
     for line_idx in 0..total_lines {
-        let seed_vec = acc_view.seed(line_idx, monoid);
+        let seed_vec = acc_view.seed(line_idx);
         let mut result = seed_vec;
 
         #[unroll]
@@ -140,7 +140,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
             result.insert(comptime!(lane_idx), curr_val);
         }
 
-        acc_view.commit(line_idx, result, monoid);
+        acc_view.commit(line_idx, result);
     }
 }
 

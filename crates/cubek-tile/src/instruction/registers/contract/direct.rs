@@ -78,7 +78,12 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     for mat in 0..matrices {
         let lhs_mat = lhs.matrix_packed::<L>(mat);
         let rhs_mat = rhs.matrix_packed::<V>(mat);
-        let mut acc_view = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
+        // The contraction's own algebra: its products accumulate under the semiring's add.
+        let mut acc_view = acc.matrix_accumulate::<A>(
+            mat,
+            comptime!(space.clone()),
+            comptime!(Semiring::SUM_PROD.add()),
+        );
 
         // A checked edge normally rolls every local array access. When enabled, split the leaf
         // into two comptime-specialized bodies: interior instances prove their complete operand

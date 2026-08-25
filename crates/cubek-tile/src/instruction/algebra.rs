@@ -172,3 +172,44 @@ impl Semiring {
         Semiring::__expand_step_of::<T>(scope, lhs, rhs, acc, self)
     }
 }
+
+/// A [`Monoid`] is comptime-only: a kernel never holds one in a register, it reads one to decide
+/// which instruction to emit. Expanding as itself is what lets a [`CubeType`] carry one in a
+/// `#[cube(comptime)]` field, the way an accumulator's scope carries the algebra it folds under.
+impl CubeType for Monoid {
+    type ExpandType = Self;
+}
+
+impl IntoExpand for Monoid {
+    type Expand = Self;
+
+    fn into_expand(self, _scope: &Scope) -> Self {
+        self
+    }
+}
+
+impl IntoMut for Monoid {
+    fn into_mut(self, _scope: &Scope) -> Self {
+        self
+    }
+}
+
+impl ExpandTypeClone for Monoid {
+    fn clone_unchecked(&self) -> Self {
+        *self
+    }
+}
+
+impl CubeDebug for Monoid {}
+
+impl AsRefExpand for Monoid {
+    fn __expand_ref_method(&self, _scope: &Scope) -> &Self {
+        self
+    }
+}
+
+impl AsMutExpand for Monoid {
+    fn __expand_ref_mut_method(&mut self, _scope: &Scope) -> &mut Self {
+        self
+    }
+}

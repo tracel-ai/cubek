@@ -109,7 +109,12 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             mat.fcast::<u32>(),
         );
 
-        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
+        // The contraction's own algebra, as [`direct`](super::direct) states it.
+        let mut acc = acc.matrix_accumulate::<A>(
+            mat,
+            comptime!(space.clone()),
+            comptime!(Semiring::SUM_PROD.add()),
+        );
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
