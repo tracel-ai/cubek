@@ -290,7 +290,7 @@ fn eight_bit_fields_contract_against_their_scales() {
 
 /// The rhs twin of [`run_matmul`]: the packed operand is the *right* one, lined along the
 /// accumulator's columns, and its scales are per `(block of K, block of N)`.
-fn run_matmul_rhs(field: QuantValue) {
+fn run_matmul_rhs(field: QuantValue, bn: usize) {
     const ROWS: usize = 4;
     const DEPTH: usize = 32;
     /// Contracted values per scale.
@@ -303,8 +303,8 @@ fn run_matmul_rhs(field: QuantValue) {
     if !fits(&client, factor) {
         return;
     }
-    // Two column blocks, each exactly one packed line: a line never straddles a scale.
-    let (cols, bn) = (factor * 2, factor);
+    // Two packed lines wide; `bn` says how many columns share a scale, and a line takes one.
+    let cols = factor * 2;
     let blocks_n = cols / bn;
 
     let x: Vec<f32> = (0..ROWS * DEPTH).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -384,14 +384,25 @@ fn run_matmul_rhs(field: QuantValue) {
     }
 }
 
-/// The q4 matmul with the weights on the right: what the shipped quant matmul does.
+/// The q4 matmul with the weights on the right: what the shipped quant matmul does. One column
+/// block per packed line, so a line never straddles a scale.
 #[test]
 fn a_packed_rhs_contracts_against_its_scales() {
-    run_matmul_rhs(QuantValue::Q4S);
+    run_matmul_rhs(QuantValue::Q4S, 32 / QuantValue::Q4S.size_bits());
 }
 
 /// The same over 8-bit fields.
 #[test]
 fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
-    run_matmul_rhs(QuantValue::Q8S);
+    run_matmul_rhs(QuantValue::Q8S, 32 / QuantValue::Q8S.size_bits());
+}
+
+/// A block covering both lines: several lines share a scale, which is the direction that is
+/// always sound. The other one — a block narrower than the line reading it — is refused by the
+/// contraction (`mm_scaled: ... scale blocks must cover whole lines`), and that refusal is a
+/// comptime panic inside the kernel, so it lands on a worker thread rather than in a
+/// `should_panic` test.
+#[test]
+fn several_lines_may_share_one_scale() {
+    run_matmul_rhs(QuantValue::Q8S, 32 / QuantValue::Q8S.size_bits() * 2);
 }

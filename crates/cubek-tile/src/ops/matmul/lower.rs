@@ -233,6 +233,17 @@ pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
+        // A promoted register accumulator: the partials stay in `E` across the whole walk, which
+        // is the form a decode gemv wants.
+        TileKind::PlaneTile(t) => t.mma_scaled(lhs, rhs, scales, space, semiring),
+        TileKind::PlanePartition(p) => {
+            comptime!(assert!(
+                p.m_tiles == 1 && p.n_tiles == 1,
+                "mma_leaf_scaled: a multi-tile partition must be contracted at its partition level"
+            ));
+            let mut t = p.at(0usize, 0usize);
+            t.mma_scaled(lhs, rhs, scales, space, semiring)
+        }
         TileKind::Gmem(g) | TileKind::Smem(g) => {
             let config = comptime!(match space.instruction() {
                 Some(Instruction::Registers { config }) => config,
@@ -244,10 +255,10 @@ pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
             });
             contract::memory_scaled::<E, EL, ER, S>(g, lhs, rhs, scales, space, config, semiring)
         }
-        _ => panic!(
-            "mma_leaf_scaled: a scaled contraction accumulates in memory under the software \
-             instruction; a fragment accumulator would need a scaled hardware instruction"
-        ),
+        TileKind::TmaGmem(_) => panic!("mma_scaled: a tma source is not an accumulator sink"),
+        TileKind::Procedural(_) => {
+            panic!("mma_scaled: a procedural tile is not an accumulator sink")
+        }
     }
 }
 
@@ -276,6 +287,33 @@ impl<E: Numeric> PlaneTile<E> {
                 strided_2d(lhs, rhs, out);
                 d.mma(lhs, rhs, semiring)
             }
+        }
+    }
+}
+
+#[cube]
+impl<E: Numeric> PlaneTile<E> {
+    /// [`mma`](PlaneTile::mma) with one operand scaled by a real operand.
+    ///
+    /// Only the register form. A hardware instruction eats its operands' format whole, so a scale
+    /// there routes to the *fragment*, not to a view: a different instruction, not this one with
+    /// a multiply added.
+    pub fn mma_scaled<EL: Numeric, ER: Numeric, ES: Numeric>(
+        &mut self,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
+        scales: &Tile<ES>,
+        #[comptime] out: Space,
+        #[comptime] semiring: Semiring,
+    ) {
+        match self {
+            PlaneTile::Register(d) => {
+                strided_2d(lhs, rhs, comptime!(out.clone()));
+                d.mma_scaled(lhs, rhs, scales, out, semiring)
+            }
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                "mma_scaled: a hardware instruction eats its operands' format, so a scaled                  contraction on a fragment accumulator needs a scaled hardware instruction"
+            ),
         }
     }
 }

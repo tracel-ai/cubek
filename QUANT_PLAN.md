@@ -79,6 +79,17 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
    column by the accumulator's width; a line still may not straddle a block. A scale over *both*
    matrix axes is refused: that is a scale of the output, not a factor of either term.
 
+5. **The promoted accumulator, and the line rule enforced** (`tests/tile/scaled.rs`).
+   `mm_scaled` reaches a register-resident accumulator: `AccumulatorScope::mm_scaled` /
+   `mma_scaled`, `PlaneTile::mma_scaled`, `RegisterData::mma_scaled`. The scaled partials no
+   longer round-trip through the sink's element between `K` steps, which is the form the decode
+   gemv wants. A fragment accumulator still refuses, for the reason under Deferred.
+
+   And the rule the docs stated is now checked: `check_lines_hold_one_scale` reads the block off
+   the scales' own projection (`scale_block`) and refuses a step whose line straddles two. Which
+   axis the line runs along is the step's own business — `K` past one served value, the
+   accumulator's columns at one.
+
 ## Next, in order
 
 | # | item | notes |
@@ -104,12 +115,13 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
 
 ## Known gaps
 
-- `mm_scaled` requires a memory accumulator (`Instruction::Registers`). A promoted register
-  accumulator is the faster form for a decode gemv, and is refused today.
-- A served line takes one scale, so a line may not straddle a block. Stated in the verb's docs and
-  not yet checked at launch — it should be, once a routine can state the block.
-- The old machinery is untouched and still shipping. Both spellings compile; nothing is deleted
-  until item 4.
+- The straddle check is a comptime assert *inside* the kernel, so it lands on a worker thread and
+  the launch returns zeros beside it. Every other contract assert is the same, but a launch-side
+  check would read as a rejection; it needs a routine that states the block.
 - A packed operand cannot be *staged in its packed form*: `smem_stored` keys the stored stage on
   the scheme, so a stated packing stages unpacked (correct, just larger). Wanted where a routine
   has reuse to amortize; see Deferred.
+- `Packing::Native` with no scales beside it (an `i8` tensor served as floats) is refused: the
+  unpacking view is `u32`-only. A widening read, not a hard one, but nothing asks for it yet.
+- The old machinery is untouched and still shipping. Both spellings compile; nothing is deleted
+  until item 4.

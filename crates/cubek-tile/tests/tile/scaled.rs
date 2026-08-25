@@ -48,6 +48,25 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
+/// [`scaled_matmul`] with the accumulator promoted to registers: the partials never round-trip
+/// through `c`'s element between `K` steps, which is the form a decode gemv wants.
+#[cube(launch)]
+fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    scales: &TileArg<'_, S, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E, S)] _dtypes: [ElemType; 2],
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
+    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+}
+
 /// `⌊k / BLOCK⌋` along the contracted axis: one scale per block of the lhs's row.
 fn scales_spec() -> TileSpec {
     TileSpec::new(Projection::new(
@@ -276,4 +295,56 @@ fn an_rhs_scale_survives_a_finer_cut() {
 #[test]
 fn an_rhs_scale_changes_within_a_coarser_region() {
     assert_rhs_scaled(&run_rhs(space(BLOCK * 2)));
+}
+
+/// [`run`] with the output stating [`Residence::Register`]: the accumulator is a register block
+/// living across the whole walk, and the scaled steps fold into it directly.
+fn run_promoted(space: Space) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+
+    let (a, _) = TestInput::builder(client.clone(), shape![ROWS, DEPTH])
+        .dtype(dtype)
+        .custom(lhs_data())
+        .generate_with_f32_host_data();
+    let (b, _) = TestInput::builder(client.clone(), shape![DEPTH, COLS])
+        .dtype(dtype)
+        .custom(rhs_data())
+        .generate_with_f32_host_data();
+    let (scales, _) = TestInput::builder(client.clone(), shape![ROWS, BLOCKS])
+        .dtype(dtype)
+        .custom(scale_data())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![ROWS, COLS])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // One entry per level: Register at the outermost, in place below it.
+    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
+    residence[0] = Residence::Register;
+
+    scaled_matmul_promoted::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(a.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
+        TileArgLaunch::new(scales.binding().into_tensor_arg(), scales_spec()),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&residence),
+        ),
+        space,
+        [dtype, dtype],
+    );
+
+    HostData::from_tensor_handle(&client, c, HostDataType::F32)
+}
+
+/// **The gap the decode gemv was waiting on.** A promoted register accumulator under a scaled
+/// contraction: refused before, and the same numbers as the memory-backed form.
+#[test]
+fn a_promoted_accumulator_takes_the_scaled_contraction() {
+    assert_scaled(&run_promoted(space(BLOCK)));
 }

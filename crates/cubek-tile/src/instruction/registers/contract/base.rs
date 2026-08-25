@@ -74,12 +74,52 @@ pub(crate) fn scale_side(scales: &Space, output: &Space) -> ScaleSide {
     let spans = |axis| scales.axes().any(|a| a == axis);
     assert!(
         !(spans(rows) && spans(cols)),
-        "mm_scaled: a scales operand over both {rows:?} and {cols:?} is a scale of the output,          not a factor of either operand's term"
+        "mm_scaled: a scales operand over both {rows:?} and {cols:?} is a scale of the output, \
+         not a factor of either operand's term"
     );
     match spans(cols) {
         true => ScaleSide::Rhs,
         false => ScaleSide::Lhs,
     }
+}
+
+/// The block a scales operand resolves `axis` at: the divisor of the physical axis addressing it,
+/// so `PhysicalAxisMap::of(K).over(8)` answers `8` and a plain axis answers `1`. An axis the
+/// operand does not span answers [`usize::MAX`]: one scale covers every value of it, so no line
+/// along it can straddle anything.
+pub(crate) fn scale_block(projection: &Projection, axis: Axis) -> usize {
+    (0..projection.physical_rank())
+        .find(|&pa| projection.scale(pa, axis) == 1)
+        .map(|pa| projection.divisor(pa).bound())
+        .unwrap_or(usize::MAX)
+}
+
+/// Refuse a served line that straddles two scales: one line is one read and takes one scale, so
+/// the block along whichever axis the line runs must cover whole lines.
+///
+/// Which axis that is depends on the step: past one served value both operands line along the
+/// contracted axis, and at one the rhs lines along the accumulator's columns instead. The lhs at
+/// one served value takes a scalar `k` per step and lines along nothing.
+pub(crate) fn check_lines_hold_one_scale(
+    scales: &Projection,
+    k: Axis,
+    cols: Axis,
+    served: usize,
+    aw: usize,
+    side: ScaleSide,
+) {
+    let (axis, width) = match (served > 1, side) {
+        (true, _) => (k, served),
+        (false, ScaleSide::Rhs) => (cols, aw),
+        (false, ScaleSide::Lhs) => return,
+    };
+    let block = scale_block(scales, axis);
+    assert!(
+        block == usize::MAX || block.is_multiple_of(width),
+        "mm_scaled: a step reads {width} values of {axis:?} as one line, so its {block}-value \
+         scale blocks must cover whole lines; state a block the line divides, or a cut that \
+         serves narrower lines"
+    );
 }
 
 /// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
@@ -120,6 +160,15 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
          coordinate to address a scale with"
     ));
     let side = comptime!(scale_side(&scales.space, &space));
+    let scales_projection = scales.projection();
+    comptime!(check_lines_hold_one_scale(
+        &scales_projection,
+        Space::contracted(&[&lhs.space, &rhs.space], &space)[0],
+        space.axis_at(space.rank() - 1),
+        served,
+        aw,
+        side,
+    ));
     direct::contract_scaled::<E, EL, ER, ES>(
         acc, lhs, rhs, scales, space, served, side, config, semiring,
     );
