@@ -77,6 +77,36 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
+/// How the lhs varies over the accumulator's axes, which is what decides how much one read of
+/// it covers.
+///
+/// The outer product the nest is written around holds only in the first case; the other two are
+/// what a gathered or batched operand degenerates to, and they differ in whether one read still
+/// covers a whole cell.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum LhsRole {
+    /// Free of the accumulator's innermost axis, so one read serves every cell of a row.
+    FreeOfColumn,
+    /// Lined *along* that axis: the line it reads is the cell, every lane a different column,
+    /// and there is no `K` component to extract. What a batched contraction needs -- an axis
+    /// every operand spans, like a depthwise convolution's channel.
+    LinedAlongColumn,
+    /// Spans that axis without lining along it, so the value differs cell by cell and the
+    /// rank-1 update degenerates to a per-cell `fma`.
+    PerCell,
+}
+
+/// The same for the rhs, over the row the outer product assumes it is free of.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum RhsRole {
+    /// Free of the row: its `nr` lines are read once per step and reused down every row.
+    FreeOfRow,
+    /// Varies down the rows, but still holds for a whole row of cells.
+    PerRow,
+    /// Varies cell by cell.
+    PerCell,
+}
+
 /// The contraction's resolved shape: everything about this nest that is settled before a single
 /// read, derived once from the accumulator's space and the two operands'.
 ///
@@ -112,10 +142,8 @@ struct Contraction {
     served: usize,
     spread: usize,
     /// How each operand varies over the accumulator's own axes.
-    lhs_spans_col: bool,
-    lhs_lines_col: bool,
-    rhs_spans_row: bool,
-    rhs_spans_col: bool,
+    lhs: LhsRole,
+    rhs: RhsRole,
     /// Whether to walk `K` as (line, lane) with fixed comptime extracts, and whether that lane
     /// index agrees with the coordinate the flat walk decodes.
     lane_fanout: bool,
@@ -154,18 +182,17 @@ impl Contraction {
         let reduce_extents = reduce.iter().map(|&a| merged.extent(a)).collect::<Vec<_>>();
         let kc = reduce_extents.iter().product::<usize>();
 
-        // Whether either operand varies along the axis the outer product assumes it is free of.
-        // `rhs_spans_col` separates an rhs that merely varies down the rows, and so still holds
-        // for a whole row of cells, from one that varies cell by cell.
-        let lhs_spans_col = lhs_space.contains(space.axis_at(rank - 1));
-
-        // An lhs lined along the accumulator's innermost axis rather than along `K`. The case a
-        // batched contraction needs: an axis every operand spans — a depthwise convolution's
-        // channel — is the accumulator's column, and the lhs holds one value per column of it
-        // rather than one per row. Its line then *is* the cell, so there is no `K` component to
-        // extract.
-        let lhs_lines_col =
-            lhs_spans_col && lhs_space.axis_at(lhs_space.rank() - 1) == space.axis_at(rank - 1);
+        let col = space.axis_at(rank - 1);
+        let lhs_role = match lhs_space.contains(col) {
+            false => LhsRole::FreeOfColumn,
+            true if lhs_space.axis_at(lhs_space.rank() - 1) == col => LhsRole::LinedAlongColumn,
+            true => LhsRole::PerCell,
+        };
+        let rhs_role = match rhs_space.contains(space.axis_at(rank - 2)) {
+            false => RhsRole::FreeOfRow,
+            true if rhs_space.contains(col) => RhsRole::PerCell,
+            true => RhsRole::PerRow,
+        };
 
         // The fixed extract the fan-out names has to agree with the coordinate `lane_component`
         // decodes on the flat walk, `last_k % lw`. A single contracted axis makes the two the
@@ -198,10 +225,8 @@ impl Contraction {
             aw,
             served,
             spread,
-            lhs_spans_col,
-            lhs_lines_col,
-            rhs_spans_row: rhs_space.contains(space.axis_at(rank - 2)),
-            rhs_spans_col: rhs_space.contains(space.axis_at(rank - 1)),
+            lhs: lhs_role,
+            rhs: rhs_role,
             lane_fanout: config.lane_fanout,
             lane_index_exact,
         };
@@ -443,7 +468,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 semiring,
             );
         }
-    } else if comptime!(ct.lane_fanout && lw > 1 && !ct.lhs_lines_col && ct.lane_index_exact) {
+    } else if comptime!(ct.lane_fanout && lw > 1 && ct.lhs != LhsRole::LinedAlongColumn && ct.lane_index_exact) {
         for line in 0..k_lines {
             #[unroll]
             for lane in 0..lw {
@@ -541,7 +566,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
     // down the `i` loop.
     let k_axis_idx = comptime!(ct.reduce.len() - 1);
-    if comptime!(!ct.rhs_spans_row) {
+    if comptime!(ct.rhs == RhsRole::FreeOfRow) {
         #[unroll(unroll)]
         for n in 0..nr {
             b[n] = Vector::<E, V>::cast_from(cell_read::<ER, V>(
@@ -562,7 +587,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         // Whatever is invariant across the row's cells is read once here. Each stays at zero, and
         // folds away, when the cell loop reads that operand for itself.
         let mut a_row = Vector::<E, V>::cast_from(E::from_int(0));
-        if comptime!(!ct.lhs_spans_col) {
+        if comptime!(ct.lhs == LhsRole::FreeOfColumn) {
             // `resolve_nd_coords` divides the fastest contracted coordinate by `lw` into a line
             // index, so this is the same position for every lane of one line.
             let line = cell_read::<EL, L>(
@@ -580,7 +605,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 lane_component::<E, EL, L, V>(line, &reduce_coords, lane, served, comptime!(ct.lw), k_axis_idx);
         }
         let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
-        if comptime!(ct.rhs_spans_row && !ct.rhs_spans_col) {
+        if comptime!(ct.rhs == RhsRole::PerRow) {
             b_row = Vector::<E, V>::cast_from(cell_read::<ER, V>(
                 rhs_view,
                 batch,
@@ -595,7 +620,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         }
         #[unroll(unroll)]
         for n in 0..nr {
-            let a = if comptime!(ct.lhs_spans_col) {
+            let a = if comptime!(ct.lhs != LhsRole::FreeOfColumn) {
                 // A col-lined lhs addresses its innermost axis in lines, exactly as the rhs
                 // does, and the line it reads is the cell: every column of it is a different
                 // value, which is the whole point of lining along that axis.
@@ -610,7 +635,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     comptime!(ct.reduce.clone()),
                     comptime!(ct.lw),
                 );
-                if comptime!(ct.lhs_lines_col) {
+                if comptime!(ct.lhs == LhsRole::LinedAlongColumn) {
                     Vector::<E, V>::cast_from(line)
                 } else {
                     lane_component::<E, EL, L, V>(
@@ -625,9 +650,9 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             } else {
                 a_row
             };
-            let v = if comptime!(!ct.rhs_spans_row) {
+            let v = if comptime!(ct.rhs == RhsRole::FreeOfRow) {
                 b[n]
-            } else if comptime!(!ct.rhs_spans_col) {
+            } else if comptime!(ct.rhs == RhsRole::PerRow) {
                 b_row
             } else {
                 Vector::<E, V>::cast_from(cell_read::<ER, V>(
@@ -744,7 +769,7 @@ impl Contraction {
         // A col-lined lhs is the exception: it lines along the accumulator's innermost axis, so
         // the fastest contracted axis is walked in elements like every other contracted one.
         assert!(
-            self.lhs_lines_col || lhs.axis_at(lhs.rank() - 1) == fastest,
+            self.lhs == LhsRole::LinedAlongColumn || lhs.axis_at(lhs.rank() - 1) == fastest,
             "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
         );
         // A vectorized rhs lines along the accumulator's innermost axis (its lanes are cells) or
@@ -756,20 +781,20 @@ impl Contraction {
             "contract gather: a vectorized rhs must line along the accumulator's innermost axis \
              or the fastest contracted axis {fastest:?}"
         );
-        // An lhs varying along the column is read once per cell, and a cell is `rhs_vec_len`
-        // columns wide. One read covers them only if that is the axis it lines along — which is
-        // what `lhs_lines_col` says. Lined along a contracted axis instead, it would need a value
-        // per lane off an axis it does not line along, and the broadcast would silently serve the
-        // first column's value to all of them.
+        // A [`LhsRole::PerCell`] lhs is read once per cell, and a cell is `rhs_vec_len` columns
+        // wide. One read covers them only when the column is the axis it lines along, which is
+        // the case the role separates. Lined along a contracted axis instead, it would need a
+        // value per lane off an axis it does not line along, and the broadcast would silently
+        // serve the first column's value to all of them.
         assert!(
-            !self.lhs_spans_col || rhs_vec_len == 1 || self.lhs_lines_col,
+            self.lhs != LhsRole::PerCell || rhs_vec_len == 1,
             "contract gather: an lhs spanning the accumulator's innermost axis needs a value per \
              column, so that axis must be the one it lines along (the accumulator is \
              {rhs_vec_len} wide, the lhs lines {lhs_vec_len})"
         );
         // The col-lined line *is* the cell, so the two are the same width by construction.
         assert!(
-            !self.lhs_lines_col || lhs_vec_len == rhs_vec_len,
+            self.lhs != LhsRole::LinedAlongColumn || lhs_vec_len == rhs_vec_len,
             "contract gather: a col-lined lhs is read as the cell itself, so its line width \
              ({lhs_vec_len}) must be the accumulator's ({rhs_vec_len})"
         );
