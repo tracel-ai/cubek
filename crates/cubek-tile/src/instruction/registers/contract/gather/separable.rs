@@ -73,9 +73,10 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                 #[unroll(unroll)]
                 for n in 0..nr {
                     let mut weights = Array::<EL>::new(taps);
-                    tap_walk::<EL>(
+                    tap_walk::<EL, ER>(
                         &mut weights,
                         lhs,
+                        rhs,
                         &batch,
                         i as u32,
                         n as u32,
@@ -111,9 +112,10 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                 }
             } else {
                 let mut weights = Array::<EL>::new(taps);
-                tap_walk::<EL>(
+                tap_walk::<EL, ER>(
                     &mut weights,
                     lhs,
+                    rhs,
                     &batch,
                     i as u32,
                     0u32,
@@ -183,29 +185,86 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
 /// Evaluate every factor's 1-D tap walk at one accumulator cell.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn tap_walk<EL: Numeric>(
+fn tap_walk<EL: Numeric, ER: Numeric>(
     weights: &mut Array<EL>,
     lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
     batch: &Coords<u32>,
     row: u32,
     col: u32,
     #[comptime] factors: usize,
     #[comptime] problem: GatherProblem,
 ) {
-    #[unroll]
-    for f in 0..factors {
-        #[unroll]
-        for k in 0..comptime!(problem.block.reduce_extents[f]) {
-            let pos = cell_position(
-                batch,
-                row,
-                col,
-                &factor_coords(comptime!(factors), f, k),
-                comptime!(problem.lhs_space.clone()),
-                comptime!(problem.clone()),
-                1usize,
-            );
-            weights[comptime!(problem.offsets[f] + k)] = lhs.separable_factor(pos, f);
+    match comptime!(problem.normalization) {
+        None =>
+        {
+            #[unroll]
+            for f in 0..factors {
+                #[unroll]
+                for k in 0..comptime!(problem.block.reduce_extents[f]) {
+                    let pos = cell_position(
+                        batch,
+                        row,
+                        col,
+                        &factor_coords(comptime!(factors), f, k),
+                        comptime!(problem.lhs_space.clone()),
+                        comptime!(problem.clone()),
+                        1usize,
+                    );
+                    weights[comptime!(problem.offsets[f] + k)] = lhs.separable_factor(pos, f);
+                }
+            }
+        }
+        Some((mask, guard)) =>
+        {
+            #[unroll]
+            for f in 0..factors {
+                let mut sum = EL::from_int(0);
+                #[unroll]
+                for k in 0..comptime!(problem.block.reduce_extents[f]) {
+                    let reduce_coords = factor_coords(comptime!(factors), f, k);
+                    let lhs_pos = cell_position(
+                        batch,
+                        row,
+                        col,
+                        &reduce_coords,
+                        comptime!(problem.lhs_space.clone()),
+                        comptime!(problem.clone()),
+                        1usize,
+                    );
+                    let weight = lhs.separable_factor(lhs_pos, f);
+                    let weight = match comptime!(mask) {
+                        TapMask::Masked => {
+                            let rhs_pos = cell_position(
+                                batch,
+                                row,
+                                col,
+                                &reduce_coords,
+                                comptime!(problem.rhs_space.clone()),
+                                comptime!(problem.clone()),
+                                comptime!(problem.block.vw),
+                            );
+                            select(
+                                rhs.separable_tap_in_bounds(
+                                    rhs_pos,
+                                    comptime!(problem.block.reduce[f]),
+                                ),
+                                weight,
+                                EL::from_int(0),
+                            )
+                        }
+                        TapMask::Unmasked => weight,
+                    };
+                    weights[comptime!(problem.offsets[f] + k)] = weight;
+                    sum += weight;
+                }
+
+                let reciprocal = guarded_recip_numeric::<EL>(sum, guard);
+                #[unroll]
+                for k in 0..comptime!(problem.block.reduce_extents[f]) {
+                    weights[comptime!(problem.offsets[f] + k)] *= reciprocal;
+                }
+            }
         }
     }
 }

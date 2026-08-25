@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Coords, Fold, FoldExpand, Region, Space, StagePlan};
+use crate::{Coords, DivGuard, Fold, FoldExpand, Region, Space, StagePlan, TapMask};
 
 use super::{RecipeCoords, VirtualRecipe};
 
@@ -24,6 +24,10 @@ pub struct ProceduralData<T: Numeric> {
     /// descends, because the leaf space alone no longer records an ancestor's overhang.
     #[cube(comptime)]
     pub(crate) bounds_check: bool,
+    /// Requested factor normalization. Only a separable contraction consumes it, because only
+    /// that leaf knows the tap run belonging to each factor.
+    #[cube(comptime)]
+    pub(crate) normalization: Option<(TapMask, DivGuard)>,
     recipe: VirtualRecipe<T>,
     #[cube(comptime)]
     space: Space,
@@ -67,6 +71,7 @@ impl<T: Numeric> ProceduralData<T> {
             origin,
             bound,
             bounds_check,
+            normalization: None,
             recipe,
             space,
             stage,
@@ -86,6 +91,7 @@ impl<T: Numeric> ProceduralData<T> {
             origin,
             bound: self.bound.clone(),
             bounds_check: comptime!(self.bounds_check),
+            normalization: comptime!(self.normalization),
             recipe: self.recipe.clone(),
             space: comptime!(space.divide()),
             stage: comptime!(self.stage.descend()),

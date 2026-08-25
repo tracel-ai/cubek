@@ -190,63 +190,69 @@ impl AxisProjection {
 
         #[unroll]
         for pa in 0..comptime!(self.projection.physical_rank()) {
-            let axis_map = comptime!(self.projection.physical_axis(pa));
-            let n = comptime!(axis_map.terms().len());
-
-            // Per-term products left in the numerator, summed below (chained, so a single
-            // coefficient-1 term folds to the coordinate itself). Under a division the sum starts
-            // at the phase the window origin could not absorb.
-            let mut terms = Coords::<u32>::new();
-            if comptime!(axis_map.is_rational()) {
-                terms.push(self.map.residues.at(pa));
-            }
-            // The exact terms, held apart so the numerator above is the same expression for every
-            // tap: a gather then computes one spatial floor and adds a step to it, where a single
-            // sum would put every tap's coordinate under the divide and defeat the reuse.
-            let mut offsets = Coords::<u32>::new();
-            #[unroll]
-            for t in 0..n {
-                let term = comptime!(axis_map.terms()[t]);
-                if comptime!(!moving.contains(&term.axis)) {
-                    let p = comptime!(self.space.position(term.axis));
-                    match comptime!(axis_map.static_offset_step(t)) {
-                        Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
-                        None => match comptime!(term.scale) {
-                            Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
-                            Scale::Dynamic { .. } => {
-                                terms.push(pos[p].fmul(self.map.coefficients.at(comptime!(
-                                    self.projection.dynamic_scale_index(pa, t).unwrap()
-                                ))))
-                            }
-                        },
-                    }
-                }
-            }
-            let n_kept = terms.len();
-            let n_exact = offsets.len();
-            let sum = terms.fsum(comptime!((0..n_kept).collect::<Vec<_>>()));
-
-            if comptime!(axis_map.is_rational()) {
-                match comptime!(axis_map.divisor()) {
-                    // No offsets when the divisor is dynamic, and `fadd` folds the empty sum away,
-                    // so only the static arm spells the addition.
-                    Divisor::Static(d) => {
-                        let offset = offsets.fsum(comptime!((0..n_exact).collect::<Vec<_>>()));
-                        out.push(sum.fdiv(comptime!(d as u32)).fadd(offset));
-                    }
-                    Divisor::Dynamic { .. } => {
-                        let divisor = self.map.coefficients.at(comptime!(
-                            self.projection.dynamic_divisor_index(pa).unwrap()
-                        ));
-                        out.push(sum.fdiv(divisor));
-                    }
-                }
-            } else {
-                out.push(sum);
-            }
+            out.push(self.project_axis(&pos, pa, comptime!(moving.clone())));
         }
 
         out
+    }
+
+    /// [`anchor`](Self::anchor) for one physical axis. Factor-local boundary normalization uses
+    /// this narrow form so checking one tap does not rebuild unrelated source coordinates.
+    pub(crate) fn project_axis(
+        &self,
+        pos: &CoordsDyn,
+        #[comptime] pa: usize,
+        #[comptime] moving: Vec<Axis>,
+    ) -> u32 {
+        let axis_map = comptime!(self.projection.physical_axis(pa));
+        let n = comptime!(axis_map.terms().len());
+
+        // Per-term products left in the numerator, summed below (chained, so a single
+        // coefficient-1 term folds to the coordinate itself). Under a division the sum starts at
+        // the phase the window origin could not absorb.
+        let mut terms = Coords::<u32>::new();
+        if comptime!(axis_map.is_rational()) {
+            terms.push(self.map.residues.at(pa));
+        }
+        // Exact steps stay outside the numerator so a rational projection takes one spatial floor
+        // and adds the tap step to it.
+        let mut offsets = Coords::<u32>::new();
+        #[unroll]
+        for t in 0..n {
+            let term = comptime!(axis_map.terms()[t]);
+            if comptime!(!moving.contains(&term.axis)) {
+                let p = comptime!(self.space.position(term.axis));
+                match comptime!(axis_map.static_offset_step(t)) {
+                    Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
+                    None => match comptime!(term.scale) {
+                        Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
+                        Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
+                            comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
+                        ))),
+                    },
+                }
+            }
+        }
+        let n_kept = terms.len();
+        let n_exact = offsets.len();
+        let sum = terms.fsum(comptime!((0..n_kept).collect::<Vec<_>>()));
+
+        if comptime!(axis_map.is_rational()) {
+            match comptime!(axis_map.divisor()) {
+                Divisor::Static(d) => {
+                    let offset = offsets.fsum(comptime!((0..n_exact).collect::<Vec<_>>()));
+                    sum.fdiv(comptime!(d as u32)).fadd(offset)
+                }
+                Divisor::Dynamic { .. } => {
+                    let divisor = self.map.coefficients.at(comptime!(
+                        self.projection.dynamic_divisor_index(pa).unwrap()
+                    ));
+                    sum.fdiv(divisor)
+                }
+            }
+        } else {
+            sum
+        }
     }
 
     /// `anchor` moved to where `pos` places the `moving` axes, which must be the ones it was

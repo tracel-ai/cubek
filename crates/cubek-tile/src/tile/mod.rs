@@ -665,6 +665,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The separable factor-normalization request, if one was attached to this procedural tile.
+    /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
+    pub(crate) fn factor_normalization(&self) -> comptime_type!(Option<(TapMask, DivGuard)>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => comptime!(data.normalization),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
     /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
     /// that factor reads matters, which is what lets the contraction walk it in 1-D.
     ///
@@ -974,6 +987,47 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
+            }
+        }
+    }
+
+    /// Whether one factor tap lands inside the input axes that factor moves. The logical position
+    /// is projected first; the memory window then checks only the physical carriers of `axis`, so
+    /// another factor's placeholder coordinate cannot mask this one.
+    pub(crate) fn separable_tap_in_bounds(&self, pos: CoordsDyn, #[comptime] axis: Axis) -> bool {
+        match &self.tile_kind {
+            TileKind::Gmem(data) => {
+                let projection = comptime!(data.projection.clone());
+                let layout = axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(projection.clone()),
+                    data.map.clone(),
+                    self.vector_size(),
+                );
+                if comptime!(projection.logical_axes().contains(&axis)) {
+                    let carriers = comptime!(projection.carriers(axis));
+                    let mut valid = true;
+                    #[unroll]
+                    for c in 0..comptime!(carriers.len()) {
+                        let pa = comptime!(carriers[c]);
+                        if comptime!(data.window.masks_axis(pa)) {
+                            let physical = layout.project_axis(&pos, pa, comptime!(Vec::new()));
+                            valid = valid && data.window.axis_in_bounds(physical, pa);
+                        }
+                    }
+                    valid
+                } else {
+                    true.runtime()
+                }
+            }
+            TileKind::Smem(_) => panic!(
+                "Tile::separable_tap_in_bounds: TapMask::Masked needs the rhs source window; \
+                 staging it in Smem erases which zeros came from the boundary"
+            ),
+            // A procedural source has no backing bound and is valid throughout its stated box.
+            TileKind::Procedural(_) => true.runtime(),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                panic!("Tile::separable_tap_in_bounds: a separable gather needs an addressable rhs")
             }
         }
     }
