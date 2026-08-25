@@ -115,7 +115,7 @@ impl Instruction {
     /// [`RegisterBlock`] directly to turn either on.
     pub const fn registers(budget: usize) -> Self {
         Instruction::Registers {
-            config: RegisterBlock::new(budget, false, false),
+            config: RegisterBlock::new(budget),
         }
     }
 

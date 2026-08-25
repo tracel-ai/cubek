@@ -621,7 +621,7 @@ fn conv1d_vectorized_input_fanout() {
         Buffering::SINGLE,
         &[],
         Instruction::Registers {
-            config: RegisterBlock::new(16, false, true),
+            config: RegisterBlock::new(16).lane_fanout(),
         },
     );
 }
@@ -2609,7 +2609,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         space,
         1,
         Instruction::Registers {
-            config: RegisterBlock::new(16, false, true),
+            config: RegisterBlock::new(16).lane_fanout(),
         },
     );
 

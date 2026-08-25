@@ -30,7 +30,7 @@ use cubek_tile::*;
 /// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
 /// specialization, no lane fan-out — the lines here run along the channel, not along `K`.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(16, false, false),
+    config: RegisterBlock::new(16),
 };
 
 // Output positions, window taps, and the one channel axis every operand shares.

@@ -17,7 +17,7 @@ use super::problem::TileQuantStageProblem;
 /// fan-out. Bound on the accumulator at the kernel top so the numbers measure the staging, not
 /// the instruction.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64, false, false),
+    config: RegisterBlock::new(64),
 };
 use super::strategy::StageDepth;
 

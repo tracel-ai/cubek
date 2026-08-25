@@ -55,7 +55,7 @@ use cubek_tile::{
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
 /// instruction; bound on the accumulator at the kernel top.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64, false, false),
+    config: RegisterBlock::new(64),
 };
 
 const M: Axis = Axis(0);

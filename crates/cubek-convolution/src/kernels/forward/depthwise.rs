@@ -30,13 +30,15 @@ use cubek_tile::*;
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 
-/// What runs on the cells the last level cuts out. 64 is the register budget in scalars, which
-/// at four channels to a line is the same sixteen cells every tiling here blocks into;
-/// `split_edge` is what keeps the padded border's guard off the instances that do not straddle
-/// it, which for a window this wide is most of them. Nothing here is accelerated, so the fan-out
-/// flag stays off: the lines run along the channel, not along `K`.
+/// What runs on the cells the last level cuts out.
+///
+/// 64 scalars is the register budget, which at four channels to a line is the same sixteen cells
+/// every tiling here blocks into. The edge split earns its second copy of the walk because a
+/// window this wide leaves most instances clear of the padded border, and they should not pay a
+/// guard for the few that straddle it. Lane fan-out does not: the lines run along the channel,
+/// not along `K`.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64, true, false),
+    config: RegisterBlock::new(64).split_edge(),
 };
 
 // Output positions, the channel axis every operand shares, and the window taps.
