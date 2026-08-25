@@ -18,6 +18,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
@@ -53,7 +54,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
             comptime!(problem.block.space.clone()),
-            comptime!(Semiring::SUM_PROD.add()),
+            comptime!(semiring.add()),
         );
 
         // Unroll only when no mask, otherwise compilation too long.
@@ -90,6 +91,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     comptime!(None),
                     unroll,
                     comptime!(problem.clone()),
+                    semiring,
                 );
             }
         } else if comptime!(lane_fanout && lw > 1 && lane_index_exact) {
@@ -106,6 +108,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                         comptime!(Some(lane)),
                         unroll,
                         comptime!(problem.clone()),
+                        semiring,
                     );
                 }
             }
@@ -121,6 +124,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     comptime!(Some(lane)),
                     unroll,
                     comptime!(problem.clone()),
+                    semiring,
                 );
             }
         } else {
@@ -138,6 +142,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     comptime!(None),
                     unroll,
                     comptime!(problem.clone()),
+                    semiring,
                 );
             }
         }
@@ -175,6 +180,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] lane: Option<usize>,
     #[comptime] unroll: bool,
     #[comptime] problem: GatherProblem,
+    #[comptime] semiring: Semiring,
 ) {
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
@@ -271,7 +277,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 ))
             };
             // One semiring step, for the reason [`block::rank1_update`] gives.
-            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, v, c[i * nr + n]);
+            c[i * nr + n] = semiring.step::<Vector<E, V>>(a, v, c[i * nr + n]);
         }
     }
 }

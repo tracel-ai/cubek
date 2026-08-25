@@ -20,7 +20,18 @@ impl<T: Numeric> RegisterData<T> {
     /// block is seeded from the sink and committed back on every visit, so a `K` walk that
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
-    pub(crate) fn mma<EL: Numeric, ER: Numeric>(&mut self, lhs: &Tile<EL>, rhs: &Tile<ER>) {
+    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
+        &mut self,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
+        #[comptime] semiring: Semiring,
+    ) {
+        comptime!(assert!(
+            semiring.add() == self.monoid,
+            "RegisterData::mma: this block folds its partials under {:?} and drains them that \
+             way, so it cannot contract under {semiring:?}",
+            self.monoid
+        ));
         let lhs_packing = lhs.packing();
         let rhs_packing = rhs.packing();
         let vw = rhs.vector_size();
@@ -65,6 +76,7 @@ impl<T: Numeric> RegisterData<T> {
             kc,
             unroll,
             lane_fanout,
+            semiring,
         );
     }
 }

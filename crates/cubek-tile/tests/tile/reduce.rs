@@ -37,7 +37,7 @@ fn reduce_matmul_kernel<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.zero();
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// Seeds `output` with the identity the fold starts from, then reduces `input` into it.

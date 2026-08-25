@@ -1,7 +1,7 @@
 //! The CpuGemm kernel: the whole body is the accumulator's scope.
 
 use cubecl::prelude::*;
-use cubek_tile::{Monoid, Space, TileArg};
+use cubek_tile::{Monoid, Semiring, Space, TileArg};
 
 /// The same three lines the tensor-core kernel runs.
 ///
@@ -36,5 +36,5 @@ pub fn cpu_gemm_kernel<
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }

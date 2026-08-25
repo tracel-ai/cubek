@@ -80,8 +80,7 @@ fn separable_kernel<E: Float>(
     };
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 /// Small integers, so the accumulation is exact in `f32`.
@@ -286,8 +285,7 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     );
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 /// Native Q8S served in `QV`-wide lines: `served / pack` is `QV`, so a scalar physical width
@@ -545,8 +543,7 @@ fn resample_kernel<E: Float>(
     };
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 #[test]

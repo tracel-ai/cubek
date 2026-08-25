@@ -6,14 +6,16 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-/// One level's matmul as a [`Pipelined`] operation: the accumulator it writes and the two operands
-/// its slots stage. The tiles are handles, so the walk addressing them addresses the same storage
-/// the caller passed in.
+/// One level's matmul as a [`Pipelined`] operation: the accumulator it writes, the two operands
+/// its slots stage, and the algebra they contract under. The tiles are handles, so the walk
+/// addressing them addresses the same storage the caller passed in.
 #[derive(CubeType)]
 pub(crate) struct MmaWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> {
     acc: Tile<Acc>,
     lhs: Tile<Lhs>,
     rhs: Tile<Rhs>,
+    #[cube(comptime)]
+    semiring: Semiring,
 }
 
 #[cube]
@@ -65,7 +67,9 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, R
         slot.consume(|staged_lhs, staged_rhs| {
             let lhs = read_operand(staged_lhs, region, lhs_payload);
             let rhs = read_operand(staged_rhs, region, rhs_payload);
-            self.acc.at(region).mma(&lhs, &rhs)
+            self.acc
+                .at(region)
+                .mma(&lhs, &rhs, comptime!(self.semiring))
         });
     }
 }
@@ -81,12 +85,14 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         op_space: Space,
         #[comptime] depth: usize,
+        #[comptime] semiring: Semiring,
     ) {
         let out = comptime!(self.space.clone());
         let mut walk = MmaWalk::<Acc, Lhs, Rhs> {
             acc: self.clone(),
             lhs: lhs.clone(),
             rhs: rhs.clone(),
+            semiring,
         };
         pipelined_walk::<MmaWalk<Acc, Lhs, Rhs>>(&mut walk, op_space, out, depth);
     }
