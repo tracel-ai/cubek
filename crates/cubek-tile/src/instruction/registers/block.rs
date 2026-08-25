@@ -173,17 +173,16 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 /// What [`seed`] and [`commit`] both need to hold before they spread a block column's lanes across
 /// several sink cells: the lanes mean one thing at a time, and a spread one addresses cells the
 /// accumulator serves singly.
-fn assert_spread<A: Size>(served: usize, spread: usize, who: &str) {
+fn assert_spread(served: usize, spread: usize, accumulator_width: usize, who: &str) {
     assert!(
         served == 1 || spread == 1,
         "{who}: lanes cannot hold contracted partials (served {served}) and neighbouring \
          sink cells (spread {spread}) at once"
     );
     assert!(
-        spread == 1 || A::try_value_const() == Some(1),
+        spread == 1 || accumulator_width == 1,
         "{who}: a spread block scatters one lane per sink cell, so the accumulator must be \
-         served scalar (it is {:?} wide)",
-        A::try_value_const()
+         served scalar (it is {accumulator_width} wide)"
     );
 }
 
@@ -211,12 +210,18 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
     #[comptime] served: usize,
     #[comptime] spread: usize,
+    #[comptime] accumulator_width: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] cols: usize,
     #[comptime] unroll: bool,
 ) -> Array<Vector<E, V>> {
-    comptime!(assert_spread::<A>(served, spread, "block::seed"));
+    comptime!(assert_spread(
+        served,
+        spread,
+        accumulator_width,
+        "block::seed"
+    ));
     let guard = comptime!(spread_guard(spread, cols));
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
     #[unroll(unroll)]
@@ -267,12 +272,18 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     c: Array<Vector<E, V>>,
     #[comptime] served: usize,
     #[comptime] spread: usize,
+    #[comptime] accumulator_width: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] cols: usize,
     #[comptime] unroll: bool,
 ) {
-    comptime!(assert_spread::<A>(served, spread, "block::commit"));
+    comptime!(assert_spread(
+        served,
+        spread,
+        accumulator_width,
+        "block::commit"
+    ));
     let guard = comptime!(spread_guard(spread, cols));
     let lane_share = acc.lane_share();
     comptime!(assert!(

@@ -130,6 +130,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     &rhs_mat,
                     lw,
                     served,
+                    aw,
                     mr,
                     nr,
                     cols,
@@ -144,6 +145,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     &rhs_mat,
                     lw,
                     served,
+                    aw,
                     mr,
                     nr,
                     cols,
@@ -160,6 +162,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 &rhs_mat,
                 lw,
                 served,
+                aw,
                 mr,
                 nr,
                 cols,
@@ -181,6 +184,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     rhs: &MatrixView<'_, Vector<ER, V>>,
     #[comptime] lw: usize,
     #[comptime] served: usize,
+    #[comptime] aw: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] cols: usize,
@@ -188,7 +192,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
 ) {
-    let mut c = block::seed::<E, V, A>(acc, served, 1usize, mr, nr, cols, unroll);
+    let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
     block::contract::<E, EL, L, ER, V>(
         lhs,
         rhs,
@@ -201,5 +205,5 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         unroll,
         lane_fanout,
     );
-    block::commit::<E, V, A>(acc, c, served, 1usize, mr, nr, cols, unroll);
+    block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
 }
