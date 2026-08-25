@@ -368,20 +368,30 @@ fn over_type_column_moves_then_converts() {
     assert!(ops.b.quant().is_some());
 }
 
-/// `stage_as` to the type the operand already holds would be a move claiming to be a
-/// conversion; refusing it keeps "a written type" and "work happens here" the same statement.
+/// `stage_as` is total in the type: stating the type the operand already holds is the move
+/// `stage` states, so a caller whose type is computed says it once and never branches.
 #[test]
-#[should_panic(expected = "use stage")]
-fn over_stage_as_same_type_panics() {
+fn over_stage_as_same_type_is_the_move() {
+    let f32t = f32::elem_type_native();
     let mut ops = matmul_operands();
     let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(16))
                 .axis(K, Cut::sequential(16));
-            o.a.stage_as(Residence::Smem, f32::elem_type_native());
+            o.a.stage_as(Residence::Smem, f32t);
+            o.b.stage(Residence::Smem);
         })
         .build();
+
+    assert_eq!(ops.a.stages(), ops.b.stages());
+    assert_eq!(
+        ops.a.stages(),
+        &[Stage {
+            residence: Residence::Smem,
+            dtype: f32t
+        }]
+    );
 }
 
 /// One residence per operand per level: a second statement is a contradiction, not an update.
