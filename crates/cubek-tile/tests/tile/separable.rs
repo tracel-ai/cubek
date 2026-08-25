@@ -939,9 +939,11 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
 
+    // Varies along TAP[0] so factor 0's antisymmetric taps do not cancel: the result then pins
+    // the fallback value itself, not just the absence of a NaN.
     let in_handle = TestInput::builder(client.clone(), shape![2, 2, 1])
         .dtype(f32_ty)
-        .custom(vec![1.0f32; 4])
+        .custom(vec![1.0f32, 1.0, 2.0, 2.0])
         .generate_without_host_data();
     let out_handle = TestInput::builder(client.clone(), shape![1, 1])
         .dtype(f32_ty)
@@ -977,6 +979,6 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
     let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32).get_f32(&[0, 0]);
     // Factor 0 has sum 0.0 -> fallback recip 3.0 -> taps become [3.0, -3.0].
     // Factor 1 has sum 4.0 -> recip 0.25 -> taps become [0.5, 0.5].
-    // Product sum = (3.0 - 3.0) * (0.5 + 0.5) * 1.0 = 0.0.
-    assert!((got - 0.0).abs() < 1.0e-6, "got {got}, want 0.0");
+    // Product sum = (3.0 * 1.0 - 3.0 * 2.0) * (0.5 + 0.5) = -3.0.
+    assert!((got + 3.0).abs() < 1.0e-6, "got {got}, want -3.0");
 }
