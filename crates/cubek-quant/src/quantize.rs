@@ -1,7 +1,8 @@
 use cubecl::{
     calculate_cube_count_elemwise,
     features::TypeUsage,
-    ir::ElemType,
+    ir::{ElemType, types::Fp8Format},
+    post_processing::minifloat::f32_to_fp8_bits,
     prelude::*,
     std::{
         quant::{check_scale_bindings, fp4::float_to_e2m1_bits, round::round_up_to_dtype},
@@ -90,9 +91,10 @@ fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
 /// according to the specified quantization input type.
 ///
 /// The field a value occupies is the format's *code*, not its magnitude, and the two only coincide
-/// for the integer formats — which is why `e2m1` is encoded rather than cast here. Casting it would
-/// truncate `0.5` and `1.5` to whole numbers and leave a format that reconstructs on the integer
-/// grid `{0, 1, 2, 3, 4, 5, 6}` instead of `e2m1`'s `{0, 0.5, 1, 1.5, 2, 3, 4, 6}`.
+/// for the integer formats — which is why a minifloat is encoded rather than cast here. Casting
+/// `e2m1` would truncate `0.5` and `1.5` to whole numbers and leave a format reconstructing on the
+/// integer grid `{0, 1, 2, 3, 4, 5, 6}`; casting `e4m3` would do the same to its fractions and then
+/// wrap anything past ±127 out of the byte, which is how `300.0` used to come back as `44.0`.
 #[cube]
 fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: QuantValue) -> QS {
     let size_quant = quant.size_bits();
@@ -104,10 +106,8 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
     let mut packed = QS::from_int(0);
 
     match quant {
-        // Rounds onto the eight `e2m1` code points and returns the codes; software throughout, so
-        // this packs the same on a backend with no 4-bit float type as on one with the intrinsic.
-        QuantValue::E2M1 => {
-            let codes = float_to_e2m1_bits::<F, N>(value);
+        QuantValue::E2M1 | QuantValue::E4M3 | QuantValue::E5M2 => {
+            let codes = encode_minifloat::<F, N>(value, quant);
             #[unroll]
             for position in 0..num_quants {
                 let offset = QS::cast_from(position * size_quant);
@@ -121,9 +121,7 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S
-        | QuantValue::E4M3
-        | QuantValue::E5M2 => {
+        | QuantValue::Q2S => {
             // Shift and combine into QS (using i32 for sign extension)
             #[unroll]
             for position in 0..num_quants {
@@ -136,6 +134,25 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
     }
 
     packed
+}
+
+/// The code a minifloat value occupies in its packed field.
+///
+/// Software throughout, so a field packs the same on a backend with no narrow float type as on one
+/// with the intrinsic — and in this path there is no such type in play anyway, since the codes ride
+/// in an integer rather than in a vector the backend could convert. Both codecs round to nearest
+/// with ties to even and saturate, which is what the host types do.
+#[cube]
+fn encode_minifloat<F: Float, N: Size>(
+    value: Vector<F, N>,
+    #[comptime] quant: QuantValue,
+) -> Vector<u32, N> {
+    match quant {
+        QuantValue::E2M1 => float_to_e2m1_bits::<F, N>(value),
+        QuantValue::E4M3 => f32_to_fp8_bits::<N>(Vector::cast_from(value), Fp8Format::E4M3),
+        QuantValue::E5M2 => f32_to_fp8_bits::<N>(Vector::cast_from(value), Fp8Format::E5M2),
+        _ => comptime!(unreachable!("{quant:?} is not a minifloat")),
+    }
 }
 
 #[cube]

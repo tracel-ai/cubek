@@ -1,6 +1,10 @@
 #![allow(missing_docs)] // pub cube modules
 
-use cubecl::{calculate_cube_count_elemwise, ir::ElemType};
+use cubecl::{
+    calculate_cube_count_elemwise,
+    ir::{ElemType, types::Fp8Format},
+    post_processing::minifloat::fp8_bits_to_f32,
+};
 use cubecl::{features::TypeUsage, tensor_vector_size_parallel};
 use cubecl::{prelude::*, std::tensor::layout::linear::LinearViewMut};
 
@@ -117,18 +121,23 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
     }
 
     match quant {
-        // A field is an `e2m1` code, not a small signed integer — the two disagree on every
-        // magnitude below 2. Decoded in software so the read lowers on every backend rather than
-        // only where the fp4 conversion intrinsic exists.
+        // A field is a minifloat *code*, not a small signed integer — `e2m1` disagrees with one on
+        // every magnitude below 2, and `e4m3` reads its own top half as negative. Decoded in
+        // software so the read lowers on every backend rather than only where the conversion
+        // intrinsic exists. Mirrors `encode_minifloat` in `quantize.rs`.
         QuantValue::E2M1 => e2m1_bits_to_float::<F, NF>(fields),
+        QuantValue::E4M3 => {
+            Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E4M3))
+        }
+        QuantValue::E5M2 => {
+            Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E5M2))
+        }
         QuantValue::Q8F
         | QuantValue::Q8S
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S
-        | QuantValue::E4M3
-        | QuantValue::E5M2 => {
+        | QuantValue::Q2S => {
             let sign_bit = 1u32 << (size_quant - 1);
             let two_pow_n = 1 << size_quant;
 
