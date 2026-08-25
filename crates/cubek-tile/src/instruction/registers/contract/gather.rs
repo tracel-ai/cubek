@@ -116,15 +116,19 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
     // The fan-out walk names the lane with a comptime extract. Its final physical line can be
     // partial, just as the direct leaf's can, so retain a short tail rather than rejecting a
-    // perfectly valid checked tile.
+    // perfectly valid checked tile. Only a single contracted axis ever reaches that tail: past
+    // one, the gate below already asks that the fastest axis is a whole number of lines.
     let k_lines = comptime!(kc / lw);
     let k_tail = comptime!(kc % lw);
 
     let lane_fanout = comptime!(config.lane_fanout);
-    let innermost_divisible = comptime!(match reduce_extents.last() {
-        Some(&extent) => extent.is_multiple_of(lw),
-        None => true,
-    });
+    // The fixed extract the fan-out names has to agree with the coordinate `lane_component`
+    // decodes on the flat walk, `last_k % lw`. A single contracted axis makes the two the same
+    // expression, whatever its extent: `last_k` *is* the flat step. Past one, `last_k` restarts
+    // every `reduce_extents.last()` steps, so the flat index only stays in step with it when that
+    // extent is a whole number of lines (a padded stage's is not).
+    let lane_index_exact =
+        comptime!(reduce.len() == 1 || reduce_extents[reduce_extents.len() - 1].is_multiple_of(lw));
 
     for mat in 0..matrices {
         let batch = unravel(
@@ -190,7 +194,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     rhs_spans_col,
                 );
             }
-        } else if comptime!(lane_fanout && lw > 1 && innermost_divisible) {
+        } else if comptime!(lane_fanout && lw > 1 && lane_index_exact) {
             for line in 0..k_lines {
                 #[unroll]
                 for lane in 0..lw {
