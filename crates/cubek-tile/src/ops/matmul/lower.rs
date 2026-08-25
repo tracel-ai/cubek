@@ -66,6 +66,60 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
+    /// `c = (a ⊗ s) · b`: [`mm`](Tile::mm) with the lhs scaled by a real operand.
+    ///
+    /// The scales are an operand like any other — their own tensor, their own axes, named at the
+    /// call — and the arithmetic that folds them in is this verb. Nothing decodes behind a read:
+    /// an operand that arrives quantized arrives as what it is, and what it takes to serve it is
+    /// written here.
+    ///
+    /// `s` spans the lhs's axes and resolves at whatever granularity its own tensor has: omitted
+    /// axes broadcast, and a [coarse](crate::Projection) axis — `⌊k / block⌋`, spelled
+    /// `PhysicalAxisMap::of(K).over(block)` — is one value per block. A served line takes one
+    /// scale, so a line may not straddle a block; state the cut that holds it.
+    pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        #[comptime] semiring: Semiring,
+    ) {
+        let spans = self.contracts_whole_at_leaf(lhs, rhs);
+        let init_from = self.request_init_from(comptime!(spans));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
+        }
+        self.mma_scaled(lhs, rhs, scales, semiring);
+        self.request_init_from(comptime!(InitFrom::Cell));
+    }
+
+    /// `c += (a ⊗ s) · b`: [`mma`](Tile::mma)'s scaled twin, and the recursion the walk re-enters
+    /// per region.
+    pub fn mma_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        #[comptime] semiring: Semiring,
+    ) {
+        let partitioner = comptime!(self.space.partitioner().clone());
+        match comptime!(partitioner) {
+            Partitioner::Final => mma_leaf_scaled(self, lhs, rhs, scales, semiring),
+            Partitioner::Level(level) => {
+                let op_space = self.op_space(lhs, rhs);
+                self.mma_scaled_buffered(
+                    lhs,
+                    rhs,
+                    scales,
+                    op_space,
+                    comptime!(level.buffering().depth()),
+                    semiring,
+                );
+            }
+        }
+    }
+
     /// Whether the final tile spans every contracted axis whole, so the walk above the leaf never
     /// returns to a cell it has already written and the one visit that owns a cell may write it
     /// outright.
@@ -154,6 +208,39 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
+    }
+}
+
+/// [`mma_leaf`] with the lhs scaled: the memory accumulator alone, which is the form that runs the
+/// software instruction and so the only one whose step has a scale to apply. A fragment accumulator
+/// contracts through a hardware instruction that takes two operands and no scales; that is the
+/// scaled-mma rung, a different instruction, not this one under a flag.
+#[cube]
+pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
+    acc: &mut Tile<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<S>,
+    #[comptime] semiring: Semiring,
+) {
+    let space = comptime!(acc.space.clone());
+    let tile_kind = &mut acc.tile_kind;
+    match tile_kind {
+        TileKind::Gmem(g) | TileKind::Smem(g) => {
+            let config = comptime!(match space.instruction() {
+                Some(Instruction::Registers { config }) => config,
+                other => panic!(
+                    "mma_leaf_scaled: a scaled contraction runs the software instruction; the \
+                     space's instruction is {other:?}. State \
+                     `.instruction(Instruction::Registers {{ config }})`"
+                ),
+            });
+            contract::memory_scaled::<E, EL, ER, S>(g, lhs, rhs, scales, space, config, semiring)
+        }
+        _ => panic!(
+            "mma_leaf_scaled: a scaled contraction accumulates in memory under the software \
+             instruction; a fragment accumulator would need a scaled hardware instruction"
+        ),
     }
 }
 

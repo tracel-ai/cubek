@@ -214,3 +214,167 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     );
     block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
 }
+
+/// [`contract`] with the lhs scaled: `c += (lhs ⊗ scale) · rhs`, the scale a real operand read
+/// through its own view. Same nest, same block, one more read per step — see
+/// [`block::contract_scaled`].
+///
+/// The scales are read where the values are, never staged: one value per block is already
+/// cache-served, and a stage would materialize the expansion the coarse read exists to avoid.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<ES>,
+    #[comptime] space: Space,
+    #[comptime] served: usize,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    comptime!(assert!(
+        Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
+        "contract: the 2-D nest contracts exactly one axis"
+    ));
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    comptime!(assert!(
+        !lhs_gathered && !rhs_gathered,
+        "contract: a gathered operand has no 2-D matrix view; it needs the N-D nest"
+    ));
+
+    let lw = lhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    let rw = rhs.vector_size();
+    let sw = scales.vector_size();
+    comptime!(assert!(
+        sw == 1,
+        "mm_scaled: the scales are read one value at a time, so their operand is scalar (it is \
+         {sw} wide)"
+    ));
+    comptime!(assert!(
+        rw == aw || served > 1,
+        "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
+    ));
+
+    let size!(S) = 1usize;
+    if comptime!(served > 1) {
+        let size!(W) = served;
+        let size!(A) = 1usize;
+        nest_scaled::<E, EL, W, ER, W, A, ES, S>(
+            acc, lhs, rhs, scales, space, served, lw, 1usize, config, semiring,
+        );
+    } else {
+        let size!(W) = lw;
+        let size!(A) = aw;
+        nest_scaled::<E, EL, W, ER, A, A, ES, S>(
+            acc, lhs, rhs, scales, space, served, lw, aw, config, semiring,
+        );
+    }
+}
+
+/// [`nest`] with the scales view built beside the operands'.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn nest_scaled<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    A: Size,
+    ES: Numeric,
+    S: Size,
+>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<ES>,
+    #[comptime] space: Space,
+    #[comptime] served: usize,
+    #[comptime] lw: usize,
+    #[comptime] aw: usize,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let rank = comptime!(space.rank());
+    let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+    let k = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space)[0]);
+    let kc = comptime!(merged.extent(k));
+
+    let cols = comptime!(space.extent_at(rank - 1));
+    let (mr, nr) = comptime!((space.extent_at(rank - 2), cols / aw));
+    let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
+    let lane_fanout = comptime!(config.lane_fanout);
+
+    for mat in 0..matrices {
+        let lhs_mat = lhs.matrix_packed::<L>(mat);
+        let rhs_mat = rhs.matrix_packed::<V>(mat);
+        let scales_mat = scales.matrix_packed::<S>(mat);
+        let mut acc_view =
+            acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
+
+        let lhs_check = comptime!(lhs_mat.check);
+        let rhs_check = comptime!(rhs_mat.check);
+        let scales_check = comptime!(scales_mat.check);
+        let acc_check = acc_view.check();
+        let eligible = comptime!(mr * nr * served * aw <= config.budget);
+        // A checked scales view is not proved in bounds here — its window is the block grid, not
+        // the operands' — so it takes the masked body rather than the split edge.
+        let unroll = comptime!(
+            eligible && !lhs_check && !rhs_check && !acc_check && !scales_check
+        );
+        body_scaled::<E, EL, L, ER, V, A, ES, S>(
+            &mut acc_view,
+            &lhs_mat,
+            &rhs_mat,
+            &scales_mat,
+            lw,
+            served,
+            aw,
+            mr,
+            nr,
+            cols,
+            kc,
+            unroll,
+            lane_fanout,
+            semiring,
+        );
+    }
+}
+
+/// [`body`] over the scaled contraction.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn body_scaled<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    A: Size,
+    ES: Numeric,
+    S: Size,
+>(
+    acc: &mut AccumulateView<'_, E, A>,
+    lhs: &MatrixView<'_, Vector<EL, L>>,
+    rhs: &MatrixView<'_, Vector<ER, V>>,
+    scales: &MatrixView<'_, Vector<ES, S>>,
+    #[comptime] lw: usize,
+    #[comptime] served: usize,
+    #[comptime] aw: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] cols: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] lane_fanout: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
+    block::contract_scaled::<E, EL, L, ER, V, ES, S>(
+        lhs, rhs, scales, &mut c, lw, served, mr, nr, kc, unroll, lane_fanout, semiring,
+    );
+    block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
+}

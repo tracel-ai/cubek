@@ -48,6 +48,45 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
+/// [`memory`] with the lhs scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`.
+///
+/// The 2-D nest only, deliberately. The N-D nest reads its operands through compacted gather
+/// windows, where a step has no single scalar `k` to address a scale with; that is a second
+/// design question, not a second copy of this one, and a routine reaching it gets told so here
+/// rather than getting a wrong answer.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<ES>,
+    #[comptime] space: Space,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    let lhs_procedural = lhs.is_procedural();
+    let rhs_procedural = rhs.is_procedural();
+    let lw = lhs.vector_size();
+    let rw = rhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    comptime!(assert!(
+        Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1
+            && !lhs_gathered
+            && !rhs_gathered
+            && !lhs_procedural
+            && !rhs_procedural
+            && !(served == 1 && rw != aw),
+        "mm_scaled: the scaled contraction serves the 2-D nest — one contracted axis, operands \
+         read as batch matrices. This one needs the N-D nest, which has no scalar step \
+         coordinate to address a scale with"
+    ));
+    direct::contract_scaled::<E, EL, ER, ES>(acc, lhs, rhs, scales, space, served, config, semiring);
+}
+
 /// How many contracted values one step consumes, reconciled across both operands and the
 /// accumulator.
 ///

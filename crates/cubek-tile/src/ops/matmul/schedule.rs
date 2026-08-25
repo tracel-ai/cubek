@@ -97,3 +97,99 @@ impl<Acc: Numeric> Tile<Acc> {
         pipelined_walk::<MmaWalk<Acc, Lhs, Rhs>>(&mut walk, op_space, out, depth);
     }
 }
+
+/// [`MmaWalk`] with a scales operand riding beside the two the ring stages.
+///
+/// It rides *beside* rather than in the ring on purpose: a scale is one value per block, so it is
+/// cache-served wherever it sits, and a stage would materialize the expansion the coarse read
+/// exists to avoid. That also keeps the ring binary, so nothing here needs a three-operand
+/// [`Staging`] payload.
+#[derive(CubeType)]
+pub(crate) struct MmaScaledWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> {
+    acc: Tile<Acc>,
+    lhs: Tile<Lhs>,
+    rhs: Tile<Rhs>,
+    scales: Tile<S>,
+    #[cube(comptime)]
+    semiring: Semiring,
+}
+
+#[cube]
+impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> Pipelined
+    for MmaScaledWalk<Acc, Lhs, Rhs, S>
+{
+    type Slot = (Tile<Lhs>, Tile<Rhs>);
+
+    fn ring(
+        &self,
+        #[comptime] op_space: Space,
+        #[comptime] out: Space,
+        #[comptime] depth: usize,
+    ) -> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+        Ring::binary(&self.lhs, &self.rhs, op_space, out, depth)
+    }
+
+    fn unrolled(&self, ring: &Ring<(Tile<Lhs>, Tile<Rhs>)>) -> comptime_type!(bool) {
+        let has_fragment_read = ring.has_fragment_read();
+        stage_walk_unrolled(
+            &self.acc,
+            comptime!(Space::merge(&[&self.lhs.space, &self.rhs.space])),
+            has_fragment_read,
+        )
+    }
+
+    fn fill_fixed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
+        slot.fill_fixed(&self.lhs, &self.rhs, region);
+    }
+
+    fn fill_streamed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
+        slot.fill_streamed(&self.lhs, &self.rhs, region);
+    }
+
+    fn compute(
+        &mut self,
+        slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>,
+        region: &Region,
+        #[comptime] publish: bool,
+    ) {
+        let lhs_plan = slot.plan(LHS);
+        let rhs_plan = slot.plan(RHS);
+        let lhs_payload = comptime!(lhs_plan.payload);
+        let rhs_payload = comptime!(rhs_plan.payload);
+        let scales = self.scales.at(region);
+        if comptime!(publish) {
+            slot.publish();
+        }
+        slot.consume(|staged_lhs, staged_rhs| {
+            let lhs = read_operand(staged_lhs, region, lhs_payload);
+            let rhs = read_operand(staged_rhs, region, rhs_payload);
+            self.acc
+                .at(region)
+                .mma_scaled(&lhs, &rhs, &scales, comptime!(self.semiring))
+        });
+    }
+}
+
+#[cube]
+impl<Acc: Numeric> Tile<Acc> {
+    /// [`mma_buffered`](Tile::mma_buffered) with the scales carried alongside.
+    pub(crate) fn mma_scaled_buffered<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        op_space: Space,
+        #[comptime] depth: usize,
+        #[comptime] semiring: Semiring,
+    ) {
+        let out = comptime!(self.space.clone());
+        let mut walk = MmaScaledWalk::<Acc, Lhs, Rhs, S> {
+            acc: self.clone(),
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+            scales: scales.clone(),
+            semiring,
+        };
+        pipelined_walk::<MmaScaledWalk<Acc, Lhs, Rhs, S>>(&mut walk, op_space, out, depth);
+    }
+}

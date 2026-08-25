@@ -177,6 +177,196 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     }
 }
 
+/// [`contract`] with the lhs scaled: `c += (lhs ⊗ scale) · rhs`, the scale read from its own
+/// operand at the step's own coordinate. One value per block of the contracted axis, so a
+/// [coarse](crate::Projection) scales view answers the same value for every `k` its block covers
+/// and nothing here divides anything.
+///
+/// A separate body rather than an option on [`contract`]: the plain contraction is the hot loop of
+/// every matmul in the crate, and a scaled step is a different program — one more read and one
+/// more product per value. What they share is [`rank1_update`]'s shape, which is why the two read
+/// the same way.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn contract_scaled<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    ES: Numeric,
+    S: Size,
+>(
+    lhs: &MatrixView<'_, Vector<EL, L>>,
+    rhs: &MatrixView<'_, Vector<ER, V>>,
+    scales: &MatrixView<'_, Vector<ES, S>>,
+    c: &mut Array<Vector<E, V>>,
+    #[comptime] lw: usize,
+    #[comptime] served: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] lane_fanout: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let mut b = Array::<Vector<E, V>>::new(nr);
+
+    if comptime!(served > 1) {
+        for line in 0..comptime!(kc / served) {
+            rank1_update_scaled::<E, EL, L, ER, V, ES, S>(
+                lhs,
+                rhs,
+                scales,
+                c,
+                &mut b,
+                0usize,
+                line as u32,
+                (line * served) as u32,
+                comptime!(None),
+                served,
+                lw,
+                mr,
+                nr,
+                unroll,
+                semiring,
+            );
+        }
+    } else if comptime!(lane_fanout && lw > 1) {
+        let k_lines = comptime!(kc / lw);
+        let k_tail = comptime!(kc % lw);
+
+        for line in 0..k_lines {
+            #[unroll]
+            for lane in 0..lw {
+                rank1_update_scaled::<E, EL, L, ER, V, ES, S>(
+                    lhs,
+                    rhs,
+                    scales,
+                    c,
+                    &mut b,
+                    line * lw + lane,
+                    line as u32,
+                    (line * lw + lane) as u32,
+                    comptime!(Some(lane)),
+                    served,
+                    lw,
+                    mr,
+                    nr,
+                    unroll,
+                    semiring,
+                );
+            }
+        }
+
+        #[unroll]
+        for lane in 0..k_tail {
+            rank1_update_scaled::<E, EL, L, ER, V, ES, S>(
+                lhs,
+                rhs,
+                scales,
+                c,
+                &mut b,
+                comptime!(k_lines * lw + lane),
+                comptime!(k_lines) as u32,
+                comptime!((k_lines * lw + lane) as u32),
+                comptime!(Some(lane)),
+                served,
+                lw,
+                mr,
+                nr,
+                unroll,
+                semiring,
+            );
+        }
+    } else {
+        for p in 0..kc {
+            rank1_update_scaled::<E, EL, L, ER, V, ES, S>(
+                lhs,
+                rhs,
+                scales,
+                c,
+                &mut b,
+                p,
+                (p / lw) as u32,
+                p as u32,
+                comptime!(None),
+                served,
+                lw,
+                mr,
+                nr,
+                unroll,
+                semiring,
+            );
+        }
+    }
+}
+
+/// [`rank1_update`] with the lhs value scaled before it forms its products: `k_scalar` is the
+/// step's own coordinate along the contracted axis, which is what addresses the scale (the line
+/// index addresses the lhs, and the two differ by its width).
+///
+/// The scale enters on the product side — `semiring.mul()` — because that is what it is: one more
+/// factor of the term, not one more term. A whole served line takes one scale, which holds exactly
+/// while a line does not straddle a block; the caller states that constraint.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn rank1_update_scaled<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    ES: Numeric,
+    S: Size,
+>(
+    lhs: &MatrixView<'_, Vector<EL, L>>,
+    rhs: &MatrixView<'_, Vector<ER, V>>,
+    scales: &MatrixView<'_, Vector<ES, S>>,
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    k: usize,
+    k_line: u32,
+    k_scalar: u32,
+    #[comptime] lane: Option<usize>,
+    #[comptime] served: usize,
+    #[comptime] lw: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    #[unroll(unroll)]
+    for n in 0..nr {
+        if comptime!(served > 1) {
+            b[n] = Vector::<E, V>::cast_from(rhs.read((n as u32, k_line)));
+        } else {
+            b[n] = Vector::<E, V>::cast_from(rhs.read((k as u32, n as u32)));
+        }
+    }
+    #[unroll(unroll)]
+    for i in 0..mr {
+        let lhs_line = lhs.read((i as u32, k_line));
+        let a = if comptime!(served > 1) {
+            Vector::<E, V>::cast_from(lhs_line)
+        } else if comptime!(lane.is_some()) {
+            Vector::<E, V>::cast_from(lhs_line.extract(comptime!(lane.unwrap())))
+        } else if comptime!(lw == 1) {
+            Vector::<E, V>::cast_from(lhs_line.extract(0usize))
+        } else {
+            Vector::<E, V>::cast_from(lhs_line.extract_dynamic(k % lw))
+        };
+        // Broadcast: the scale is one value whatever the line's width, so it multiplies every
+        // component of the served line.
+        let scale = Vector::<E, V>::cast_from(scales.read((i as u32, k_scalar)).extract(0usize));
+        let a = semiring.mul().fold::<Vector<E, V>>(a, scale);
+        #[unroll(unroll)]
+        for n in 0..nr {
+            c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
+        }
+    }
+}
+
 /// What [`seed`] and [`commit`] both need to hold before they spread a block column's lanes across
 /// several sink cells: the lanes mean one thing at a time, and a spread one addresses cells the
 /// accumulator serves singly.
