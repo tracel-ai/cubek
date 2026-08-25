@@ -93,8 +93,8 @@ fn quantize_packed_value<F: Float, N: Size, FS: CubePrimitive, QS: Int>(
 /// The field a value occupies is the format's *code*, not its magnitude, and the two only coincide
 /// for the integer formats — which is why a minifloat is encoded rather than cast here. Casting
 /// `e2m1` would truncate `0.5` and `1.5` to whole numbers and leave a format reconstructing on the
-/// integer grid `{0, 1, 2, 3, 4, 5, 6}`; casting `e4m3` would do the same to its fractions and then
-/// wrap anything past ±127 out of the byte, which is how `300.0` used to come back as `44.0`.
+/// integer grid `{0, 1, 2, 3, 4, 5, 6}`; casting `e4m3` would do the same to its fractions and
+/// then wrap, since its codes reach ±448 while a byte read as two's complement stops at ±127.
 #[cube]
 fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: QuantValue) -> QS {
     let size_quant = quant.size_bits();
@@ -105,35 +105,34 @@ fn pack_q<F: Float, N: Size, QS: Int>(value: Vector<F, N>, #[comptime] quant: Qu
     let mask = (1 << size_quant) - 1;
     let mut packed = QS::from_int(0);
 
-    match quant {
+    let fields = match quant {
         QuantValue::E2M1 | QuantValue::E4M3 | QuantValue::E5M2 => {
-            let codes = encode_minifloat::<F, N>(value, quant);
-            #[unroll]
-            for position in 0..num_quants {
-                let offset = QS::cast_from(position * size_quant);
-                let shifted =
-                    QS::cast_from(i32::cast_from(codes.extract(position)) & mask) << offset;
-                packed |= shifted;
-            }
+            encode_minifloat::<F, N>(value, quant)
         }
         QuantValue::Q8F
         | QuantValue::Q8S
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S => {
-            // Shift and combine into QS (using i32 for sign extension)
-            #[unroll]
-            for position in 0..num_quants {
-                let offset = QS::cast_from(position * size_quant);
-                let shifted =
-                    QS::cast_from(i32::cast_from(value.extract(position)) & mask) << offset;
-                packed |= shifted;
-            }
-        }
+        | QuantValue::Q2S => integer_fields::<F, N>(value),
+    };
+
+    // Shift and combine into QS (using i32 for sign extension)
+    #[unroll]
+    for position in 0..num_quants {
+        let offset = QS::cast_from(position * size_quant);
+        let shifted = QS::cast_from(i32::cast_from(fields.extract(position)) & mask) << offset;
+        packed |= shifted;
     }
 
     packed
+}
+
+/// The field an integer format's value occupies, which is the value itself: its codes and its
+/// magnitudes are the same numbers, and the mask the caller applies does the sign truncation.
+#[cube]
+fn integer_fields<F: Float, N: Size>(value: Vector<F, N>) -> Vector<u32, N> {
+    Vector::<u32, N>::reinterpret(Vector::<i32, N>::cast_from(value))
 }
 
 /// The code a minifloat value occupies in its packed field.
@@ -162,12 +161,12 @@ fn write_scale<F: Float, FS: CubePrimitive>(
     mut out_scale: ViewMut<FS, usize>,
     global: &GlobalScale,
     scales_layout: ScalesLayout,
-    #[comptime] param: ScaleDtype,
+    #[comptime] dtype: ScaleDtype,
 ) -> Scale<FS> {
     // Rounded up rather than cast to nearest, which can land below the scale calibration asked for
     // and clip every value at the block maximum. The CPU backends round up too, and both have to,
     // or a tensor quantized on one reconstructs differently on the other.
-    let inner = FS::cast_from(round_up_to_dtype::<F>(scale.read(in_pos), param));
+    let inner = FS::cast_from(round_up_to_dtype::<F>(scale.read(in_pos), dtype));
 
     // Write the scale into the output buffer
     if scales_layout.is_block_start(in_pos) {
@@ -188,8 +187,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     out_scale: ScalesViewMut<'_, FS>,
     out_global: ComptimeOption<LinearViewMut<'_, f32>>,
     scales_layout: ScalesLayout,
-    #[comptime] param: ScaleDtype,
-    #[comptime] quant: QuantValue,
+    #[comptime] scheme: QuantScheme,
     #[define(F, FS, Q)] _dtypes: [ElemType; 3],
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -200,7 +198,14 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
     let in_pos = ABSOLUTE_POS * input.vector_size() * native_packing;
     let global = GlobalScale::read(global);
     global.write(out_global);
-    let scale = write_scale(in_pos, scale, out_scale, &global, scales_layout, param);
+    let scale = write_scale(
+        in_pos,
+        scale,
+        out_scale,
+        &global,
+        scales_layout,
+        scheme.scale_dtype(),
+    );
 
     output.write(
         ABSOLUTE_POS,
@@ -209,7 +214,7 @@ fn quantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric>(
             scale,
             range_min.get::<F>(),
             range_max.get::<F>(),
-            quant,
+            scheme.value,
         ),
     );
 }
@@ -289,13 +294,6 @@ pub fn launch_ref<R: Runtime>(
 ) -> Result<(), LaunchError> {
     check_scale_bindings(scheme, scales.len());
     check_scale_bindings(scheme, out_scales.len());
-    // Refused here rather than during kernel expansion, where the caller can no longer read the
-    // scheme off the error.
-    assert!(
-        scheme.scale_dtype().round_up(1.0).is_some(),
-        "{:?} scales have no round-up rule, which quantization requires",
-        scheme.scale_dtype()
-    );
 
     let scale_dtype = ElemType::from_scale_dtype(scheme.scale_dtype());
     let (scale, global) = split_levels(scales);
@@ -414,8 +412,7 @@ fn quantize_native<R: Runtime>(
                     scales_view(output, out_scale, 1, scheme),
                     out_global.map(linear_view).into(),
                     scales_layout,
-                    scheme.scale_dtype(),
-                    scheme.value,
+                    *scheme,
                     [input_dtype, scale_dtype, output_dtype],
                 )
             }

@@ -5,7 +5,7 @@
 //! the format's *code*, and only for the integer value types is a code the same number as the
 //! magnitude it stands for. `e2m1` is where that first bites, but `e4m3` is where it bites hardest
 //! — its codes run to ±448 while a byte read as two's complement stops at ±127, so a codec that
-//! confuses the two does not merely lose precision, it wraps. `300.0` came back as `44.0`.
+//! confuses the two does not merely lose precision, it wraps: `300.0` lands on `44.0`.
 //!
 //! The native store has its own coverage; these are the packed path, which has no fp8 type in play
 //! at all and so has to encode in software.
@@ -76,13 +76,13 @@ fn e5m2_code_points_survive_the_round_trip() {
     );
 }
 
-/// Magnitudes above what a byte read as two's complement can hold. This is the regression the
-/// packed path actually had: the field was cast from the value rather than encoded, so anything
-/// past ±127 wrapped out of the byte into an unrelated magnitude.
+/// Magnitudes above what a byte read as two's complement can hold. A field cast from the value
+/// rather than encoded wraps here, landing on an unrelated magnitude — which is the failure that
+/// costs accuracy silently, since nothing about it raises an error.
 #[test]
 fn large_magnitudes_do_not_wrap_out_of_the_field() {
     // 300 is not an e4m3 value; 288 and 320 are its neighbours and 304 the midpoint, so it rounds
-    // down to 288. What matters is that it lands near itself rather than on 44.
+    // down to 288. What matters is that it lands near itself rather than a wrap away from it.
     let data = [300.0f32, -300.0, 448.0, -448.0, 256.0, -256.0, 130.0, 200.0];
     let computed = round_trip(QuantValue::E4M3, &data);
 

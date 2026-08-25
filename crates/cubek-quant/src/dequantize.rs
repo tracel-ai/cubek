@@ -137,26 +137,35 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
         | QuantValue::Q4F
         | QuantValue::Q4S
         | QuantValue::Q2F
-        | QuantValue::Q2S => {
-            let sign_bit = 1u32 << (size_quant - 1);
-            let two_pow_n = 1 << size_quant;
-
-            let mut output = Vector::empty();
-            #[unroll]
-            for position in 0..num_quant {
-                let raw = fields.extract(position);
-
-                // Branchless two's complement conversion
-                // If raw >= 2^(n-1), then result = raw - 2^n
-                let raw_i32 = i32::cast_from(raw);
-                let is_negative = i32::cast_from(raw >= sign_bit); // 1 if negative, 0 if positive
-                let signed_value = raw_i32 - (is_negative * two_pow_n);
-
-                output.insert(position, F::cast_from(signed_value));
-            }
-            output
-        }
+        | QuantValue::Q2S => integer_fields_to_float::<F, NF>(fields, num_quant, size_quant),
     }
+}
+
+/// Read each field as a two's complement integer of `size_quant` bits, which for the integer
+/// formats is both the code and the magnitude it stands for.
+#[cube]
+fn integer_fields_to_float<F: Float, NF: Size>(
+    fields: Vector<u32, NF>,
+    #[comptime] num_quant: usize,
+    #[comptime] size_quant: usize,
+) -> Vector<F, NF> {
+    let sign_bit = 1u32 << (size_quant - 1);
+    let two_pow_n = 1 << size_quant;
+
+    let mut output = Vector::empty();
+    #[unroll]
+    for position in 0..num_quant {
+        let raw = fields.extract(position);
+
+        // Branchless two's complement conversion
+        // If raw >= 2^(n-1), then result = raw - 2^n
+        let raw_i32 = i32::cast_from(raw);
+        let is_negative = i32::cast_from(raw >= sign_bit); // 1 if negative, 0 if positive
+        let signed_value = raw_i32 - (is_negative * two_pow_n);
+
+        output.insert(position, F::cast_from(signed_value));
+    }
+    output
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
