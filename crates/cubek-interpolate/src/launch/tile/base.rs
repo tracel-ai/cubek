@@ -10,7 +10,7 @@ use crate::{
     definition::{InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
-use cubek_tile::*;
+use cubek_tile::{Operand, Residence};
 
 /// Every choice the tile-backed interpolation launch makes.
 ///

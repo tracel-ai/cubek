@@ -3,7 +3,7 @@ use super::{
     space::*,
 };
 use cubecl::{ir::ElemType, prelude::*};
-use cubek_tile::*;
+use cubek_tile::{Phase, Tile, TileArg, affine_along, separable_product, sum_of};
 
 /// The distance from a tap to the source coordinate the output position lands on.
 ///

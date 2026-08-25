@@ -1,6 +1,9 @@
 use super::geometry::TileGeometry;
 use cubecl::{Runtime, client::ComputeClient};
-use cubek_tile::*;
+use cubek_tile::{
+    Axis, Buffering, Compaction, ComputeScope, Coverage, CubeAxis, Cut, Distribution, Instruction,
+    PhysicalAxisMap, Projection, RegisterBlock, Space, Spread, Tiling, WalkOrder,
+};
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);

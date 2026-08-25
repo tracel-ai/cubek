@@ -1,6 +1,9 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
-use cubek_tile::*;
+use cubek_tile::{
+    AffineCoordinate, Boundary, Constant, Cubic, Lanczos, Linear, Phase, Recipe, SeparableProduct,
+    Sum,
+};
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
 type NearestAxis<E> = Constant<E>;
