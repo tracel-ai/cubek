@@ -64,5 +64,5 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     };
 
     let mut output = output.tile(space);
-    output.mma(&weights, &input);
+    output.mm(&weights, &input);
 }
