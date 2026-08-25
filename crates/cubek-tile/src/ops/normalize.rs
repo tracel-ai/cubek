@@ -158,7 +158,7 @@ mod tests {
             8,
             1,
             LaneShare::Whole,
-            LeafOp::Sum,
+            Monoid::Sum,
         );
         let tile = TileExpand::<f32> {
             tile_kind: TileKindExpand::PlaneTile(plane_tile),
