@@ -23,8 +23,12 @@ pub(super) struct ContractShape {
     pub mr: usize,
     /// Its columns, counted in cells.
     pub nr: usize,
+    /// The accumulator's innermost (column) extent in scalars.
+    pub cols: usize,
     /// Contracted values one step consumes ([`Space::served`]).
     pub served: usize,
+    /// How many sink cells one block column's vector lanes spread across.
+    pub spread: usize,
     /// The lhs's line width.
     pub lw: usize,
     /// The rhs's, and so the block's.
@@ -51,18 +55,26 @@ impl ContractShape {
             .iter()
             .map(|&axis| merged.extent(axis))
             .collect::<Vec<_>>();
-        // A folded step holds partials of one cell in the block's lanes, so its cells are one
-        // column wide; otherwise a cell is the rhs's line.
-        let cell_width = if served > 1 { 1 } else { vw };
+        let cols = space.extent_at(rank - 1);
+        let spread = if served > 1 { 1 } else { vw / aw };
+        // A spread block column holds `spread` scalar sink cells in its lanes and rounds up;
+        // otherwise a cell is `vw`-wide (or 1 at a folded step) and keeps counting whole lines.
+        let nr = if spread > 1 {
+            cols.div_ceil(spread)
+        } else {
+            cols / (if served > 1 { 1 } else { vw })
+        };
 
         Self {
             kc: reduce_extents.iter().product(),
             mr: space.extent_at(rank - 2),
-            nr: space.extent_at(rank - 1) / cell_width,
+            nr,
+            cols,
             space,
             reduce,
             reduce_extents,
             served,
+            spread,
             lw,
             vw,
             aw,
@@ -82,9 +94,16 @@ impl ContractShape {
     }
 
     /// The block's size in scalars, which is what [`RegisterBlock::budget`] counts: `mr * nr`
-    /// lines of `served * aw` (exactly one of the two exceeds 1). Past the budget a schedule
-    /// rolls its loops rather than keeping the block in registers.
+    /// lines of `served * aw` (exactly one of the two exceeds 1), or `spread` sink cells. Past
+    /// the budget a schedule rolls its loops rather than keeping the block in registers.
     pub fn scalars(&self) -> usize {
-        self.mr * self.nr * self.served * self.aw
+        self.mr * self.nr * self.served * self.aw * self.spread
+    }
+
+    /// Whether the lane fan-out's fixed extracts stay in step with the coordinate
+    /// `lane_component` decodes on the flat walk.
+    pub fn lane_index_exact(&self) -> bool {
+        self.reduce.len() == 1
+            || self.reduce_extents[self.reduce_extents.len() - 1].is_multiple_of(self.lw)
     }
 }

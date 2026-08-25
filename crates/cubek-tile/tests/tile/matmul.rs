@@ -228,6 +228,268 @@ fn matmul_cpu_big_k() {
     );
 }
 
+/// A scalar `K×N` source whose `N = 3` rows cannot be vectorized globally is padded into
+/// four-wide shared-memory lines. The register gather scatters those lanes back into the scalar
+/// `M×N` sink; the fourth lane is padding and must not consume the next row's first live value.
+#[test]
+fn matmul_padded_rhs_stage_into_scalar_sink() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (2usize, 3usize, 2usize);
+    let dtype = f32::elem_type_native();
+    let mut operands = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
+            level
+                .axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(k));
+            ops.1.stage(Residence::Smem);
+        })
+        .build();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let launcher = space.launcher(&client);
+    let a_op = launcher.bind(&operands.0, a.handle().binding()).build();
+    let b_op = launcher
+        .bind(&operands.1, b.handle().binding())
+        .stage_width(4)
+        .build();
+    let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        1,
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher
+            .space()
+            .clone()
+            .with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = vec![3.0, 4.0, 5.0, 9.0, 14.0, 19.0];
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The single-row shape, where a block column overhanging `N` has nowhere legal to land: with no
+/// row after it, `block::commit`'s masked lanes are all that keeps the write inside the output.
+#[test]
+fn matmul_padded_rhs_stage_single_row_sink() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (1usize, 3usize, 2usize);
+    let dtype = f32::elem_type_native();
+    let mut operands = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
+            level
+                .axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(k));
+            ops.1.stage(Residence::Smem);
+        })
+        .build();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let launcher = space.launcher(&client);
+    let a_op = launcher.bind(&operands.0, a.handle().binding()).build();
+    let b_op = launcher
+        .bind(&operands.1, b.handle().binding())
+        .stage_width(4)
+        .build();
+    let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        1,
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher
+            .space()
+            .clone()
+            .with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = vec![3.0, 4.0, 5.0];
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// A scalar `K×N` source with `N = 5` spanning two 4-wide shared-memory lines (total 8 lanes, 3
+/// padding). Exercises non-multiple tail across multi-line stages.
+#[test]
+fn matmul_padded_rhs_stage_multi_line() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (2usize, 5usize, 2usize);
+    let dtype = f32::elem_type_native();
+    let mut operands = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
+            level
+                .axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(k));
+            ops.1.stage(Residence::Smem);
+        })
+        .build();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let launcher = space.launcher(&client);
+    let a_op = launcher.bind(&operands.0, a.handle().binding()).build();
+    let b_op = launcher
+        .bind(&operands.1, b.handle().binding())
+        .stage_width(4)
+        .build();
+    let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        1,
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher
+            .space()
+            .clone()
+            .with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = vec![5.0, 6.0, 7.0, 8.0, 9.0, 15.0, 20.0, 25.0, 30.0, 35.0];
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// A scalar `M×K` source with `K = 3` passes an outer `InPlace` level before its pending stage
+/// width reaches Smem, where it is padded into one four-wide line per row. Unlike the padded-rhs
+/// cases above, a scalar rhs and sink keep this on the direct 2-D contraction path; its partial
+/// final lhs line must contribute exactly three K values.
+#[test]
+fn matmul_padded_lhs_stage_direct_tail() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (2usize, 2usize, 3usize);
+    let dtype = f32::elem_type_native();
+    let mut operands = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
+            level
+                .axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(k));
+            ops.0.stage(Residence::InPlace);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
+            level
+                .axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::sequential(k));
+            ops.0.stage(Residence::Smem);
+        })
+        .build();
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+    let launcher = space.launcher(&client);
+    let a_op = launcher
+        .bind(&operands.0, a.handle().binding())
+        .stage_width(4)
+        .build();
+    let b_op = launcher.bind(&operands.1, b.handle().binding()).build();
+    let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        1,
+        a_op.arg(),
+        b_op.arg(),
+        c_op.arg(),
+        launcher
+            .space()
+            .clone()
+            .with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected = vec![10.0, 13.0, 28.0, 40.0];
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// The "global matmul" shape: M and N stay comptime (`Static`), only K is `Dynamic`, so its tile
 /// count is resolved from the tensor at runtime while M/N fold and unroll. Exercises the mixed
 /// `Static`/`Dynamic` path through `merged_space`/`Extents` that every `all_dynamic` caller skips.

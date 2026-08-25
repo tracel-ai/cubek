@@ -71,7 +71,16 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
         let unroll =
             comptime!(problem.block.scalars() * kc <= config.budget && !rhs_check && !acc_check);
         let unroll_taps = comptime!(kc <= config.budget);
-        let mut c = block::seed::<E, V, V>(&mut acc, 1usize, comptime!(mr), comptime!(nr), unroll);
+        let mut c = block::seed::<E, V, V>(
+            &mut acc,
+            1usize,
+            1usize,
+            comptime!(problem.block.aw),
+            comptime!(mr),
+            comptime!(nr),
+            comptime!(problem.block.cols),
+            unroll,
+        );
 
         #[unroll(unroll)]
         for i in 0..mr {
@@ -188,7 +197,17 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                 }
             }
         }
-        block::commit::<E, V, V>(&mut acc, c, 1usize, comptime!(mr), comptime!(nr), unroll);
+        block::commit::<E, V, V>(
+            &mut acc,
+            c,
+            1usize,
+            1usize,
+            comptime!(problem.block.aw),
+            comptime!(mr),
+            comptime!(nr),
+            comptime!(problem.block.cols),
+            unroll,
+        );
     }
 }
 

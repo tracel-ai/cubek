@@ -115,6 +115,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
+    // `step_served` only returns 1 for an rhs lining along the accumulator, where it already
+    // refused anything but a matched pair or a scalar sink, so the division is exact.
+    comptime!(assert!(
+        rw == aw || aw == 1,
+        "contract gather: a rhs staged wider than its sink spreads its lanes across scalar cells, \
+         so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
+    ));
     let factors = lhs.factors();
     let rhs_projection = rhs.projection();
 

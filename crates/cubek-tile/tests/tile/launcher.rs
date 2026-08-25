@@ -715,3 +715,67 @@ fn quantized_packed_store_narrow_line_panics() {
             .with_store(QuantStore::PackedU32(0)),
     );
 }
+
+#[test]
+#[should_panic(expected = "never Smem-resident")]
+fn stage_width_without_smem_panics() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
+    let _ = launch
+        .arg(binding(&client, &[64, 16]))
+        .subspace(&[M, K])
+        .stage_width(4)
+        .build();
+}
+
+/// A padded stage assembles its lines out of scalar cells, so there is nothing for it to do for
+/// an operand global memory already vectorizes.
+#[test]
+#[should_panic(expected = "must be unvectorized")]
+fn stage_width_refuses_a_vectorized_operand() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = batched_space(1, 1, 64, 64, 16);
+    let launch = space.launcher(&client);
+    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
+    operand.stage(Residence::Smem);
+    operand.stage(Residence::InPlace);
+    let _ = launch
+        .bind(&operand, binding(&client, &[64, 16]))
+        .vectorize(4)
+        .stage_width(8)
+        .build();
+}
+
+/// A stage served at the operand's own scalar width pads nothing, so stating it is a mistake
+/// rather than a no-op.
+#[test]
+#[should_panic(expected = "must widen the operand's own")]
+fn stage_width_must_widen() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = batched_space(1, 1, 64, 64, 16);
+    let launch = space.launcher(&client);
+    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
+    operand.stage(Residence::Smem);
+    operand.stage(Residence::InPlace);
+    let _ = launch
+        .bind(&operand, binding(&client, &[64, 16]))
+        .stage_width(1)
+        .build();
+}
+
+#[test]
+#[should_panic(expected = "not supported for quantized operands")]
+fn stage_width_refuses_quant() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = batched_space(1, 1, 64, 64, 16);
+    let launch = space.launcher(&client);
+    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
+    operand.stage(Residence::Smem);
+    operand.stage(Residence::InPlace);
+    let scales = binding(&client, &[1, 8]);
+    let _ = launch
+        .bind(&operand, binding(&client, &[64, 16]))
+        .quantized(&[scales], quant_scheme(), DequantAt::Read)
+        .stage_width(4)
+        .build();
+}
