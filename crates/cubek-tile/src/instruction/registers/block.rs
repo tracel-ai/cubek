@@ -165,12 +165,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
             // One step of the sum-product semiring, which is a single `fma`: `+= a * b` would
             // lower to a separate mul + dependent add (no fast-math contraction on the CPU
             // backend), doubling the FP instruction count and serializing the accumulate.
-            c[i * nr + n] = Semiring::step::<Vector<E, V>>(
-                a,
-                b[n],
-                c[i * nr + n],
-                comptime!(Semiring::SUM_PROD),
-            );
+            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
         }
     }
 }

@@ -14,7 +14,7 @@ pub fn vector<E: Numeric, N: Size>(
     let mut acc = Monoid::identity::<E>(monoid);
     #[unroll]
     for j in 0..width {
-        acc = Monoid::fold::<E>(acc, v.extract(j), monoid);
+        acc = monoid.fold::<E>(acc, v.extract(j));
     }
     acc
 }
@@ -36,7 +36,7 @@ pub fn array_from<E: Numeric>(
     let mut acc = seed;
     #[unroll]
     for i in 0..len {
-        acc = Monoid::fold::<E>(acc, arr[i], monoid);
+        acc = monoid.fold::<E>(acc, arr[i]);
     }
     acc
 }

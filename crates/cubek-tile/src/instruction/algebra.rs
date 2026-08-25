@@ -3,6 +3,27 @@
 
 use cubecl::prelude::*;
 
+/// What a monoid asks of the values it folds: ordering and arithmetic. Every bound here is one
+/// the four folds need, and the set stays well below `Numeric`, which `Vector` does not have.
+pub trait Foldable:
+    CubePartialOrd
+    + CubeAdd
+    + CubeMul
+    + core::ops::Add<Self, Output = Self>
+    + core::ops::Mul<Self, Output = Self>
+    + Sized
+{
+}
+
+impl<T> Foldable for T where
+    T: CubePartialOrd
+        + CubeAdd
+        + CubeMul
+        + core::ops::Add<Self, Output = Self>
+        + core::ops::Mul<Self, Output = Self>
+{
+}
+
 /// An identity and an associative fold. Everything that merges values takes one: the plane
 /// instructions ([`plane`](super::plane)), the register nests
 /// ([`instruction`](crate::instruction::registers)), the verb that schedules them
@@ -35,27 +56,37 @@ impl Monoid {
         }
     }
 
-    /// Fold `rhs` into `lhs`.
-    ///
-    /// Generic over scalars and lines alike: these four need only ordering and arithmetic, which
-    /// `Vector` has, so the bound stays well below `Numeric` (which it does not have).
-    pub fn fold<
-        T: CubePartialOrd
-            + CubeAdd
-            + CubeMul
-            + core::ops::Add<T, Output = T>
-            + core::ops::Mul<T, Output = T>,
-    >(
-        lhs: T,
-        rhs: T,
-        #[comptime] monoid: Monoid,
-    ) -> T {
+    /// Fold `rhs` into `lhs`, over scalars and lines alike.
+    fn fold_of<T: Foldable>(lhs: T, rhs: T, #[comptime] monoid: Monoid) -> T {
         match comptime!(monoid) {
             Monoid::Sum => lhs + rhs,
             Monoid::Prod => lhs * rhs,
             Monoid::Max => max(lhs, rhs),
             Monoid::Min => min(lhs, rhs),
         }
+    }
+}
+
+/// `monoid.fold(a, b)`, the form call sites use.
+///
+/// Written out rather than generated: `#[cube]` hangs a method's expansion on `{Name}Expand`,
+/// and a comptime-only value has none, so the operation is an associated function above and
+/// this pair forwards to it. The plain half serves the unexpanded copy of a `#[cube]` body, the
+/// `__expand` half is what the macro calls. [`identity`](Monoid::identity) takes no such pair:
+/// its call is comptime through and through, which the macro folds on the host, where a generic
+/// element has no value to fold.
+impl Monoid {
+    pub fn fold<T: Foldable>(self, lhs: T, rhs: T) -> T {
+        Monoid::fold_of::<T>(lhs, rhs, self)
+    }
+
+    pub fn __expand_fold_method<T: Foldable>(
+        self,
+        scope: &Scope,
+        lhs: T::ExpandType,
+        rhs: T::ExpandType,
+    ) -> T::ExpandType {
+        Monoid::__expand_fold_of::<T>(scope, lhs, rhs, self)
     }
 }
 
@@ -110,14 +141,7 @@ impl Semiring {
     /// One function rather than [`Monoid::fold`] twice because [`SUM_PROD`](Semiring::SUM_PROD)
     /// must stay a single `fma`: a separate multiply and dependent add doubles the FP instruction
     /// count and serializes the accumulate, since the CPU backend contracts neither.
-    pub fn step<
-        T: CubePrimitive
-            + CubePartialOrd
-            + CubeAdd
-            + CubeMul
-            + core::ops::Add<T, Output = T>
-            + core::ops::Mul<T, Output = T>,
-    >(
+    fn step_of<T: Foldable + CubePrimitive>(
         lhs: T,
         rhs: T,
         acc: T,
@@ -126,11 +150,25 @@ impl Semiring {
         if comptime!(semiring == Semiring::SUM_PROD) {
             fma(lhs, rhs, acc)
         } else {
-            Monoid::fold::<T>(
-                acc,
-                Monoid::fold::<T>(lhs, rhs, comptime!(semiring.mul())),
-                comptime!(semiring.add()),
-            )
+            let product = semiring.mul().fold::<T>(lhs, rhs);
+            semiring.add().fold::<T>(product, acc)
         }
+    }
+}
+
+/// `semiring.step(a, b, acc)`, the pair [`Monoid::fold`] documents.
+impl Semiring {
+    pub fn step<T: Foldable + CubePrimitive>(self, lhs: T, rhs: T, acc: T) -> T {
+        Semiring::step_of::<T>(lhs, rhs, acc, self)
+    }
+
+    pub fn __expand_step_method<T: Foldable + CubePrimitive>(
+        self,
+        scope: &Scope,
+        lhs: T::ExpandType,
+        rhs: T::ExpandType,
+        acc: T::ExpandType,
+    ) -> T::ExpandType {
+        Semiring::__expand_step_of::<T>(scope, lhs, rhs, acc, self)
     }
 }

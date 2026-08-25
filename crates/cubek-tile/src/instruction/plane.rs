@@ -57,11 +57,8 @@ pub fn group<E: Numeric, V: Size>(
     #[unroll]
     for bit in 0..comptime!(usize::BITS - fold_mask.leading_zeros()) {
         if comptime!(fold_mask & (1 << bit) != 0) {
-            total = Monoid::fold::<Vector<E, V>>(
-                total,
-                plane_shuffle_xor(total, comptime!(1u32 << bit)),
-                monoid,
-            );
+            total = monoid
+                .fold::<Vector<E, V>>(total, plane_shuffle_xor(total, comptime!(1u32 << bit)));
         }
     }
     total

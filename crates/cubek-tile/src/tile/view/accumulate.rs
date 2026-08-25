@@ -59,7 +59,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 if UNIT_POS_X == 0 {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, Monoid::fold::<Vector<E, V>>(old, combined, monoid));
+                        .write(pos, monoid.fold::<Vector<E, V>>(old, combined));
                 }
             }
             LaneShare::Group { fold_mask } => {
@@ -68,7 +68,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
                 if lane_in_group == 0 {
                     let old = self.values.read(pos.clone());
                     self.values
-                        .write(pos, Monoid::fold::<Vector<E, V>>(old, combined, monoid));
+                        .write(pos, monoid.fold::<Vector<E, V>>(old, combined));
                 }
             }
             LaneShare::Whole => self.values.write(pos, value),

@@ -231,14 +231,9 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
                 )
             }
         };
-        acc_vec =
-            Monoid::fold::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec), monoid);
+        acc_vec = monoid.fold::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec));
     }
-    Monoid::fold::<Acc>(
-        seed,
-        horizontal::vector::<Acc, V>(acc_vec, served, monoid),
-        monoid,
-    )
+    monoid.fold::<Acc>(seed, horizontal::vector::<Acc, V>(acc_vec, served, monoid))
 }
 
 /// [`element`]'s scalar path: one extract per contracted element.
@@ -300,7 +295,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
         };
         let in_cast = Acc::cast_from(in_val);
 
-        curr_val = Monoid::fold::<Acc>(curr_val, in_cast, monoid);
+        curr_val = monoid.fold::<Acc>(curr_val, in_cast);
     }
 
     curr_val
