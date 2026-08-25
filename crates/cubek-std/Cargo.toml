@@ -29,7 +29,7 @@ benchmarks = ["testing"]
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false, optional = true }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false, optional = true }
 
 [dev-dependencies]
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
