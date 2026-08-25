@@ -493,14 +493,15 @@ impl Space {
     /// Whether the final tile spans every axis contracted against `output` whole, so no level
     /// above the leaf walks a contracted region and no output cell is visited twice.
     ///
-    /// What lets an accumulation seed from its fold's identity instead of reading the sink: the
-    /// one leaf visit that owns a cell is also the only one, so nothing it would have read back
-    /// is ever a partial. Asked of the operands' [`merge`](Space::merge) where there are two.
+    /// What lets [`mm`](crate::Tile::mm) and [`reduce_axis`](crate::Tile::reduce_axis) start from
+    /// their fold's identity instead of reading the accumulator back: the one leaf visit that owns
+    /// a cell is also the only one, so nothing it would have read back is ever a partial. Asked of
+    /// the operands' [`merge`](Space::merge) where there are two.
     pub fn spans_contracted_at_leaf(&self, output: &Space) -> bool {
         let leaf = self.final_space();
         self.contracting(output).iter().all(|&axis| {
             // A Dynamic extent is only known at runtime, so whether the leaf spans it whole
-            // cannot be settled here. Seeding from the sink is the answer that is right either way.
+            // cannot be settled here. Reading the accumulator back is right either way.
             matches!(
                 (self.extent_raw(axis), leaf.extent_raw(axis)),
                 (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf
@@ -788,7 +789,7 @@ mod contraction_tests {
     }
 
     /// A `Dynamic` contracted extent cannot be compared against the leaf's at comptime, and
-    /// preserving the sink is the answer that is right either way.
+    /// reading the accumulator back is right either way.
     #[test]
     fn a_dynamic_contracted_axis_does_not_land_at_the_leaf() {
         let lhs = flat_space(&[(M, 8), (K, 4)]).all_dynamic();

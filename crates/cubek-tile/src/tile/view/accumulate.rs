@@ -15,7 +15,7 @@ pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2
     #[cube(comptime)]
     lane_share: LaneShare,
     #[cube(comptime)]
-    sink_identity: Option<LeafOp>,
+    overwrites: bool,
 }
 
 #[cube]
@@ -23,48 +23,41 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
-        #[comptime] sink_identity: Option<LeafOp>,
+        #[comptime] overwrites: bool,
     ) -> Self {
         AccumulateView::<'a, E, V, C> {
             values,
             lane_share,
-            sink_identity,
+            overwrites,
         }
     }
 
     /// The underlying overhang-mask flag, so a leaf makes the same unroll decision it makes on a
-    /// plain [`MatrixView`].
+    /// plain view.
     pub fn check(&self) -> comptime_type!(bool) {
-        comptime!(self.values.check)
+        self.values.check
     }
 
-    /// Whether a non-empty output block is wholly valid for unchecked seed/commit accesses.
+    /// Whether a whole block starting at `pos` is in bounds.
     pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
         self.values.block_in_bounds(pos, extent)
     }
 
-    /// A block's starting value for a `fold` fold. A partial starts at `fold`'s identity: the
-    /// shared cell is folded in once, by the lane that commits, so seeding from it would count it
-    /// once per lane. A `LaneShare::Whole` cell seeds from memory unless the buffer is known to
-    /// hold `fold`'s identity, in which case it starts from the identity directly and skips the read.
+    /// A block's starting value for a `fold` fold. Two reasons to start from `fold`'s identity
+    /// rather than the cell: a partial holds no whole cell to carry forward (the shared cell is
+    /// folded in once, by the lane that commits, so starting from it would count it once per
+    /// lane), and an overwriting accumulation is not folding onto the cell at all.
     pub fn seed(&self, pos: C, #[comptime] fold: LeafOp) -> Vector<E, V> {
-        // A folded share holds no whole cell to carry forward, and a buffer known to hold
-        // `fold`'s identity already holds the starting value: both start from the identity
-        // and skip the read.
-        let carries = comptime!(
-            matches!(self.lane_share, LaneShare::Whole) && self.sink_identity != Some(fold)
-        );
-        if comptime!(carries) {
+        let reads_back = self.reads_back();
+        if comptime!(reads_back) {
             self.values.read(pos)
         } else {
             Vector::<E, V>::cast_from(LeafOp::identity::<E>(fold))
         }
     }
 
-    /// Fold a finished block back under `fold`. The fold reduces each `V`-wide cell element-wise
-    /// and leaves every lane holding a partial of it with the total, so one of them writes and its
-    /// siblings don't all hit the address: the plane's first lane where the whole plane shares one
-    /// cell, each group's first lane where the plane carries a cell per group.
+    /// Fold `value` into the cell at `pos`. A lane-shared cell is combined across the lanes that
+    /// hold it first, then written by one; a whole cell is the lane's own.
     pub fn commit(&mut self, pos: C, value: Vector<E, V>, #[comptime] fold: LeafOp) {
         match comptime!(self.lane_share) {
             LaneShare::Plane => {
@@ -80,8 +73,10 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 
-    /// Commit a cell combined across the lanes that share it. The elected lane folds in the sink
-    /// exactly once.
+    /// Commit a cell combined across the lanes that share it, under the elected lane. It folds
+    /// the cell's own value in exactly once, unless the accumulation overwrites it, in which case
+    /// there is nothing to fold: the block never started from it, and it holds whatever it held
+    /// before the operation.
     fn commit_shared(
         &mut self,
         pos: C,
@@ -89,10 +84,21 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         leader: bool,
         #[comptime] fold: LeafOp,
     ) {
+        let reads_back = self.reads_back();
         if leader {
-            let old = self.values.read(pos.clone());
-            self.values
-                .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
+            if comptime!(reads_back) {
+                let old = self.values.read(pos.clone());
+                self.values
+                    .write(pos, LeafOp::combine::<Vector<E, V>>(old, combined, fold));
+            } else {
+                self.values.write(pos, combined);
+            }
         }
+    }
+
+    /// Whether the cell's own value is read back into the result: it is a whole cell this lane
+    /// owns, and the accumulation folds onto it rather than overwriting it.
+    fn reads_back(&self) -> comptime_type!(bool) {
+        comptime!(matches!(self.lane_share, LaneShare::Whole) && !self.overwrites)
     }
 }

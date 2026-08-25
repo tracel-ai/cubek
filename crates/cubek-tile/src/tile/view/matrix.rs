@@ -296,7 +296,6 @@ impl<T: Numeric> Tile<T> {
 
     /// Mutable version of [`matrix`](Tile::matrix). Only supported for direct projections.
     pub fn matrix_mut<W: Size>(&mut self, i: usize) -> MatrixViewMut<'_, Vector<T, W>> {
-        self.set_sink_identity(comptime!(None));
         let vector_size = self.vector_size();
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {

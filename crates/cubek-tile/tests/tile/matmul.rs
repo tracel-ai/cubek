@@ -904,7 +904,7 @@ fn register_matmul_unit_spread_n() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        // Non-zero buffer initialized on host; `launch_staged_matmul` zeroes `c` before MMA.
+        // Dirty on the host: `launch_staged_matmul` states `c = a·b`, so none of it survives.
         .uniform(4242, 10., 100.);
 
     launch_staged_matmul::launch::<TestRuntime>(
@@ -935,10 +935,10 @@ fn register_matmul_unit_spread_n() {
         .enforce()
 }
 
-/// Accumulating onto a pre-seeded sink without `zero()`: verifies that MMA preserves the existing
-/// buffer values and adds the contraction result rather than replacing them.
+/// `mma` onto a pre-seeded accumulator: the existing buffer values must survive and the
+/// contraction add onto them, rather than overwrite.
 #[test]
-fn matmul_staged_accumulate_preseeded_sink() {
+fn matmul_staged_mma_accumulates_onto_existing() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let lanes = client.properties().hardware.plane_size_max as usize;
 
@@ -993,12 +993,11 @@ fn matmul_staged_accumulate_preseeded_sink() {
         .enforce()
 }
 
-/// Writing the accumulator by hand between `zero()` and `mma`: the zero's identity stamp must not
-/// survive the write, or the contraction seeds from `0` and the hand-written values vanish. The
-/// contraction here lands whole at the leaf, so the replacement is armed and only the stamp's
-/// invalidation stands between the write and its loss.
+/// `mm` over a `c` the host filled with non-zero data, on a space whose contraction lands whole
+/// at the leaf so the overwrite is granted. Nothing zeroes `c`: if the leaf read it back it would
+/// fold that data in, so an exact `A·B` is what proves it never did.
 #[test]
-fn matmul_staged_hand_write_after_zero_survives() {
+fn matmul_staged_mm_ignores_existing_data() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (4usize, 4usize, 8usize);
     let seq = |edge| Cut::sequential(edge);
@@ -1018,9 +1017,9 @@ fn matmul_staged_hand_write_after_zero_survives() {
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .untiled()
-        .zeros();
+        .uniform(1234, 10., 100.);
 
-    launch_staged_matmul_hand_seeded::launch::<TestRuntime>(
+    launch_staged_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1036,8 +1035,7 @@ fn matmul_staged_hand_write_after_zero_survives() {
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
             let (i, j) = (idx / n, idx % n);
-            let mma: f32 = (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum();
-            HAND_SEED as f32 + mma
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
         })
         .collect();
     let (_, expected) = TestInput::builder(client, shape![m, n])
@@ -1048,10 +1046,11 @@ fn matmul_staged_hand_write_after_zero_survives() {
         .enforce()
 }
 
-/// Multi-level contraction with K split across levels: the leaf-span check must fail, vetoing
-/// replacement so that all K chunks across levels accumulate into the sink.
+/// Multi-level contraction with K split across levels: the leaf-span check must fail, so the
+/// overwrite is refused, `mm` clears `c` itself, and the K chunks fold onto each other across
+/// levels. The non-zero host buffer is what catches a fallback that forgets the clear.
 #[test]
-fn matmul_staged_k_split_levels_zeroed() {
+fn matmul_staged_mm_falls_back_when_k_splits_levels() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (8usize, 8usize, 8usize);
     let seq = |edge| Cut::sequential(edge);
@@ -1114,9 +1113,9 @@ fn matmul_staged_k_split_levels_zeroed() {
 }
 
 /// Lane-folded split-K (`Cut::unit` on K axis): each lane holds a partial of the same cell, so
-/// `commit_shared` must fold the sink in exactly once, under the elected lane. The stamp never
-/// reaches this path (a folded share seeds from the identity whatever the buffer holds), which is
-/// what makes this the regression guard for the commit, not for the replacement.
+/// `commit_shared` must read the cell back exactly once, under the elected lane. K rides the
+/// lanes, so it does not span the leaf and the overwrite is refused here whatever the verb: this
+/// guards the commit, not the overwrite.
 #[test]
 fn register_matmul_unit_spread_k() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1552,8 +1551,10 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .enforce()
 }
 
-/// The kernel: `c.mma(a, b)` — `c` is a whole tensor, so it lowers; the move comes
+/// The kernel: `c.mm(a, b)` — `c` is a whole tensor, so it lowers; the move comes
 /// from its partitioner's `Buffering` (here `.buffered(Buffering::SINGLE)` or `.buffered(Buffering::DOUBLE)`).
+/// `c` arrives holding whatever its caller put there: `mm` states `c = a·b`, so it
+/// either seeds from the identity at the leaf or clears `c` itself.
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -1565,11 +1566,10 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
-/// A staged matmul kernel that accumulates directly into `c` without zeroing first.
+/// [`launch_staged_matmul`]'s counterpart: `mma` folds onto whatever `c` holds.
 #[cube(launch)]
 fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -1584,37 +1584,9 @@ fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
     c.mma(&a, &b);
 }
 
-/// `zero`, then hand-written cells, then `mma`. The zero stamps the buffer as holding `Sum`'s
-/// identity; the hand write invalidates that claim, and taking a mutable view is the only notice
-/// the tile gets. Miss it and the contraction seeds from `0`, dropping `HAND_SEED` on the floor.
-#[cube(launch)]
-fn launch_staged_matmul_hand_seeded<E: Numeric, V: Size>(
-    a: &TileArg<'_, E, V>,
-    b: &TileArg<'_, E, V>,
-    c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    c.zero();
-    let size!(W) = c.vector_size();
-    let seed = Vector::<E, W>::cast_from(E::from_int(HAND_SEED));
-    let mut cells = c.flat_mut::<W>();
-    let total = cells.shape();
-    for i in 0..total {
-        cells.write(i, seed);
-    }
-    c.mma(&a, &b);
-}
-
-/// The value [`launch_staged_matmul_hand_seeded`] writes over its zeroed accumulator.
-const HAND_SEED: i64 = 7;
-
-/// The tensor-core kernel: promote the accumulator to its register form, zero it (the
-/// classic `init_accumulator`), run the whole contraction on it, copy it back (the
-/// epilogue).
+/// The tensor-core kernel: promote the accumulator to its register form, run the whole
+/// contraction on it, copy it back (the epilogue). A fragment refuses the overwrite, so `mm`
+/// clears it first: the classic `init_accumulator`, stated as part of the contract.
 #[cube(launch)]
 fn launch_resident_matmul<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -1627,8 +1599,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     let mut acc = c.accumulate(&a, LeafOp::Sum);
-    acc.zero();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
     c.copy_from(&acc);
 }
 
@@ -1649,13 +1620,12 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     let mut acc = c.accumulate(&a, LeafOp::Sum);
-    acc.zero();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
     c.copy_from(&acc);
 }
 
 /// The CPU kernel: `c.zero()` then `c.mma(a, b)` (the production cpu_gemm body — the
-/// register leaf accumulates in place, so the routine zeroes first); the default
+/// register leaf accumulates in place, so the routine states `c = a·b`); the default
 /// `InPlace` residence selects the no-staging move. Operands are size-free —
 /// vectorization is a launch concern, not threaded through the DSL.
 #[cube(launch)]
@@ -1669,8 +1639,7 @@ fn launch_cpu_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// The promoted twin of [`launch_cpu_matmul`]: the register leaf's accumulator lifted out of
@@ -1688,8 +1657,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
-    acc.zero();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
     acc.drain_cast_into(&mut c);
 }
 
@@ -1837,8 +1805,7 @@ fn launch_cpu_matmul_lined<E: Numeric, LV: Size, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// [`launch_cpu_matmul_lined`] through the promoted block instead of through the output.
@@ -1855,8 +1822,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
-    acc.zero();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
     acc.drain_cast_into(&mut c);
 }
 
@@ -1986,8 +1952,7 @@ fn launch_matmul_folded<E: Numeric, AV: Size, BV: Size, CV: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// `A·Bᵀ` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(j, p) = j·k + p`.
@@ -2150,8 +2115,7 @@ fn launch_matmul_folded_quant<I: Numeric, E: Numeric, BV: Size>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// A folded step whose lhs is packed `q8s` (4 values per word): the pack factor narrows the
@@ -3934,8 +3898,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// One staged level cutting `tm×tn×tk` register-leaf tiles — the shape `check_matmul`
@@ -4205,8 +4168,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]` — the exact scheme

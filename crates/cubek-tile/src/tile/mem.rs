@@ -57,18 +57,17 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
-    /// Which operation's identity this buffer is known to hold, so an accumulation can replace
-    /// the initial sink read. Stamped by [`Tile::zero`] and [`Tile::init_identity`].
+    /// Whether the accumulation being lowered right now writes these cells outright instead of
+    /// folding onto what they hold, so the leaf seeds from the fold's identity and never reads
+    /// them back.
     ///
-    /// A claim about the cells, so every door that writes them has to drop it or the claim goes
-    /// stale and the replacement silently discards the write. The whole-tile verbs
-    /// ([`Tile::init`], [`Tile::copy_from`], [`Tile::drain_cast_into`]) and every mutable view
-    /// ([`Tile::dense_mut`], [`Tile::flat_mut`], [`Tile::matrix_mut`], [`Tile::view_mut`]) do;
-    /// a new one must too. The exception is [`matrix_accumulate`](MemData::matrix_accumulate) and
-    /// [`flat_accumulate`](MemData::flat_accumulate), which hand the stamp to the fold that is
-    /// entitled to it and leave the siblings it says nothing about alone.
+    /// Not a claim about the bytes: it says nothing about what the buffer holds, only what the
+    /// caller asked for. [`Tile::mm`] and [`Tile::reduce_axis`] raise it for the span of their own
+    /// lowering, having proven the leaf visits each cell once
+    /// ([`Space::spans_contracted_at_leaf`]); it is false everywhere else, and rides
+    /// [`at`](Tile::at) down so the levels below see the verb the caller used.
     #[cube(comptime)]
-    pub(crate) sink_identity: Option<LeafOp>,
+    pub(crate) overwrites: bool,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -388,7 +387,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                sink_identity: comptime!(None),
+                overwrites: comptime!(false),
             }),
             space: comptime!(space),
         }
@@ -678,7 +677,7 @@ impl<T: Numeric> MemData<T> {
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                sink_identity: comptime!(None),
+                overwrites: comptime!(false),
             }),
             space: comptime!(meta.space),
         }
@@ -710,7 +709,6 @@ impl<T: Numeric> Tile<T> {
     }
 
     pub fn view_mut<W: Size>(&mut self) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
-        self.set_sink_identity(comptime!(None));
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 if comptime!(g.store.quant.is_some()) {
@@ -731,10 +729,11 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
-    /// Set which operation's identity this memory handle is known to hold.
-    pub(crate) fn set_sink_identity(&mut self, #[comptime] sink_identity: Option<LeafOp>) {
+    /// State whether the accumulation being lowered writes these cells outright
+    /// ([`overwrites`](MemData::overwrites)).
+    pub(crate) fn set_overwrites(&mut self, #[comptime] overwrites: bool) {
         comptime!({
-            self.sink_identity = sink_identity;
+            self.overwrites = overwrites;
         });
     }
 
@@ -1529,20 +1528,22 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
-    /// [`LaneShare`] and which identity these cells hold ([`sink_identity`](MemData::sink_identity)),
-    /// so a leaf accumulates through it without being told.
+    /// [`LaneShare`] these cells carry and whether the accumulation overwrites them
+    /// ([`overwrites`](MemData::overwrites)), so a leaf accumulates through it without being
+    /// told.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
         #[comptime] space: Space,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        let sink_identity = comptime!(self.sink_identity);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, sink_identity)
+        let overwrites = comptime!(self.overwrites);
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, overwrites)
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
-    /// [`LaneShare`] and [`sink_identity`](MemData::sink_identity) these cells carry.
+    /// [`LaneShare`] these cells carry and whether the accumulation overwrites them
+    /// ([`overwrites`](MemData::overwrites)).
     pub(crate) fn flat_accumulate<W: Size>(&mut self) -> AccumulateView<'_, T, W, Coords1d> {
         // A flat logical scan only agrees with this physical window under the direct,
         // non-storage-tiled mapping. Otherwise the reduction's logical accumulator index would
@@ -1556,8 +1557,8 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        let sink_identity = comptime!(self.sink_identity);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share, sink_identity)
+        let overwrites = comptime!(self.overwrites);
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, overwrites)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -1704,7 +1705,7 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
-            sink_identity: comptime!(self.sink_identity),
+            overwrites: comptime!(self.overwrites),
         }
     }
 }

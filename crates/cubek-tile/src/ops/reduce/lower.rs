@@ -9,36 +9,35 @@ use crate::{instruction::registers::reduce, *};
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c.reduce_axis(input, fold)`: reduce `input` into `self` across contracted axes, folding
-    /// each contracted cell into whatever `self` already holds there.
+    /// `c = fold(input)`: reduce `input` into `self` across the contracted axes. `self` is a
+    /// result, so nothing it held before takes part.
     ///
-    /// Where `self` is known to hold `fold`'s identity ([`Tile::init_identity`]) and the
-    /// reduction lands whole at the leaf
-    /// ([`spans_contracted_at_leaf`](Space::spans_contracted_at_leaf)), the initial sink read is
-    /// replaced by that identity instead. Otherwise `self`'s existing value is the fold's literal
-    /// starting point: the caller must have seeded it, or an uninitialized/stale accumulator folds
-    /// against garbage.
-    ///
-    /// The stamp is consumed here, so a caller-owned loop folding over its own contraction steps
-    /// must seed *inside* the loop or not at all: seeding above it serves the first step and
-    /// leaves the rest reading a sink they never wrote.
+    /// [`mm`](Tile::mm)'s twin, and the same bargain: where the leaf owns each output cell
+    /// outright it starts from `fold`'s identity and never reads `self` back, and where it does
+    /// not, the seeding the caller would have written ([`init_identity`](Tile::init_identity))
+    /// happens here instead.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
-        let replaces = self.replaces_reduce_sink(input, fold);
-        self.set_sink_identity(comptime!(if replaces { Some(fold) } else { None }));
+        let spans = comptime!(input.space.spans_contracted_at_leaf(&self.space));
+        let overwrites = self.request_overwrite(comptime!(spans));
+        if comptime!(!overwrites) {
+            self.init_identity(fold);
+        }
         lower_reduce(self, input, fold);
-        self.set_sink_identity(comptime!(None));
+        self.request_overwrite(comptime!(false));
     }
 
-    /// Whether this reduction may seed from the identity instead of reading the sink: the buffer
-    /// must be known to hold `fold`'s identity, and the final tile must span every contracted
-    /// axis whole, so the walk above the leaf never returns to a cell it has already written.
-    fn replaces_reduce_sink<In: Numeric>(
-        &self,
+    /// `c = fold(c, input)`: [`reduce_axis`](Tile::reduce_axis) with the accumulate `mma` carries
+    /// over `mm`, folding each contracted cell into whatever `self` already holds there.
+    ///
+    /// That existing value is the fold's literal starting point, and the caller owns it: it must
+    /// have seeded `self` with `fold`'s identity ([`init_identity`](Tile::init_identity)) before
+    /// the first call, or an uninitialized accumulator folds against garbage.
+    pub fn reduce_axis_accumulate<In: Numeric>(
+        &mut self,
         input: &Tile<In>,
         #[comptime] fold: LeafOp,
-    ) -> comptime_type!(bool) {
-        let sink_id = self.sink_identity();
-        comptime!(sink_id == Some(fold) && input.space.spans_contracted_at_leaf(&self.space))
+    ) {
+        lower_reduce(self, input, fold);
     }
 
     /// The level's operation space: the input operand's space, sized by whichever operand
@@ -57,10 +56,12 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// Lower one operation-scoped accumulator handle to its leaf. `sink_identity` is derived before
-/// this recursion from the undivided operand spaces. When set to `Some(fold)`, every contracted axis already
-/// fits in the final space, so no ancestor visits an output cell for multiple contracted regions;
-/// child handles preserve the stamp unchanged and never recompute it from their smaller spaces.
+/// Lower one operation-scoped accumulator handle to its leaf, and the recursion the walk re-enters
+/// per region. Deliberately neither [`reduce_axis`](Tile::reduce_axis) nor
+/// [`reduce_axis_accumulate`](Tile::reduce_axis_accumulate): the overwrite is decided once, at the
+/// top, from the undivided input space. A region's input is one contracted step of the whole, and
+/// always spans its own leaf, so re-deciding down here would overwrite at every step of a walk
+/// that must fold them together.
 #[cube]
 pub(super) fn lower_reduce<Acc: Numeric, In: Numeric>(
     acc: &mut Tile<Acc>,

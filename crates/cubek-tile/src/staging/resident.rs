@@ -8,9 +8,15 @@
 //!
 //! ```ignore
 //! let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);  // register form, uninitialized (EA = f32)
-//! acc.zero();                       // init (or acc.copy_from(&c) to accumulate)
-//! acc.mma(&a, &b);                  // the whole contraction, register-resident
+//! acc.mm(&a, &b);                   // the whole contraction, register-resident; owns its init
 //! acc.drain_cast_into(&mut c);      // epilogue, casting EA down to c's element type
+//! ```
+//!
+//! To accumulate onto `c` rather than replace it, state the init and use the folding verb:
+//!
+//! ```ignore
+//! acc.copy_from(&c);
+//! acc.mma(&a, &b);
 //! ```
 
 use cubecl::prelude::*;
@@ -22,9 +28,10 @@ impl<Acc: Numeric> Tile<Acc> {
     /// Build this accumulator's register form ([`Residence::Register`]), uninitialized, folding
     /// under `op`: `Sum` for a matmul, whichever fold a reduce asked for. `op` is stated here
     /// because it is read on drain, when the plane's lanes are combined, and comptime state
-    /// cannot be set after a thing is built. The caller states the init ([`zero`](Tile::zero) for
-    /// `c = a·b`, or [`copy_from`](Tile::copy_from) to accumulate) and writes it back with
-    /// [`drain_cast_into`](Tile::drain_cast_into) after. `EA` is the register accumulate
+    /// cannot be set after a thing is built. The caller writes the result back with
+    /// [`drain_cast_into`](Tile::drain_cast_into) after, and owns the init unless
+    /// [`mm`](Tile::mm) is doing it: [`copy_from`](Tile::copy_from) then [`mma`](Tile::mma) to
+    /// accumulate onto `c`. `EA` is the register accumulate
     /// type, distinct from the served/stored `Acc` (e.g. `f32` accumulate under an `f16`
     /// output).
     ///

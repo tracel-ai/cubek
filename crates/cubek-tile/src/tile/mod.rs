@@ -573,31 +573,39 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Which operation's identity this tile is backed by, so an accumulation can replace
-    /// the initial sink read. Comptime.
-    pub(crate) fn sink_identity(&self) -> comptime_type!(Option<LeafOp>) {
+    /// Whether the accumulation being lowered writes this tile's cells outright
+    /// ([`overwrites`](MemData::overwrites)). Comptime.
+    pub(crate) fn overwrites(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.sink_identity),
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.overwrites),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                comptime!(None)
+                comptime!(false)
             }
         }
     }
 
-    /// Set which operation's identity this tile's memory handles are known to hold.
-    pub(crate) fn set_sink_identity(&mut self, #[comptime] sink_identity: Option<LeafOp>) {
+    /// Ask to overwrite these cells rather than fold onto them, and answer whether the request
+    /// took. Only a memory accumulator carries the flag: a promoted fragment states its own init
+    /// and never reads a cell back to begin with, so it answers `false` and its caller seeds the
+    /// accumulator instead. Asking rather than deciding here is what keeps a kind that cannot
+    /// overwrite from having to be listed anywhere else.
+    pub(crate) fn request_overwrite(
+        &mut self,
+        #[comptime] overwrite: bool,
+    ) -> comptime_type!(bool) {
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => {
-                d.set_sink_identity(comptime!(sink_identity));
+                d.set_overwrites(comptime!(overwrite));
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {}
         }
+        self.overwrites()
     }
 
     /// This operand's decode site ([`DequantAt`]). A tile with nothing to decode answers
@@ -816,12 +824,11 @@ impl<T: Numeric> Tile<T> {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
-    /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
-    /// `out = A·B` zeroes first. Stamping `zero` also enables the fast-path accumulator replacement
-    /// when the contraction is proven to visit every cell at the leaf level, skipping the sink
-    /// read. Same shape as [`mma`](Tile::mma): a final tile clears its store, a level
-    /// walks and recurses (each region clears exactly the windows it owns; a fragment output takes
-    /// the unrolled walk, memory the compact loop).
+    /// Zero this tile: [`mma`](Tile::mma) accumulates over whatever is there, so a routine whose
+    /// contract is `c = a·b` zeroes first, or states that contract directly with [`mm`](Tile::mm)
+    /// and skips the clear. Same shape as `mma`: a final tile clears its store, a level walks and
+    /// recurses (each region clears exactly the windows it owns; a fragment output takes the
+    /// unrolled walk, memory the compact loop).
     pub fn zero(&mut self) {
         match comptime!(self.space.partitioner().clone()) {
             Partitioner::Final => match &mut self.tile_kind {
@@ -839,12 +846,12 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
-        self.set_sink_identity(comptime!(Some(LeafOp::Sum)));
     }
 
     /// Seed this tile with `op`'s identity, so a fold under `op` starts from a value folding it in
-    /// leaves unchanged. Stamping the identity is what lets [`reduce_axis`](Tile::reduce_axis)
-    /// replace its initial sink read.
+    /// leaves unchanged. What [`reduce_axis_accumulate`](Tile::reduce_axis_accumulate) asks of its
+    /// caller, and what [`reduce_axis`](Tile::reduce_axis) falls back to when it cannot skip
+    /// reading the accumulator back.
     ///
     /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
     /// fragments included; the other folds need a real value and so reach only the forms
@@ -855,7 +862,6 @@ impl<T: Numeric> Tile<T> {
             self.zero();
         } else {
             self.init(LeafOp::identity::<T>(op));
-            self.set_sink_identity(comptime!(Some(op)));
         }
     }
 
@@ -877,7 +883,6 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         }
-        self.set_sink_identity(comptime!(None));
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
@@ -897,7 +902,6 @@ impl<T: Numeric> Tile<T> {
 
     /// The mutable twin of [`dense`](Tile::dense).
     pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
-        self.set_sink_identity(comptime!(None));
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -945,7 +949,6 @@ impl<T: Numeric> Tile<T> {
                 _ => panic!("Tile::copy_from: unsupported kind pairing"),
             },
         }
-        self.set_sink_identity(comptime!(None));
     }
 
     /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element
@@ -963,7 +966,6 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
             }
         }
-        dst.set_sink_identity(comptime!(None));
     }
 }
 

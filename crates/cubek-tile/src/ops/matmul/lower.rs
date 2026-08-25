@@ -1,4 +1,4 @@
-//! Lowering `c.mma(a, b)`: at a final tile, the leaf dispatch ([`mma_leaf`]); while levels remain,
+//! Lowering `c.mm(a, b)` and `c.mma(a, b)`: at a final tile, the leaf dispatch ([`mma_leaf`]); while levels remain,
 //! walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
 //! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
 //! allocate nothing. Register residency is the kernel's explicit bracket
@@ -11,34 +11,41 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c.mma(a, b)`: contract at a final tile, else walk this level.
+    /// `c = a · b`: contract at a final tile, else walk this level. `c` is a result, so nothing
+    /// it held before takes part.
     ///
-    /// Accumulates onto whatever `c` holds. Where `c` is known to hold `0`
-    /// ([`zero`](Tile::zero)) and the contraction lands whole at the leaf
-    /// ([`spans_contracted_at_leaf`](Space::spans_contracted_at_leaf)), the initial sink read is
-    /// replaced by that `0` instead. The stamp is consumed here, so a caller-owned loop
-    /// accumulating over its own contraction steps must zero *inside* the loop or not at all:
-    /// zeroing above it seeds the first step and leaves the rest reading a sink they never wrote.
-    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
-        let replaces = self.replaces_mma_sink(lhs, rhs);
-        self.set_sink_identity(comptime!(if replaces { Some(LeafOp::Sum) } else { None }));
+    /// Where the leaf owns each output cell outright, that lets the register block start from `0`
+    /// instead of reading `c` back, which is one load and, for a `kc` too short to amortize it, a
+    /// measurable share of the leaf. Where it does not, the clear the caller would have written
+    /// happens here instead, so the verb costs nothing to reach for.
+    ///
+    /// Only an unpromoted memory accumulator takes the fast path. A promoted fragment states its
+    /// own init and never reads a cell back to begin with, so it takes the clear.
+    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        let spans = self.contracts_whole_at_leaf(lhs, rhs);
+        let overwrites = self.request_overwrite(comptime!(spans));
+        if comptime!(!overwrites) {
+            self.zero();
+        }
         lower_mma(self, lhs, rhs);
-        self.set_sink_identity(comptime!(None));
+        self.request_overwrite(comptime!(false));
     }
 
-    /// Whether this contraction may seed from the identity instead of reading the sink: the buffer
-    /// must be known to hold `Sum`'s identity (`0`), and the final tile must span every contracted
-    /// axis whole, so the walk above the leaf never returns to a cell it has already written.
-    fn replaces_mma_sink<Lhs: Numeric, Rhs: Numeric>(
+    /// `c += a · b`: [`mm`](Tile::mm) with the accumulate its name carries. Folds onto whatever
+    /// `c` holds, which the caller owns: nothing here initializes it.
+    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        lower_mma(self, lhs, rhs);
+    }
+
+    /// Whether the final tile spans every contracted axis whole, so the walk above the leaf never
+    /// returns to a cell it has already written and the one visit that owns a cell may write it
+    /// outright.
+    fn contracts_whole_at_leaf<Lhs: Numeric, Rhs: Numeric>(
         &self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
     ) -> comptime_type!(bool) {
-        let sink_id = self.sink_identity();
-        comptime!(
-            sink_id == Some(LeafOp::Sum)
-                && Space::merge(&[&lhs.space, &rhs.space]).spans_contracted_at_leaf(&self.space)
-        )
+        comptime!(Space::merge(&[&lhs.space, &rhs.space]).spans_contracted_at_leaf(&self.space))
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
@@ -68,10 +75,11 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// Lower one operation-scoped accumulator handle to its leaf. `sink_identity` is derived before
-/// this recursion from the undivided operand spaces. When set to `Some(Sum)`, every contracted axis already
-/// fits in the final space, so no ancestor visits an output cell for multiple contracted regions;
-/// child handles preserve the stamp unchanged and never recompute it from their smaller spaces.
+/// Lower one operation-scoped accumulator handle to its leaf, and the recursion the walk re-enters
+/// per region. Deliberately neither [`mm`](Tile::mm) nor [`mma`](Tile::mma): the overwrite is
+/// decided once, at the top, from the undivided operand spaces. A region's operands are one
+/// contracted step of the whole, and always span their own leaf, so re-deciding down here would
+/// overwrite at every step of a walk that must fold them together.
 #[cube]
 pub(super) fn lower_mma<Acc: Numeric, Lhs: Numeric, Rhs: Numeric>(
     acc: &mut Tile<Acc>,
@@ -100,7 +108,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
         // A promoted accumulator states its own init (`zero` for `c = a·b`, `copy_from` to
-        // accumulate), so it has no sink read for `sink_identity` to skip.
+        // accumulate), so it reads no cell back to skip and never carries the overwrite.
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.

@@ -36,16 +36,14 @@ fn reduce_matmul_kernel<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.zero();
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
-/// Seeds `output` for `op` (the identity a fold starts from), then reduces `input` into it.
-/// One body serves Sum/Max/Min alike, which is the point: the three kernels below differed only
-/// in this seed and the `LeafOp` passed to `reduce_axis`.
+/// `output = fold(input)` under `op`. One body serves Sum/Max/Min alike, which is the point: the
+/// three kernels below differed only in their seed and the `LeafOp` passed to the reduction, and
+/// `reduce_axis` owns both.
 #[cube]
 fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] op: LeafOp) {
-    output.init_identity(op);
     output.reduce_axis(input, op);
 }
 
@@ -1197,7 +1195,6 @@ fn resident_fold_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let mut out = output.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, op);
-    acc.init_identity(op);
     acc.reduce_axis(&input, op);
     out.copy_from(&acc);
 }
