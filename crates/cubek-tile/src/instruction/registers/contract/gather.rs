@@ -24,6 +24,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] space: Space,
     #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
@@ -43,13 +44,15 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         let size!(W) = served;
         let size!(A) = 1usize;
         nest::<E, EL, W, ER, W, A>(
-            acc, lhs, rhs, space, served, spread, lw, served, 1usize, config,
+            acc, lhs, rhs, space, served, spread, lw, served, 1usize, config, semiring,
         );
     } else {
         let size!(W) = lw;
         let size!(V) = rw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, space, served, spread, lw, rw, aw, config);
+        nest::<E, EL, W, ER, V, A>(
+            acc, lhs, rhs, space, served, spread, lw, rw, aw, config, semiring,
+        );
     }
 }
 
@@ -68,6 +71,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] vw: usize,
     #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let rank = comptime!(space.rank());
     // `cols` is the sink's own innermost extent. Only a spread block rounds up: its lanes are
@@ -141,11 +145,8 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         );
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
-        let mut acc = acc.matrix_accumulate::<A>(
-            mat,
-            comptime!(space.clone()),
-            comptime!(Semiring::SUM_PROD.add()),
-        );
+        let mut acc =
+            acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
@@ -198,6 +199,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     lhs_spans_col,
                     rhs_spans_row,
                     rhs_spans_col,
+                    semiring,
                 );
             }
         } else if comptime!(lane_fanout && lw > 1 && lane_index_exact) {
@@ -226,6 +228,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                         lhs_spans_col,
                         rhs_spans_row,
                         rhs_spans_col,
+                        semiring,
                     );
                 }
             }
@@ -253,6 +256,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     lhs_spans_col,
                     rhs_spans_row,
                     rhs_spans_col,
+                    semiring,
                 );
             }
         } else {
@@ -282,6 +286,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     lhs_spans_col,
                     rhs_spans_row,
                     rhs_spans_col,
+                    semiring,
                 );
             }
         }
@@ -331,6 +336,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] lhs_spans_col: bool,
     #[comptime] rhs_spans_row: bool,
     #[comptime] rhs_spans_col: bool,
+    #[comptime] semiring: Semiring,
 ) {
     let reduce_coords = unravel(&const_coords(reduce_extents), p.fcast::<u32>());
 
@@ -425,7 +431,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 ))
             };
             // One semiring step, for the reason [`block::rank1_update`] gives.
-            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, v, c[i * nr + n]);
+            c[i * nr + n] = semiring.step::<Vector<E, V>>(a, v, c[i * nr + n]);
         }
     }
 }

@@ -19,6 +19,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] space: Space,
     #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     comptime!(assert!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
@@ -44,11 +45,11 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     if comptime!(served > 1) {
         let size!(W) = served;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, 1usize, config);
+        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, 1usize, config, semiring);
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, config);
+        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, config, semiring);
     }
 }
 
@@ -65,6 +66,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] lw: usize,
     #[comptime] aw: usize,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let rank = comptime!(space.rank());
     let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
@@ -86,11 +88,8 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         let lhs_mat = lhs.matrix_packed::<L>(mat);
         let rhs_mat = rhs.matrix_packed::<V>(mat);
         // The contraction's own algebra: its products accumulate under the semiring's add.
-        let mut acc_view = acc.matrix_accumulate::<A>(
-            mat,
-            comptime!(space.clone()),
-            comptime!(Semiring::SUM_PROD.add()),
-        );
+        let mut acc_view =
+            acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
 
         // A checked edge normally rolls every local array access. When enabled, split the leaf
         // into two comptime-specialized bodies: interior instances prove their complete operand
@@ -142,6 +141,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     kc,
                     true,
                     lane_fanout,
+                    semiring,
                 );
             } else {
                 body::<E, EL, L, ER, V, A>(
@@ -157,6 +157,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     kc,
                     false,
                     lane_fanout,
+                    semiring,
                 );
             }
         } else {
@@ -174,6 +175,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 kc,
                 unroll,
                 lane_fanout,
+                semiring,
             );
         }
     }
@@ -196,6 +198,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
+    #[comptime] semiring: Semiring,
 ) {
     let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
     block::contract::<E, EL, L, ER, V>(
@@ -209,6 +212,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         kc,
         unroll,
         lane_fanout,
+        semiring,
     );
     block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
 }

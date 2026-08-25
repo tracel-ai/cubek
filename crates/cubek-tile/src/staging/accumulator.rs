@@ -9,7 +9,7 @@
 //! accumulator for that whole region, and every level below runs inside it.
 //!
 //! ```ignore
-//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope
+//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope, states the algebra
 //! acc.mm(&a, &b);                   // `c = a·b`, and the drain that closes the scope
 //! ```
 //!
@@ -72,17 +72,18 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 
     /// `c = lhs · rhs`: contract into the accumulator and drain, the contraction owning the init.
     /// The scope's whole body at every call site that is not accumulating onto `c`.
+    ///
+    /// The `·` is whatever the scope's monoid contracts under ([`Monoid::contraction`]): the
+    /// ordinary product where partials sum, an addition where they take a min or a max.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         match self {
-            AccumulatorScope::Register {
-                tile,
-                sink,
-                monoid: _,
-            } => {
-                tile.mm(lhs, rhs);
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                tile.mm(lhs, rhs, comptime!(monoid.contraction()));
                 tile.drain_cast_into(sink);
             }
-            AccumulatorScope::InPlace { sink, monoid: _ } => sink.mm(lhs, rhs),
+            AccumulatorScope::InPlace { sink, monoid } => {
+                sink.mm(lhs, rhs, comptime!(monoid.contraction()))
+            }
         }
     }
 
@@ -92,15 +93,13 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
     /// what writes the result back.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         match self {
-            AccumulatorScope::Register {
-                tile,
-                sink,
-                monoid: _,
-            } => {
-                tile.mma(lhs, rhs);
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                tile.mma(lhs, rhs, comptime!(monoid.contraction()));
                 tile.drain_cast_into(sink);
             }
-            AccumulatorScope::InPlace { sink, monoid: _ } => sink.mma(lhs, rhs),
+            AccumulatorScope::InPlace { sink, monoid } => {
+                sink.mma(lhs, rhs, comptime!(monoid.contraction()))
+            }
         }
     }
 
@@ -136,13 +135,15 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// Open this output's accumulator scope, uninitialized, folding under `monoid`: `Sum` for a
-    /// matmul, whichever fold a reduce asked for. `monoid` is stated here because it is read on
-    /// drain, when the plane's lanes are combined, and comptime state cannot be set after a thing is
-    /// built, and because it is the accumulation's one algebra rather than a fact about each
-    /// call. The op that closes the scope drains it; where that op is
-    /// [`mm`](AccumulatorScope::mm) or [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the
-    /// init too, and only the accumulating verbs ask the caller to state one
-    /// ([`seed`](AccumulatorScope::seed)).
+    /// matmul, `Min` for a min-plus one, whichever fold a reduce asked for. `monoid` is stated
+    /// here because it is read on drain, when the plane's lanes are combined, and comptime state
+    /// cannot be set after a thing is built, and because it is the accumulation's one algebra
+    /// rather than a fact about each call: a contraction reads its product back off it
+    /// ([`Monoid::contraction`]), so the two halves cannot disagree.
+    ///
+    /// The op that closes the scope drains it; where that op is [`mm`](AccumulatorScope::mm) or
+    /// [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the init too, and only the
+    /// accumulating verbs ask the caller to state one ([`seed`](AccumulatorScope::seed)).
     ///
     /// Where the accumulator lives is the output operand's own statement, read off the residence
     /// it stated at this level ([`Operand::stage`]). `EA` is the register accumulate type, read

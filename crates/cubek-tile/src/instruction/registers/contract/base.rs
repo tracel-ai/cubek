@@ -22,6 +22,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     rhs: &Tile<ER>,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
@@ -41,9 +42,9 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     );
 
     if nd {
-        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config);
+        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config, semiring);
     } else {
-        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config);
+        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config, semiring);
     }
 }
 

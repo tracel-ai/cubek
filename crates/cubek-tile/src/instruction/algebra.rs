@@ -133,6 +133,26 @@ impl Semiring {
     }
 }
 
+impl Monoid {
+    /// The contraction that accumulates under this monoid: the named pair whose
+    /// [`add`](Semiring::add) this is. An accumulation states its algebra once, as the monoid its
+    /// partials fold under, and a contraction reads the product back from here rather than being
+    /// told a second time, which is how the two halves cannot disagree.
+    ///
+    /// [`Prod`](Monoid::Prod) names no semiring: it reduces, it does not contract.
+    pub const fn contraction(self) -> Semiring {
+        match self {
+            Monoid::Sum => Semiring::SUM_PROD,
+            Monoid::Min => Semiring::MIN_SUM,
+            Monoid::Max => Semiring::MAX_SUM,
+            Monoid::Prod => panic!(
+                "Monoid::contraction: no semiring accumulates under Prod; a contraction folds \
+                 under Sum, Min or Max"
+            ),
+        }
+    }
+}
+
 #[cube]
 impl Semiring {
     /// One accumulation step: `acc + (lhs * rhs)` under this semiring's two monoids. Takes its
@@ -173,44 +193,52 @@ impl Semiring {
     }
 }
 
-/// A [`Monoid`] is comptime-only: a kernel never holds one in a register, it reads one to decide
+/// An algebra is comptime-only: a kernel never holds one in a register, it reads one to decide
 /// which instruction to emit. Expanding as itself is what lets a [`CubeType`] carry one in a
-/// `#[cube(comptime)]` field, the way an accumulator's scope carries the algebra it folds under.
-/// Each impl below is one `CubeType` requires of an expand type; none is spare.
-impl CubeType for Monoid {
-    type ExpandType = Self;
+/// `#[cube(comptime)]` field, the way an accumulator's scope carries the monoid it folds under and
+/// a level's walk carries the semiring it contracts under. Each impl below is one `CubeType`
+/// requires of an expand type; none is spare.
+macro_rules! expands_as_itself {
+    ($ty:ty) => {
+        impl CubeType for $ty {
+            type ExpandType = Self;
+        }
+
+        impl IntoExpand for $ty {
+            type Expand = Self;
+
+            fn into_expand(self, _scope: &Scope) -> Self {
+                self
+            }
+        }
+
+        impl IntoMut for $ty {
+            fn into_mut(self, _scope: &Scope) -> Self {
+                self
+            }
+        }
+
+        impl ExpandTypeClone for $ty {
+            fn clone_unchecked(&self) -> Self {
+                *self
+            }
+        }
+
+        impl CubeDebug for $ty {}
+
+        impl AsRefExpand for $ty {
+            fn __expand_ref_method(&self, _scope: &Scope) -> &Self {
+                self
+            }
+        }
+
+        impl AsMutExpand for $ty {
+            fn __expand_ref_mut_method(&mut self, _scope: &Scope) -> &mut Self {
+                self
+            }
+        }
+    };
 }
 
-impl IntoExpand for Monoid {
-    type Expand = Self;
-
-    fn into_expand(self, _scope: &Scope) -> Self {
-        self
-    }
-}
-
-impl IntoMut for Monoid {
-    fn into_mut(self, _scope: &Scope) -> Self {
-        self
-    }
-}
-
-impl ExpandTypeClone for Monoid {
-    fn clone_unchecked(&self) -> Self {
-        *self
-    }
-}
-
-impl CubeDebug for Monoid {}
-
-impl AsRefExpand for Monoid {
-    fn __expand_ref_method(&self, _scope: &Scope) -> &Self {
-        self
-    }
-}
-
-impl AsMutExpand for Monoid {
-    fn __expand_ref_mut_method(&mut self, _scope: &Scope) -> &mut Self {
-        self
-    }
-}
+expands_as_itself!(Monoid);
+expands_as_itself!(Semiring);
