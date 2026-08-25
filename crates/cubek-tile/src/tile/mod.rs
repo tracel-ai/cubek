@@ -34,6 +34,8 @@ use cubecl::{
     },
 };
 
+use cubecl::zspace::SmallVec;
+
 use crate::*;
 
 impl<T: Numeric> Tile<T> {
@@ -692,6 +694,25 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// This operand's window sign, for a stage recording where it was filled from.
+    pub(crate) fn window_signed(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.signed),
+            _ => comptime!(false),
+        }
+    }
+
+    /// This operand's per-axis boundary handling, read by a stage filled from it: the stage's own
+    /// list is empty (it never overhangs its buffer), so the padding policy has to come from here.
+    pub(crate) fn window_boundaries(
+        &self,
+    ) -> comptime_type!(SmallVec<[Option<Boundary>; MAX_AXES]>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.boundaries.clone()),
+            _ => comptime!(SmallVec::new()),
+        }
+    }
+
     /// The separable factor-normalization request, if one was attached to this procedural tile.
     /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
     pub(crate) fn factor_normalization(
@@ -1065,10 +1086,41 @@ impl<T: Numeric> Tile<T> {
                     true.runtime()
                 }
             }
-            TileKind::Smem(_) => panic!(
-                "Tile::separable_physical_tap_in_bounds: TapMask::Masked needs the rhs source window; \
-                 staging it in Smem erases which zeros came from the boundary"
-            ),
+            // A staged operand answers against the window it was *filled from*: the fill wrote
+            // the boundary's value wherever a tap fell outside, and this window no longer says
+            // which cells those were. A stage recorded with no source window was never gathered,
+            // so nothing it holds came from a boundary and every tap is in bounds.
+            TileKind::Smem(data) => {
+                let projection = comptime!(data.projection.clone());
+                #[comptime]
+                match &data.source_window {
+                    ComptimeOption::Some(source) => {
+                        if comptime!(projection.logical_axes().contains(&axis)) {
+                            let carriers = comptime!(projection.carriers(axis));
+                            let mut valid = true;
+                            #[unroll]
+                            for c in 0..comptime!(carriers.len()) {
+                                let pa = comptime!(carriers[c]);
+                                if comptime!(
+                                    source.boundaries.get(pa).copied().flatten()
+                                        == Some(Boundary::Zero)
+                                ) {
+                                    valid = valid
+                                        && source.axis_in_bounds(
+                                            data.window.origin.at(pa),
+                                            pos[pa],
+                                            pa,
+                                        );
+                                }
+                            }
+                            valid
+                        } else {
+                            true.runtime()
+                        }
+                    }
+                    ComptimeOption::None => true.runtime(),
+                }
+            }
             TileKind::Procedural(data) => data.axis_in_bounds(pos, axis),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
                 panic!(
