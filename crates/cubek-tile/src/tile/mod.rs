@@ -598,6 +598,30 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Ask this accumulator to start from `init_from`, and answer what actually took.
+    ///
+    /// Asking rather than deciding is what keeps a kind that cannot take the request from having
+    /// to be listed anywhere else.
+    pub(crate) fn request_init_from(
+        &mut self,
+        #[comptime] init_from: InitFrom,
+    ) -> comptime_type!(InitFrom) {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => {
+                d.set_init_from(comptime!(init_from));
+                comptime!(init_from)
+            }
+            // A promoted fragment states its own init and never reads a cell back to begin with,
+            // so the request does not take and its caller seeds instead.
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(InitFrom::Cell)
+            }
+        }
+    }
+
     /// This operand's decode site ([`DequantAt`]). A tile with nothing to decode answers
     /// [`DequantAt::Load`]: served and stored are the same element, so its load already delivers
     /// what the read wants and the stage takes that element. A tma source is never quantized, so it
@@ -957,7 +981,7 @@ impl<T: Numeric> Tile<T> {
                     d.load_window(src)
                 }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
-                    s.store_window(d)
+                    s.store_window(d, space)
                 }
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {

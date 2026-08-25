@@ -846,3 +846,126 @@ fn broadcast_indivisible() {
         .into(),
     );
 }
+
+/// A caller asking for an input register type of its own (tf32 registers off an f32 tensor)
+/// is asking for a conversion this routine does not emit. It is rejected at setup rather
+/// than run at the global type behind the caller's back.
+#[test]
+fn cpu_gemm_rejects_input_register_type() {
+    use cubecl::{
+        ir::{ElemType, FloatKind},
+        prelude::*,
+    };
+    use cubek_matmul::{
+        definition::MatmulSetupError,
+        tiled::cpu_gemm::{WithLayout, launch_ref},
+    };
+    use cubek_std::InputBinding;
+    use cubek_test_utils::TestInput;
+
+    let client = TestRuntime::client(&Default::default());
+    let f32t = f32::elem_type_native();
+    let tensor = |seed| {
+        TestInput::builder(client.clone(), shape![32, 32])
+            .dtype(f32t)
+            .layout(MatrixLayout::RowMajor)
+            .uniform(seed, -1., 1.)
+            .generate_without_host_data()
+    };
+    let (lhs, rhs, out) = (tensor(1234), tensor(5678), tensor(4242));
+
+    // Everything f32 but the lhs register: the one field the kernel has no cast for.
+    let mut dtypes = MatmulElems::from_single_dtype(f32t);
+    dtypes.lhs_register = ElemType::Float(FloatKind::TF32);
+
+    match launch_ref::<TestRuntime>(
+        &client,
+        WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f32t)).unwrap(),
+        WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f32t)).unwrap(),
+        WithLayout::strided_output(out.binding()).unwrap(),
+        &Default::default(),
+        &dtypes,
+    ) {
+        Err(MatmulSetupError::InvalidConfig(msg)) => {
+            let msg = msg.to_string();
+            assert!(
+                msg.contains("Lhs") && msg.contains("TF32"),
+                "wrong rejection: {msg}"
+            );
+        }
+        other => panic!("expected a type rejection, got {other:?}"),
+    }
+}
+
+/// The accumulator contracts at the stated type, not at the output buffer's.
+///
+/// Every `K` step after the first adds `2^-11` to a running `1.0`. That is half an `f16` ulp at
+/// that magnitude, so an `f16` accumulator rounds every one of them away and answers `1.0`,
+/// while the stated `f32` accumulator reaches `~5.0` and rounds once on drain. Nothing about
+/// the shape is unusual, so only the accumulate width can move the result: a routine that
+/// quietly contracted in the output's element would report a quarter of the answer.
+#[test]
+fn accumulator_holds_steps_the_output_element_cannot() {
+    use cubecl::prelude::*;
+    use cubek_matmul::{
+        definition::MatmulGlobalElems as Globals,
+        tiled::cpu_gemm::{WithLayout, launch_ref},
+    };
+    use cubek_std::InputBinding;
+    use cubek_test_utils::{HostData, HostDataType, HostDataVec, TestInput};
+
+    let (m, n, k, tile) = (8, 8, 8192, 8);
+    let client = TestRuntime::client(&Default::default());
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let f16t = half::f16::elem_type_native();
+    let step = 2f32.powi(-11);
+    // One `1.0` row, then a long tail of steps too small to survive an `f16` running sum.
+    let rhs_data: Vec<f32> = (0..k)
+        .flat_map(|row| std::iter::repeat_n(if row == 0 { 1.0 } else { step }, n))
+        .collect();
+    let build = |shape: Vec<usize>, data: Vec<f32>| {
+        TestInput::builder(client.clone(), shape)
+            .dtype(f16t)
+            .custom(data)
+            .generate_without_host_data()
+    };
+    let lhs = build(vec![m, k], vec![1.0; m * k]);
+    let rhs = build(vec![k, n], rhs_data);
+    let out = build(vec![m, n], vec![0.0; m * n]);
+
+    launch_ref::<TestRuntime>(
+        &client,
+        WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f16t)).unwrap(),
+        WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f16t)).unwrap(),
+        WithLayout::strided_output(out.clone().binding()).unwrap(),
+        &BlueprintStrategy::Forced(CpuGemmBlueprint {
+            instruction: InstructionShape {
+                m: tile,
+                n: tile,
+                k: tile,
+            },
+            planes: PlaneGrid { m: 1, n: 1 },
+        }),
+        &MatmulElems::from_globals(&Globals {
+            lhs: f16t,
+            rhs: f16t,
+            out: f16t,
+        }),
+    )
+    .unwrap();
+
+    let expected = 1.0 + (k - 1) as f32 * step;
+    let actual = match HostData::from_tensor_handle(&client, out, HostDataType::F32).data {
+        HostDataVec::F32(v) => v,
+        other => panic!("expected f32 host data, got {other:?}"),
+    };
+    // The drain rounds to `f16` once, so allow one ulp there and nothing like the gap to `1.0`.
+    for (i, got) in actual.iter().enumerate() {
+        assert!(
+            (got - expected).abs() < 0.01,
+            "element {i}: got {got}, expected {expected} (an f16 accumulator answers 1.0)"
+        );
+    }
+}

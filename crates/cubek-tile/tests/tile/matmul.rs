@@ -109,6 +109,29 @@ fn matmul_one_tile_per_cube() {
     );
 }
 
+/// `mm` owns the init: `c` comes out as `a·b`, whatever it held going in.
+///
+/// The whole contraction lands at the leaf here, which is the case where the accumulation never
+/// reads `c` back at all. If it read it anyway, the poison the harness filled `c` with would be
+/// in every cell of the result.
+#[test]
+fn matmul_whole_k_at_the_leaf() {
+    check_matmul(
+        8,
+        8,
+        4,
+        Partitioner::row_major(
+            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
+            ByAxis::new(&[
+                (M, Distribution::Sequential),
+                (N, Distribution::Sequential),
+                (K, Distribution::Sequential),
+            ]),
+        )
+        .buffered(Buffering::SINGLE),
+    );
+}
+
 #[test]
 fn matmul_reversed_walk_single_cube() {
     check_matmul(
@@ -1519,9 +1542,11 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
         .operand(&b_operand)
         .tile(&[tile_edge, tile_edge])
         .arange();
+    // Poisoned, not zeroed: `mm` owns the init, so anything `c` held must be gone from the
+    // result whether the leaf overwrote it or seeded it first.
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
-        .zeros();
+        .uniform(7, -100.0, 100.0);
 
     launch_staged_matmul::launch::<TestRuntime>(
         &client,
@@ -1638,9 +1663,11 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .operand(&b_operand)
         .tile(&[tile_edge, tile_edge])
         .arange();
+    // Poisoned, not zeroed: `mm` owns the init, so anything `c` held must be gone from the
+    // result whether the leaf overwrote it or seeded it first.
     let c = TileInput::builder(&client, space.project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
-        .zeros();
+        .uniform(7, -100.0, 100.0);
 
     launch_staged_matmul::launch::<TestRuntime>(
         &client,
@@ -1669,8 +1696,93 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .enforce()
 }
 
-/// The kernel is `c.mma(a, b)`: `c` is a whole tensor, so it lowers; the move comes
+/// `mma` never takes the init from the caller.
+///
+/// The space is one `mm` would overwrite, so a split that let either verb answer for the other
+/// would drop what `c` holds and turn every `c += a·b` in the workspace into `c = a·b`.
+#[test]
+fn mma_folds_onto_what_c_holds() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, tile_edge) = (8usize, 8usize, 4usize, 4usize);
+    let dtype = f32::elem_type_native();
+    // The whole contraction lands at the leaf, so `mm` here would overwrite. `mma` must not.
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, tile_edge), (N, tile_edge), (K, k)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let mut a_operand = Operand::new(&[M, K], dtype);
+    a_operand.stage(Residence::Smem);
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .operand(&a_operand)
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let mut b_operand = Operand::new(&[K, N], dtype);
+    b_operand.stage(Residence::Smem);
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .operand(&b_operand)
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .tile(&[tile_edge, tile_edge])
+        .arange();
+
+    launch_staged_matmul_accumulate::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // `c` held the same arange the buffer was filled with, cell for cell.
+    let expected: Vec<f32> = references::tiled_matmul(m, n, k, tile_edge)
+        .into_iter()
+        .enumerate()
+        .map(|(i, product)| product + i as f32)
+        .collect();
+    let (_, expected) = TestInput::builder(
+        client,
+        shape![m / tile_edge, n / tile_edge, tile_edge, tile_edge],
+    )
+    .custom(expected)
+    .generate_with_f32_host_data();
+
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// [`launch_staged_matmul`]'s accumulating twin, for the caller that owns `c`'s init.
+#[cube(launch)]
+fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
+    a: &TileArg<'_, E, V>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.mma(&a, &b);
+}
+
+/// The kernel is `c.mm(a, b)`: `c` is a whole tensor, so it lowers; the move comes
 /// from its partitioner's `Buffering` (here `.buffered(Buffering::SINGLE)` or `.buffered(Buffering::DOUBLE)`).
+/// `mm` states the contract `c = a·b`, so it owns the init, and every caller below poisons or
+/// zeroes `c` knowing the kernel decides what that is worth.
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -1682,7 +1794,7 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mm(&a, &b);
 }
 
 /// The tensor-core kernel: promote the accumulator to its register form, zero it (the
@@ -1700,8 +1812,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.seed();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
 }
 
 /// Quantized `A` through the resident K walk: `A` is served via its quant arg, so `acc.mma`
@@ -1721,8 +1832,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.seed();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
 }
 
 /// The CPU kernel: `c.zero()` then `c.mma(a, b)` straight on the output, with no accumulator
@@ -1758,8 +1868,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.seed();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
 }
 
 /// The register leaf contracts through a promoted block rather than through the output, so a
@@ -1926,8 +2035,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.seed();
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
 }
 
 /// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
