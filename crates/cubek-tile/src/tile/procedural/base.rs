@@ -154,6 +154,12 @@ impl<T: Numeric> ProceduralData<T> {
 
 impl<T: Numeric> Vectorized for ProceduralData<T> {}
 
+impl<T: Numeric> ProceduralDataExpand<T> {
+    pub(crate) fn factor_count(&self, scope: &Scope) -> Option<usize> {
+        self.recipe.__expand_factors_method(scope)
+    }
+}
+
 impl<T: Numeric> VectorizedExpand for ProceduralDataExpand<T> {
     fn __expand_vector_size_method(&self, _scope: &Scope) -> VectorSize {
         1

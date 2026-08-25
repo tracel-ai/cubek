@@ -464,6 +464,7 @@ fn resample_weights<E: Float>() -> Weights<E> {
 fn resample_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
+    #[comptime] normalized: bool,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -472,6 +473,11 @@ fn resample_kernel<E: Float>(
         comptime!(space.project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     );
+    let weights = if comptime!(normalized) {
+        weights.normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()))
+    } else {
+        weights
+    };
 
     let mut output = output.tile(space);
     output.zero();
@@ -480,6 +486,15 @@ fn resample_kernel<E: Float>(
 
 #[test]
 fn a_separable_lhs_contracts_a_resampling_rhs() {
+    check_resampling(false);
+}
+
+#[test]
+fn a_separable_resampling_lhs_normalizes_its_factor_run() {
+    check_resampling(true);
+}
+
+fn check_resampling(normalized: bool) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
 
@@ -521,6 +536,7 @@ fn a_separable_lhs_contracts_a_resampling_rhs() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
+        normalized,
         space,
         f32_ty,
     );
@@ -533,10 +549,14 @@ fn a_separable_lhs_contracts_a_resampling_rhs() {
                 let at = (resample_origin(row) + tap) * RCOLS + col;
                 want += factor_value(0, tap, row) * in_data[at];
             }
+            if normalized {
+                want /= (0..RTAPS).map(|tap| factor_value(0, tap, row)).sum::<f32>();
+            }
             let have = got.get_f32(&[row, col]);
             assert!(
                 (have - want).abs() < 1e-4,
-                "separable resample: at ({row}, {col}) got {have}, want {want}"
+                "separable resample (normalized={normalized}): at ({row}, {col}) got {have}, \
+                 want {want}"
             );
         }
     }

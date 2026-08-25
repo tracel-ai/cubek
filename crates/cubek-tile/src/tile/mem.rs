@@ -2316,25 +2316,22 @@ impl Window {
     /// Whether `pos` is valid on the selected physical axes. This is the factor-local form of
     /// [`Layout::is_in_bounds`]: separable normalization must mask the source axes moved by one
     /// tap without letting another factor's tap affect that decision.
+    #[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
     pub(crate) fn axes_in_bounds(&self, pos: &CoordsDyn, #[comptime] axes: Vec<usize>) -> bool {
         let mut valid = true;
         #[unroll]
         for a in 0..comptime!(axes.len()) {
             let i = comptime!(axes[a]);
-            if comptime!(self.masks_axis(i)) {
+            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
                 valid = valid && self.axis_in_bounds(pos[i], i);
             }
         }
         valid
     }
 
-    pub(crate) fn masks_axis(&self, #[comptime] axis: usize) -> comptime_type!(bool) {
-        comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero))
-    }
-
     /// The scalar physical-axis check behind [`axes_in_bounds`](Self::axes_in_bounds).
     pub(crate) fn axis_in_bounds(&self, pos: u32, #[comptime] axis: usize) -> bool {
-        if comptime!(self.masks_axis(axis)) {
+        if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
             let abs = self.origin.at(axis).fadd(pos.fcast::<i32>());
             if comptime!(self.signed) {
                 abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(axis)

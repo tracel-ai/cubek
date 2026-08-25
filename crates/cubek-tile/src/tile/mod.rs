@@ -1010,7 +1010,10 @@ impl<T: Numeric> Tile<T> {
                     #[unroll]
                     for c in 0..comptime!(carriers.len()) {
                         let pa = comptime!(carriers[c]);
-                        if comptime!(data.window.masks_axis(pa)) {
+                        if comptime!(
+                            data.window.boundaries.get(pa).copied().flatten()
+                                == Some(Boundary::Zero)
+                        ) {
                             let physical = layout.project_axis(&pos, pa, comptime!(Vec::new()));
                             valid = valid && data.window.axis_in_bounds(physical, pa);
                         }
