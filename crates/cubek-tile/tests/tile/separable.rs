@@ -561,3 +561,69 @@ fn check_resampling(normalized: bool) {
         }
     }
 }
+
+// ---- masked normalization against a procedural trailing tile ----------------
+
+/// Normalize one deliberately child-local factor run at a time. This shape makes the rhs's
+/// second procedural window contain one real tap and one padded tap, so `TapMask::Masked` must
+/// distinguish the checked-read zero from an in-bounds sample without relying on backing memory.
+#[cube(launch)]
+fn procedural_mask_kernel<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let rhs = Tile::<E>::procedural::<AffineCoordinate<E>>(
+        comptime!(space.project(&[TAP[0], COL])),
+        affine_along(TAP[0], E::new(1.0_f32), E::new(1.0_f32)),
+    );
+    let mut output = output.tile(comptime!(space.clone()));
+    output.zero();
+
+    for region in Walk::over(rhs.runtime_space()) {
+        let rhs = rhs.at(&region);
+        let child = comptime!(space.divide());
+        let mut factors = Sequence::new();
+        factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(0.0_f32)));
+        let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
+            comptime!(child.project(&[ROW, TAP[0]])),
+            separable_product(factors),
+        )
+        .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
+        output.at(&region).mma(&weights, &rhs);
+    }
+}
+
+#[test]
+fn masked_normalization_excludes_a_procedural_overhang() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![1, 1])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    let space = Tiling::new()
+        .extents(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(1))
+                .axis(COL, Cut::sequential(1))
+                .axis(TAP[0], Cut::sequential(2))
+        })
+        .build();
+
+    procedural_mask_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32).get_f32(&[0, 0]);
+    // First child: (1 + 2) / 2. Trailing child: 3 / 1, with its padded fourth tap excluded.
+    assert!((got - 4.5).abs() < 1.0e-6, "got {got}, want 4.5");
+}

@@ -499,11 +499,18 @@ impl<T: Numeric> Tile<T> {
                 g.nd_physical::<I, WP, W>(),
                 comptime!(g.projection.physical_rank()),
             ),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("Tile::nd_split: only a memory operand has a projection and physical box")
+            TileKind::Procedural(_) => NdReader::new(
+                axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(Projection::direct_over(&self.space)),
+                    RuntimeMap::integral(comptime!(self.space.rank())),
+                    comptime!(1usize),
+                ),
+                self.nd::<I, WP, W>(),
+                comptime!(self.space.rank()),
+            ),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                panic!("Tile::nd_split: this tile has no addressable N-D read surface")
             }
         }
     }

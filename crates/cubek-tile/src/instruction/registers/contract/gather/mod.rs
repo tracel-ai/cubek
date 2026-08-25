@@ -44,7 +44,7 @@ impl GatherProblem {
         rhs_projection: &Projection,
         block: ContractShape,
         factors: Option<usize>,
-        normalization: Option<(TapMask, DivGuard)>,
+        normalization: Option<(TapMask, DivGuard, Space)>,
     ) -> Self {
         let rank = block.space.rank();
         let lhs_spans_col = lhs.contains(block.space.axis_at(rank - 1));
@@ -72,6 +72,16 @@ impl GatherProblem {
                 "contract gather: factor normalization needs a separable lhs"
             );
         }
+        let normalization = normalization.map(|(mask, guard, original)| {
+            for &axis in &block.reduce {
+                assert!(
+                    original.contains(axis) && original.extent_raw(axis) == lhs.extent_raw(axis),
+                    "contract gather: a normalized factor axis cannot be partitioned above the \
+                     gather leaf; normalize the full factor run in one leaf"
+                );
+            }
+            (mask, guard)
+        });
         if matches!(normalization, Some((TapMask::Masked, _))) {
             assert_factorized_mask(
                 rhs_projection,
@@ -254,6 +264,23 @@ mod tests {
     #[should_panic(expected = "one factor per contracted axis")]
     fn problem_rejects_a_rank_one_factorization_of_a_two_axis_reduction() {
         problem(Some(1), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "normalized factor axis cannot be partitioned")]
+    fn problem_rejects_chunk_local_factor_normalization() {
+        let (lhs, rhs, acc) = spaces();
+        let original = Space::new(&[(M, 4), (K0, 4), (K1, 3)]);
+        let projection = Projection::direct(&[K0, K1, N]);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
+        GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            Some(2),
+            Some((TapMask::Unmasked, DivGuard::default(), original)),
+        );
     }
 
     /// An unfactorized lhs states no factor count, so the reduction's rank is unconstrained.

@@ -80,7 +80,7 @@ impl<T: Float> TileExpand<T> {
                     data.factor_count(scope).is_some(),
                     "Tile::normalized: the procedural recipe states no separable factorization"
                 );
-                data.normalization = Some((mask, guard));
+                data.normalization = Some((mask, guard, data.space.clone()));
             }
             TileKindExpand::Gmem(_)
             | TileKindExpand::Smem(_)

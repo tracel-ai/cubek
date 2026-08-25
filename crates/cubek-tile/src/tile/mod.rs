@@ -667,9 +667,11 @@ impl<T: Numeric> Tile<T> {
 
     /// The separable factor-normalization request, if one was attached to this procedural tile.
     /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
-    pub(crate) fn factor_normalization(&self) -> comptime_type!(Option<(TapMask, DivGuard)>) {
+    pub(crate) fn factor_normalization(
+        &self,
+    ) -> comptime_type!(Option<(TapMask, DivGuard, Space)>) {
         match &self.tile_kind {
-            TileKind::Procedural(data) => comptime!(data.normalization),
+            TileKind::Procedural(data) => comptime!(data.normalization.clone()),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -1027,8 +1029,7 @@ impl<T: Numeric> Tile<T> {
                 "Tile::separable_tap_in_bounds: TapMask::Masked needs the rhs source window; \
                  staging it in Smem erases which zeros came from the boundary"
             ),
-            // A procedural source has no backing bound and is valid throughout its stated box.
-            TileKind::Procedural(_) => true.runtime(),
+            TileKind::Procedural(data) => data.axis_in_bounds(&pos, axis),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
                 panic!("Tile::separable_tap_in_bounds: a separable gather needs an addressable rhs")
             }
