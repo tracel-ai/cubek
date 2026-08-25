@@ -32,7 +32,7 @@ use super::{
 /// the map would spell every term again, and under a rational axis a divide with them, per line
 /// and per tap.
 #[cube]
-pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
@@ -41,6 +41,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
 ) {
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
+    let cols = comptime!(problem.block.cols);
+    let spread = comptime!(problem.block.spread);
+    let aw = comptime!(problem.block.aw);
     let matrices = comptime!(problem.block.matrices());
     let batch_extents = comptime!(problem.block.batch_extents());
 
@@ -58,7 +61,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
         let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
-        let mut acc = acc.matrix_accumulate::<V>(
+        let mut acc = acc.matrix_accumulate::<A>(
             mat,
             comptime!(problem.block.space.clone()),
             comptime!(Semiring::SUM_PROD.add()),
@@ -71,14 +74,14 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
         let unroll =
             comptime!(problem.block.scalars() * kc <= config.budget && !rhs_check && !acc_check);
         let unroll_taps = comptime!(kc <= config.budget);
-        let mut c = block::seed::<E, V, V>(
+        let mut c = block::seed::<E, V, A>(
             &mut acc,
             1usize,
-            1usize,
-            comptime!(problem.block.aw),
+            spread,
+            aw,
             comptime!(mr),
             comptime!(nr),
-            comptime!(problem.block.cols),
+            comptime!(cols),
             unroll,
         );
 
@@ -197,15 +200,15 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                 }
             }
         }
-        block::commit::<E, V, V>(
+        block::commit::<E, V, A>(
             &mut acc,
             c,
             1usize,
-            1usize,
-            comptime!(problem.block.aw),
+            spread,
+            aw,
             comptime!(mr),
             comptime!(nr),
-            comptime!(problem.block.cols),
+            comptime!(cols),
             unroll,
         );
     }

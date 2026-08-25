@@ -141,7 +141,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
             "contract gather: a separable lhs needs scalar weights served one value a step"
         ));
         let size!(V) = rw;
-        separable::contract::<E, EL, ER, V>(acc, lhs, rhs, problem, config);
+        let size!(A) = aw;
+        separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config);
     } else if comptime!(served > 1) {
         // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.

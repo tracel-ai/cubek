@@ -541,3 +541,68 @@ fn a_separable_lhs_contracts_a_resampling_rhs() {
         }
     }
 }
+
+#[test]
+fn a_separable_lhs_contracts_a_padded_staged_rhs() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let in_shape = shape![TAPS[0], TAPS[1], TAPS[2], COLS];
+    let in_data = ramp(in_shape.num_elements());
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![ROWS, COLS])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[
+            (ROW, ROWS),
+            (COL, COLS),
+            (TAP[0], TAPS[0]),
+            (TAP[1], TAPS[1]),
+            (TAP[2], TAPS[2]),
+        ])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(ROWS))
+                .axis(COL, Cut::sequential(COLS))
+                .axis(TAP[0], Cut::sequential(TAPS[0]))
+                .axis(TAP[1], Cut::sequential(TAPS[1]))
+                .axis(TAP[2], Cut::sequential(TAPS[2]))
+        })
+        .build();
+
+    let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL])
+        .residence(&[Residence::Smem])
+        .stage_width(4);
+
+    separable_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        true,
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    let want = reference(&in_data);
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            let have = got.get_f32(&[row, col]);
+            let want = want[row * COLS + col];
+            assert!(
+                (have - want).abs() < 1e-4,
+                "separable padded staged: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
+}
