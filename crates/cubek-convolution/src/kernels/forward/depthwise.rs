@@ -383,8 +383,9 @@ pub fn launch_depthwise_tiled<R: Runtime>(
 ///
 /// Burn stores it `[c, kh, kw]` (its trailing `in_channels / groups` is 1 here), which is the one
 /// layout this kernel cannot read: the channel has to be the innermost dim for a line to cover a
-/// cell's worth of filter. Re-presenting the same buffer with permuted strides names the tensor
-/// we want; `into_contiguous` is what makes it true.
+/// cell's worth of filter. Permuting the binding's existing strides re-presents that logical
+/// tensor without assuming anything about its storage; `into_contiguous` is what makes the new
+/// layout physical.
 fn channels_innermost<R: Runtime>(
     client: &ComputeClient<R>,
     weight: TensorBinding<R>,
@@ -393,8 +394,13 @@ fn channels_innermost<R: Runtime>(
 ) -> Result<TensorBinding<R>, LaunchError> {
     let (c, rh, rw) = (geometry.c, geometry.rh, geometry.rw);
     let mut permuted = weight;
+    let channel_stride = permuted.strides[0];
+    let row_stride = permuted.strides[1];
+    let col_stride = permuted.strides[2];
     permuted.shape = Shape::from(vec![rh, rw, c]);
-    permuted.strides = Strides::new(&[rw, 1, rh * rw]);
+    // `[C, kh, kw, 1] -> [kh, kw, C]`. The omitted axis is singleton, so it contributes no
+    // offset; every surviving axis must retain its actual stride for sliced/strided bindings.
+    permuted.strides = Strides::new(&[row_stride, col_stride, channel_stride]);
 
     Ok(InputBinding::new(permuted, dtype)
         .into_contiguous(client)?

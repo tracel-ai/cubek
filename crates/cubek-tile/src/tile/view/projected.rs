@@ -334,6 +334,23 @@ impl<T: Numeric> Tile<T> {
         self.nd_guarded::<I, WP, W>(comptime!(true))
     }
 
+    /// Whether disabling this tile's N-D guard would remove a clamp boundary.
+    ///
+    /// Kept next to [`nd_guarded`](Tile::nd_guarded), the operation whose `false` path drops the
+    /// boundary. Non-memory tile kinds carry no [`Window`](crate::Window) boundary; the ones that
+    /// cannot form an N-D view are rejected by `nd_guarded` itself.
+    pub(crate) fn has_clamp_boundary(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(data) | TileKind::Smem(data) => {
+                comptime!(data.window.boundaries.contains(&Some(Boundary::Clamp)))
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(false),
+        }
+    }
+
     /// [`nd`](Tile::nd) with the guard stated rather than taken from the tile. `guarded = false`
     /// is for a caller that has proved every read it will take lands inside the buffer: the view
     /// then carries neither the overhang mask nor the window's clamp, which are what a checked

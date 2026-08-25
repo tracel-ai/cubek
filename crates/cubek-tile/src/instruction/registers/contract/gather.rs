@@ -113,7 +113,14 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     // nothing from an unguarded view: the split is worth its second copy of the walk only when
     // the fast side would actually unroll.
     let eligible = comptime!(mr * nr * served * aw <= config.budget);
-    let split_operands = comptime!(config.split_edge && eligible && (lhs_check || rhs_check));
+    // Dropping a clamp is not the same as dropping a redundant zero mask: clamped reads are
+    // semantically in bounds after remapping, so the corner check below cannot prove their raw
+    // coordinates safe. Keep those operands on the guarded walk.
+    let lhs_has_clamp = lhs.has_clamp_boundary();
+    let rhs_has_clamp = rhs.has_clamp_boundary();
+    let has_clamp = comptime!(lhs_has_clamp || rhs_has_clamp);
+    let split_operands =
+        comptime!(config.split_edge && eligible && !has_clamp && (lhs_check || rhs_check));
     // Whether the operands' whole boxes are inside their buffers. Hoisted out of the matrix loop
     // because it is a statement about the operand, not about which batch matrix is being read,
     // and computed only when something below would act on it. `L` is the lhs's line width as the

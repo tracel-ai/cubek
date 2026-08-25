@@ -71,6 +71,17 @@ impl Case {
     }
 
     fn check(&self, tiling: DepthwiseTiling) -> Result<(), String> {
+        self.check_with_weight_gap(tiling, 1)
+    }
+
+    /// Check a weight binding whose logical trailing singleton occupies one element out of every
+    /// `weight_gap` in its backing buffer. A gap above one makes every non-singleton weight axis
+    /// strided while preserving the logical `[C, kh, kw, 1]` shape.
+    fn check_with_weight_gap(
+        &self,
+        tiling: DepthwiseTiling,
+        weight_gap: usize,
+    ) -> Result<(), String> {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let dtype = f32::elem_type_native();
         let out_size = self.out_size();
@@ -81,15 +92,26 @@ impl Case {
 
         let in_data = Self::ramp(in_shape.iter().product(), 7);
         let w_data = Self::ramp(w_shape.iter().product(), 5);
+        let physical_w_shape = [self.c, self.k, self.k, weight_gap];
+        let mut physical_w_data = vec![99.0; physical_w_shape.iter().product()];
+        for (physical, &logical) in physical_w_data
+            .chunks_exact_mut(weight_gap)
+            .zip(w_data.iter())
+        {
+            physical[0] = logical;
+        }
 
         let (input, _) = TestInput::builder(client.clone(), Shape::new(in_shape))
             .dtype(dtype)
             .custom(in_data.clone())
             .generate_with_f32_host_data();
-        let (weight, _) = TestInput::builder(client.clone(), Shape::new(w_shape))
+        let (weight, _) = TestInput::builder(client.clone(), Shape::new(physical_w_shape))
             .dtype(dtype)
-            .custom(w_data.clone())
+            .custom(physical_w_data)
             .generate_with_f32_host_data();
+        let mut weight = weight.binding();
+        // Keep the physical binding's strides while exposing only its logical singleton axis.
+        weight.shape = Shape::new(w_shape);
         // Zeroed, not empty: the kernel writes every cell it owns, so a cell left untouched by a
         // buggy walk shows up as the zero it started as rather than as whatever was there.
         let out: TensorHandle<TestRuntime> =
@@ -101,7 +123,7 @@ impl Case {
         launch_depthwise_tiled::<TestRuntime>(
             &client,
             input.binding(),
-            weight.binding(),
+            weight,
             out.clone().binding(),
             &in_shape,
             &w_shape,
@@ -237,4 +259,21 @@ fn depthwise_channels_not_a_whole_number_of_cubes() {
         padding: 1,
     }
     .check_every_tiling();
+}
+
+/// Re-laying the filter must follow the binding's actual address map, not assume contiguous
+/// `[C, kh, kw, 1]` storage.
+#[test]
+fn depthwise_strided_weight() {
+    Case {
+        b: 1,
+        c: 8,
+        size: 5,
+        k: 3,
+        stride: 1,
+        dilation: 1,
+        padding: 1,
+    }
+    .check_with_weight_gap(DepthwiseTiling::default(), 2)
+    .unwrap();
 }
