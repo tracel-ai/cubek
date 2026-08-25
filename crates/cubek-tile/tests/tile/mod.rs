@@ -1,4 +1,5 @@
 mod attention;
+mod coarse;
 mod conv;
 mod depthwise;
 mod instruction;
