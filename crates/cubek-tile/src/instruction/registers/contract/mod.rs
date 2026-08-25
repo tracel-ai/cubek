@@ -11,5 +11,6 @@ mod base;
 mod direct;
 mod gather;
 mod promoted;
+mod shape;
 
 pub(crate) use base::memory;

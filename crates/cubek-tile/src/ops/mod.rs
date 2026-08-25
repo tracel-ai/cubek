@@ -6,9 +6,11 @@
 mod attention;
 mod copy;
 mod matmul;
+mod normalize;
 mod reduce;
 mod softmax;
 
 pub use attention::*;
+pub use normalize::*;
 pub use softmax::*;
 // matmul and reduce add `Tile` impls only; nothing to re-export.

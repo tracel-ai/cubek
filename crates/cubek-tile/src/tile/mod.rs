@@ -28,7 +28,10 @@ use cubecl::{
     prelude::*,
     quant::scheme::QuantScheme,
     std::quant::view::{KnownScale, QuantizedView as DequantView},
-    std::tensor::{View, layout::Coordinates},
+    std::tensor::{
+        View,
+        layout::{Coordinates, CoordsDyn},
+    },
 };
 
 use crate::*;
@@ -46,6 +49,31 @@ impl<T: Numeric> Tile<T> {
         recipe: R::ExpandType,
     ) -> TileExpand<T> {
         Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place())
+    }
+
+    /// Create a procedural tile while preserving the recipe's factorization for contraction: the
+    /// consumer sees one factor per contracted axis instead of one opaque field.
+    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(
+        _space: Space,
+        _recipe: R,
+    ) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_procedural_separable<R: SeparableRecipe<T> + 'static>(
+        scope: &Scope,
+        space: Space,
+        recipe: R::ExpandType,
+    ) -> TileExpand<T> {
+        // A separable procedural tile is always evaluated in place. This invariant is load-bearing
+        // for normalization: staging a recipe into shared memory would drop its factorization and
+        // normalization metadata without diagnostic.
+        Self::__expand_procedural_virtual(
+            scope,
+            space,
+            VirtualRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
+            StagePlan::in_place(),
+        )
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
@@ -649,6 +677,59 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The factorization this tile's values state, if any: `Some(n)` for a recipe presenting `n`
+    /// separable factors, `None` for a tile read from a buffer or a recipe that only answers as a
+    /// whole. A rank-one factorization is `Some(1)`, which a consumer can still exploit, and so is
+    /// deliberately not the same answer as `None`.
+    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => data.factors(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
+    /// The separable factor-normalization request, if one was attached to this procedural tile.
+    /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
+    pub(crate) fn factor_normalization(
+        &self,
+    ) -> comptime_type!(Option<(TapMask, DivGuard, Space)>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => comptime!(data.normalization.clone()),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
+    /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
+    /// that factor reads matters, which is what lets the contraction walk it in 1-D.
+    ///
+    /// Asking [`factors`](Tile::factors) first is the whole precondition: a tile answering `None`
+    /// has no factorization to index into, and is exactly the tile kind that cannot evaluate one.
+    pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => {
+                data.evaluate_factor_dyn(&pos, factor, comptime!(self.space.clone()))
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => {
+                panic!(
+                    "Tile::separable_factor: a tile read from a buffer states no factorization, \
+                     so `factors` answered `None` and there is no factor {factor} to evaluate"
+                )
+            }
+        }
+    }
+
     /// Whether this tile can state `axis`'s runtime size for the operation it takes part in: it
     /// spans the axis [`Dynamic`](crate::Extent), has a buffer to read a bound off, and that bound
     /// is the axis's own extent ([`bound_states`]). Each clause rules out an operand that spans the
@@ -951,6 +1032,48 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
+            }
+        }
+    }
+
+    /// Whether one factor tap lands inside the input axes that factor moves. The physical position
+    /// is already stepped from the row's hoisted anchor; the memory window then checks only the
+    /// physical carriers of `axis`, avoiding rebuilding the projection per tap.
+    pub(crate) fn separable_physical_tap_in_bounds(
+        &self,
+        pos: &CoordsDyn,
+        #[comptime] axis: Axis,
+    ) -> bool {
+        match &self.tile_kind {
+            TileKind::Gmem(data) => {
+                let projection = comptime!(data.projection.clone());
+                if comptime!(projection.logical_axes().contains(&axis)) {
+                    let carriers = comptime!(projection.carriers(axis));
+                    let mut valid = true;
+                    #[unroll]
+                    for c in 0..comptime!(carriers.len()) {
+                        let pa = comptime!(carriers[c]);
+                        if comptime!(
+                            data.window.boundaries.get(pa).copied().flatten()
+                                == Some(Boundary::Zero)
+                        ) {
+                            valid = valid && data.window.axis_in_bounds(pos[pa], pa);
+                        }
+                    }
+                    valid
+                } else {
+                    true.runtime()
+                }
+            }
+            TileKind::Smem(_) => panic!(
+                "Tile::separable_physical_tap_in_bounds: TapMask::Masked needs the rhs source window; \
+                 staging it in Smem erases which zeros came from the boundary"
+            ),
+            TileKind::Procedural(data) => data.axis_in_bounds(pos, axis),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                panic!(
+                    "Tile::separable_physical_tap_in_bounds: a separable gather needs an addressable rhs"
+                )
             }
         }
     }

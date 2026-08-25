@@ -1543,6 +1543,26 @@ impl<T: Numeric> MemData<T> {
         self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout)
     }
 
+    /// [`nd_transparent`](MemData::nd_transparent) over the *physical* box instead of the logical
+    /// one, for a caller that folds the map itself.
+    ///
+    /// The map is the only layer dropped: the [`Window`] that owns the boundary sits below it
+    /// either way, so a coordinate past the operand's data masks exactly as it does through
+    /// [`nd_transparent`](MemData::nd_transparent). The identity step keeps the box's own bound,
+    /// which is the part a caller cannot fold away.
+    ///
+    /// The logical box test goes with the map, though, so this masks against the physical box
+    /// alone. A caller owes it the coordinates the map would have produced from inside the logical
+    /// one: a position folded from a logical coordinate out of range is no longer caught here, and
+    /// reads whatever the window says lives at it.
+    pub(crate) fn nd_physical<I: Numeric, WP: Size, W: Size>(
+        &self,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        let rank = comptime!(self.projection.physical_rank());
+        let identity = StepUp::new(self.window.extent.clone(), comptime!(vec![1; rank]));
+        self.transparent::<I, WP, W, CoordsDyn, StepUp>(identity)
+    }
+
     /// The mutable twin of [`flat`](MemData::flat).
     pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         if comptime!(self.store.quant.is_some()) {
@@ -2597,6 +2617,36 @@ impl Window {
             boundaries,
         }
     }
+
+    /// Whether `pos` is valid on the selected physical axes. This is the factor-local form of
+    /// [`Layout::is_in_bounds`]: separable normalization must mask the source axes moved by one
+    /// tap without letting another factor's tap affect that decision.
+    #[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
+    pub(crate) fn axes_in_bounds(&self, pos: &CoordsDyn, #[comptime] axes: Vec<usize>) -> bool {
+        let mut valid = true;
+        #[unroll]
+        for a in 0..comptime!(axes.len()) {
+            let i = comptime!(axes[a]);
+            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
+                valid = valid && self.axis_in_bounds(pos[i], i);
+            }
+        }
+        valid
+    }
+
+    /// The scalar physical-axis check behind [`axes_in_bounds`](Self::axes_in_bounds).
+    pub(crate) fn axis_in_bounds(&self, pos: u32, #[comptime] axis: usize) -> bool {
+        if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
+            let abs = self.origin.at(axis).fadd(pos.fcast::<i32>());
+            if comptime!(self.signed) {
+                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(axis)
+            } else {
+                abs.fcast::<u32>() < self.bound.at(axis)
+            }
+        } else {
+            true.runtime()
+        }
+    }
 }
 
 #[cube]
@@ -2610,13 +2660,10 @@ impl Layout for Window {
         #[unroll]
         for i in 0..self.origin.len() {
             let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-            // Clamp negative coordinates to 0 before bounds masking.
+            // Clamp negative coordinates to 0 before bounds masking. Branchless: this runs per
+            // tap of every gathered read, where a diamond would cost more than the cast it skips.
             let shifted = if comptime!(self.signed) {
-                if abs >= 0i32 {
-                    abs.fcast::<u32>()
-                } else {
-                    0u32
-                }
+                select(abs >= 0i32, abs.fcast::<u32>(), 0u32)
             } else {
                 abs.fcast::<u32>()
             };
@@ -2625,15 +2672,11 @@ impl Layout for Window {
             let shifted = match comptime!(self.boundaries.get(i).copied().flatten()) {
                 Some(Boundary::Clamp) => {
                     let bound_i = self.bound.at(i);
-                    // A zero-extent axis has no edge cell to fold onto, and `bound - 1` would
-                    // wrap into a wild line index; it folds to `0` like an underflow instead.
-                    if bound_i == 0u32 {
-                        0u32
-                    } else if shifted >= bound_i {
-                        bound_i - 1u32
-                    } else {
-                        shifted
-                    }
+                    let edge = select(shifted >= bound_i, bound_i.fsub(1u32), shifted);
+                    // A zero-extent axis has no edge cell to fold onto, and the `bound - 1` above
+                    // wrapped into a wild line index; both arms evaluate, so it is discarded here
+                    // rather than skipped, and the axis folds to `0` like an underflow instead.
+                    select(bound_i == 0u32, 0u32, edge)
                 }
                 None | Some(Boundary::Zero) => shifted,
             };
@@ -2653,22 +2696,10 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut valid = true;
-        // `origin`, not `bound`: the two share a rank on every window a mode can reach, and this
-        // is the one `pos` and `boundaries` are indexed by.
-        #[unroll]
-        for i in 0..self.origin.len() {
-            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
-                let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-                let inside = if comptime!(self.signed) {
-                    abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
-                } else {
-                    abs.fcast::<u32>() < self.bound.at(i)
-                };
-                valid = valid && inside;
-            }
-        }
-        valid
+        self.axes_in_bounds(
+            &pos,
+            comptime!((0..self.boundaries.len()).collect::<Vec<_>>()),
+        )
     }
 }
 

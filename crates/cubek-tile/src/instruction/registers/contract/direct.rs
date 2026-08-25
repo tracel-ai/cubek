@@ -2,6 +2,7 @@
 
 use cubecl::prelude::*;
 
+use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::*;
 
@@ -20,10 +21,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
 ) {
-    comptime!(assert!(
-        Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
-        "contract: the 2-D nest contracts exactly one axis"
-    ));
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     comptime!(assert!(
@@ -32,11 +29,18 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     ));
 
     let lw = lhs.vector_size();
-    let aw = comptime!(acc.store.vector_size);
     let rw = rhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
     comptime!(assert!(
         rw == aw || served > 1,
         "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
+    ));
+    let shape = comptime!(ContractShape::new(
+        &lhs.space, &rhs.space, space, served, lw, rw, aw,
+    ));
+    comptime!(assert!(
+        shape.reduce.len() == 1,
+        "contract: the 2-D nest contracts exactly one axis"
     ));
 
     // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
@@ -44,39 +48,32 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     if comptime!(served > 1) {
         let size!(W) = served;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, space, served, lw, 1usize, config);
+        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, shape, config);
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, space, served, lw, aw, config);
+        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, shape, config);
     }
 }
 
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
 #[cube]
-#[allow(clippy::too_many_arguments)]
 fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    #[comptime] space: Space,
-    #[comptime] served: usize,
-    #[comptime] lw: usize,
-    #[comptime] aw: usize,
+    #[comptime] shape: ContractShape,
     #[comptime] config: RegisterBlock,
 ) {
-    let rank = comptime!(space.rank());
-    let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-    let k = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space)[0]);
-    let kc = comptime!(merged.extent(k));
-
-    // `nr` counts the accumulator's own lines along `N`; `mr` (rows) and `kc` (scalar `K`) are
-    // unvectorized. `cols` is the scalar extent behind `nr`, which the block only consults on the
-    // N-D nest's spread path.
-    let cols = comptime!(space.extent_at(rank - 1));
-    let (mr, nr) = comptime!((space.extent_at(rank - 2), cols / aw));
-    let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
+    let mr = comptime!(shape.mr);
+    let nr = comptime!(shape.nr);
+    let cols = comptime!(shape.cols);
+    let kc = comptime!(shape.kc);
+    let served = comptime!(shape.served);
+    let lw = comptime!(shape.lw);
+    let aw = comptime!(shape.aw);
+    let matrices = comptime!(shape.matrices());
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
@@ -88,7 +85,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         // The contraction's own algebra: its products accumulate under the semiring's add.
         let mut acc_view = acc.matrix_accumulate::<A>(
             mat,
-            comptime!(space.clone()),
+            comptime!(shape.space.clone()),
             comptime!(Semiring::SUM_PROD.add()),
         );
 
@@ -99,9 +96,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         let lhs_check = comptime!(lhs_mat.check);
         let rhs_check = comptime!(rhs_mat.check);
         let acc_check = acc_view.check();
-        // The budget is scalars, and the block holds `mr * nr` lines of `served * aw` (exactly one
-        // of the two exceeds 1).
-        let eligible = comptime!(mr * nr * served * aw <= config.budget);
+        let eligible = comptime!(shape.scalars() <= config.budget);
         let split_edge =
             comptime!(eligible && config.split_edge && (lhs_check || rhs_check || acc_check));
         if comptime!(split_edge) {
