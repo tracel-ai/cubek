@@ -20,13 +20,13 @@ impl<Acc: Numeric> Tile<Acc> {
     /// would have written happens here instead, so the verb costs nothing to reach for.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let spans = self.contracts_whole_at_leaf(lhs, rhs);
-        let init = self.request_start(comptime!(spans));
-        match comptime!(init) {
-            Init::Identity => {}
-            Init::Cell => self.init_identity(comptime!(Semiring::SUM_PROD.add())),
+        let init_from = self.request_init_from(comptime!(spans));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => self.init_identity(comptime!(Semiring::SUM_PROD.add())),
         }
         self.mma(lhs, rhs);
-        self.request_start(comptime!(Init::Cell));
+        self.request_init_from(comptime!(InitFrom::Cell));
     }
 
     /// `c += a · b`: [`mm`](Tile::mm) with the accumulate its name carries. Folds onto whatever
@@ -54,12 +54,12 @@ impl<Acc: Numeric> Tile<Acc> {
         &self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-    ) -> comptime_type!(Init) {
+    ) -> comptime_type!(InitFrom) {
         comptime!(match Space::merge(&[&lhs.space, &rhs.space])
             .spans_contracted_at_leaf(&self.space)
         {
-            true => Init::Identity,
-            false => Init::Cell,
+            true => InitFrom::Identity,
+            false => InitFrom::Cell,
         })
     }
 

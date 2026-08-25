@@ -19,16 +19,16 @@ impl<Acc: Numeric> Tile<Acc> {
     /// ([`init_identity`](Tile::init_identity)) happens here instead.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
         let spans = comptime!(match input.space.spans_contracted_at_leaf(&self.space) {
-            true => Init::Identity,
-            false => Init::Cell,
+            true => InitFrom::Identity,
+            false => InitFrom::Cell,
         });
-        let init = self.request_start(comptime!(spans));
-        match comptime!(init) {
-            Init::Identity => {}
-            Init::Cell => self.init_identity(monoid),
+        let init_from = self.request_init_from(comptime!(spans));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => self.init_identity(monoid),
         }
         self.reduce_axis_accumulate(input, monoid);
-        self.request_start(comptime!(Init::Cell));
+        self.request_init_from(comptime!(InitFrom::Cell));
     }
 
     /// `c = fold(c, input)`: [`reduce_axis`](Tile::reduce_axis) with the accumulate

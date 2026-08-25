@@ -109,8 +109,11 @@ fn matmul_one_tile_per_cube() {
     );
 }
 
-/// The whole contraction lands at the leaf, so the one visit that owns an output cell is also
-/// the only one and `mm` writes it outright, never reading the poisoned `c` back.
+/// `mm` owns the init: `c` comes out as `a·b`, whatever it held going in.
+///
+/// The whole contraction lands at the leaf here, which is the case where the accumulation never
+/// reads `c` back at all. If it read it anyway, the poison the harness filled `c` with would be
+/// in every cell of the result.
 #[test]
 fn matmul_whole_k_at_the_leaf() {
     check_matmul(
@@ -1431,8 +1434,10 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .enforce()
 }
 
-/// `c += a·b` onto content the caller owns: the accumulating verb never takes the init away
-/// from it, whatever `mm` would have decided about this same space.
+/// `mma` never takes the init from the caller.
+///
+/// The space is one `mm` would overwrite, so a split that let either verb answer for the other
+/// would drop what `c` holds and turn every `c += a·b` in the workspace into `c = a·b`.
 #[test]
 fn mma_folds_onto_what_c_holds() {
     let client = <TestRuntime as Runtime>::client(&Default::default());

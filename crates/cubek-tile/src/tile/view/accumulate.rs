@@ -6,10 +6,10 @@ use cubecl::{
 use crate::{instruction::plane, *};
 
 /// What an accumulation starts from: the statement a verb makes about the cells it is about to
-/// write ([`Tile::mm`] and [`Tile::reduce_axis`] say [`Identity`](Init::Identity), the
-/// accumulating verbs say [`Cell`](Init::Cell)).
+/// write ([`Tile::mm`] and [`Tile::reduce_axis`] say [`Identity`](InitFrom::Identity), the
+/// accumulating verbs say [`Cell`](InitFrom::Cell)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Init {
+pub enum InitFrom {
     /// Fold onto the cell: it holds a value that counts, whether a partial the walk above left
     /// there or an accumulator the caller seeded.
     Cell,
@@ -34,10 +34,10 @@ pub(crate) enum CellRead {
 impl CellRead {
     /// Derived, never stated: whether the cell counts at all is the accumulation's statement, and
     /// which site reads it is what the plane's lanes hold of it.
-    const fn of(lane_share: LaneShare, init: Init) -> Self {
-        match init {
-            Init::Identity => CellRead::Never,
-            Init::Cell => match lane_share {
+    const fn of(lane_share: LaneShare, init_from: InitFrom) -> Self {
+        match init_from {
+            InitFrom::Identity => CellRead::Never,
+            InitFrom::Cell => match lane_share {
                 LaneShare::Whole => CellRead::AtSeed,
                 LaneShare::Plane | LaneShare::Group { .. } => CellRead::AtCommit,
             },
@@ -70,13 +70,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
         #[comptime] monoid: Monoid,
-        #[comptime] init: Init,
+        #[comptime] init_from: InitFrom,
     ) -> Self {
         AccumulateView::<'a, E, V, C> {
             values,
             lane_share,
             monoid,
-            cell_read: comptime!(CellRead::of(lane_share, init)),
+            cell_read: comptime!(CellRead::of(lane_share, init_from)),
         }
     }
 
