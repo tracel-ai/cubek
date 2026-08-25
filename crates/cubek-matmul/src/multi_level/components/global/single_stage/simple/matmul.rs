@@ -21,7 +21,7 @@ use cubecl::{
 };
 use std::marker::PhantomData;
 
-// Type aliases for the (long) per-flow Stage types — saves repeating the
+// Type aliases for the (long) per-flow Stage types: saves repeating the
 // `FullLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>` shape at every
 // PartitionMatmul call site below.
 type LhsStageFor<MP, RC, LL> = FullLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;

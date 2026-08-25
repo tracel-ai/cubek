@@ -2,7 +2,7 @@
 //!
 //! Used by the tuner to compare the output of two metal runs (current commit
 //! vs. trusted reference) without materializing both at the same time. Files
-//! are intended to live in a temp directory — there's no forward-compatibility
+//! are intended to live in a temp directory: there's no forward-compatibility
 //! story beyond a version byte that lets a reader reject an unknown format.
 //!
 //! Layout (little-endian throughout):
@@ -21,7 +21,7 @@
 //! ```
 //!
 //! Booleans are written as one byte each (0/1). The element count is the
-//! length of the packed data array (not `shape.product()` — strides may make
+//! length of the packed data array (not `shape.product()`: strides may make
 //! the physical extent larger than the logical one).
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -84,7 +84,7 @@ pub fn write_host_data(path: &Path, data: &HostData) -> io::Result<u64> {
         HostDataVec::F64(v) => w.write_all(bytemuck::cast_slice(v))?,
         HostDataVec::I32(v) => w.write_all(bytemuck::cast_slice(v))?,
         HostDataVec::Bool(v) => {
-            // One byte per bool — keeps reads alignment-free and rare enough
+            // One byte per bool: keeps reads alignment-free and rare enough
             // not to be worth bit-packing.
             for b in v {
                 w.write_all(&[u8::from(*b)])?;
@@ -101,7 +101,7 @@ pub fn write_host_data(path: &Path, data: &HostData) -> io::Result<u64> {
 
 /// Read a [`HostData`] previously produced by [`write_host_data`].
 ///
-/// Errors with `InvalidData` for any header/version/tag mismatch — these
+/// Errors with `InvalidData` for any header/version/tag mismatch: these
 /// usually mean the file came from a different cubek version and should be
 /// regenerated.
 pub fn read_host_data(path: &Path) -> io::Result<HostData> {
@@ -111,7 +111,7 @@ pub fn read_host_data(path: &Path) -> io::Result<HostData> {
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic)?;
     if &magic != MAGIC {
-        return Err(invalid("wrong magic — file is not a HostData blob"));
+        return Err(invalid("wrong magic: file is not a HostData blob"));
     }
     let version = read_u8(&mut r)?;
     if version != VERSION {

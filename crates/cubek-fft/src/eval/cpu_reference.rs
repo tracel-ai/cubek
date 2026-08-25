@@ -155,7 +155,7 @@ pub fn cpu_reference_result(
 }
 
 /// Number of progress bumps the FFT reference will produce. Granularity is one
-/// bump per FFT window — the inner `fft_recursive` dominates runtime, so
+/// bump per FFT window: the inner `fft_recursive` dominates runtime, so
 /// per-bin bumps would be noisy.
 pub fn cpu_reference_total(shape: &[usize], dim: usize, mode: FftMode) -> u64 {
     let sample_window = shape[dim];

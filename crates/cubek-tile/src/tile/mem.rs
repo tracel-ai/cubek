@@ -127,8 +127,8 @@ impl Overhang {
 impl<T: Numeric> Tile<T> {
     /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one
     /// `space` projected onto the operand's `spec` axes, so no operand carries its own
-    /// copy of the space. The element type carries the line width — `Vector<T, W>` for a
-    /// lined operand, `T` itself for scalar — so the served width *is* the binding's
+    /// copy of the space. The element type carries the line width: `Vector<T, W>` for a
+    /// lined operand, `T` itself for scalar, so the served width *is* the binding's
     /// width by construction and is never re-lined in-kernel. Shape/strides come in
     /// scalar-unit and convert to line-unit here.
     pub fn of<E: CubePrimitive<Scalar = T>>(
@@ -175,7 +175,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (its
-    /// element's scalar is the *stored* type — `u32` words for a packed scheme, `i8` native),
+    /// element's scalar is the *stored* type: `u32` words for a packed scheme, `i8` native),
     /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
     /// them back in. The served width is the binding's width × the scheme's packing factor.
     #[allow(clippy::too_many_arguments)]
@@ -1065,11 +1065,11 @@ impl<T: Numeric> MemData<T> {
 
     /// The sub-word twin of [`scan_transparent`](MemData::scan_transparent): the source's served
     /// line is one whole packed word (`vector_size == num_quants`, a scalar `u32` binding), and
-    /// each word unpacks into `num_quants / W` lines of this store's width — how a packed operand
+    /// each word unpacks into `num_quants / W` lines of this store's width: how a packed operand
     /// fills a stage on a device whose vectors cannot cover a word. Word-serving is what keeps the
     /// line/storage-line correspondence exact (one line **is** one word), so no other width plays.
     ///
-    /// Unchecked only — and unreachable any other way: a checked operand cannot vectorize
+    /// Unchecked only, and unreachable any other way: a checked operand cannot vectorize
     /// ([`realize`](crate::StridedTileSource) refuses it), and a word-serving operand is
     /// `num_quants` wide, so a checked source never gets here; the assert below is a backstop for
     /// hand-built args. The ragged-tail obligation this leaves is the engine's ordinary unchecked
@@ -1258,7 +1258,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The window as one dense run of lines: index `i` addresses line
-    /// `origin + i` — one add, no layout walk. Legal only where the window's
+    /// `origin + i`: one add, no layout walk. Legal only where the window's
     /// content is physically contiguous in row-major order: an untiled,
     /// unmasked, unquantized store whose windowed logical axes are contiguous
     /// in memory (the strided operands a streaming fold windows). The
@@ -1568,19 +1568,24 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
-    /// [`LaneShare`] these cells carry, so a leaf accumulates through it without being told.
+    /// [`LaneShare`] these cells carry and the [`Monoid`] they fold under, so a leaf accumulates
+    /// through it without being told either.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
         #[comptime] space: Space,
+        #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share)
+        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, monoid)
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
-    /// [`LaneShare`] these cells carry.
-    pub(crate) fn flat_accumulate<W: Size>(&mut self) -> AccumulateView<'_, T, W, Coords1d> {
+    /// [`LaneShare`] these cells carry and the [`Monoid`] they fold under.
+    pub(crate) fn flat_accumulate<W: Size>(
+        &mut self,
+        #[comptime] monoid: Monoid,
+    ) -> AccumulateView<'_, T, W, Coords1d> {
         // A flat logical scan only agrees with this physical window under the direct,
         // non-storage-tiled mapping. Otherwise the reduction's logical accumulator index would
         // seed and commit a different physical cell than the one it reduces for.
@@ -1593,7 +1598,7 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share)
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, monoid)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the

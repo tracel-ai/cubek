@@ -100,7 +100,7 @@ pub fn test_algo(
         out: dtypes.acc_global,
     };
 
-    // Build a synthetic problem just to compute the matmul layout — the actual
+    // Build a synthetic problem just to compute the matmul layout: the actual
     // problem will be reconstructed inside `launch_ref` from the bindings.
     let problem = ConvolutionProblem {
         m,

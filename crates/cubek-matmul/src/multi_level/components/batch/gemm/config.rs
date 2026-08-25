@@ -34,20 +34,20 @@ impl MatmulOperandLayouts {
 
     /// Pick the kernel variant appropriate for these layouts.
     ///
-    /// `Dot` (Row-Col): K is contiguous on both sides — dot-product
+    /// `Dot` (Row-Col): K is contiguous on both sides, so a dot-product
     /// reduction along K, one cell per plane. Supports `plane_dim > 1`
     /// (units cooperate across K).
     ///
     /// `OuterN` (Row-Row): rhs is N-contig (RowMajor) and lhs is K-contig
-    /// (RowMajor or vector) — outer-product vectorized along N with a
+    /// (RowMajor or vector): outer-product vectorized along N with a
     /// single LHS K-vector load. CPU-only (`plane_dim == 1`).
     ///
     /// `OuterM` (Col-Col): lhs is M-contig (ColMajor) and rhs is K-contig
-    /// (ColMajor or vector) — outer-product vectorized along M with a
+    /// (ColMajor or vector): outer-product vectorized along M with a
     /// single RHS K-vector load. CPU-only.
     ///
     /// Col-Row has no variant: every operand a variant touches is read as
-    /// a vector along one axis, and there is no such axis here — the lhs
+    /// a vector along one axis, and there is no such axis here: the lhs
     /// is M-contig while the planes own one M row each. The CPU serves
     /// that layout through the `cpu_gemm` routine instead.
     pub fn variant(self) -> Result<Variant, MatmulSetupError> {
@@ -81,10 +81,10 @@ impl Variant {
     /// cube and only advances via the cube grid.
     pub fn planes_split(self) -> PlanesSplit {
         match self {
-            // Vector accumulator is along M — independent per N column,
+            // Vector accumulator is along M: independent per N column,
             // so planes split N. (Same as Dot, just larger M-block.)
             Variant::OuterM => PlanesSplit::N,
-            // Vector accumulator is along N — independent per M row, so
+            // Vector accumulator is along N: independent per M row, so
             // planes split M for OuterN. Dot has no constraint; pick N
             // so columnar work parallelizes naturally on wide outputs.
             Variant::OuterN => PlanesSplit::M,
@@ -129,7 +129,7 @@ fn operand_kind(dim: usize, layout: MatrixLayout) -> OperandLayout {
 
 /// Unified config for the gemm family. `variant` selects the kernel;
 /// `plane_dim` is the hardware plane width (only `Variant::Dot` supports
-/// `plane_dim > 1` — outer-product variants enforce `plane_dim == 1`).
+/// `plane_dim > 1`: outer-product variants enforce `plane_dim == 1`).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct GemmConfig {
     pub(crate) plane_dim: u32,

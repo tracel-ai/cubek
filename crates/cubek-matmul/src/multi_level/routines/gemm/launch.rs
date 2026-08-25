@@ -112,7 +112,7 @@ pub fn launch_ref<R: Runtime>(
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     // For variants that walk K with vector-size steps, k must be divisible
-    // by plane_size to even have a valid vector_size — the Family's
+    // by plane_size to even have a valid vector_size: the Family's
     // validate_blueprint enforces the full per-variant divisibility.
     if !k.is_multiple_of(plane_size) {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -164,7 +164,7 @@ pub fn launch_ref<R: Runtime>(
 
     // Vec operands need K-contiguous storage; the kernel reads them as if
     // they were the side that supplies K-vectors / scalars. Mat operands
-    // keep their natural layout — the Family picks the variant from
+    // keep their natural layout: the Family picks the variant from
     // `MatmulOperandLayouts`.
     if matches!(kind.lhs, OperandLayout::Vector) && kind_problem.lhs_strides[rank - 1] != 1 {
         lhs = lhs.into_contiguous(client)?;

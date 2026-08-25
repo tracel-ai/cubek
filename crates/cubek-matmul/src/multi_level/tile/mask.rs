@@ -12,7 +12,7 @@ pub trait Mask: CubeType {
 }
 
 /// Layout of an attention-style mask fragment across the units of a plane.
-/// Purely comptime — all variants carry only comptime data.
+/// Purely comptime: all variants carry only comptime data.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum MaskLayout {
     /// Each unit owns a full row-major copy of the tile.

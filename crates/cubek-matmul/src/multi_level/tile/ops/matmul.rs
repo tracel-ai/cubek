@@ -30,7 +30,7 @@ impl<N: Numeric, Sc: TileScope> Tile<N, Sc> {
             }
             (TileKind::Stage(_), TileKind::Stage(_), TileKind::Partition(_)) => {
                 panic!(
-                    "Tile::mma: (Stage, Stage, Partition) requires extra context — call \
+                    "Tile::mma: (Stage, Stage, Partition) requires extra context: call \
                      Tile::mma_partition."
                 )
             }

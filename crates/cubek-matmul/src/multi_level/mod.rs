@@ -13,6 +13,9 @@ pub mod stage;
 /// The tile abstraction the innermost level computes on.
 pub mod tile;
 
+#[cfg(feature = "benchmarks")]
+pub mod eval;
+
 mod cube_dim_resource;
 mod instruction;
 mod plane_flow;

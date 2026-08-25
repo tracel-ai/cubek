@@ -1,7 +1,7 @@
 //! Kernel 2: compute `dQ`. Q-outer loop, accumulates in registers, no atomics.
 //!
 //! Each program instance owns one Q-block and sweeps all KV-blocks. `S` and
-//! `dP` are recomputed inside the loop — never materialized to HBM.
+//! `dP` are recomputed inside the loop, never materialized to HBM.
 
 use cubecl::{CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
 
@@ -84,11 +84,11 @@ fn flash_attention_backward_dq_kernel<E: Float>(
 /// Inputs:
 /// - `q, k, v`: `[B, H, N, d]`.
 /// - `do_`:     `[B, H, N, d]` upstream gradient.
-/// - `lse`:     `[B, H, N]` fp32 — saved from forward.
-/// - `d`:       `[B, H, N]` fp32 — from the prepass kernel.
+/// - `lse`:     `[B, H, N]` fp32: saved from forward.
+/// - `d`:       `[B, H, N]` fp32: from the prepass kernel.
 ///
 /// Output:
-/// - `dq`:      `[B, H, N, d]` — written cleanly.
+/// - `dq`:      `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward_dq<R: Runtime>(
     client: &ComputeClient<R>,

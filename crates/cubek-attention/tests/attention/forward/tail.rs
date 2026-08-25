@@ -1,6 +1,6 @@
 //! Out-of-bounds tail tier: non-causal, unmasked problems whose dimensions do
 //! not divide the tiling spans, so correctness rests entirely on the OOB
-//! predicate — the tail tiles of each axis must contribute exactly nothing.
+//! predicate: the tail tiles of each axis must contribute exactly nothing.
 //!
 //! Inputs are drawn at `uniform(-8, 8)` as well as the default unit range: a
 //! leak of a real (unmasked) score or value grows with input magnitude, while
@@ -201,7 +201,7 @@ fn kv_tail_blackbox_large_magnitude() {
 
 // Encoder-decoder shapes (Whisper's decoder): the query sequence is far
 // smaller than one q-stage span, so every unit's rows beyond seq_q are
-// entirely out of bounds — cross-attention prefill (few queries against a
+// entirely out of bounds: cross-attention prefill (few queries against a
 // long encoder), single-query decode, and a short causal prefill.
 
 #[test]
@@ -235,7 +235,7 @@ fn causal_short_prefill_unit() {
 }
 
 // Permuted inputs: q/k/v as `(b, heads, seq, hd)` views of `(b, seq, heads,
-// hd)` buffers — the layout every attention module produces from its fused
+// hd)` buffers: the layout every attention module produces from its fused
 // projection. Needs `heads >= 2` (with one head the permutation degenerates
 // to the contiguous layout).
 

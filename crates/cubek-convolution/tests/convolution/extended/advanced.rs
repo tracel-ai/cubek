@@ -1,5 +1,5 @@
 //! Forced-blueprint tests for non-default knobs (swizzle, partition
-//! buffering). Each knob is exercised once on a representative routine —
+//! buffering). Each knob is exercised once on a representative routine;
 //! per-routine combinations live in `full/`.
 
 use cubek_convolution::ConvAlgorithm;

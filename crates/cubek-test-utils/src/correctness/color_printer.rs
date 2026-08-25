@@ -19,7 +19,7 @@ impl From<std::ops::Range<usize>> for DimFilter {
     /// matches nothing.
     fn from(r: std::ops::Range<usize>) -> Self {
         if r.start >= r.end {
-            // Empty range — produce a filter that excludes every index.
+            // Empty range: produce a filter that excludes every index.
             DimFilter::Exact(usize::MAX)
         } else {
             DimFilter::Range {

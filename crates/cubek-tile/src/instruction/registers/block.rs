@@ -162,10 +162,10 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         };
         #[unroll(unroll)]
         for n in 0..nr {
-            // Explicit `fma`: `+= a * b` lowers to a separate mul + dependent add (no fast-math
-            // contraction on the CPU backend), doubling the FP instruction count and serializing
-            // the accumulate. `fma` emits one fused op (`fmla`).
-            c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+            // One step of the sum-product semiring, which is a single `fma`: `+= a * b` would
+            // lower to a separate mul + dependent add (no fast-math contraction on the CPU
+            // backend), doubling the FP instruction count and serializing the accumulate.
+            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
         }
     }
 }
@@ -195,7 +195,7 @@ fn spread_guard(spread: usize, cols: usize) -> bool {
 }
 
 /// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the steps
-/// never touch memory. Always under `Sum`: a contraction accumulates by definition.
+/// never touch memory. The algebra is the view's, stated where it was built.
 ///
 /// At `served > 1` the block's lanes are partials of one cell, so the accumulator's value seeds
 /// lane 0 alone and the rest start at the identity.
@@ -232,7 +232,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
                 let base = (n as u32).fmul(comptime!(spread as u32));
                 // The spare lanes of an overhanging last column have no cell to seed from, and
                 // the zero they keep is `Sum`'s identity, so they contribute nothing.
-                let mut lanes = Vector::<E, V>::cast_from(E::from_int(0));
+                let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(Monoid::Sum));
                 #[unroll]
                 for l in 0..spread {
                     let col = base.fadd(comptime!(l as u32));
@@ -242,14 +242,14 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
                         true.runtime()
                     };
                     if live {
-                        lanes.insert(l, acc.seed((i as u32, col), LeafOp::Sum).extract(0usize));
+                        lanes.insert(l, acc.seed((i as u32, col)).extract(0usize));
                     }
                 }
                 c[i * nr + n] = lanes;
             } else {
-                let cell = acc.seed((i as u32, n as u32), LeafOp::Sum);
+                let cell = acc.seed((i as u32, n as u32));
                 if comptime!(served > 1) {
-                    let mut lanes = Vector::<E, V>::cast_from(LeafOp::identity::<E>(LeafOp::Sum));
+                    let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(Monoid::Sum));
                     lanes.insert(0usize, cell.extract(0usize));
                     c[i * nr + n] = lanes;
                 } else {
@@ -310,26 +310,14 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
                         true.runtime()
                     };
                     if live {
-                        acc.commit(
-                            (i as u32, col),
-                            Vector::<E, A>::cast_from(cell.extract(l)),
-                            LeafOp::Sum,
-                        );
+                        acc.commit((i as u32, col), Vector::<E, A>::cast_from(cell.extract(l)));
                     }
                 }
             } else if comptime!(served > 1) {
-                let total = horizontal::vector::<E, V>(cell, served, LeafOp::Sum);
-                acc.commit(
-                    (i as u32, n as u32),
-                    Vector::<E, A>::cast_from(total),
-                    LeafOp::Sum,
-                );
+                let total = horizontal::vector::<E, V>(cell, served, Monoid::Sum);
+                acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(total));
             } else {
-                acc.commit(
-                    (i as u32, n as u32),
-                    Vector::<E, A>::cast_from(cell),
-                    LeafOp::Sum,
-                );
+                acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(cell));
             }
         }
     }

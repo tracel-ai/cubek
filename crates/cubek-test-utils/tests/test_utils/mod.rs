@@ -168,7 +168,7 @@ fn fail_message_contains_aggregate_stats_and_examples() {
         "missing worst index, got: {reason}"
     );
 
-    // In Print modes the per-element output is on stdout — the panic message
+    // In Print modes the per-element output is on stdout: the panic message
     // intentionally drops the examples block. In non-Print modes the block
     // must be present.
     let is_print_mode = std::env::var("CUBE_TEST_MODE")
@@ -188,7 +188,7 @@ fn assert_equals_approx_in_slice_accepts_tensor_filter() {
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    // Same setup as `arange_handle_row_major_slice` — the second row of
+    // Same setup as `arange_handle_row_major_slice`: the second row of
     // `actual` differs (9, 9, 9) from the expected arange (3, 4, 5).
     let actual = TestInput::builder(client.clone(), shape![2, 3])
         .custom(vec![0., 1., 2., 9., 9., 9.])
@@ -198,7 +198,7 @@ fn assert_equals_approx_in_slice_accepts_tensor_filter() {
         .custom(vec![0., 1., 2., 3., 4., 5.])
         .f32_host_data();
 
-    // Equivalent to `vec![0..1, 0..3]` — only the first row is compared, so
+    // Equivalent to `vec![0..1, 0..3]`: only the first row is compared, so
     // the differing second row is ignored and the result is `Pass`.
     let filter = vec![DimFilter::Exact(0), DimFilter::Range { start: 0, end: 2 }];
     assert_equals_approx_in_slice(&actual, &expected, 0.001, filter)
@@ -300,7 +300,7 @@ fn builder_normal_distribution_within_statistical_bounds() {
 fn host_data_typed_accessors_and_iter() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    // arange tensor — values 0..6 in row-major order.
+    // arange tensor: values 0..6 in row-major order.
     let host = TestInput::builder(client.clone(), shape![2, 3])
         .arange()
         .f32_host_data();
@@ -326,7 +326,7 @@ fn host_data_iter_respects_strides() {
 
     // Same logical 2x3 tensor, but stored col-major. The iterator must walk
     // the *logical* row-major order while resolving each cell through the
-    // strides — so the values must match a row-major arange.
+    // strides, so the values must match a row-major arange.
     let actual = TestInput::builder(client.clone(), shape![2, 3])
         .layout(StridedLayout::ColMajor)
         .arange()
@@ -390,7 +390,7 @@ fn print_tensors_skips_shape_mismatch() {
         .arange()
         .f32_host_data();
 
-    // Shapes differ (2,3) vs (3,2) — must not panic and must not print.
+    // Shapes differ (2,3) vs (3,2): must not panic and must not print.
     // (We can't observe stdout from here, so this is a smoke test.)
     print_tensors("mismatched", &[&a, &b], Some(0.001));
 }
@@ -408,7 +408,7 @@ fn print_tensors_skips_rank_mismatch() {
         .arange()
         .f32_host_data();
 
-    // Different ranks — must not panic and must not print.
+    // Different ranks: must not panic and must not print.
     print_tensors("mismatched_rank", &[&r2, &r3], Some(0.001));
 }
 
@@ -435,7 +435,7 @@ fn print_tensor_is_no_op_in_correct_mode() {
 fn pretty_print_handles_rank_3() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    // 2 × 2 × 3 tensor — should print as two labeled 2×3 tables.
+    // 2 × 2 × 3 tensor: should print as two labeled 2×3 tables.
     let host = TestInput::builder(client.clone(), shape![2, 2, 3])
         .arange()
         .f32_host_data();
@@ -466,12 +466,12 @@ fn pretty_print_slice_filters_rows_and_cols() {
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    // 2 × 4 arange — values 0..8 in row-major order.
+    // 2 × 4 arange: values 0..8 in row-major order.
     let host = TestInput::builder(client.clone(), shape![2, 4])
         .arange()
         .f32_host_data();
 
-    // Pin row 1 only, cols 1-2 only — should print just `[1, 1]=5` and
+    // Pin row 1 only, cols 1-2 only: should print just `[1, 1]=5` and
     // `[1, 2]=6` and skip every other cell.
     let printed = host.pretty_print_slice(vec![
         DimFilter::Exact(1),
@@ -502,7 +502,7 @@ fn pretty_print_slice_filters_leading_dims() {
 
     let client = <TestRuntime as Runtime>::client(&Default::default());
 
-    // 3 × 2 × 2 — exercise filtering on the leading dim.
+    // 3 × 2 × 2: exercise filtering on the leading dim.
     let host = TestInput::builder(client.clone(), shape![3, 2, 2])
         .arange()
         .f32_host_data();
@@ -527,7 +527,7 @@ fn pretty_print_slice_filters_leading_dims() {
 
 #[test]
 fn builder_uniform_values_in_range() {
-    // Range/property check rather than seed-stability — see the note on the
+    // Range/property check rather than seed-stability: see the note on the
     // normal test above.
     let client = <TestRuntime as Runtime>::client(&Default::default());
 

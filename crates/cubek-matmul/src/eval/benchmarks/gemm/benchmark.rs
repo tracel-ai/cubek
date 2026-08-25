@@ -11,10 +11,9 @@ use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{
-    definition::MatmulElems,
+    definition::{MatmulElems, MatmulPrecision},
     eval::benchmarks::gemm::problem::{GemmProblem, Precision},
     launch::launch_ref,
-    multi_level::definition::MatmulPrecision,
     strategy::Strategy,
 };
 

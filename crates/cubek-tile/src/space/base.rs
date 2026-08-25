@@ -447,7 +447,7 @@ impl Space {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
         }
-        // Innermost first, so `weight` is the axis's stride in the lane index as it is reached —
+        // Innermost first, so `weight` is the axis's stride in the lane index as it is reached,
         // the same least-significant-last ordering `Walk::from_counts` decodes with.
         let (mut weight, mut fold_mask) = (1usize, 0usize);
         for axis in self.partitioner.axes().into_iter().rev() {

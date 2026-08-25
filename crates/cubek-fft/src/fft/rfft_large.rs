@@ -14,19 +14,19 @@
 //! four-step path.
 //!
 //! Forward `rfft` pipeline:
-//!   1. `rfft_pack_kernel` — pack real `x[0..N]` into complex
+//!   1. `rfft_pack_kernel`: pack real `x[0..N]` into complex
 //!      `y[k] = x[2k] + i*x[2k+1]`, length M.
-//!   2. `cfft_launch_any_size(FORWARD)` — complex FFT of `y`.
-//!   3. `rfft_post_kernel` — recover the half-spectrum
+//!   2. `cfft_launch_any_size(FORWARD)`: complex FFT of `y`.
+//!   3. `rfft_post_kernel`: recover the half-spectrum
 //!      `X[0..N/2+1]` from `Y` using the Z_even / Z_odd split.
 //!
 //! Inverse `irfft` pipeline:
-//!   1. `irfft_pre_kernel` — rebuild the packed `Y` of length M from the
+//!   1. `irfft_pre_kernel`: rebuild the packed `Y` of length M from the
 //!      half-spectrum `X[0..N/2+1]` (inverse of step 3 above).
-//!   2. `cfft_launch_any_size(INVERSE)` — complex IFFT of `Y` into `y`.
+//!   2. `cfft_launch_any_size(INVERSE)`: complex IFFT of `Y` into `y`.
 //!      Note: butterfly output is unnormalised (sum, not mean); we fold
 //!      the `1/M` factor into the unpack step.
-//!   3. `irfft_unpack_kernel` — write `x[2k] = Re(y[k])`,
+//!   3. `irfft_unpack_kernel`: write `x[2k] = Re(y[k])`,
 //!      `x[2k+1] = Im(y[k])`, applying the `1/M` normalisation.
 //!
 //! Invariants:
