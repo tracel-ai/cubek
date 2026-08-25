@@ -154,8 +154,14 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let lhs_has_clamp = lhs.has_clamp_boundary();
     let rhs_has_clamp = rhs.has_clamp_boundary();
     let has_clamp = comptime!(lhs_has_clamp || rhs_has_clamp);
-    let split_operands =
-        comptime!(config.split_edge && eligible && !has_clamp && (lhs_check || rhs_check));
+    // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
+    // extent — one past the far corner [`box_in_bounds`] proves, which counts whole lines. The
+    // accumulator has [`block::seed`]/[`block::commit`]'s per-lane mask for those spare lanes; an
+    // operand read that has dropped its guard has nothing, so keep the whole leaf checked.
+    let spread_overhang = comptime!(block::spread_guard(spread, cols));
+    let split_operands = comptime!(
+        config.split_edge && eligible && !has_clamp && !spread_overhang && (lhs_check || rhs_check)
+    );
     // Whether the operands' whole boxes are inside their buffers. Hoisted out of the matrix loop
     // because it is a statement about the operand, not about which batch matrix is being read,
     // and computed only when something below would act on it. `L` is the lhs's line width as the
@@ -308,6 +314,11 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 /// is monotone in every logical one: nothing between the corners can reach outside what they
 /// bracket. `is_in_bounds` composes down the whole view stack, so one call covers the logical
 /// extents, the window's own bound (which is where padding shows up), and the buffer.
+///
+/// The far corner is the operand's own extent in *whole* lines, so this proves only the reads a
+/// walk staying inside that box takes. A caller whose column count overhangs the extent — the
+/// spread block's rounded-up `nr` — reaches a line this never looked at, and must not act on a
+/// `true` from here.
 #[cube]
 #[allow(clippy::needless_range_loop)]
 fn box_in_bounds<T: Numeric, W: Size>(

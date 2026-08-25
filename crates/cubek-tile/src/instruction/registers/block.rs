@@ -197,7 +197,10 @@ fn assert_spread(served: usize, spread: usize, accumulator_width: usize, who: &s
 /// it. The N-D nest rounds `nr` up, so the last column's spare lanes address cells past `cols`
 /// exactly when `spread` does not divide it. Nothing masks them downstream: an unchecked
 /// [`AccumulateView`] writes straight through.
-fn spread_guard(spread: usize, cols: usize) -> bool {
+///
+/// The nest reads this too: those same spare lanes address a column past the *operands'* last
+/// line, so a walk that has dropped its guard would read one line outside them.
+pub(crate) fn spread_guard(spread: usize, cols: usize) -> bool {
     spread > 1 && !cols.is_multiple_of(spread)
 }
 
