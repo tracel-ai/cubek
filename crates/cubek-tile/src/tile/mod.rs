@@ -573,6 +573,38 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Ask this accumulator to start from `init`, and answer what actually took.
+    ///
+    /// Only a memory accumulator carries the statement. A promoted fragment states its own init
+    /// and never reads a cell back to begin with, so it answers [`Cell`](Init::Cell) and its
+    /// caller seeds it instead. Asking rather than deciding here is what keeps a kind that cannot
+    /// start from the identity from having to be listed anywhere else.
+    pub(crate) fn request_start(&mut self, #[comptime] init: Init) -> comptime_type!(Init) {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => {
+                d.set_init(comptime!(init));
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {}
+        }
+        self.starts_from()
+    }
+
+    /// What the accumulation being lowered starts from, as this tile's cells answer for it.
+    pub(crate) fn starts_from(&self) -> comptime_type!(Init) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.init),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(Init::Cell)
+            }
+        }
+    }
+
     /// This operand's decode site ([`DequantAt`]). A tile with nothing to decode answers
     /// [`DequantAt::Load`]: served and stored are the same element, so its load already delivers
     /// what the read wants and the stage takes that element. A tma source is never quantized, so it

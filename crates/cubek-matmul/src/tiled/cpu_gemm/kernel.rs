@@ -29,8 +29,7 @@ pub fn cpu_gemm_kernel<E: Numeric, EL: Numeric, ER: Numeric, VA: Size, VB: Size,
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    // The matmul contract is `out = A·B` and `mma` accumulates, so seed first: the
-    // register leaf runs in place, round-tripping K-chunk partials through `c`.
-    acc.seed();
-    acc.mma(&a, &b);
+    // `mm` states the matmul contract `out = A·B`, so it owns the init: here the register leaf
+    // runs in place, round-tripping K-chunk partials through `c`, so the init is a real clear.
+    acc.mm(&a, &b);
 }

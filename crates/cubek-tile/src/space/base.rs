@@ -490,6 +490,25 @@ impl Space {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
+    /// Whether the final tile spans every axis contracted against `output` whole, so no level
+    /// above the leaf walks a contracted region and no output cell is visited twice.
+    ///
+    /// What lets an accumulation start from its monoid's identity instead of reading the
+    /// accumulator back: the one leaf visit that owns a cell is also the only one, so nothing it
+    /// would have read back is ever a partial. Asked of the operands' [`merge`](Space::merge)
+    /// where there are two.
+    pub fn spans_contracted_at_leaf(&self, output: &Space) -> bool {
+        let leaf = self.final_space();
+        self.contracting(output).iter().all(|&axis| {
+            // A Dynamic extent is only known at runtime, so whether the leaf spans it whole
+            // cannot be settled here. Reading the accumulator back is right either way.
+            matches!(
+                (self.extent_raw(axis), leaf.extent_raw(axis)),
+                (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf
+            )
+        })
+    }
+
     /// How many contracted values one step consumes off a `width`-wide line of this operand.
     ///
     /// A line folds into one accumulator cell only where it runs along the fastest of
@@ -740,5 +759,62 @@ mod contraction_tests {
         let rhs = flat_space(&[(K, 4), (R, 3), (N, 8)]);
         let out = flat_space(&[(M, 8), (N, 8)]);
         assert!(!Space::contraction_agrees(&lhs, &rhs, &out));
+    }
+
+    /// One level cutting each axis at its full extent leaves the whole contraction at the leaf,
+    /// so the accumulation may seed from the identity.
+    #[test]
+    fn a_single_level_contraction_lands_whole_at_the_leaf() {
+        let lhs = flat_space(&[(M, 8), (K, 4)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(lhs.spans_contracted_at_leaf(&out));
+    }
+
+    /// A contracted axis split across levels puts several contracted regions above the leaf, so
+    /// each visit must fold onto what the last one left.
+    #[test]
+    fn a_split_contracted_axis_does_not_land_at_the_leaf() {
+        let lhs = split_space(&[(M, 8), (K, 8)], &[(M, 8), (K, 2)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(!lhs.spans_contracted_at_leaf(&out));
+    }
+
+    /// Only the contracted axes are asked: an output axis walked in several regions still visits
+    /// each cell once, so it never vetoes the replacement.
+    #[test]
+    fn a_split_output_axis_still_lands_at_the_leaf() {
+        let lhs = split_space(&[(M, 8), (K, 4)], &[(M, 2), (K, 4)]);
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(lhs.spans_contracted_at_leaf(&out));
+    }
+
+    /// A `Dynamic` contracted extent cannot be compared against the leaf's at comptime, and
+    /// reading the accumulator back is right either way.
+    #[test]
+    fn a_dynamic_contracted_axis_does_not_land_at_the_leaf() {
+        let lhs = flat_space(&[(M, 8), (K, 4)]).all_dynamic();
+        let out = flat_space(&[(M, 8), (N, 8)]);
+        assert!(lhs.is_dynamic(K));
+        assert!(!lhs.spans_contracted_at_leaf(&out));
+    }
+
+    /// Two levels: `outer` the extents, `inner` the tile each axis is cut to below it.
+    fn split_space(outer: &[(Axis, usize)], inner: &[(Axis, usize)]) -> Space {
+        use crate::{Buffering, Cut, Tiling, WalkOrder};
+        Tiling::new()
+            .extents(outer)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
+                for &(axis, e) in outer {
+                    l = l.axis(axis, Cut::sequential(e));
+                }
+                l
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
+                for &(axis, e) in inner {
+                    l = l.axis(axis, Cut::sequential(e));
+                }
+                l
+            })
+            .build()
     }
 }
