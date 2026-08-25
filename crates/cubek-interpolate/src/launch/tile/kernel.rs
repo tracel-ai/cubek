@@ -3,7 +3,9 @@ use super::{
     space::*,
 };
 use cubecl::{ir::ElemType, prelude::*};
-use cubek_tile::{Axis, Phase, Space, Tile, TileArg, affine_along, separable_product, sum_of};
+use cubek_tile::{
+    Axis, Phase, Semiring, Space, Tile, TileArg, affine_along, separable_product, sum_of,
+};
 
 /// The distance from a tap to the source coordinate the output position lands on.
 ///
@@ -64,5 +66,5 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     };
 
     let mut output = output.tile(space);
-    output.mm(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
