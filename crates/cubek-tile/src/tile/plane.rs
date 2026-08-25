@@ -126,21 +126,27 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>) {
+    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
         match self {
             PlaneTile::Cmma(d) => d.store_window(mem),
             PlaneTile::Mma(d) => d.store_window(mem),
             // Same-type store; the block drains through `store_cast_window`, which is the
             // same write with the cast the wider accumulator needs.
-            PlaneTile::Register(d) => d.store_cast_window(mem),
+            PlaneTile::Register(d) => d.store_cast_window(mem, space),
         }
     }
 
-    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
+    /// `space` is the sink window's, and only the software block reads it: a hardware fragment
+    /// is exactly the instruction's shape and stores through its own intrinsic.
+    pub(crate) fn store_cast_window<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
         match self {
             PlaneTile::Cmma(d) => d.store_cast_window(mem),
             PlaneTile::Mma(d) => d.store_cast_window(mem),
-            PlaneTile::Register(d) => d.store_cast_window(mem),
+            PlaneTile::Register(d) => d.store_cast_window(mem, space),
         }
     }
 }
@@ -328,8 +334,9 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let frag = self.at(mi, ni);
                 let mut window = dst.fragment_window(mi, ni);
+                let space = comptime!(window.space.clone());
                 match &mut window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g, space),
                     TileKind::PlaneTile(_)
                     | TileKind::PlanePartition(_)
                     | TileKind::TmaGmem(_)
@@ -350,8 +357,9 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let frag = self.at(mi, ni);
                 let mut window = dst.fragment_window(mi, ni);
+                let space = comptime!(window.space.clone());
                 match &mut window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g),
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g, space),
                     TileKind::PlaneTile(_)
                     | TileKind::PlanePartition(_)
                     | TileKind::TmaGmem(_)

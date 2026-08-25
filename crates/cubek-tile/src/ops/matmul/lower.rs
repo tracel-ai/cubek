@@ -1,5 +1,5 @@
-//! Lowering `c.mma(a, b)`: at a final tile, the leaf dispatch ([`mma_leaf`]); while levels remain,
-//! walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
+//! Lowering `c.mm(a, b)` and `c.mma(a, b)`: at a final tile, the leaf dispatch ([`mma_leaf`]);
+//! while levels remain, walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
 //! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
 //! allocate nothing. An accumulator's register residency is read the same way, by
 //! [`accumulate`](Tile::accumulate) opening the scope it states, not by a lowering decision.
@@ -11,7 +11,31 @@ use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c.mma(a, b)`: contract at a final tile, else walk this level.
+    /// `c = a · b`: contract at a final tile, else walk this level. `c` is a result, so nothing
+    /// it held before takes part.
+    ///
+    /// Where the leaf owns each output cell outright, that lets the register block start from the
+    /// identity instead of reading `c` back, which is one load per cell and, for a `kc` too short
+    /// to amortize it, a measurable share of the leaf. Where it does not, the seed the caller
+    /// would have written happens here instead, so the verb costs nothing to reach for.
+    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        let spans = self.contracts_whole_at_leaf(lhs, rhs);
+        let init_from = self.request_init_from(comptime!(spans));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => self.init_identity(comptime!(Semiring::SUM_PROD.add())),
+        }
+        self.mma(lhs, rhs);
+        self.request_init_from(comptime!(InitFrom::Cell));
+    }
+
+    /// `c += a · b`: [`mm`](Tile::mm) with the accumulate its name carries. Folds onto whatever
+    /// `c` holds, which the caller owns: nothing here initializes it.
+    ///
+    /// Also the recursion the walk re-enters per region, and deliberately so: what the
+    /// accumulation starts from is decided once, at the top, from the undivided operand spaces. A
+    /// region's operands are one contracted step of the whole and always span their own leaf, so
+    /// re-deciding down here would overwrite at every step of a walk that must fold them together.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
@@ -21,6 +45,22 @@ impl<Acc: Numeric> Tile<Acc> {
                 self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
             }
         }
+    }
+
+    /// Whether the final tile spans every contracted axis whole, so the walk above the leaf never
+    /// returns to a cell it has already written and the one visit that owns a cell may write it
+    /// outright.
+    fn contracts_whole_at_leaf<Lhs: Numeric, Rhs: Numeric>(
+        &self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+    ) -> comptime_type!(InitFrom) {
+        comptime!(match Space::merge(&[&lhs.space, &rhs.space])
+            .spans_contracted_at_leaf(&self.space)
+        {
+            true => InitFrom::Identity,
+            false => InitFrom::Cell,
+        })
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand

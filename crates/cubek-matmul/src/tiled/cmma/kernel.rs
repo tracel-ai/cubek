@@ -34,8 +34,5 @@ pub fn cmma_kernel<
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    // The matmul contract is `out = A·B` and `mma` accumulates, so start at the identity.
-    acc.seed();
-    // The contraction exhausts the scope `out` opened, so this drains it too.
-    acc.mma(&a, &b);
+    acc.mm(&a, &b);
 }

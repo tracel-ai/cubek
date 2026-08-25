@@ -1933,8 +1933,7 @@ fn conv_mma_kernel<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, Monoid::Sum);
-    acc.seed();
-    acc.mma(&input, &weight);
+    acc.mm(&input, &weight);
 }
 
 #[test]

@@ -57,6 +57,16 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
+    /// What the accumulation being lowered right now starts from ([`InitFrom`]).
+    ///
+    /// Not a claim about the bytes: it says nothing about what the buffer holds, only what the
+    /// caller asked for. [`Tile::mm`] and [`Tile::reduce_axis`] state
+    /// [`Identity`](InitFrom::Identity) for the span of their own lowering, having proven the leaf
+    /// visits each cell once ([`Space::spans_contracted_at_leaf`]); it is
+    /// [`Cell`](InitFrom::Cell) everywhere else, and rides [`at`](MemData::at) down so the levels
+    /// below see the verb the caller used.
+    #[cube(comptime)]
+    pub(crate) init_from: InitFrom,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -379,6 +389,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
+                init_from: comptime!(InitFrom::Cell),
             }),
             space: comptime!(space),
         }
@@ -672,6 +683,7 @@ impl<T: Numeric> MemData<T> {
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
+                init_from: comptime!(InitFrom::Cell),
             }),
             space: comptime!(meta.space),
         }
@@ -723,6 +735,13 @@ impl<T: Numeric> Tile<T> {
 
 #[cube]
 impl<T: Numeric> MemData<T> {
+    /// State what the accumulation being lowered starts from ([`init`](MemData::init)).
+    pub(crate) fn set_init_from(&mut self, #[comptime] init_from: InitFrom) {
+        comptime!({
+            self.init_from = init_from;
+        });
+    }
+
     /// Memory transport leaf: cooperative cyclic copy of `src` into `self`, whole
     /// `Vector<T, W>` lines at `self`'s width, unit `u` moving lines `u`, `u + CUBE_DIM`, ….
     /// The caller owns the rendezvous: a `sync_cube` must separate this fill from its readers.
@@ -1588,8 +1607,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
-    /// [`LaneShare`] these cells carry and the [`Monoid`] they fold under, so a leaf accumulates
-    /// through it without being told either.
+    /// [`LaneShare`] these cells carry, the [`Monoid`] they fold under and what the accumulation
+    /// starts from, so a leaf accumulates through it without being told any of the three.
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
@@ -1597,7 +1616,13 @@ impl<T: Numeric> MemData<T> {
         #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.matrix_mut::<W>(i, space), lane_share, monoid)
+        let init_from = comptime!(self.init_from);
+        AccumulateView::new(
+            self.matrix_mut::<W>(i, space),
+            lane_share,
+            monoid,
+            init_from,
+        )
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
@@ -1618,7 +1643,8 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share, monoid)
+        let init_from = comptime!(self.init_from);
+        AccumulateView::new(self.flat_mut::<W>(), lane_share, monoid, init_from)
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -1778,6 +1804,7 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
+            init_from: comptime!(self.init_from),
         }
     }
 }
