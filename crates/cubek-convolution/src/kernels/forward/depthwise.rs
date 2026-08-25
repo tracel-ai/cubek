@@ -102,10 +102,9 @@ impl Default for DepthwiseTiling {
     ///
     /// Small on both spatial axes on purpose: the window overlaps, so a cube's halo is what it
     /// re-reads, but a *wide* tile is also what pushes its far corner past the padded border and
-    /// costs every instance in it the guarded walk. Four each is where the two turned over on
-    /// the shapes an encoder actually runs, and it is within 2% of the best fixed tile on every
-    /// one of them. The line width is the knob worth deciding per problem, which
-    /// [`for_problem`](Self::for_problem) is.
+    /// costs every instance in it the guarded walk. Four each is where those two meet on the
+    /// shapes an encoder actually runs. The line width is the knob worth deciding per problem,
+    /// which [`for_problem`](Self::for_problem) is.
     fn default() -> Self {
         Self {
             rows: 4,
@@ -117,6 +116,17 @@ impl Default for DepthwiseTiling {
 }
 
 impl DepthwiseTiling {
+    /// A window with at least this many taps re-reads enough of its halo to run out of
+    /// instructions before it runs out of bandwidth, which is the only regime where a wider line
+    /// pays for the registers it costs. A 5x5 window is the first one an encoder runs that
+    /// reaches it.
+    const INSTRUCTION_BOUND_TAPS: usize = 25;
+
+    /// ...and the channel axis has to stay wide enough to fill the grid once a wide line has
+    /// divided its parallelism. Below this many cube-widths of channels, widening starves the
+    /// grid instead of the bus.
+    const WIDE_BLOCK_LANE_MULTIPLE: usize = 8;
+
     /// The tiling to run a problem of this shape under.
     ///
     /// Only [`lines`](Self::lines) is decided here, and it is close to a single question: is this
@@ -126,14 +136,13 @@ impl DepthwiseTiling {
     /// trade; everything else is already reading memory as fast as the device will read it, and
     /// pays the registers for nothing.
     ///
-    /// Measured over EfficientNet-B4's fourteen distinct depthwise shapes at batch 4, on one
-    /// RTX 3070 laptop: 16.6 ms of depthwise convolution against 17.3 ms for always-scalar and
-    /// 19.3 ms for always-wide, and within 6% of picking the whole tiling per shape. The
-    /// thresholds are where the sweep turned over, not a model of the hardware — a different
-    /// device is a reason to re-run the sweep, and the benchmark catalogue is what re-runs it.
+    /// Both thresholds are where that turnover was observed rather than where a model of the
+    /// hardware puts it, so this is a derivation a device is allowed to disagree with. The
+    /// `depthwise` benchmark catalogue is the instrument that settles it: running its `Fixed`
+    /// entries against `Routine` is what says whether this rule still picks the right line.
     pub fn for_problem(channels: usize, taps: usize, lanes: usize) -> Self {
-        let deep_window = taps >= 25;
-        let wide_block = channels >= 8 * lanes;
+        let deep_window = taps >= Self::INSTRUCTION_BOUND_TAPS;
+        let wide_block = channels >= Self::WIDE_BLOCK_LANE_MULTIPLE * lanes;
 
         Self {
             lines: match deep_window && wide_block {
@@ -151,7 +160,6 @@ impl DepthwiseTiling {
     /// useless one. The second separates what one cube took across the cube's own threads: rows
     /// go to planes, channels to lanes. The taps stay `sequential` throughout — they are the
     /// contraction, and every tap of one output position accumulates into the same register.
-    #[allow(clippy::too_many_arguments)]
     fn space(&self, geometry: &Geometry, lanes: usize, width: usize) -> Space {
         let Self {
             rows, cols, chans, ..
@@ -234,7 +242,7 @@ pub fn launch_depthwise<R: Runtime>(
     strategy: DepthwiseStrategy,
 ) -> Result<(), ConvSetupError> {
     let geometry = Geometry::new(&tensors, args, groups)?;
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let lanes = plane_lanes(client);
     let tiling = match strategy {
         DepthwiseStrategy::Routine => {
             DepthwiseTiling::for_problem(geometry.c, geometry.taps(), lanes)
@@ -296,10 +304,9 @@ pub fn launch_depthwise<R: Runtime>(
         guard(ragged_c),
     ]);
 
-    // Read in place rather than staged. Staging the filter into shared memory was measured
-    // and rejected: it pays a cooperative fill and a sync per cube, which the deep blocks —
-    // few output positions, many channels — never amortise, and they regressed roughly 2x
-    // while only the widest spatial shapes gained.
+    // Read in place rather than staged. A shared-memory stage costs a cooperative fill and a
+    // sync per cube, and a deep block — many channels over few output positions — has too few
+    // output positions to amortise either; only the widest spatial shapes have enough.
     let w_spec = TileSpec::direct(&[RH, RW, C]).boundaries(&[None, None, guard(ragged_c)]);
     let out_spec = TileSpec::direct(&[B, OH, OW, C]).boundaries(&[
         None,
@@ -401,6 +408,22 @@ impl Geometry {
             .into_contiguous(client)?
             .into_data())
     }
+}
+
+/// The plane width the channel tile is sized to.
+///
+/// `plane_size_max` deliberately, and it is only safe because this kernel issues no plane
+/// instruction: the leaf is [`Instruction::Registers`], the taps contract into a register rather
+/// than across lanes, and `Cut::plane`/[`Coverage::PlaneLanes`] here distribute work rather than
+/// cooperate. So the width is a coalescing decision, and a device honouring a narrower one still
+/// gets every lane of the tile from a real thread — `Space::cube_dim` sizes the launch from the
+/// same number.
+///
+/// The moment a plane reduction appears in this kernel that stops being true: wgpu reports a
+/// range on AMD RDNA (32/64) and Intel (8/32), and a reduction sized to the max would cover a
+/// fraction of its row on a device honouring the min.
+fn plane_lanes<R: Runtime>(client: &ComputeClient<R>) -> usize {
+    client.properties().hardware.plane_size_max as usize
 }
 
 /// The boundary an axis needs, or `None` when every read along it is in bounds by construction.
