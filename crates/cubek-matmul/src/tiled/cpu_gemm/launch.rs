@@ -3,21 +3,24 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, StorageTiling, Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Residence, StorageTiling, Tiling,
+    WalkOrder,
 };
 
 use crate::{
     definition::{
-        AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+        AvailableVectorSizes, MatmulElems, MatmulIdent, MatmulProblem, MatmulSetupError,
+        broadcast_batches,
     },
-    routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis},
+    routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
+    tiled::{K, M, MatmulOperands, N, batch_axis},
 };
 
 /// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
 /// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the
-/// binding's own shape/strides don't reveal — a tiled buffer just looks like a higher-rank strided
-/// one — so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
+/// binding's own shape/strides don't reveal: a tiled buffer just looks like a higher-rank strided
+/// one, so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
 /// layout is derived at launch by [`cubek_tile::StridedTileSource`].
 pub struct WithLayout<B> {
     pub binding: B,
@@ -52,6 +55,27 @@ fn validate_strided(strides: &[usize]) -> Result<(), MatmulSetupError> {
         Err(MatmulSetupError::InvalidConfig(Box::new(
             "CpuGemm: strided operand is contiguous in neither matrix axis".to_string(),
         )))
+    }
+}
+
+/// CpuGemm reads each input where it already lies, so it carries one type per input from
+/// global memory to the leaf, where the cast into the accumulator happens. A stage or register
+/// type of its own is a second conversion this routine does not emit. The accumulator is not
+/// fenced here: its element is stated on the operand and threaded as `EA`.
+#[allow(clippy::result_large_err)]
+fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), MatmulSetupError> {
+    let (global, stage, register) = (
+        dtypes.global(ident),
+        dtypes.stage(ident),
+        dtypes.register(ident),
+    );
+    if stage == global && register == global {
+        Ok(())
+    } else {
+        Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "CpuGemm runs {ident:?} at {global:?} throughout; stage {stage:?} and register \
+             {register:?} would need a conversion it does not emit"
+        ))))
     }
 }
 
@@ -92,6 +116,9 @@ pub fn launch_ref<R: Runtime>(
             "CpuGemm does not support quantized inputs".to_string(),
         )));
     }
+
+    validate_single_type(dtypes, MatmulIdent::Lhs)?;
+    validate_single_type(dtypes, MatmulIdent::Rhs)?;
 
     // Logical dims folded from each operand's physical shape (it may be a higher-rank tiled
     // buffer): `k` on lhs's trailing axis, `n` on rhs's, leading dims each operand's own (possibly
@@ -157,15 +184,18 @@ pub fn launch_ref<R: Runtime>(
 
     // One level per decomposition, coarse→fine: the cube grid (a serial loop on CPU), then the
     // plane split (the parallel worker threads). Batch axes ride one-per-cube on Z then iterate
-    // sequentially; K is contracted sequentially in both leaves. Every operand is read where it
-    // already is, so no level states a stage.
+    // sequentially; K is contracted sequentially in both leaves. Both inputs are read where they
+    // already lie, so no level stages them. The accumulator states its residence at the cube
+    // grid: `out` spans no contracted axis, so that level holds one region per cube, and a
+    // register-resident accumulator there spans the whole `K` walk below it.
     let mut ops = MatmulOperands::new(dtypes);
     let space = Tiling::over(&mut ops, &extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, cube_m))
                 .axis(N, Cut::cube(CubeAxis::Y, cube_n))
                 .axis(K, Cut::sequential(k));
+            o.out.stage_as(Residence::Register, dtypes.acc_register);
         })
         // A CPU backend: a wide scalar register budget to unroll against, the dual-path edge
         // specialization, and a flat scalar K-walk (no lanes to fan out over).
@@ -183,7 +213,7 @@ pub fn launch_ref<R: Runtime>(
         .build();
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
-    // shape family), overhang checks derived per operand — all inside the launcher.
+    // shape family), overhang checks derived per operand: all inside the launcher.
     let launch = space.launcher(client);
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
@@ -226,9 +256,10 @@ pub fn launch_ref<R: Runtime>(
         b.arg(),
         c.arg(),
         launch.space().clone(),
-        dtypes.lhs_global,
-        dtypes.rhs_global,
-        dtypes.acc_global,
+        ops.a.dtype(),
+        ops.b.dtype(),
+        ops.out.dtype(),
+        ops.out.current_dtype(),
     );
     Ok(())
 }

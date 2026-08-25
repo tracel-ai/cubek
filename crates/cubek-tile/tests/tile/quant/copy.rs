@@ -307,7 +307,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
 }
 
 /// Block-quantized: each `bm×bn` block carries its own scale, and one flat fill spans the whole
-/// grid — the per-line lookup picks each line's scale. The last case's tiles overhang the tensor,
+/// grid: the per-line lookup picks each line's scale. The last case's tiles overhang the tensor,
 /// running the checked path; only the valid region is asserted, so it pins that masking leaves
 /// live values (and their scales) intact, not that the overhang itself is suppressed.
 #[test]
@@ -320,12 +320,12 @@ fn copy_quantized_block_matches_reference() {
 }
 
 /// Packed-u32 block-quantized: the buffer holds `num_quants` values per `u32`, which the view
-/// unpacks on read. Unlike the native cases this needs no i8 support — the binding is a `u32` —
+/// unpacks on read. Unlike the native cases this needs no i8 support: the binding is a `u32`,
 /// so it runs on every backend.
 ///
 /// Each case's inner block is a multiple of the served line, as the launch requires (a line may
 /// not split a `u32`, nor straddle two scales). A whole word is one served line, so a scheme's
-/// packing factor must fit the device's vector width — a case that doesn't is skipped loudly,
+/// packing factor must fit the device's vector width: a case that doesn't is skipped loudly,
 /// the same gate a selector applies when it picks widths from the device (only WGSL-bound
 /// targets cap at 4; cpu/cuda serve any width).
 #[test]
@@ -341,7 +341,7 @@ fn copy_quantized_packed_u32_matches_reference() {
 
 /// Packed-u32 lookup-quantized ([`QuantMode::Lookup`]): each 4-bit field is an index into a
 /// 16-entry table, so `out == table[q] * scale[i/bm, j/bn]`. The table is deliberately not
-/// affine in the index — a decode that fell back to the integer cast would reconstruct the
+/// affine in the index: a decode that fell back to the integer cast would reconstruct the
 /// index itself and miss every entry. Block scales beside it pin that the two lookups (block →
 /// scale, field → entry) stay independent.
 #[test]
@@ -477,7 +477,7 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
 }
 
 /// Sub-word **lookup**: each word's fields index the table and unpack across several output
-/// lines — the exact read a vec4 device gives a 4-bit lookup-quantized cache.
+/// lines: the exact read a vec4 device gives a 4-bit lookup-quantized cache.
 #[test]
 fn copy_quantized_subword_lookup_matches_reference() {
     let (m, n, bm, bn, w) = (8usize, 8usize, 4usize, 8usize, 4usize);
@@ -538,7 +538,7 @@ fn copy_quantized_subword_lookup_matches_reference() {
 /// Copy a `bm×bn` block-scaled packed input and check each value used its own block's scale:
 /// `out == q * scale[i/bm, j/bn]`.
 ///
-/// The packed operand is described **in values** — shape `[m, n]`, strides `[n, 1]` — while its
+/// The packed operand is described **in values** (shape `[m, n]`, strides `[n, 1]`) while its
 /// buffer holds `m·n/pack` `u32`s. That is the launch convention the served-width split rests on:
 /// the tile counts lines, and one `u32` line is one served line of `pack` values.
 fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: usize) {

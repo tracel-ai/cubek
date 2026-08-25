@@ -1,6 +1,6 @@
 //! Basic tier: smoke tests for each convolution algorithm family.
 //!
-//! Tests with no `cfg` attribute are the **light** subset — always compiled,
+//! Tests with no `cfg` attribute are the **light** subset: always compiled,
 //! exercised on the CPU runtime in CI. Adding `#[cfg(feature = "heavy")]`
 //! gates the slower / more comprehensive smoke tests intended for GPU runs.
 //!

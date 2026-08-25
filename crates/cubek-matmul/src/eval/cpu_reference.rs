@@ -42,7 +42,7 @@ pub fn strategy_result(
 /// CPU-only counterpart to [`strategy_result`]: generate the same seeded
 /// inputs, run the naive triple-loop, return the result as a [`HostData`].
 ///
-/// Slow on bench-scale problems by design — only useful as a ground truth.
+/// Slow on bench-scale problems by design: only useful as a ground truth.
 pub fn cpu_reference_result(
     client: ComputeClient<TestRuntime>,
     problem: MatmulProblem,
@@ -179,7 +179,7 @@ pub fn matmul_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
     total_eps as f32 * safety_factor
 }
 
-/// Naive CPU matmul. Slow on large payloads — intended only for testing.
+/// Naive CPU matmul. Slow on large payloads: intended only for testing.
 pub fn matmul_cpu_reference(
     lhs: &HostData,
     rhs: &HostData,

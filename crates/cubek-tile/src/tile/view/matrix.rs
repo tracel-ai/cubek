@@ -169,7 +169,11 @@ pub(crate) fn batch_matrix(
 ) -> BatchMatrix {
     let rank = comptime!(space.rank());
     let rows = comptime!(space.extent_at(rank - 2));
-    let cols = comptime!(space.extent_at(rank - 1) / vector_size);
+    // Rounded up like the buffer's own line count (`storage_extents`): a padded stage's innermost
+    // extent need not fill whole lines, and the box a checked read tests against has to include
+    // the partial last one it really holds. `cols` is a shape here, never a stride, so this only
+    // widens the bound.
+    let cols = comptime!(space.extent_at(rank - 1).div_ceil(vector_size));
     let extents = leading_extents(bound, comptime!(space), gathered);
 
     BatchMatrix::new(unravel(&extents, i.fcast::<u32>()), rows, cols)

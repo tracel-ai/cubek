@@ -39,6 +39,8 @@ struct TileSourceData<'a, R: Runtime> {
     storage: Option<StageStorage>,
     /// Where the operand lives at each level of `space`, coarse to fine; empty stages nothing.
     residence: Vec<Residence>,
+    /// The width the operand's next Smem stage is served at; `None` serves it at `v`.
+    stage_width: Option<usize>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -73,6 +75,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 boundary: None,
                 storage: None,
                 residence: Vec::new(),
+                stage_width: None,
                 units: 0,
                 quant: None,
             },
@@ -208,6 +211,14 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
+    /// Serve this operand's next shared-memory stage in `width`-wide lines rather than in the
+    /// [`vectorize`](Self::vectorize) width it is read from global memory in, padding its
+    /// innermost axis out to whole lines.
+    pub fn stage_width(mut self, width: usize) -> Self {
+        self.data.stage_width = Some(width);
+        self
+    }
+
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
     pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
@@ -248,7 +259,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// [`quantized`](Self::quantized) for a lookup scheme
     /// ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)): each stored field indexes
     /// `table` and a read reconstructs `table[field] * scale`. The table must hold `2^bits`
-    /// f32 entries — the unpack's mask bounds every index to that range, so a shorter buffer
+    /// f32 entries: the unpack's mask bounds every index to that range, so a shorter buffer
     /// is read out of bounds, and no check here can see its length.
     pub fn quantized_lookup(
         mut self,
@@ -267,7 +278,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
 /// back in, and how far the quantized form travels before something decodes it. One thing, because
-/// none of the three says anything on its own — a scheme without scales cannot be applied, and an
+/// none of the three says anything on its own: a scheme without scales cannot be applied, and an
 /// [`DequantAt`] without a scheme has nothing to bound.
 pub struct Quantization<R: Runtime> {
     /// The innermost level's scales, the only ones addressed per position.
@@ -433,6 +444,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             boundary,
             storage,
             residence,
+            stage_width,
             units,
             quant,
         } = self.data;
@@ -519,6 +531,12 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             .boundaries(&boundaries)
             .units(units)
             .residence(&residence);
+        if let Some(width) = stage_width {
+            spec = spec.stage_width(width);
+        }
+        // At launch rather than at trace time, so the failure carries a host backtrace; the same
+        // check runs again in `Tile::of` for specs that never pass through this builder.
+        spec.validate_stage_width(v, quant.is_some());
         if let Some(storage) = storage {
             spec = spec.storage(storage);
         }
@@ -684,9 +702,9 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
 /// [`Delivery::Copy`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
 /// and a strided load runs code per element, so it decodes whatever it moves. Only the form is
 /// left: a fragment load takes a raw window at one element type, so a form that loads fragments
-/// needs its values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this
-/// — a bulk copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the
-/// only site it can honour — but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)),
+/// needs its values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this:
+/// a bulk copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the
+/// only site it can honour, but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)),
 /// so a quantized TMA operand is not expressible and the rule has no site to fire at yet.
 pub(crate) fn validate_dequant_at(dequant_at: DequantAt, register_stage: Option<Instruction>) {
     match (dequant_at, register_stage) {

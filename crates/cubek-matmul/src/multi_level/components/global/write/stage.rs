@@ -1,12 +1,12 @@
-use crate::multi_level::components::stage::{Stage, StageFamily, StridedStageMemory};
-use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::{
+use crate::multi_level::{
+    components::stage::{Stage, StageFamily, StridedStageMemory},
     stage::StageMemoryConfig,
     tile::{
         ContiguousTilingLayout, RowMajorTilingOrder, SharedTile, StridedTile, Tile, TileScope,
         TilingLayout,
     },
 };
+use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 pub type WriteTiling = ContiguousTilingLayout<RowMajorTilingOrder>;
 

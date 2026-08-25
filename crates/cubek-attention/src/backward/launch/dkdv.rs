@@ -155,12 +155,12 @@ fn flash_attention_backward_dk_kernel<E: Float>(
 /// Inputs:
 /// - `q, k, v`: `[B, H, N, d]`.
 /// - `do_`:     `[B, H, N, d]` upstream gradient.
-/// - `lse`:     `[B, H, N]` fp32 — saved from forward.
-/// - `d`:       `[B, H, N]` fp32 — from the prepass kernel.
+/// - `lse`:     `[B, H, N]` fp32: saved from forward.
+/// - `d`:       `[B, H, N]` fp32: from the prepass kernel.
 ///
 /// Outputs:
-/// - `dk`:      `[B, H, N, d]` — written cleanly.
-/// - `dv`:      `[B, H, N, d]` — written cleanly.
+/// - `dk`:      `[B, H, N, d]`: written cleanly.
+/// - `dv`:      `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward_dkdv<R: Runtime>(
     client: &ComputeClient<R>,

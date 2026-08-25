@@ -3,8 +3,11 @@ use std::{fmt::Debug, hash::Hash};
 use cubecl::features::MmaConfig;
 use cubecl::{ir::DeviceProperties, ir::VectorSize};
 use cubek_matmul::definition::MatmulAvailabilityError;
-use cubek_std::tile::{InnerLayout, MaskLayout, SoftmaxKind};
-use cubek_std::{CubeDimResource, InvalidConfigError};
+use cubek_matmul::multi_level::{
+    CubeDimResource,
+    tile::{InnerLayout, MaskLayout, SoftmaxKind},
+};
+use cubek_std::InvalidConfigError;
 
 use crate::components::tile::matmul::AttentionTileMatmul;
 use crate::forward::definition::{
@@ -246,7 +249,7 @@ fn validate_blackbox(
                     lhs: dtypes.query_tile,
                     rhs: dtypes.key_value_tile,
                     output: dtypes.softmax_acc,
-                    size: Some(cfg.tile_size.to_score_matmul_tile_size()),
+                    size: Some(cfg.tile_size.to_score_matmul_tile_size().into()),
                 },
             ),
         ));
@@ -265,7 +268,7 @@ fn validate_blackbox(
                     lhs: dtypes.softmax_lhs,
                     rhs: dtypes.key_value_tile,
                     output: dtypes.accumulator,
-                    size: Some(cfg.tile_size.to_value_matmul_tile_size()),
+                    size: Some(cfg.tile_size.to_value_matmul_tile_size().into()),
                 },
             ),
         ));

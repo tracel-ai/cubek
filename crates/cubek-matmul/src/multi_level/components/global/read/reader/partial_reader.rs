@@ -13,10 +13,10 @@ use crate::multi_level::{
         stage::LoadStageFamily,
     },
     definition::MatmulTypes,
+    tile::TilingLayout,
 };
 use cubecl::prelude::{barrier::Barrier, *};
 use cubecl::std::tensor::{View, layout::Coords2d};
-use cubek_std::tile::TilingLayout;
 
 #[cube]
 /// A strategy for loading partial stage memory
@@ -62,7 +62,7 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
 #[allow(clippy::type_complexity)]
 /// Loads a stage from stage memory using synchronous data movement operations.
 ///
-/// A complete load is referred to as a `Job`, which is divided into `Tasks`—
+/// A complete load is referred to as a `Job`, which is divided into `Tasks`:
 /// each Task represents a single data transfer for a specific unit
 pub struct PartialStageGlobalReader<
     'a,

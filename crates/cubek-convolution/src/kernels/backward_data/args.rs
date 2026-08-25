@@ -20,8 +20,7 @@ use cubek_matmul::{
         definition::{BatchMatmulBlueprint, Blueprint},
     },
 };
-use cubek_std::launch::tma::remap_storage_for_tma;
-use cubek_std::{InputBinding, MatrixLayout};
+use cubek_std::{InputBinding, MatrixLayout, launch::tma::remap_storage_for_tma};
 use enumset::EnumSet;
 
 use crate::components::{

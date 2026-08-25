@@ -7,8 +7,7 @@ use cubecl::std::tensor::{
     layout::{Coords1d, VirtualLayout, VirtualLayoutLaunch},
 };
 use cubecl::unexpanded;
-use cubek_std::launch::tma::tma_operand;
-use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
+use cubek_std::{InputBinding, MatrixLayout, launch::tma::tma_operand};
 
 pub use crate::routine::RuntimeConfig;
 use crate::{
@@ -21,6 +20,7 @@ use crate::{
             SimpleTmaGlobalLayoutLaunch,
         },
         definition::Blueprint as _,
+        stage::SwizzleMode,
     },
 };
 

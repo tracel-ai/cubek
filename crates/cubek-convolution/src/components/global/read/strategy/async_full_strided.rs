@@ -3,6 +3,7 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
+use cubek_matmul::multi_level::tile::StridedTilingLayout;
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
     multi_level::components::{
@@ -19,7 +20,7 @@ use cubek_matmul::{
         stage::{StridedStageFamily, StridedStageMemory},
     },
 };
-use cubek_std::{InvalidConfigError, StageIdent, tile::StridedTilingLayout};
+use cubek_std::{InvalidConfigError, StageIdent};
 
 use crate::components::global::{
     args::RuntimeArgs,

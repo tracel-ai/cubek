@@ -560,7 +560,7 @@ impl<T: Numeric> Tile<T> {
 
     /// What this tile's cells are to the plane's lanes: whole, or a partial only true once
     /// combined across the plane. A resident form inherits it from the memory it was promoted
-    /// from — the split is the space's, not the storage's.
+    /// from: the split is the space's, not the storage's.
     pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
@@ -569,6 +569,30 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 comptime!(LaneShare::Whole)
+            }
+        }
+    }
+
+    /// Ask this accumulator to start from `init_from`, and answer what actually took.
+    ///
+    /// Asking rather than deciding is what keeps a kind that cannot take the request from having
+    /// to be listed anywhere else.
+    pub(crate) fn request_init_from(
+        &mut self,
+        #[comptime] init_from: InitFrom,
+    ) -> comptime_type!(InitFrom) {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => {
+                d.set_init_from(comptime!(init_from));
+                comptime!(init_from)
+            }
+            // A promoted fragment states its own init and never reads a cell back to begin with,
+            // so the request does not take and its caller seeds instead.
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(InitFrom::Cell)
             }
         }
     }
@@ -812,6 +836,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Seed this tile with `monoid`'s identity, so a fold under it starts from a value folding
+    /// it in leaves unchanged.
+    ///
+    /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
+    /// fragments included; the other monoids need a real value and so reach only the forms
+    /// [`init`](Tile::init) serves.
+    pub fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+        match comptime!(monoid) {
+            Monoid::Sum => self.zero(),
+            Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
+        }
+    }
+
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
     pub fn init(&mut self, val: T) {
         match comptime!(self.space.partitioner().clone()) {
@@ -833,7 +870,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
-    /// own width): index `i` reads line `origin + i` — one add, no layout
+    /// own width): index `i` reads line `origin + i`, one add and no layout
     /// walk. See [`MemData::dense_lines`] for the (caller-owned) contiguity
     /// contract; the streaming fold's operands satisfy it by construction.
     pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
@@ -881,7 +918,7 @@ impl<T: Numeric> Tile<T> {
                     d.load_window(src)
                 }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
-                    s.store_window(d)
+                    s.store_window(d, space)
                 }
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
@@ -902,7 +939,10 @@ impl<T: Numeric> Tile<T> {
     /// type. [`copy_from`](Self::copy_from) can't: its transports move bytes so stay same-type,
     /// but a register accumulator (`f32`) is wider than the output it writes (`f16`). Only a
     /// fragment partition drains this way.
-    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+    ///
+    /// Crate-internal: what closes an accumulator's scope is the scope's own business
+    /// ([`AccumulatorScope`](crate::AccumulatorScope)), not a call site's.
+    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::PlanePartition(s) => s.drain_cast_into(dst),
             TileKind::Gmem(_)

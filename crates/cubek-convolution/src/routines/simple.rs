@@ -1,6 +1,7 @@
 use cubecl::{
     Runtime, client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError,
 };
+use cubek_matmul::multi_level::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use cubek_matmul::{
     definition::AvailableVectorSizes,
     multi_level::{
@@ -14,7 +15,6 @@ use cubek_matmul::{
         routines::batch::simple::{SimpleAlgorithm, SimpleArgs},
     },
 };
-use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use std::marker::PhantomData;
 
 use crate::{

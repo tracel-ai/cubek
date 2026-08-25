@@ -1,10 +1,11 @@
+use crate::multi_level::{
+    components::global::memory::GlobalMemoryConfig, stage::StageMemoryConfig,
+};
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::{MatrixLayout, stage::StageMemoryConfig};
-
-use crate::multi_level::components::global::memory::GlobalMemoryConfig;
+use cubek_std::MatrixLayout;
 
 /// Reads data from the tensor view as a window, i.e. a slice of global memory
 /// Also returns the length of the slice

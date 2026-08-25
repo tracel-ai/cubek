@@ -67,8 +67,7 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let weight = weight.tile(comptime!(space.clone()));
     let input = input.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
-    out.zero();
-    out.mma(&weight, &input);
+    out.mm(&weight, &input, Semiring::SUM_PROD);
 }
 
 /// How one cube's share of the output is shaped, and how the cube's threads divide it.

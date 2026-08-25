@@ -1,8 +1,8 @@
 #[macro_export]
 macro_rules! testgen_convolution_swizzle {
     ($algorithm: expr, $dtypes: expr, $tiling_scheme: expr) => {
-        use cubek_std::SwizzleModes;
-        use cubek_std::stage::SwizzleMode;
+        use cubek_matmul::multi_level::stage::SwizzleMode;
+        use cubek_matmul::multi_level::stage::SwizzleModes;
 
         mod none {
             use super::*;

@@ -54,8 +54,7 @@ fn depthwise_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
-    out.zero();
-    out.mma(&input, &weight);
+    out.mm(&input, &weight, Semiring::SUM_PROD);
 }
 
 /// Small integers, so the accumulation is exact in `f32` and the reference compares for equality.

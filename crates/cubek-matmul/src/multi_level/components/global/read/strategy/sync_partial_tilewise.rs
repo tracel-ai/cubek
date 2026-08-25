@@ -16,16 +16,14 @@ use crate::{
             },
             stage::{StridedStageFamily, StridedStageMemory},
         },
+        tile::{ContiguousTilingLayout, TilingOrder, TilingOrderEnum, TilingValidation},
     },
 };
 use cubecl::{
     std::tensor::layout::Coords2d,
     {ir::DeviceProperties, prelude::*},
 };
-use cubek_std::{
-    tile::{ContiguousTilingLayout, TilingOrder, TilingOrderEnum, TilingValidation},
-    {FormattedConfigError, InvalidConfigError},
-};
+use cubek_std::{FormattedConfigError, InvalidConfigError};
 
 use super::{LoadingJob, LoadingValidation};
 
