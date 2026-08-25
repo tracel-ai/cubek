@@ -345,7 +345,7 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.matrix_transparent::<i8, WP, W>(i)
             }
-            Packing::Packed { factor: _ } => {
+            Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.matrix_transparent::<u32, WP, W>(i)
             }
@@ -406,7 +406,7 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.fragment_matrix::<i8, WP, W>(rows, cols)
             }
-            Packing::Packed { factor: _ } => {
+            Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.fragment_matrix::<u32, WP, W>(rows, cols)
             }

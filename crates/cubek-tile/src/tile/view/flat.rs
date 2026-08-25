@@ -21,6 +21,7 @@ pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 /// linearly (`shape()` is the element count) without re-deriving strides in the kernel.
 /// A static window's extents are constant handles, so the decode divides by constants.
 #[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct FlatLayout {
     shape: Coords<u32>,
 }
@@ -66,8 +67,8 @@ impl<T: Numeric> Tile<T> {
     pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
-                if comptime!(g.store.quant.is_some()) {
-                    panic!("Tile::flat: a quantized tile only dequantizes under Tile::copy_from")
+                if comptime!(g.store.packing != Packing::Plain) {
+                    panic!("Tile::flat: a packed tile only unpacks under Tile::copy_from")
                 }
                 g.flat::<W>()
             }

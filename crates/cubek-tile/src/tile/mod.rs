@@ -263,6 +263,18 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
 }
 
+/// The [`Packing`] a quantization scheme implies: how many of its values a stored element holds
+/// and what field each occupies. The one place a scheme is read for a fact about *storage*, so a
+/// quantized operand and one that merely states [`TileSpec::packed`] answer every reader alike.
+pub(crate) fn scheme_packing(scheme: QuantScheme) -> Packing {
+    match scheme.num_quants() {
+        1 => Packing::Native,
+        _ => Packing::Packed {
+            field: scheme.value,
+        },
+    }
+}
+
 /// Whether one scale covers a window of `extent` under `block` edges: every axis fits inside a
 /// block, so there is nothing left for [`ScaleLayout`] to address and the scale can be read once
 /// ([`QuantInfo::uniform_scale`]) instead of per value.

@@ -84,7 +84,9 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
          read as batch matrices. This one needs the N-D nest, which has no scalar step \
          coordinate to address a scale with"
     ));
-    direct::contract_scaled::<E, EL, ER, ES>(acc, lhs, rhs, scales, space, served, config, semiring);
+    direct::contract_scaled::<E, EL, ER, ES>(
+        acc, lhs, rhs, scales, space, served, config, semiring,
+    );
 }
 
 /// How many contracted values one step consumes, reconciled across both operands and the

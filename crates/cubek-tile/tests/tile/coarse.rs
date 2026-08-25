@@ -103,7 +103,10 @@ fn run(space: Space) -> HostData {
         space.cube_dim(&client),
         TileArgLaunch::new(a.binding().into_tensor_arg(), coarse_spec()),
         TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
-        TileArgLaunch::new(c.clone().binding().into_tensor_arg(), TileSpec::direct(&[M, N])),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
         space,
         dtype,
     );

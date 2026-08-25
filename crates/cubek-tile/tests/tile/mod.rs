@@ -5,6 +5,7 @@ mod depthwise;
 mod instruction;
 mod launcher;
 mod matmul;
+mod packed;
 mod procedural;
 mod quant;
 mod recursive;

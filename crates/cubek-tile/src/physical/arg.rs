@@ -3,7 +3,7 @@
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubecl::std::quant::view::KnownScale;
 use cubecl::std::tensor::{
     ViewMut,
@@ -42,6 +42,11 @@ pub struct TileSpec {
     /// The line width this operand's next shared-memory stage is served at; `None` serves it at
     /// the operand's own. See [`StagePlan::stage_width`](crate::StagePlan::stage_width).
     pub stage_width: Option<usize>,
+    /// How this operand's values sit in its binding ([`Packing::Plain`] unless stated): the one
+    /// fact a packed operand needs and a plain binding cannot carry, since the binding names the
+    /// stored element and a `u32` says nothing about the values inside it. Stated by
+    /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
+    pub packing: Packing,
 }
 
 impl TileSpec {
@@ -62,6 +67,7 @@ impl TileSpec {
             storage: None,
             residence: SmallVec::new(),
             stage_width: None,
+            packing: Packing::Plain,
         }
     }
 
@@ -111,6 +117,18 @@ impl TileSpec {
     /// [`StagePlan::stage_width`](crate::StagePlan::stage_width).
     pub fn stage_width(mut self, width: usize) -> Self {
         self.stage_width = Some(width);
+        self
+    }
+
+    /// State that this operand's binding holds `u32` words packing several values each, one per
+    /// `field`-wide slot: `32 / field.size_bits()` of them, innermost axis first. The tile then
+    /// serves those values ([`TileArg::tile_packed`]), unpacking at the read.
+    ///
+    /// Values and nothing else. Scales, where the operand has any, are a second tensor and folding
+    /// them in is a verb the kernel writes ([`Tile::mm_scaled`](crate::Tile::mm_scaled)), so a
+    /// packed operand is sayable on its own and a q4 kernel needs no scheme.
+    pub fn packed(mut self, field: QuantValue) -> Self {
+        self.packing = Packing::Packed { field };
         self
     }
 
@@ -217,6 +235,13 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// operand's `spec` axes.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
         Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
+    }
+
+    /// [`tile`](Self::tile) for a [`packed`](TileSpec::packed) operand: `E` is the *stored*
+    /// element (`u32` words) and `O` the served value, unpacked at the read. The two differ, so
+    /// the served type is stated at the call rather than read off the binding.
+    pub fn tile_packed<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
+        Tile::<O>::of_packed(self.tensor, space, comptime!(self.spec.clone()))
     }
 
     /// [`tile`](Self::tile) for a gather whose affine map is not all comptime: `coefficients` holds

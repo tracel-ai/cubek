@@ -322,9 +322,7 @@ fn nest_scaled<
         let eligible = comptime!(mr * nr * served * aw <= config.budget);
         // A checked scales view is not proved in bounds here — its window is the block grid, not
         // the operands' — so it takes the masked body rather than the split edge.
-        let unroll = comptime!(
-            eligible && !lhs_check && !rhs_check && !acc_check && !scales_check
-        );
+        let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check && !scales_check);
         body_scaled::<E, EL, L, ER, V, A, ES, S>(
             &mut acc_view,
             &lhs_mat,
@@ -374,7 +372,18 @@ fn body_scaled<
 ) {
     let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
     block::contract_scaled::<E, EL, L, ER, V, ES, S>(
-        lhs, rhs, scales, &mut c, lw, served, mr, nr, kc, unroll, lane_fanout, semiring,
+        lhs,
+        rhs,
+        scales,
+        &mut c,
+        lw,
+        served,
+        mr,
+        nr,
+        kc,
+        unroll,
+        lane_fanout,
+        semiring,
     );
     block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
 }

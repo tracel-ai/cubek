@@ -51,11 +51,27 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
    contraction is the hot loop of every matmul in the crate, and a scaled step is a different
    program: one more read and one more product per value.
 
+3. **`TileSpec::packed(field)`: packed values without a scheme** (`tests/tile/packed.rs`).
+   `Packing` is self-describing now — `Packed { field: QuantValue }`, the field naming its own
+   width and sign — and it is *stated* on the operand rather than recovered from a scheme.
+   `w.tile_packed::<E>(space)` serves a `u32` binding's fields as values, unpacked at the read by
+   `PackedView` (`tile/view/packed.rs`), the unscaled twin of cubecl's `QuantizedView`: no scheme,
+   no scale binding, no block grid anywhere in the path.
+
+   `Store` carries the packing, so it is one statement whichever door minted it: a quantized
+   operand's scheme derives it (`scheme_packing`), a spec states it, and every "stored is not
+   served" refusal keys on it rather than on the presence of scales. A packed source also unpacks
+   under `copy_from`, which is decode-into-smem for free when it stages.
+
+   The q4 kernel the plan was blocked on now runs end to end:
+   `w.tile_packed()` + a scales tensor + `c.mm_scaled(&w, &x, &s, ..)`. Q4S/Q2S need a device whose
+   vectors reach the packing factor (a packed line serves a whole word); verified on cpu, Q8S runs
+   everywhere.
+
 ## Next, in order
 
 | # | item | notes |
 |---|---|---|
-| 1 | **packed values without a scheme** | the last thing `QuantScheme` is load-bearing for: 8 values per stored `u32`, 4 bits each, signed. That is a fact about the values operand — `Packing` already names it (`tile/packing.rs`) — and it has to be sayable with no scales beside it. Until it is, a q4 kernel cannot be written in this spelling |
 | 2 | **the rhs case** | `mm_scaled` scales the lhs. The shipped quant matmul test scales the rhs (`[1, bn]` blocks along `N`), so porting it needs the twin. Two verbs, or one taking both scale operands — settle when the second caller exists |
 | 3 | **the N-D nest** | `memory_scaled` serves the 2-D nest and refuses the rest loudly. A gathered operand's step has no single scalar `k` to address a scale with; that is a design question, not a copy |
 | 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test |
@@ -84,3 +100,6 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
   not yet checked at launch — it should be, once a routine can state the block.
 - The old machinery is untouched and still shipping. Both spellings compile; nothing is deleted
   until item 4.
+- A packed operand cannot be *staged in its packed form*: `smem_stored` keys the stored stage on
+  the scheme, so a stated packing stages unpacked (correct, just larger). Wanted where a routine
+  has reuse to amortize; see Deferred.

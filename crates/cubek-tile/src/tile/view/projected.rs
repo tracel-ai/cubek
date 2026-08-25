@@ -402,7 +402,7 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.nd::<i8, WP, W>(guard)
             }
-            Packing::Packed { factor: _ } => {
+            Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.nd::<u32, WP, W>(guard)
             }
@@ -507,7 +507,7 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.nd_split::<i8, WP, W>()
             }
-            Packing::Packed { factor: _ } => {
+            Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.nd_split::<u32, WP, W>()
             }
