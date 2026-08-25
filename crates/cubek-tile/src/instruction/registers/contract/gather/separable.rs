@@ -56,7 +56,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
 
     for mat in 0..matrices {
         let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
-        let mut acc = acc.matrix_accumulate::<V>(mat, comptime!(problem.block.space.clone()));
+
+        // The contraction's own algebra, as [`direct`](super::direct) states it.
+        let mut acc = acc.matrix_accumulate::<V>(
+            mat,
+            comptime!(problem.block.space.clone()),
+            comptime!(Semiring::SUM_PROD.add()),
+        );
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
         // `kc` bodies per cell, so the taps unroll on their own budget: the whole nest only when
@@ -105,8 +111,12 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                             comptime!(problem.clone()),
                             comptime!(problem.block.vw),
                         ));
-                        c[i * nr + n] =
-                            fma(Vector::<E, V>::cast_from(weight), value, c[i * nr + n]);
+                        // One semiring step, for the reason [`block::rank1_update`] gives.
+                        c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(
+                            Vector::<E, V>::cast_from(weight),
+                            value,
+                            c[i * nr + n],
+                        );
                     }
                 }
             } else {
@@ -171,7 +181,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                             comptime!(rhs_reader.rank),
                             n as u32,
                         )));
-                        c[i * nr + n] = fma(weight, value, c[i * nr + n]);
+                        // One semiring step, for the reason [`block::rank1_update`] gives.
+                        c[i * nr + n] =
+                            Semiring::SUM_PROD.step::<Vector<E, V>>(weight, value, c[i * nr + n]);
                     }
                 }
             }
