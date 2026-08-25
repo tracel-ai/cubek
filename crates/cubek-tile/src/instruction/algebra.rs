@@ -1,0 +1,136 @@
+//! The algebra an accumulation runs under: a [`Monoid`] to fold values together, and a
+//! [`Semiring`] pairing one with the product a contraction forms before folding.
+
+use cubecl::prelude::*;
+
+/// An identity and an associative fold. Everything that merges values takes one: the plane
+/// instructions ([`plane`](super::plane)), the register nests
+/// ([`instruction`](crate::instruction::registers)), the verb that schedules them
+/// ([`Tile::reduce_axis`](crate::Tile::reduce_axis)), and the drain that combines a plane's
+/// partials.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Monoid {
+    /// `acc + val`, identity `0`.
+    Sum,
+    /// `acc * val`, identity `1`.
+    Prod,
+    /// `max(acc, val)`, identity the lowest value of the element.
+    Max,
+    /// `min(acc, val)`, identity the highest value of the element.
+    Min,
+}
+
+#[cube]
+impl Monoid {
+    /// This monoid's identity element: folding it in leaves the other operand unchanged. What a
+    /// masked read past an operand's valid extent must return instead of a shared zero, since zero
+    /// is `Sum`'s identity but biases `Max` toward it (any negative data), `Min` away from it (any
+    /// positive data), and annihilates `Prod`.
+    pub fn identity<E: Numeric>(#[comptime] monoid: Monoid) -> E {
+        match comptime!(monoid) {
+            Monoid::Sum => E::from_int(0),
+            Monoid::Prod => E::from_int(1),
+            Monoid::Max => E::min_value(),
+            Monoid::Min => E::max_value(),
+        }
+    }
+
+    /// Fold `rhs` into `lhs`.
+    ///
+    /// Generic over scalars and lines alike: these four need only ordering and arithmetic, which
+    /// `Vector` has, so the bound stays well below `Numeric` (which it does not have).
+    pub fn fold<
+        T: CubePartialOrd
+            + CubeAdd
+            + CubeMul
+            + core::ops::Add<T, Output = T>
+            + core::ops::Mul<T, Output = T>,
+    >(
+        lhs: T,
+        rhs: T,
+        #[comptime] monoid: Monoid,
+    ) -> T {
+        match comptime!(monoid) {
+            Monoid::Sum => lhs + rhs,
+            Monoid::Prod => lhs * rhs,
+            Monoid::Max => max(lhs, rhs),
+            Monoid::Min => min(lhs, rhs),
+        }
+    }
+}
+
+/// What a contraction contracts under: the product it forms from a pair of operands, and the
+/// monoid those products accumulate into.
+///
+/// The fields are private and the pairs that are real semirings are named as constants, so a
+/// combination that is not one is unsayable rather than rejected somewhere downstream.
+///
+/// [`add`](Semiring::add) is the half every drain reads: partials merge the same way whether they
+/// came from a contraction or a reduction, which is why an accumulator's scope keeps only that.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Semiring {
+    add: Monoid,
+    mul: Monoid,
+}
+
+impl Semiring {
+    /// `(+, *)`: the ordinary matmul.
+    pub const SUM_PROD: Self = Self {
+        add: Monoid::Sum,
+        mul: Monoid::Prod,
+    };
+    /// `(min, +)`: shortest paths, DTW.
+    pub const MIN_SUM: Self = Self {
+        add: Monoid::Min,
+        mul: Monoid::Sum,
+    };
+    /// `(max, +)`: Viterbi in log space.
+    pub const MAX_SUM: Self = Self {
+        add: Monoid::Max,
+        mul: Monoid::Sum,
+    };
+
+    /// The monoid products accumulate into: what seeds an accumulator, what commits it, and what
+    /// every drain folds partials under.
+    pub const fn add(self) -> Monoid {
+        self.add
+    }
+
+    /// The product a pair of operands forms before it is folded in.
+    pub const fn mul(self) -> Monoid {
+        self.mul
+    }
+}
+
+#[cube]
+impl Semiring {
+    /// One accumulation step: `acc + (lhs * rhs)` under this semiring's two monoids. Takes its
+    /// operands in `fma`'s order, which is the instruction the ordinary semiring is.
+    ///
+    /// One function rather than [`Monoid::fold`] twice because [`SUM_PROD`](Semiring::SUM_PROD)
+    /// must stay a single `fma`: a separate multiply and dependent add doubles the FP instruction
+    /// count and serializes the accumulate, since the CPU backend contracts neither.
+    pub fn step<
+        T: CubePrimitive
+            + CubePartialOrd
+            + CubeAdd
+            + CubeMul
+            + core::ops::Add<T, Output = T>
+            + core::ops::Mul<T, Output = T>,
+    >(
+        lhs: T,
+        rhs: T,
+        acc: T,
+        #[comptime] semiring: Semiring,
+    ) -> T {
+        if comptime!(semiring == Semiring::SUM_PROD) {
+            fma(lhs, rhs, acc)
+        } else {
+            Monoid::fold::<T>(
+                acc,
+                Monoid::fold::<T>(lhs, rhs, comptime!(semiring.mul())),
+                comptime!(semiring.add()),
+            )
+        }
+    }
+}

@@ -162,10 +162,15 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         };
         #[unroll(unroll)]
         for n in 0..nr {
-            // Explicit `fma`: `+= a * b` lowers to a separate mul + dependent add (no fast-math
-            // contraction on the CPU backend), doubling the FP instruction count and serializing
-            // the accumulate. `fma` emits one fused op (`fmla`).
-            c[i * nr + n] = fma(a, b[n], c[i * nr + n]);
+            // One step of the sum-product semiring, which is a single `fma`: `+= a * b` would
+            // lower to a separate mul + dependent add (no fast-math contraction on the CPU
+            // backend), doubling the FP instruction count and serializing the accumulate.
+            c[i * nr + n] = Semiring::step::<Vector<E, V>>(
+                a,
+                b[n],
+                c[i * nr + n],
+                comptime!(Semiring::SUM_PROD),
+            );
         }
     }
 }
@@ -188,9 +193,9 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     for i in 0..mr {
         #[unroll(unroll)]
         for n in 0..nr {
-            let cell = acc.seed((i as u32, n as u32), LeafOp::Sum);
+            let cell = acc.seed((i as u32, n as u32), Monoid::Sum);
             if comptime!(served > 1) {
-                let mut lanes = Vector::<E, V>::cast_from(LeafOp::identity::<E>(LeafOp::Sum));
+                let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(Monoid::Sum));
                 lanes.insert(0usize, cell.extract(0usize));
                 c[i * nr + n] = lanes;
             } else {
@@ -220,17 +225,17 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
         for n in 0..nr {
             let cell = c[i * nr + n];
             if comptime!(served > 1) {
-                let total = horizontal::vector::<E, V>(cell, served, LeafOp::Sum);
+                let total = horizontal::vector::<E, V>(cell, served, Monoid::Sum);
                 acc.commit(
                     (i as u32, n as u32),
                     Vector::<E, A>::cast_from(total),
-                    LeafOp::Sum,
+                    Monoid::Sum,
                 );
             } else {
                 acc.commit(
                     (i as u32, n as u32),
                     Vector::<E, A>::cast_from(cell),
-                    LeafOp::Sum,
+                    Monoid::Sum,
                 );
             }
         }

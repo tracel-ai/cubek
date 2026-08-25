@@ -1,5 +1,5 @@
 //! The register nest behind [`Tile::reduce_axis`](crate::Tile::reduce_axis): fold an input's
-//! contracted axes into one accumulator cell at a time, under a [`LeafOp`].
+//! contracted axes into one accumulator cell at a time, under a [`Monoid`].
 //!
 //! The contraction nest's sibling ([`contract`](super::contract)): same seed, walk `kc`, commit
 //! shape over an [`AccumulateView`], one operand and an elementwise fold
@@ -17,19 +17,19 @@ pub(crate) fn register_data<Acc: Numeric, In: Numeric>(
     acc: &mut RegisterData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) {
     // The block was built to fold one way and is drained that way; folding it another here would
     // combine the lanes under an operator the partials were never built for.
     comptime!(assert!(
-        acc.fold == fold,
+        acc.monoid == monoid,
         "reduce: this accumulator folds under {:?} (stated at `Tile::accumulate`) but is being \
-         reduced under {fold:?}",
-        acc.fold
+         reduced under {monoid:?}",
+        acc.monoid
     ));
 
     let size!(V) = input.vector_size();
-    register_data_body::<Acc, In, V>(acc, input, acc_space, fold);
+    register_data_body::<Acc, In, V>(acc, input, acc_space, monoid);
 }
 
 #[cube]
@@ -37,7 +37,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
     acc: &mut RegisterData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) {
     let in_space = comptime!(input.space.clone());
     let vw = input.vector_size();
@@ -70,7 +70,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
             &acc_coords,
             vw,
             seed,
-            fold,
+            monoid,
         );
 
         let mut vec_line = acc.data[line_idx];
@@ -84,10 +84,10 @@ pub(crate) fn memory<Acc: Numeric, In: Numeric>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) {
     let size!(V) = input.vector_size();
-    memory_body::<Acc, In, V>(acc, input, acc_space, fold);
+    memory_body::<Acc, In, V>(acc, input, acc_space, monoid);
 }
 
 #[cube]
@@ -95,7 +95,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
     acc: &mut MemData<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) {
     let in_space = comptime!(input.space.clone());
     let vw = input.vector_size();
@@ -114,7 +114,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
     let in_view = input.nd_packed::<V>();
 
     for line_idx in 0..total_lines {
-        let seed_vec = acc_view.seed(line_idx, fold);
+        let seed_vec = acc_view.seed(line_idx, monoid);
         let mut result = seed_vec;
 
         #[unroll]
@@ -134,13 +134,13 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
                 &acc_coords,
                 vw,
                 seed,
-                fold,
+                monoid,
             );
 
             result.insert(comptime!(lane_idx), curr_val);
         }
 
-        acc_view.commit(line_idx, result, fold);
+        acc_view.commit(line_idx, result, monoid);
     }
 }
 
@@ -159,7 +159,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
     acc_coords: &Coords<u32>,
     #[comptime] vw: usize,
     seed: Acc,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) -> Acc {
     let served = comptime!(in_space.served(&layout.reduce_axes, vw));
     if comptime!(served > 1) {
@@ -171,7 +171,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
             acc_coords,
             served,
             seed,
-            fold,
+            monoid,
         )
     } else {
         element_scalars::<Acc, In, V>(
@@ -182,7 +182,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
             acc_coords,
             vw,
             seed,
-            fold,
+            monoid,
         )
     }
 }
@@ -200,9 +200,9 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
     acc_coords: &Coords<u32>,
     #[comptime] served: usize,
     seed: Acc,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) -> Acc {
-    let mut acc_vec = Vector::<Acc, V>::cast_from(LeafOp::identity::<Acc>(fold));
+    let mut acc_vec = Vector::<Acc, V>::cast_from(Monoid::identity::<Acc>(monoid));
     for p in 0..comptime!(layout.kc / served) {
         let reduce_coords = unravel(
             &const_coords(comptime!(layout.reduce_extents.clone())),
@@ -220,24 +220,24 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
         );
 
         // Same masking as the scalar path, a whole line at a time.
-        let in_vec = match comptime!(fold) {
-            LeafOp::Sum => in_view.read(in_coords),
-            LeafOp::Max | LeafOp::Min => {
+        let in_vec = match comptime!(monoid) {
+            Monoid::Sum => in_view.read(in_coords),
+            Monoid::Prod | Monoid::Max | Monoid::Min => {
                 let valid = in_view.is_in_bounds(in_coords.clone());
                 select(
                     valid,
                     in_view.read(in_coords),
-                    Vector::<In, V>::cast_from(LeafOp::identity::<In>(fold)),
+                    Vector::<In, V>::cast_from(Monoid::identity::<In>(monoid)),
                 )
             }
         };
         acc_vec =
-            LeafOp::combine::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec), fold);
+            Monoid::fold::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec), monoid);
     }
-    LeafOp::combine::<Acc>(
+    Monoid::fold::<Acc>(
         seed,
-        horizontal::vector::<Acc, V>(acc_vec, served, fold),
-        fold,
+        horizontal::vector::<Acc, V>(acc_vec, served, monoid),
+        monoid,
     )
 }
 
@@ -252,7 +252,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
     acc_coords: &Coords<u32>,
     #[comptime] vw: usize,
     seed: Acc,
-    #[comptime] fold: LeafOp,
+    #[comptime] monoid: Monoid,
 ) -> Acc {
     let mut curr_val = seed;
     let kc = comptime!(layout.kc);
@@ -273,15 +273,15 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
         );
 
         // Memory reads already return Sum's zero identity out of bounds; procedural reads are
-        // always valid. Max and Min retain their explicit operation-specific fallback.
-        let in_vec = match comptime!(fold) {
-            LeafOp::Sum => in_view.read(in_coords),
-            LeafOp::Max | LeafOp::Min => {
+        // always valid. The others need the identity read in explicitly.
+        let in_vec = match comptime!(monoid) {
+            Monoid::Sum => in_view.read(in_coords),
+            Monoid::Prod | Monoid::Max | Monoid::Min => {
                 let valid = in_view.is_in_bounds(in_coords.clone());
                 select(
                     valid,
                     in_view.read(in_coords),
-                    Vector::<In, V>::cast_from(LeafOp::identity::<In>(fold)),
+                    Vector::<In, V>::cast_from(Monoid::identity::<In>(monoid)),
                 )
             }
         };
@@ -300,7 +300,7 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
         };
         let in_cast = Acc::cast_from(in_val);
 
-        curr_val = LeafOp::combine::<Acc>(curr_val, in_cast, fold);
+        curr_val = Monoid::fold::<Acc>(curr_val, in_cast, monoid);
     }
 
     curr_val

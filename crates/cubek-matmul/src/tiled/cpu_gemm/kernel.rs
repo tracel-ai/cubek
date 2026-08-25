@@ -1,7 +1,7 @@
 //! The CpuGemm kernel: the whole body is the accumulator's scope.
 
 use cubecl::prelude::*;
-use cubek_tile::{LeafOp, Space, TileArg};
+use cubek_tile::{Monoid, Space, TileArg};
 
 /// The same three lines the tensor-core kernel runs. `out` states no residence, so its scope is
 /// [`InPlace`](cubek_tile::Residence::InPlace): the register leaf contracts through `c` itself
@@ -28,7 +28,7 @@ pub fn cpu_gemm_kernel<E: Numeric, EL: Numeric, ER: Numeric, VA: Size, VB: Size,
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&a, LeafOp::Sum);
+    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
     // The matmul contract is `out = A·B` and `mma` accumulates, so zero first: the
     // register leaf runs in place, round-tripping K-chunk partials through `c`.
     acc.zero();

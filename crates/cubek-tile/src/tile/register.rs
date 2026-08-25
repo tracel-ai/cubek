@@ -48,9 +48,9 @@ pub struct RegisterData<T: Numeric> {
     /// How this block's partials merge: the `⊕` it accumulates under. Stated where the block is
     /// built ([`Tile::accumulate`]), because comptime state cannot be set afterwards, and read on
     /// drain next to [`lane_share`](Self::lane_share): that one says partials exist, this one says
-    /// what combining them means. A matmul's is [`Sum`](LeafOp::Sum).
+    /// what combining them means. A matmul's is [`Sum`](Monoid::Sum).
     #[cube(comptime)]
-    pub(crate) fold: LeafOp,
+    pub(crate) monoid: Monoid,
 }
 
 /// Bind the block width `RA` for the rest of the kernel's scope.
@@ -71,7 +71,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
         #[comptime] config: RegisterBlock,
-        #[comptime] fold: LeafOp,
+        #[comptime] monoid: Monoid,
     ) -> RegisterData<T> {
         comptime!(assert!(
             vector_size > 0 && n.is_multiple_of(vector_size),
@@ -86,7 +86,7 @@ impl<T: Numeric> RegisterData<T> {
             nr,
             lane_share,
             config,
-            fold,
+            monoid,
         }
     }
 
@@ -146,7 +146,7 @@ impl<T: Numeric> RegisterData<T> {
                     for n in 0..comptime!(self.nr) {
                         let combined = plane::broadcast::<Vector<T, RA>>(
                             self.data[comptime!(i * self.nr + n)],
-                            comptime!(self.fold),
+                            comptime!(self.monoid),
                         );
                         if UNIT_POS_X == 0 {
                             let offset = (i as u32) * line_stride + comptime!(n as u32);
@@ -164,7 +164,7 @@ impl<T: Numeric> RegisterData<T> {
                         let combined = plane::group::<T, RA>(
                             self.data[comptime!(i * self.nr + n)],
                             comptime!(fold_mask),
-                            comptime!(self.fold),
+                            comptime!(self.monoid),
                         );
                         let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                         if lane_in_group == 0 {

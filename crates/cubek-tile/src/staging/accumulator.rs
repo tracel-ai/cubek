@@ -9,8 +9,8 @@
 //! accumulator for that whole region, and every level below runs inside it.
 //!
 //! ```ignore
-//! let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);  // opens the scope, uninitialized
-//! acc.zero();                       // init (or acc.seed(op) for a fold's identity)
+//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope, uninitialized
+//! acc.zero();                       // init (or acc.seed(monoid) for a fold's identity)
 //! acc.mma(&a, &b);                  // the contraction, and the drain that closes the scope
 //! ```
 //!
@@ -49,13 +49,15 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
         }
     }
 
-    /// Seed the accumulator with `fold`'s identity, for the reductions `zero` is wrong for
+    /// Seed the accumulator with `monoid`'s identity, for the reductions `zero` is wrong for
     /// (`Max` wants the lowest value, not `0`). The identity is minted in whichever element the
     /// accumulator actually holds, which is the element the caller cannot name here.
-    pub fn seed(&mut self, #[comptime] fold: LeafOp) {
+    pub fn seed(&mut self, #[comptime] monoid: Monoid) {
         match self {
-            AccumulatorScope::Register { tile, sink: _ } => tile.init(LeafOp::identity::<EA>(fold)),
-            AccumulatorScope::InPlace { sink } => sink.init(LeafOp::identity::<Out>(fold)),
+            AccumulatorScope::Register { tile, sink: _ } => {
+                tile.init(Monoid::identity::<EA>(monoid))
+            }
+            AccumulatorScope::InPlace { sink } => sink.init(Monoid::identity::<Out>(monoid)),
         }
     }
 
@@ -73,22 +75,22 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 
     /// Fold `input` along the axes the accumulator does not span, then drain, as
     /// [`mma`](AccumulatorScope::mma) does.
-    pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] fold: LeafOp) {
+    pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
         match self {
             AccumulatorScope::Register { tile, sink } => {
-                tile.reduce_axis(input, fold);
+                tile.reduce_axis(input, monoid);
                 tile.drain_cast_into(sink);
             }
-            AccumulatorScope::InPlace { sink } => sink.reduce_axis(input, fold),
+            AccumulatorScope::InPlace { sink } => sink.reduce_axis(input, monoid),
         }
     }
 }
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// Open this output's accumulator scope, uninitialized, folding under `op`: `Sum` for a
-    /// matmul, whichever fold a reduce asked for. `op` is stated here because it is read on drain,
-    /// when the plane's lanes are combined, and comptime state cannot be set after a thing is
+    /// Open this output's accumulator scope, uninitialized, folding under `monoid`: `Sum` for a
+    /// matmul, whichever fold a reduce asked for. `monoid` is stated here because it is read on
+    /// drain, when the plane's lanes are combined, and comptime state cannot be set after a thing is
     /// built. The caller states the init ([`zero`](AccumulatorScope::zero), or
     /// [`seed`](AccumulatorScope::seed) for a fold's identity); the op that closes the scope drains it.
     ///
@@ -107,12 +109,12 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn accumulate<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
-        #[comptime] op: LeafOp,
+        #[comptime] monoid: Monoid,
     ) -> AccumulatorScope<EA, Acc> {
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
-                let tile = self.register_partition::<EA, EL>(lhs, op);
+                let tile = self.register_partition::<EA, EL>(lhs, monoid);
                 AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone())
             }
             Residence::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone()),
@@ -128,7 +130,7 @@ impl<Acc: Numeric> Tile<Acc> {
     fn register_partition<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
-        #[comptime] op: LeafOp,
+        #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         // The contracted axes are those `lhs` spans and this accumulator does not, and the
         // fragment is sized by their product. Off the leaf space: a caller holds a level above
@@ -151,7 +153,7 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(k),
             vector_size,
             lane_share,
-            op,
+            monoid,
         )
     }
 }

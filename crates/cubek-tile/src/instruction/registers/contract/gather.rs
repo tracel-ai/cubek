@@ -364,8 +364,9 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     vw,
                 ))
             };
-            // Explicit `fma`, for the reason [`block::rank1_update`] gives.
-            c[i * nr + n] = fma(a, v, c[i * nr + n]);
+            // One semiring step, for the reason [`block::rank1_update`] gives.
+            c[i * nr + n] =
+                Semiring::step::<Vector<E, V>>(a, v, c[i * nr + n], comptime!(Semiring::SUM_PROD));
         }
     }
 }

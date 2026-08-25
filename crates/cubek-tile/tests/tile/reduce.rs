@@ -40,17 +40,13 @@ fn reduce_matmul_kernel<E: Numeric>(
     c.mma(&a, &b);
 }
 
-/// Seeds `output` for `op` (the identity a fold starts from), then reduces `input` into it.
-/// One body serves Sum/Max/Min alike, which is the point: the three kernels below differed only
-/// in this seed and the `LeafOp` passed to `reduce_axis`.
+/// Seeds `output` with the identity the fold starts from, then reduces `input` into it.
+/// One body serves every monoid, which is the point: the kernels below differed only in this
+/// seed and the `Monoid` passed to `reduce_axis`.
 #[cube]
-fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] op: LeafOp) {
-    match comptime!(op) {
-        LeafOp::Sum => output.zero(),
-        LeafOp::Max => output.init(E::min_value()),
-        LeafOp::Min => output.init(E::max_value()),
-    }
-    output.reduce_axis(input, op);
+fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] monoid: Monoid) {
+    output.init(Monoid::identity::<E>(monoid));
+    output.reduce_axis(input, monoid);
 }
 
 #[cube(launch)]
@@ -58,12 +54,12 @@ fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] op: LeafOp,
+    #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, op);
+    reduce_body(&input, &mut output, monoid);
 }
 
 #[cube(launch)]
@@ -71,12 +67,12 @@ fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] op: LeafOp,
+    #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, op);
+    reduce_body(&input, &mut output, monoid);
 }
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
@@ -100,7 +96,7 @@ fn procedural_reduce_kernel<E: Float>(
         stage,
     );
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, comptime!(LeafOp::Max));
+    reduce_body(&input, &mut output, comptime!(Monoid::Max));
 }
 
 /// Small integers, so every product and partial sum is exact in `f32` and the two kernels can be
@@ -315,9 +311,18 @@ fn run_reduce(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: LeafOp,
+    monoid: Monoid,
 ) -> HostData {
-    run_reduce_with_vw(in_shape, out_shape, in_axes, out_axes, space, op, 1, &[])
+    run_reduce_with_vw(
+        in_shape,
+        out_shape,
+        in_axes,
+        out_axes,
+        space,
+        monoid,
+        1,
+        &[],
+    )
 }
 
 /// [`run_reduce`] with the input's per-level [`Residence`] stated, for the walks that stage it.
@@ -328,7 +333,7 @@ fn run_reduce_resident(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: LeafOp,
+    monoid: Monoid,
     in_residence: &[Residence],
 ) -> HostData {
     run_reduce_with_vw(
@@ -337,7 +342,7 @@ fn run_reduce_resident(
         in_axes,
         out_axes,
         space,
-        op,
+        monoid,
         1,
         in_residence,
     )
@@ -345,7 +350,7 @@ fn run_reduce_resident(
 
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
-fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usize, op: LeafOp) {
+fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
     let space = Tiling::new()
         .extents(&[(M, m), (K, k)])
         .level(WalkOrder::RowMajor, buffering, |l| {
@@ -359,21 +364,22 @@ fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usiz
         &[M, K],
         &[M],
         space,
-        op,
+        monoid,
         &[Residence::Smem],
     );
 
     for i in 0..m {
         let values = (0..k).map(|j| ((i * k + j) % 7) as f32);
-        let want = match op {
-            LeafOp::Sum => values.sum(),
-            LeafOp::Max => values.fold(f32::NEG_INFINITY, f32::max),
-            LeafOp::Min => values.fold(f32::INFINITY, f32::min),
+        let want = match monoid {
+            Monoid::Sum => values.sum(),
+            Monoid::Prod => values.product(),
+            Monoid::Max => values.fold(f32::NEG_INFINITY, f32::max),
+            Monoid::Min => values.fold(f32::INFINITY, f32::min),
         };
         assert_eq!(
             got.get_f32(&[i]),
             want,
-            "{buffering:?} {op:?} mismatch at index {i}"
+            "{buffering:?} {monoid:?} mismatch at index {i}"
         );
     }
 }
@@ -385,7 +391,7 @@ fn run_reduce_with_vw(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: LeafOp,
+    monoid: Monoid,
     in_vw: usize,
     in_residence: &[Residence],
 ) -> HostData {
@@ -417,7 +423,7 @@ fn run_reduce_with_vw(
                 ),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
                 space,
-                op,
+                monoid,
                 f32_ty,
             );
         }
@@ -432,7 +438,7 @@ fn run_reduce_with_vw(
                 ),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
                 space,
-                op,
+                monoid,
                 f32_ty,
             );
         }
@@ -452,7 +458,7 @@ fn test_reduce_axis_sum_2d_to_1d() {
         })
         .build();
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Sum);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -470,7 +476,7 @@ fn test_reduce_axis_sum_walked_levels() {
         })
         .build();
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Sum);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -488,7 +494,7 @@ fn test_reduce_axis_max_2d_to_1d() {
         })
         .build();
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Max);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Max);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -508,7 +514,7 @@ fn test_reduce_axis_min_2d_to_1d() {
         })
         .build();
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Min);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Min);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -536,7 +542,7 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
         &[B, M, K],
         &[B],
         space,
-        LeafOp::Sum,
+        Monoid::Sum,
     );
 
     for bi in 0..b {
@@ -553,32 +559,32 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
 
 #[test]
 fn test_reduce_axis_sum_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, LeafOp::Sum);
+    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, Monoid::Sum);
 }
 
 #[test]
 fn test_reduce_axis_sum_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, LeafOp::Sum);
+    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, Monoid::Sum);
 }
 
 #[test]
 fn test_reduce_axis_max_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, LeafOp::Max);
+    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, Monoid::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, LeafOp::Min);
+    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, Monoid::Min);
 }
 
 #[test]
 fn test_reduce_axis_max_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, LeafOp::Max);
+    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, Monoid::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, LeafOp::Min);
+    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, Monoid::Min);
 }
 
 /// Reduction over an outer axis while retaining the innermost axis (which lines along vector width).
@@ -598,7 +604,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
         &[M, K],
         &[K],
         space,
-        LeafOp::Sum,
+        Monoid::Sum,
         1,
         &[],
     );
@@ -627,7 +633,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
         &[M, K],
         &[K],
         space,
-        LeafOp::Sum,
+        Monoid::Sum,
         4,
         &[],
     );
@@ -660,7 +666,7 @@ fn test_reduce_axis_max_inner_axis_reduced_v4() {
         &[M, K],
         &[M],
         space,
-        LeafOp::Max,
+        Monoid::Max,
         4,
         &[],
     );
@@ -688,7 +694,7 @@ fn run_reduce_checked(
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
-    op: LeafOp,
+    monoid: Monoid,
     in_residence: &[Residence],
 ) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -718,7 +724,7 @@ fn run_reduce_checked(
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
         space,
-        op,
+        monoid,
         f32_ty,
     );
 
@@ -746,7 +752,7 @@ fn test_reduce_axis_sum_nondivisible_k() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        LeafOp::Sum,
+        Monoid::Sum,
         &[],
     );
 
@@ -768,7 +774,7 @@ fn test_reduce_axis_sum_nondivisible_k_staged() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        LeafOp::Sum,
+        Monoid::Sum,
         &[Residence::Smem],
     );
 
@@ -793,7 +799,7 @@ fn test_reduce_axis_sum_in_place_double_buffered() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
-        LeafOp::Sum,
+        Monoid::Sum,
         &[Residence::InPlace],
     );
 
@@ -819,7 +825,7 @@ fn test_reduce_axis_sum_nondivisible_k_double_buffered() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
-        LeafOp::Sum,
+        Monoid::Sum,
         &[Residence::Smem],
     );
 
@@ -845,7 +851,7 @@ fn test_reduce_axis_max_nondivisible_k() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        LeafOp::Max,
+        Monoid::Max,
         &[],
     );
 
@@ -914,7 +920,7 @@ fn test_reduce_axis_max_nondivisible_k_negative_data() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        LeafOp::Max,
+        Monoid::Max,
         &[],
     );
 
@@ -941,7 +947,7 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
         &[M, K],
         &[M],
         nondivisible_k_space(m, k, tk, Buffering::SINGLE),
-        LeafOp::Min,
+        Monoid::Min,
         &[],
     );
 
@@ -970,7 +976,7 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
         &[M, K],
         &[K],
         space,
-        LeafOp::Max,
+        Monoid::Max,
         4,
         &[],
     );
@@ -1003,7 +1009,7 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
         &[M, K],
         &[K],
         space,
-        LeafOp::Min,
+        Monoid::Min,
         4,
         &[],
     );
@@ -1038,7 +1044,7 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
         &[M, K],
         &[M],
         space,
-        LeafOp::Sum,
+        Monoid::Sum,
         4,
         &[],
     );
@@ -1072,7 +1078,7 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
         &[B, M, K],
         &[B, K],
         space,
-        LeafOp::Sum,
+        Monoid::Sum,
         4,
         &[],
     );
@@ -1110,7 +1116,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
         .build()
         .resolve_lanes(lanes);
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Sum);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -1137,7 +1143,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
         .build()
         .resolve_lanes(lanes);
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Max);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Max);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1166,7 +1172,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
         .build()
         .resolve_lanes(lanes);
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, LeafOp::Min);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Min);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1195,14 +1201,14 @@ fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] op: LeafOp,
+    #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let out = output.tile(space);
-    let mut acc = out.accumulate::<E, _>(&input, op);
-    acc.seed(op);
-    acc.reduce_axis(&input, op);
+    let mut acc = out.accumulate::<E, _>(&input, monoid);
+    acc.seed(monoid);
+    acc.reduce_axis(&input, monoid);
 }
 
 #[test]
@@ -1248,7 +1254,7 @@ fn resident_max_over_lane_split_k() {
             TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         ),
         space,
-        LeafOp::Max,
+        Monoid::Max,
         f32_ty,
     );
 
