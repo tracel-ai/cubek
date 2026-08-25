@@ -39,7 +39,7 @@ struct TileSourceData<'a, R: Runtime> {
     storage: Option<StageStorage>,
     /// Where the operand lives at each level of `space`, coarse to fine; empty stages nothing.
     residence: Vec<Residence>,
-    /// The width the operand's smem stages are served at; `None` serves them at `v`.
+    /// The width the operand's next Smem stage is served at; `None` serves it at `v`.
     stage_width: Option<usize>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
@@ -211,7 +211,7 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
         self
     }
 
-    /// Serve this operand's shared-memory stages in `width`-wide lines rather than in the
+    /// Serve this operand's next shared-memory stage in `width`-wide lines rather than in the
     /// [`vectorize`](Self::vectorize) width it is read from global memory in, padding its
     /// innermost axis out to whole lines.
     pub fn stage_width(mut self, width: usize) -> Self {
