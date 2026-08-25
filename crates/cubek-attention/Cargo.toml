@@ -29,11 +29,11 @@ benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 [dependencies]
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubek-matmul = { path = "../cubek-matmul", version = "=0.3.0-pre.2", default-features = false, features = [
+cubek-matmul = { path = "../cubek-matmul", version = "=0.3.0-pre.3", default-features = false, features = [
     "multi-level",
 ] }
-cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.2", default-features = false }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false, optional = true }
+cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.3", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false, optional = true }
 
 bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
@@ -42,6 +42,6 @@ serde = { workspace = true }
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-attention = { path = ".", features = ["benchmarks"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false }
+cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
 pretty_assertions = { workspace = true }
 trybuild = "1"

@@ -39,6 +39,8 @@ struct TileSourceData<'a, R: Runtime> {
     storage: Option<StageStorage>,
     /// Where the operand lives at each level of `space`, coarse to fine; empty stages nothing.
     residence: Vec<Residence>,
+    /// The width the operand's next Smem stage is served at; `None` serves it at `v`.
+    stage_width: Option<usize>,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -73,6 +75,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 boundary: None,
                 storage: None,
                 residence: Vec::new(),
+                stage_width: None,
                 units: 0,
                 quant: None,
             },
@@ -205,6 +208,14 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// [`operand`](Self::operand)'s raw form, for the bridges that already hold the column.
     pub(crate) fn residence(mut self, residence: &[Residence]) -> Self {
         self.data.residence = residence.to_vec();
+        self
+    }
+
+    /// Serve this operand's next shared-memory stage in `width`-wide lines rather than in the
+    /// [`vectorize`](Self::vectorize) width it is read from global memory in, padding its
+    /// innermost axis out to whole lines.
+    pub fn stage_width(mut self, width: usize) -> Self {
+        self.data.stage_width = Some(width);
         self
     }
 
@@ -433,6 +444,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             boundary,
             storage,
             residence,
+            stage_width,
             units,
             quant,
         } = self.data;
@@ -519,6 +531,12 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             .boundaries(&boundaries)
             .units(units)
             .residence(&residence);
+        if let Some(width) = stage_width {
+            spec = spec.stage_width(width);
+        }
+        // At launch rather than at trace time, so the failure carries a host backtrace; the same
+        // check runs again in `Tile::of` for specs that never pass through this builder.
+        spec.validate_stage_width(v, quant.is_some());
         if let Some(storage) = storage {
             spec = spec.storage(storage);
         }

@@ -918,7 +918,7 @@ impl<T: Numeric> Tile<T> {
                     d.load_window(src)
                 }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
-                    s.store_window(d)
+                    s.store_window(d, space)
                 }
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
