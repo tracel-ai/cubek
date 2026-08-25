@@ -139,7 +139,7 @@ fn generate_blueprint<R: Runtime>(
     let cube_size = cube_dim.num_elems();
 
     // Unchecked comptime fast paths only when raw shapes are their own
-    // autotune keys — see the twin comment in `plane.rs`.
+    // autotune keys: see the twin comment in `plane.rs`.
     let unchecked = settings.unchecked_fast_paths;
     let work_size = match settings.vectorization_mode {
         VectorizationMode::Parallel => problem.reduce_len / settings.vector_size_input,
@@ -155,7 +155,7 @@ fn generate_blueprint<R: Runtime>(
 
     // Out-of-range units come from the reduce-axis tail *and* from over-launched
     // (idle) cubes; both need a bound check. When the input read has a write side
-    // effect (fuse-on-read), that check must branch rather than mask — a mask
+    // effect (fuse-on-read), that check must branch rather than mask: a mask
     // clamps the index to 0 and still performs the side-effecting read,
     // clobbering position 0.
     let tail_bounds = !(unchecked && work_size.is_multiple_of(cube_size as usize));

@@ -25,7 +25,7 @@ const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
-/// `C = A · dequant(B)`, `B` the packed weight — the staged lowering picks the stage form.
+/// `C = A · dequant(B)`, `B` the packed weight: the staged lowering picks the stage form.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
@@ -101,7 +101,7 @@ struct TileQuantStageBench {
 
 impl TileQuantStageBench {
     /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's lanes,
-    /// one served line each, so the leaf is `mr = m`, `nr = 1` — unrolled while `m <= 64` (the
+    /// one served line each, so the leaf is `mr = m`, `nr = 1`: unrolled while `m <= 64` (the
     /// `mr·nr` cliff), keeping the unroll state constant as depth varies. Both inputs state
     /// their shared stage where L0 is declared: L0 fills it, L1 reads windows of it, which is
     /// the staging this bench measures. The output stages nothing.

@@ -140,7 +140,7 @@ pub trait Category: Sync {
     type Problem;
     type Strategy;
 
-    /// Stable identifier — persisted in tuner-results history. Don't rename.
+    /// Stable identifier: persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn problems(&self) -> Vec<CatalogEntry<Self::Problem>>;
@@ -152,7 +152,7 @@ pub trait Category: Sync {
         num_samples: usize,
     ) -> Result<RunSamples, String>;
 
-    /// Which timing method [`Self::bench`] uses internally — used by the bench
+    /// Which timing method [`Self::bench`] uses internally: used by the bench
     /// runner to label its printed stats. Defaults to `System`; categories
     /// running on the device timing method (unary/contiguous/memcpy_async)
     /// override this.
@@ -209,7 +209,7 @@ pub trait Correctness: Sync {
 /// type that implements [`Category`]; categories should implement `Category`
 /// rather than this trait directly.
 pub trait BenchmarkCategory: Sync {
-    /// Stable identifier — persisted in tuner-results history. Don't rename.
+    /// Stable identifier: persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn strategies(&self) -> Vec<ItemDescriptor>;
@@ -225,7 +225,7 @@ pub trait BenchmarkCategory: Sync {
     ) -> Result<RunSamples, String>;
 
     /// `None` means the category doesn't expose a kernel result (e.g.
-    /// memcpy_async — no semantic-level output).
+    /// memcpy_async: no semantic-level output).
     fn kernel_result(
         &self,
         _strategy_id: &str,

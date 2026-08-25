@@ -28,7 +28,7 @@ use cubecl::{
 };
 use std::marker::PhantomData;
 
-// Per-flow Stage type aliases — keep call sites readable.
+// Per-flow Stage type aliases: keep call sites readable.
 type LhsStageFor<MP, RC, LL> = PartialLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;
 type RhsStageFor<MP, RC, RL> = PartialLoaderStage<RC, RL, Stage<Rhs<MP>>, StageSize<Rhs<MP>>>;
 type AccStageFor<MP, RC, AL> =

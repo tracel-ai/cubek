@@ -5,7 +5,7 @@
 //! point), and compares the GPU output against the CPU reference in
 //! [`cubek_attention::eval::backward::cpu_reference`].
 //!
-//! The kernels themselves are `todo!()` for now — these tests are the
+//! The kernels themselves are `todo!()` for now: these tests are the
 //! harness, expected to fail at runtime until the kernels land.
 
 #![cfg(feature = "cpu-reference")]
@@ -162,7 +162,7 @@ fn config(problem: &AttentionProblem) -> BackwardConfig {
     c
 }
 
-/// Loose epsilon for scaffold tests — the GPU side currently panics, so this
+/// Loose epsilon for scaffold tests: the GPU side currently panics, so this
 /// only kicks in when the kernels start producing real results.
 const EPS: f32 = 1e-3;
 
@@ -172,7 +172,7 @@ fn run_prepass(problem: AttentionProblem) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let inputs = seed_inputs(&client, &problem);
 
-    // We need O for the prepass — generate it by running the CPU forward.
+    // We need O for the prepass: generate it by running the CPU forward.
     // For scaffold simplicity, derive O from the debug reference.
     let dbg = flash_attention_backward_reference_debug(
         &inputs.q_data,
@@ -527,8 +527,8 @@ fn run_gradcheck(problem: AttentionProblem) {
 
 fn finite_diff_check(_inputs: &BackwardInputs, _problem: &AttentionProblem) {
     // Finite-difference perturbation of Q, K, V comparing analytic dQ/dK/dV
-    // against (loss(x + eps) - loss(x - eps)) / (2*eps). Left as scaffolding
-    // — the harness must compile and call into the CPU reference; the
+    // against (loss(x + eps) - loss(x - eps)) / (2*eps). Left as scaffolding:
+    // the harness must compile and call into the CPU reference; the
     // numerical FD walk lands with the kernel bodies.
 }
 
@@ -538,7 +538,7 @@ fn finite_diff_check(_inputs: &BackwardInputs, _problem: &AttentionProblem) {
 // One per kernel for the small base shape; a causal variant; a shape sweep
 // that mirrors the brief (batches {1,2}, heads {1,4}, seq lens {16,64,128,257},
 // head dims {32,64,128}). Sweep tests are #[ignore]d by default to keep CI
-// fast — the kernels they exercise are stubs, so they'd all panic anyway.
+// fast: the kernels they exercise are stubs, so they'd all panic anyway.
 // -----------------------------------------------------------------------------
 
 #[test]

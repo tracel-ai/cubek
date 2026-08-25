@@ -1,4 +1,4 @@
-//! `StridedStageFamily` — the `LoadStageFamily` wrapper around
+//! `StridedStageFamily`: the `LoadStageFamily` wrapper around
 //! [`StridedStageMemory`], plus the `Stage` impls for that memory type.
 
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};

@@ -1,7 +1,7 @@
 //! Test-only physical-layout enum for the cpu_gemm layout laboratory: a compact
 //! `RowMajor`/`ColMajor`/`Tiled` description that builds synthetic operands (their physical dims +
-//! strides) and converts to the real [`ConcreteLayout`]. Production carries no such enum — it reads
-//! the storage-tiling depth + strides straight off each binding — so this lives with the tests.
+//! strides) and converts to the real [`ConcreteLayout`]. Production carries no such enum: it reads
+//! the storage-tiling depth + strides straight off each binding, so this lives with the tests.
 
 use cubecl::{
     Runtime,
@@ -14,16 +14,16 @@ use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, StorageTiling};
 /// How a logical `(batch, rows, cols)` operand is physically stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InnerLayout {
-    /// `cols` contiguous (standard C order) — `MatrixLayout::RowMajor`.
+    /// `cols` contiguous (standard C order): `MatrixLayout::RowMajor`.
     RowMajor,
-    /// `rows` contiguous within a batch (matrix transposed) — `MatrixLayout::ColMajor`.
+    /// `rows` contiguous within a batch (matrix transposed): `MatrixLayout::ColMajor`.
     ColMajor,
     /// Matrix axes blocked into nested, contiguous sub-tiles. Each entry is one
-    /// nesting level's `(row_edge, col_edge)`, outer→inner — so tiles may be
+    /// nesting level's `(row_edge, col_edge)`, outer→inner, so tiles may be
     /// rectangular and arbitrarily deep:
-    /// - `[(4, 4)]` — plain `4 × 4` blocks (a leaf is one contiguous block).
-    /// - `[(8, 4)]` — rectangular `8 × 4` blocks.
-    /// - `[(4, 4), (2, 2)]` — `4 × 4` blocks each split into `2 × 2`.
+    /// - `[(4, 4)]`: plain `4 × 4` blocks (a leaf is one contiguous block).
+    /// - `[(8, 4)]`: rectangular `8 × 4` blocks.
+    /// - `[(4, 4), (2, 2)]`: `4 × 4` blocks each split into `2 × 2`.
     Tiled { tiles: Vec<(usize, usize)> },
 }
 
@@ -66,7 +66,7 @@ impl InnerLayout {
     }
 
     /// The per-operand [`ConcreteLayout`] this imposes on the matrix axes `[row, col]`, in physical
-    /// (major-to-minor) order — for layout-request matching: row-major makes `col` innermost,
+    /// (major-to-minor) order, for layout-request matching: row-major makes `col` innermost,
     /// col-major `row`, a tiled layout expands each matrix axis into its `[grid…, leaf]` fragments.
     pub fn to_concrete(
         &self,

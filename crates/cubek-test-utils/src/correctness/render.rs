@@ -2,7 +2,7 @@
 //!
 //! One entry point: [`print_tensors`]. It takes a slice of one or two
 //! `HostData` references and renders them according to the active
-//! [`PrintSection`]. There is no separate "diff" path — comparing actual to
+//! [`PrintSection`]. There is no separate "diff" path: comparing actual to
 //! expected and pretty-printing two same-shape tensors are the same call.
 //!
 //! Rules:
@@ -51,7 +51,7 @@ pub fn print_tensors(cfg: &PrintSection, label: &str, tensors: &[&HostData], eps
     } else {
         Some(cfg.filter.clone())
     };
-    // ε isn't in the header — it's per-cell (each cell uses
+    // ε isn't in the header: it's per-cell (each cell uses
     // `max(epsilon, epsilon * |expected|)`), so a single number would lie.
     println!("=== {label}  shape={:?} ===", primary.shape);
 
@@ -85,7 +85,7 @@ fn render_table(
                 let cell_eps = (epsilon * bv).abs().max(epsilon);
                 let is_wrong = compare_pair(av, bv, cell_eps);
                 if cfg.fail_only && !is_wrong {
-                    // Blank out matching cells — the table layout still
+                    // Blank out matching cells: the table layout still
                     // pads them, so the surviving red cells stay aligned.
                     return String::new();
                 }
@@ -230,7 +230,7 @@ fn render_lines(
     let two = b.is_some();
     let primary_label = if two { "got" } else { "value" };
 
-    // Header — Δ / ε / status are always present in 2-tensor lines view.
+    // Header: Δ / ε / status are always present in 2-tensor lines view.
     let mut header = format!("{:>idx_w$} | {:>pri_w$}", "index", primary_label);
     if two {
         header.push_str(&format!(

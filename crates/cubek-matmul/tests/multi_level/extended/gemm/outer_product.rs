@@ -4,7 +4,7 @@
 // the Routine validates this.
 
 // =====================================================================
-// Mat × Mat (Row, Col) — Variant::Dot (same kernel the plane-parallel cases hit).
+// Mat × Mat (Row, Col): Variant::Dot (same kernel the plane-parallel cases hit).
 // =====================================================================
 
 fn matmat_row_col() -> (MatrixLayout, MatrixLayout) {
@@ -80,7 +80,7 @@ pub fn matmat_broadcast_lhs_row_col() {
 }
 
 // =====================================================================
-// Mat × Mat (Row, Row) — Variant::OuterNLhsContig.
+// Mat × Mat (Row, Row): Variant::OuterNLhsContig.
 // =====================================================================
 
 fn matmat_row_row() -> (MatrixLayout, MatrixLayout) {
@@ -156,7 +156,7 @@ pub fn matmat_batched_row_row() {
 }
 
 // =====================================================================
-// Mat × Mat (Col, Col) — Variant::OuterM.
+// Mat × Mat (Col, Col): Variant::OuterM.
 // =====================================================================
 
 fn matmat_col_col() -> (MatrixLayout, MatrixLayout) {
@@ -232,7 +232,7 @@ pub fn matmat_batched_col_col() {
 }
 
 // =====================================================================
-// Mat × Mat (Col, Row) — no variant reads this layout pair: `launch_ref`
+// Mat × Mat (Col, Row): no variant reads this layout pair, since `launch_ref`
 // normalizes it to Dot where planes exist, and the routine rejects it on
 // CPU (the `cpu_gemm` routine serves it there). Kept as coverage that
 // both paths give the right answer, whichever one runs.
@@ -276,7 +276,7 @@ pub fn matmat_large_square_col_row() {
     .test();
 }
 
-/// A transposed lhs whose M is not a multiple of the vector size — the
+/// A transposed lhs whose M is not a multiple of the vector size: the
 /// `a.transpose().matmul(b)` shape from burn#5304. The Col-Row variant read
 /// the lhs as M-vectors and silently returned another row's data; no variant
 /// claims the layout now.

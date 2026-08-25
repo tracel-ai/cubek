@@ -127,8 +127,8 @@ impl Overhang {
 impl<T: Numeric> Tile<T> {
     /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one
     /// `space` projected onto the operand's `spec` axes, so no operand carries its own
-    /// copy of the space. The element type carries the line width — `Vector<T, W>` for a
-    /// lined operand, `T` itself for scalar — so the served width *is* the binding's
+    /// copy of the space. The element type carries the line width: `Vector<T, W>` for a
+    /// lined operand, `T` itself for scalar, so the served width *is* the binding's
     /// width by construction and is never re-lined in-kernel. Shape/strides come in
     /// scalar-unit and convert to line-unit here.
     pub fn of<E: CubePrimitive<Scalar = T>>(
@@ -175,7 +175,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (its
-    /// element's scalar is the *stored* type — `u32` words for a packed scheme, `i8` native),
+    /// element's scalar is the *stored* type: `u32` words for a packed scheme, `i8` native),
     /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
     /// them back in. The served width is the binding's width × the scheme's packing factor.
     #[allow(clippy::too_many_arguments)]
@@ -1004,11 +1004,11 @@ impl<T: Numeric> MemData<T> {
 
     /// The sub-word twin of [`scan_transparent`](MemData::scan_transparent): the source's served
     /// line is one whole packed word (`vector_size == num_quants`, a scalar `u32` binding), and
-    /// each word unpacks into `num_quants / W` lines of this store's width — how a packed operand
+    /// each word unpacks into `num_quants / W` lines of this store's width: how a packed operand
     /// fills a stage on a device whose vectors cannot cover a word. Word-serving is what keeps the
     /// line/storage-line correspondence exact (one line **is** one word), so no other width plays.
     ///
-    /// Unchecked only — and unreachable any other way: a checked operand cannot vectorize
+    /// Unchecked only, and unreachable any other way: a checked operand cannot vectorize
     /// ([`realize`](crate::StridedTileSource) refuses it), and a word-serving operand is
     /// `num_quants` wide, so a checked source never gets here; the assert below is a backstop for
     /// hand-built args. The ragged-tail obligation this leaves is the engine's ordinary unchecked
@@ -1197,7 +1197,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The window as one dense run of lines: index `i` addresses line
-    /// `origin + i` — one add, no layout walk. Legal only where the window's
+    /// `origin + i`: one add, no layout walk. Legal only where the window's
     /// content is physically contiguous in row-major order: an untiled,
     /// unmasked, unquantized store whose windowed logical axes are contiguous
     /// in memory (the strided operands a streaming fold windows). The

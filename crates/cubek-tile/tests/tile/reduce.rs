@@ -1186,10 +1186,10 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 ///
 /// Two things had to be true for this to work, and neither was. The drain combined lanes with a
 /// hardcoded sum, and a promoted block read its `LaneShare` from the tile, which is only stamped on
-/// the way down — so it saw `Whole` and every lane wrote its partial over the last.
+/// the way down, so it saw `Whole` and every lane wrote its partial over the last.
 ///
-/// The data is all negative, so any identity leaking in — a zero from a sum-shaped combine, or from
-/// an out-of-bounds read — wins the maximum and the assert catches it.
+/// The data is all negative, so any identity leaking in (a zero from a sum-shaped combine, or
+/// from an out-of-bounds read) wins the maximum and the assert catches it.
 #[cube(launch)]
 fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -1199,11 +1199,10 @@ fn resident_fold_kernel<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
-    let mut out = output.tile(space);
+    let out = output.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, op);
-    acc.init(LeafOp::identity::<E>(op));
+    acc.seed(op);
     acc.reduce_axis(&input, op);
-    out.copy_from(&acc);
 }
 
 #[test]
@@ -1244,7 +1243,9 @@ fn resident_max_over_lane_split_k() {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            // The lane-split fold joins its partials in registers, so the output states that it
+            // lives there for the one level it has.
+            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         ),
         space,
         LeafOp::Max,

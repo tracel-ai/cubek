@@ -32,10 +32,10 @@ pub fn cmma_kernel<
 ) {
     let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     // The matmul contract is `out = A·B` and `mma` accumulates, so start at zero.
     acc.zero();
+    // The contraction exhausts the scope `out` opened, so this drains it too.
     acc.mma(&a, &b);
-    acc.drain_cast_into(&mut c);
 }

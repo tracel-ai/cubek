@@ -1,6 +1,6 @@
 //! Benchmark catalogue for the FlashAttention backward pass.
 //!
-//! Stubs only — the kernels are `todo!()` until the implementation lands.
+//! Stubs only: the kernels are `todo!()` until the implementation lands.
 //! Reuses [`crate::eval::benchmarks::problem`] for the
 //! `(batch, heads, seq, ...)` catalogue; the per-kernel slices live in
 //! [`strategy`]; the bench harness in [`benchmark`].

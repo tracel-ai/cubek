@@ -1,6 +1,6 @@
 //! Forced-blueprint tests for non-default hypercube / specialization /
 //! partition-buffering knobs. All of these are applied to one representative
-//! routine (SimpleCyclicCmma or DoubleCyclicCmma as appropriate) — the point
+//! routine (SimpleCyclicCmma or DoubleCyclicCmma as appropriate): the point
 //! is to exercise each knob at least once, not to cover every combo.
 //!
 //! Swizzle knobs are not covered here: CMMA does not support swizzling, and

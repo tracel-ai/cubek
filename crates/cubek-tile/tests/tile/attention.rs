@@ -1,6 +1,6 @@
 //! The attention fold end-to-end on tiles: the score and mix leaves
 //! ([`ops::attention`]) interleaved with the softmax step, the walk owned by
-//! the kernel — the miniature of the routine a client (metabolic) launches.
+//! the kernel: the miniature of the routine a client (metabolic) launches.
 //! GQA rides the axes: `q` stacks its group over the same query block
 //! (group-major rows), `k`/`v` simply omit the group axis, and the probe's
 //! `q_rows` maps rows back to query positions for the causal predicate.
@@ -25,7 +25,7 @@ const C: Axis = Axis(6); // score cols = one S block
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_kernel<W: Size>(
     q: &TileArg<'_, f32, W>,           // {G, QP, D}
-    k: &TileArg<'_, f32, W>,           // {S, D} — omits the group axis
+    k: &TileArg<'_, f32, W>,           // {S, D}: omits the group axis
     v: &TileArg<'_, f32, W>,           // {S, V}
     mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
     out: &mut Tensor<f32>,             // [G·QP·V] flat
@@ -282,12 +282,12 @@ fn fold_scalar_odd_bound() {
 /// split-wide smem tiles, then the states merge cross-team
 /// ([`merge_splits`](cubek_tile::Tile)) and the drain folds the split
 /// weights and the normalizer in. `splits == 1` degenerates to the plain
-/// fold — one code path for both.
+/// fold: one code path for both.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_split_kernel<W: Size>(
     q: &TileArg<'_, f32, W>,           // {G, QP, D}
-    k: &TileArg<'_, f32, W>,           // {S, D} — omits the group axis
+    k: &TileArg<'_, f32, W>,           // {S, D}: omits the group axis
     v: &TileArg<'_, f32, W>,           // {S, V}
     mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
     out: &mut Tensor<f32>,             // [G·QP·V] flat
@@ -623,7 +623,7 @@ fn split_fold_idle_teams() {
     run_split((4, 4, 2, 1, 16, 8, 8, 8), 10, false, 1);
 }
 
-/// The streaming fold: the decode shape with no score tile — each plane (one
+/// The streaming fold: the decode shape with no score tile, where each plane (one
 /// per split team on the cube's y dim) streams its S slice through
 /// [`StreamFold`], and the same split ending as the shared-memory fold
 /// (publish, [`merge_splits`](cubek_tile::Tile), weighted drain) closes it.
@@ -655,7 +655,7 @@ fn attention_stream_test_kernel<W: Size>(
     let size!(N) = q.vector_size();
     let mut fold = StreamFold::<f32, N>::new(&q, lanes, kept);
 
-    // This team's contiguous slice of the walk — no barriers anywhere.
+    // This team's contiguous slice of the walk: no barriers anywhere.
     let t = UNIT_POS_Y as usize;
     let bound_s = bound as usize;
     let k_walk = Walk::over(k.runtime_space());

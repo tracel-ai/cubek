@@ -49,7 +49,7 @@ use crate::{
 };
 
 // =====================================================================
-// StageMatmul — matmul-domain configuration enum
+// StageMatmul: matmul-domain configuration enum
 // =====================================================================
 
 /// Stage-level matmul instance. The variant tags which compute primitive owns

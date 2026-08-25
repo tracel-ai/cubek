@@ -1,4 +1,4 @@
-//! Both families on one table: each branch owns its entries, this concatenates
+//! Both architectures on one table: each branch owns its entries, this concatenates
 //! whichever are compiled.
 
 use cubek_test_utils::CatalogEntry;

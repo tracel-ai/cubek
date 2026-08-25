@@ -44,7 +44,7 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
     supported
 }
 
-// Matmul's axes — the labels this client gives the engine's opaque `Axis`. `B`
+// Matmul's axes: the labels this client gives the engine's opaque `Axis`. `B`
 // is the leading batch axis; `M`/`N`/`K` are the matrix axes.
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -384,7 +384,7 @@ fn matmul_broadcast_lhs_only() {
 
 /// Both batch axes ride cube-Z at once: `B0` and `B1` are `Spatial { Cube(Z) }`, so
 /// the launch puts their *product* on Z and the walk decodes one cube's `CUBE_POS_Z`
-/// back into `(b0, b1)`. The same broadcast result as the sequential variants — this
+/// back into `(b0, b1)`. The same broadcast result as the sequential variants: this
 /// is what lets CpuGemm parallelise the whole batch on Z.
 #[test]
 fn matmul_broadcast_two_batch_axes_on_z() {
@@ -871,8 +871,92 @@ fn matmul_staged_invariant_lhs() {
         .enforce()
 }
 
+/// A level whose edges equal the extents handed to it partitions nothing, so the build drops
+/// it: the two plans are one [`Space`] and compile one kernel, and the kernel is the one the
+/// plain plan describes. Its operands' residence columns lose the padded entry with it.
+#[test]
+fn matmul_a_level_that_cuts_nothing_is_dropped() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k) = (8usize, 8usize, 8usize);
+    let seq = |edge| Cut::sequential(edge);
+    let dtype = f32::elem_type_native();
+    let operands = || {
+        (
+            Operand::new(&[M, K], dtype),
+            Operand::new(&[K, N], dtype),
+            Operand::new(&[M, N], dtype),
+        )
+    };
+
+    let mut plain_ops = operands();
+    let plain = Tiling::over(&mut plain_ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .build();
+
+    let mut ops = operands();
+    // The second level's edges are the first's: every axis's count is 1, and no operand
+    // states anything here.
+    let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            o.0.stage(Residence::Smem);
+            o.1.stage(Residence::Smem);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+        })
+        .build();
+
+    assert_eq!(space, plain);
+    assert_eq!(space.cube_dim(&client), plain.cube_dim(&client));
+    assert_eq!(ops.0.residences(), plain_ops.0.residences());
+
+    let a = TileInput::builder(&client, space.project(ops.0.axes()))
+        .operand(&ops.0)
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(ops.1.axes()))
+        .operand(&ops.1)
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .untiled()
+        .zeros();
+
+    launch_staged_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        CubeDim::new_single(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
 /// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint
-/// column of the register-leaf output and contracts the whole K in registers — the
+/// column of the register-leaf output and contracts the whole K in registers: the
 /// gemv-perpendicular mapping. `Cut::unit` declares the split without the lane count;
 /// [`Space::resolve_lanes`] (the launch's stamping pass) fills it from the hardware
 /// `plane_size`, so the Unit axis rides the warp's lanes on the cube's X dim.
@@ -963,6 +1047,9 @@ fn cmma_matmul_staged_n_walk_partition() {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
+            // The output spans no contracted axis, so L0 holds one region for it: the
+            // accumulator opened here lives across the whole K walk below.
+            o.2.stage(Residence::Register);
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
@@ -995,6 +1082,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .operand(&ops.2)
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -1053,6 +1141,9 @@ fn cmma_matmul_double_buffered_plane_stage() {
             l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
+            // The output spans no contracted axis, so L0 holds one region for it: the
+            // accumulator opened here lives across the whole K walk below.
+            o.2.stage(Residence::Register);
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
@@ -1085,6 +1176,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(ops.2.axes()))
+        .operand(&ops.2)
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1315,7 +1407,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .enforce()
 }
 
-/// The kernel: `c.mma(a, b)` — `c` is a whole tensor, so it lowers; the move comes
+/// The kernel is `c.mma(a, b)`: `c` is a whole tensor, so it lowers; the move comes
 /// from its partitioner's `Buffering` (here `.buffered(Buffering::SINGLE)` or `.buffered(Buffering::DOUBLE)`).
 #[cube(launch)]
 fn launch_staged_matmul<E: Numeric, V: Size>(
@@ -1344,15 +1436,14 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.accumulate(&a, LeafOp::Sum);
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    c.copy_from(&acc);
 }
 
 /// Quantized `A` through the resident K walk: `A` is served via its quant arg, so `acc.mma`
-/// dequantizes each K-stage's smem fill on its own — the fill recovers the storage element from
+/// dequantizes each K-stage's smem fill on its own: the fill recovers the storage element from
 /// the scheme, so the kernel threads no `I` into the walk and the body is [`launch_resident_matmul`]
 /// verbatim but for `A`'s served type. Tensor-core only.
 #[cube(launch)]
@@ -1366,16 +1457,14 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.accumulate(&a, LeafOp::Sum);
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    c.copy_from(&acc);
 }
 
-/// The CPU kernel: `c.zero()` then `c.mma(a, b)` (the production cpu_gemm body — the
-/// register leaf accumulates in place, so the routine zeroes first); the default
-/// `InPlace` residence selects the no-staging move. Operands are size-free —
+/// The CPU kernel: `c.zero()` then `c.mma(a, b)` straight on the output, with no accumulator
+/// scope around it: what an `InPlace` scope lowers to, spelled by hand. Operands are size-free:
 /// vectorization is a launch concern, not threaded through the DSL.
 #[cube(launch)]
 fn launch_cpu_matmul<E: Numeric>(
@@ -1405,11 +1494,10 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    acc.drain_cast_into(&mut c);
 }
 
 /// The register leaf contracts through a promoted block rather than through the output, so a
@@ -1418,7 +1506,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
 #[test]
 fn register_matmul_promoted_accumulator() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    // One block per instance (a 1x1 partition at the leaf), K walked in four steps — every
+    // One block per instance (a 1x1 partition at the leaf), K walked in four steps: every
     // step returns to the same promoted accumulator, which is the round trip this removes.
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
     let partitioner = Partitioner::row_major(
@@ -1440,6 +1528,7 @@ fn register_matmul_promoted_accumulator() {
         .arange();
     // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1506,6 +1595,7 @@ fn register_matmul_promoted_cube_plane() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1572,11 +1662,10 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, LeafOp::Sum);
     acc.zero();
     acc.mma(&a, &b);
-    acc.drain_cast_into(&mut c);
 }
 
 /// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
@@ -1660,6 +1749,7 @@ fn register_matmul_promoted_lined_lhs() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -1967,7 +2057,7 @@ fn run_folded_step_quant(
 /// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no
 /// arithmetic: gmem → smem → cmma (load) → smem → gmem (store). Validates that the
 /// `TileKind::Cmma` transit (`cmma::load_with_layout` / `cmma::store`) preserves data.
-/// Tensor-core only — skipped on backends without cmma (wgpu/cpu); run with
+/// Tensor-core only: skipped on backends without cmma (wgpu/cpu); run with
 /// `cargo test-metal`.
 #[test]
 fn cmma_fragment_roundtrip() {
@@ -2001,7 +2091,7 @@ fn cmma_fragment_roundtrip() {
         .enforce()
 }
 
-/// gmem → smem → cmma accumulator → smem → gmem — pure transit, no arithmetic.
+/// gmem → smem → cmma accumulator → smem → gmem: pure transit, no arithmetic.
 #[cube(launch)]
 fn cmma_roundtrip<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2044,7 +2134,7 @@ fn cmma_roundtrip<E: Numeric>(
 
 /// A real 8×8×8 matmul through tensor cores: `C = A · B`, contracted by `cmma::execute`
 /// on the cmma final space. Validates the fragment load → `execute` → store path against
-/// the register reference. Tensor-core only — run with `cargo test-metal`.
+/// the register reference. Tensor-core only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -2169,7 +2259,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
 
 /// A matmul through tensor cores with a K walk: the kernel promotes the accumulator to
 /// its register-resident form, the staged K regions accumulate into it, and the copy
-/// back to gmem is the epilogue. Tensor-core only — run with `cargo test-metal`.
+/// back to gmem is the epilogue. Tensor-core only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
     check_cmma_matmul_k_walk(16, Buffering::SINGLE);
@@ -2298,6 +2388,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2330,7 +2421,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         .enforce()
 }
 
-/// The manual/raw-mma instruction (`Instruction::Mma`): the raw-mma twin of `cmma_matmul_staged_k_walk` — the
+/// The manual/raw-mma instruction (`Instruction::Mma`): the raw-mma twin of `cmma_matmul_staged_k_walk`: the
 /// same resident promote → zero → mma → drain kernel, but the contraction runs through
 /// `MmaDefinition::execute` over register fragments rather than the cooperative `cmma::execute`.
 /// Gated on the backend exposing the manual-mma feature (`features.matmul.mma`); uses the universal
@@ -2374,6 +2465,7 @@ fn mma_matmul_8x8x8() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2409,7 +2501,7 @@ fn mma_matmul_8x8x8() {
 /// The multi-plane cmma stage: a double-buffered K walk fills a shared `16×8`/`8×16`
 /// stage cooperatively (cyclic across the cube's 128 units), and a plane-partitioned
 /// inner level hands each of the 4 planes its own `8×8` fragment, resident across all
-/// four K steps. Tensor-core only — run with `cargo test-metal`.
+/// four K steps. Tensor-core only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_plane_partitioned_stage() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -2451,6 +2543,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2510,7 +2603,7 @@ fn cmma_matmul_multi_fragment_partition() {
                 .axis(N, Cut::plane(part))
                 .axis(K, seq(stage_k))
         })
-        // L2: the partition level — 2×2 fragments per plane, 2 K sub-tiles.
+        // L2: the partition level, 2×2 fragments per plane, 2 K sub-tiles.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
         })
@@ -2532,6 +2625,7 @@ fn cmma_matmul_multi_fragment_partition() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -2713,7 +2807,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
 }
 
 /// Block-quantized `A` (block along `M`): one flat `8×8` smem fill spans both scale blocks, the
-/// per-line lookup picking each line's scale — `A`'s space needs no block sub-level. The cmma
+/// per-line lookup picking each line's scale: `A`'s space needs no block sub-level. The cmma
 /// fragment then reads the whole `8×8` smem. Validates block windowing into the matmul stage.
 #[test]
 fn cmma_matmul_quant_block_m_8x8x8() {
@@ -2880,7 +2974,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 }
 
 /// Per-tensor-quantized `A` (i8) through the resident K walk, staged: `K = 16` runs in two
-/// `8`-deep K regions, and each region's smem fill dequantizes `A` on its own — the same
+/// `8`-deep K regions, and each region's smem fill dequantizes `A` on its own: the same
 /// `launch_resident_matmul_quant` body as the plain K walk. The self-describing fill in action.
 /// Tensor-core only.
 #[test]
@@ -2953,6 +3047,7 @@ fn mma_matmul_quant_until_read() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3045,6 +3140,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3089,7 +3185,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
 }
 
 /// Block-M-quantized `A` through the resident K walk: one K stage stages the whole `M = 8`, which
-/// spans two `bm = 4` scale blocks, so a single cooperative fill dequantizes across two scales —
+/// spans two `bm = 4` scale blocks, so a single cooperative fill dequantizes across two scales:
 /// the per-line scale lookup, not the one-scale-per-window assumption. `acc.mma` still just works.
 /// Tensor-core only.
 #[test]
@@ -3141,6 +3237,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3185,7 +3282,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
 }
 
 /// Block-K-quantized `A` through the resident K walk (the quantized-weight case): the scale
-/// changes partway through each `8`-deep K stage (`bk = 4`), and it changes again between stages —
+/// changes partway through each `8`-deep K stage (`bk = 4`), and it changes again between stages,
 /// so the per-line scale lookup must fold in the stage's `window_start`. `acc.mma` just works.
 /// Tensor-core only.
 #[test]
@@ -3237,6 +3334,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3281,7 +3379,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
 }
 
 /// Block-K-quantized `A` served in 2-wide lines: the blocks sit on the vectorized inner axis, so
-/// a line's coordinate counts lines while its scale block is cut in elements — the widening
+/// a line's coordinate counts lines while its scale block is cut in elements: the widening
 /// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a stage's scale still changes mid-fill.
 /// Tensor-core only.
 #[test]
@@ -3333,6 +3431,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -3454,6 +3553,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         .untiled()
         .arange();
     let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
         .untiled()
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
@@ -3633,9 +3733,9 @@ fn cmma_matmul_staged_k_walk_vectorized() {
 // ---- Quantized A through the register (plain-ALU) leaf --------------------------------
 //
 // Every other quant matmul above runs `acc.mma()` on tensor cores and skips where cmma is
-// absent — which is everywhere the memory-bound GEMV actually lives. These pin the other
+// absent, which is everywhere the memory-bound GEMV actually lives. These pin the other
 // leaf: the staged walk stages `A`'s *packed storage words* into smem (`Tile::copy_from`), and
-// the software instruction dequantizes each read out of smem through `matrix_transparent` — no
+// the software instruction dequantizes each read out of smem through `matrix_transparent`: no
 // f32 inflation of the stage, no promotion, no cmma, no i8 needed for the packed cases (the
 // binding is a `u32`).
 
@@ -3656,7 +3756,20 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     c.mma(&a, &b);
 }
 
-/// One staged level cutting `tm×tn×tk` register-leaf tiles — the shape `check_matmul`
+/// The output operand of a promoting plan: [`Residence::Register`] at the top level, in place
+/// below it. The output spans no contracted axis, so its top level already holds one region per
+/// instance, and stating `Register` there is what opens an accumulator living across everything
+/// under it. The column is one entry per level, so the space's depth sizes it.
+fn accumulator_in_registers(space: &Space) -> Operand {
+    let mut out = Operand::new(&[M, N], f32::elem_type_native());
+    out.stage(Residence::Register);
+    for _ in 1..space.partitioner().depth() {
+        out.stage(Residence::InPlace);
+    }
+    out
+}
+
+/// One staged level cutting `tm×tn×tk` register-leaf tiles: the shape `check_matmul`
 /// drives, minus the storage tiling (operands stay plain strided).
 /// The one-level partitioner both the staged and the direct-serve register-leaf tests walk. They
 /// differ only in what the operands ask for there ([`Residence::Smem`] vs
@@ -3905,7 +4018,7 @@ fn run_register_matmul_quant(
 
 // ---- Quantized B (RHS) through the register leaf ---------------------------------------
 //
-// The gemv production shape: the *weight* is the streamed RHS — `(K, N) = (d_in, d_out)`,
+// The gemv production shape: the *weight* is the streamed RHS at `(K, N) = (d_in, d_out)`,
 // packed along `d_out` (the innermost axis) with one scale per `(k, N-group)` block
 // (`[1, bn]`). A stays float. The RHS's served width drives the accumulator's line width
 // in the register instruction, so `C` is launched at the same width.
@@ -3926,7 +4039,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     c.mma(&a, &b);
 }
 
-/// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]` — the exact scheme
+/// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]`: the exact scheme
 /// family `metabolic`'s gemv ships (`q8s`, packed-u32, block scales along `d_out`).
 #[test]
 fn register_matmul_quant_rhs_packed_q8() {
@@ -3959,7 +4072,7 @@ fn register_matmul_quant_rhs_packed_q4() {
     );
 }
 
-/// The decode shape itself: a single activation row (`m = 1`) against the packed weight —
+/// The decode shape itself: a single activation row (`m = 1`) against the packed weight,
 /// what every projection degenerates to during token-by-token generation.
 #[test]
 fn register_matmul_quant_rhs_gemv_row() {
@@ -4005,7 +4118,7 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 
 /// Direct-serve the quantized RHS weight (Keystone K): an `InPlace` residence stages nothing,
 /// so the register leaf reads the packed weight straight from gmem and dequantizes *per read*
-/// through [`matrix_transparent`] — the sync-free `m = 1` decode path. The `_rhs_*` tests above are
+/// through [`matrix_transparent`]: the sync-free `m = 1` decode path. The `_rhs_*` tests above are
 /// all staged ([`Residence::Smem`]): they stage the weight's *packed words* into smem (plus its
 /// scales) and dequantize per read out of smem. Same answer; direct avoids even the smem
 /// round-trip.
@@ -4036,7 +4149,7 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
 
 /// The Goal path: a staged ([`Residence::Smem`]) packed weight whose smem stage holds the *packed
 /// u32 words*, not a dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with block
-/// `[1, bn]` scales — distinct along K — so each region refills both the staged packed words and
+/// `[1, bn]` scales (distinct along K), so each region refills both the staged packed words and
 /// the staged scales, and the leaf dequantizes per read out of smem via [`matrix_transparent`].
 /// This is the batched weight-streaming case the change targets: the contrast to the f32-inflated
 /// stage the cmma leaf still uses, and to the sync-free direct serve above.

@@ -291,7 +291,7 @@ fn select_size(
     (rows, plane_count / rows, plane_count)
 }
 
-/// The instruction shape for this problem — [`crate::multi_level::find_instruction_size`]
+/// The instruction shape for this problem: [`crate::multi_level::find_instruction_size`]
 /// with matmul's own error on the empty case, and the client and element triple
 /// bound into its capability closures. The stages itself is shape-only and takes
 /// neither, so a selector without a runtime in hand can call it.

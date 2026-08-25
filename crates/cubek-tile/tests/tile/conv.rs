@@ -1931,11 +1931,10 @@ fn conv_mma_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
-    let mut acc = out.accumulate(&input, LeafOp::Sum);
+    let out = out.tile(space);
+    let mut acc = out.accumulate::<E, _>(&input, LeafOp::Sum);
     acc.zero();
     acc.mma(&input, &weight);
-    out.copy_from(&acc);
 }
 
 #[test]
@@ -2014,7 +2013,9 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[OH, CO]),
+            // The manual-mma leaf contracts register fragments, so the output states where its
+            // accumulator lives: registers, for the one level there is.
+            TileSpec::direct(&[OH, CO]).residence(&[Residence::Register]),
         ),
         space.with_instruction(instruction),
         f32_ty,

@@ -1,6 +1,6 @@
 //! Forced-blueprint tests covering awkward / non-aligned spatial sizes,
 //! channel counts, and tall/skinny problems. Uses the simple sync-cyclic
-//! algorithm as the representative routine — the goal is to exercise
+//! algorithm as the representative routine: the goal is to exercise
 //! bounds-checking and vector-size handling under odd shapes, not to cover
 //! every routine.
 

@@ -37,8 +37,8 @@ pub struct TileInput {
 impl TileInput {
     /// Start building a tile over `space`. Stack tiling levels coarse→fine with
     /// [`split`](TileInputBuilder::split) (by count) or
-    /// [`tile`](TileInputBuilder::tile) (by element edge) — chain them for
-    /// recursion, or [`untiled`](TileInputBuilder::untiled) for none — then a data
+    /// [`tile`](TileInputBuilder::tile) (by element edge): chain them for
+    /// recursion, or [`untiled`](TileInputBuilder::untiled) for none, then a data
     /// finalizer ([`arange`](TileInputBuilder::arange) /
     /// [`zeros`](TileInputBuilder::zeros)).
     pub fn builder(client: &ComputeClient<TestRuntime>, space: Space) -> TileInputBuilder {
@@ -50,7 +50,7 @@ impl TileInput {
         }
     }
 
-    /// Launch arg for this tile's view — the buffer seen in its logical space.
+    /// Launch arg for this tile's view: the buffer seen in its logical space.
     /// Every logical axis is tiled (`num_tiled = space.rank()`), recursively for
     /// `levels` nested tile levels.
     pub fn view(&self) -> TiledViewLaunch<TestRuntime> {
@@ -99,7 +99,7 @@ impl TileInput {
         )
     }
 
-    /// Launch arg for this tile's raw global buffer — a plain [`TensorArg`] over the
+    /// Launch arg for this tile's raw global buffer: a plain [`TensorArg`] over the
     /// `[grid…, tile…]` buffer, optionally re-lined by `vector_size` along the inner
     /// axis (so a kernel reading raw `Vector<E, S>` slices lands on contiguous lines).
     /// `vector_size == 1` is the plain buffer. For `Tile::of` pass the plain buffer:
@@ -188,7 +188,7 @@ impl TileInputBuilder {
         self
     }
 
-    /// Divide the current tile into `counts[axis]` sub-tiles per axis — a finer
+    /// Divide the current tile into `counts[axis]` sub-tiles per axis: a finer
     /// level. Chain for recursion: `.split(&[4, 4]).split(&[2, 2])`.
     pub fn split(mut self, counts: &[usize]) -> Self {
         self.levels
@@ -197,7 +197,7 @@ impl TileInputBuilder {
         self
     }
 
-    /// Set the current tile to `edges[axis]` elements per axis — a finer level.
+    /// Set the current tile to `edges[axis]` elements per axis: a finer level.
     /// The dual of [`split`](Self::split) (it divides the current edge down to
     /// `edges`), so `.tile(&[16, 16]).tile(&[8, 8])` ≡ `.tile(&[16, 16]).split(&[2, 2])`.
     pub fn tile(mut self, edges: &[usize]) -> Self {
@@ -208,7 +208,7 @@ impl TileInputBuilder {
     }
 
     /// No sub-tiling: the buffer is the logical shape itself, row-major (zero tile
-    /// levels — the view is the identity).
+    /// levels: the view is the identity).
     pub fn untiled(mut self) -> Self {
         self.levels = Some(Vec::new());
         self
@@ -220,7 +220,7 @@ impl TileInputBuilder {
         self.build(TestInputBuilder::arange)
     }
 
-    /// All-zeros physical buffer — e.g. a matmul output.
+    /// All-zeros physical buffer: e.g. a matmul output.
     pub fn zeros(self) -> TileInput {
         self.build(TestInputBuilder::zeros)
     }
@@ -230,11 +230,11 @@ impl TileInputBuilder {
         self.build(|b: TestInputBuilder| b.uniform(seed, lo, hi))
     }
 
-    /// Continue as a packed-u32 quantized input: a *container* step, like the tiling ones —
+    /// Continue as a packed-u32 quantized input: a *container* step, like the tiling ones.
     /// the tile will be declared **in values** (its shape and strides count them) while the
     /// buffer holds the packed words, the binding convention the tile launch expects for a
     /// packed operand. Content comes from the quantized builder's own finalizer (e.g.
-    /// [`arange`](QuantizedTileInputBuilder::arange)), which also mints the scales — a
+    /// [`arange`](QuantizedTileInputBuilder::arange)), which also mints the scales: a
     /// quantized tensor is one thing (data + scales + scheme). Untiled only: packed storage
     /// has no physically tiled layout.
     pub fn packed(self, scheme: &QuantScheme, dequant_at: DequantAt) -> QuantizedTileInputBuilder {
@@ -257,7 +257,7 @@ impl TileInputBuilder {
     /// Build the `[grid…, level…, finest…]` device buffer, filled by `fill` (a
     /// `TestInput` finalizer like `arange`/`zeros`) in physical row-major order.
     /// Walking coarse→fine, each level becomes one block of `rank` dims and the
-    /// leftover edge is the finest block — `(levels + 1) * rank` dims, the layout
+    /// leftover edge is the finest block: `(levels + 1) * rank` dims, the layout
     /// the `tiled_view` reads back.
     fn build(self, fill: impl FnOnce(TestInputBuilder) -> TestInput) -> TileInput {
         let levels = self
@@ -315,7 +315,7 @@ impl TileInputBuilder {
 
 /// The quantized continuation of a [`TileInputBuilder`]: the container is fixed
 /// (packed-u32, values-unit declaration, the scheme's block grid for scales); a content
-/// finalizer fills it and mints the values tile and its scales together — a quantized
+/// finalizer fills it and mints the values tile and its scales together: a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
     residence: Vec<Residence>,
@@ -372,7 +372,7 @@ impl QuantizedTileInputBuilder {
     }
 
     /// [`arange`](Self::arange) for a lookup scheme: the packed fields walk the table indices
-    /// **descending** — `2^bits - 1, …, 1, 0, 2^bits - 1, …` — so every entry is read *and* the
+    /// **descending** (`2^bits - 1, …, 1, 0, 2^bits - 1, …`), so every entry is read *and* the
     /// field is never the identity of its position: a decode that indexed the table by position
     /// instead of by the unpacked field would pass an ascending walk. The scales are the same
     /// distinct-per-block ramp, and `table` uploads beside them. Panics unless the scheme's mode
@@ -431,7 +431,7 @@ impl QuantizedTileInputBuilder {
     }
 }
 
-/// A packed-quantized input born whole — a quantized tensor is one thing (data, scales,
+/// A packed-quantized input born whole: a quantized tensor is one thing (data, scales,
 /// scheme), so the [`quantized builder`](QuantizedTileInputBuilder) mints the pair together,
 /// plus the exact numbers behind both for host references.
 pub struct QuantizedTileInput {

@@ -8,12 +8,12 @@ use cubek_std::MatmulProblemSize;
 /// one, then `8x8x8`, then whatever the device supports at all.
 ///
 /// `tm`/`tn`/`tk` force an axis when `Some`, and a forced axis filters every
-/// candidate including the fallback — so forcing a shape the device cannot serve
+/// candidate including the fallback, so forcing a shape the device cannot serve
 /// yields `None` rather than silently picking another.
 ///
 /// This is a heuristic over *shapes*, and takes nothing else: `is_supported` answers
 /// whether one `m×n×k` may be used, `fallback_sizes` lists what to fall back to.
-/// Element types, a compute client, a device — whatever a caller needs to answer
+/// Element types, a compute client, a device: whatever a caller needs to answer
 /// that, it closes over. Which is what lets it sit beside the size types it returns
 /// rather than inside a routine: matmul, convolution and attention all pick an
 /// instruction the same way, and a selector that plans against a hardware snapshot
@@ -22,7 +22,7 @@ use cubek_std::MatmulProblemSize;
 /// "Supported" is the caller's word, not the device's. A selector that also requires
 /// the shape to divide its problem folds that into `is_supported` and into what
 /// `fallback_sizes` lists, and the preference order then applies to exactly the
-/// shapes it would accept — the operand never returns one the caller would reject.
+/// shapes it would accept: the operand never returns one the caller would reject.
 ///
 /// `None` means no candidate was both supported and consistent with the forced
 /// axes. Callers with a richer error map it to their own.

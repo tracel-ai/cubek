@@ -14,6 +14,6 @@ pub use error::*;
 pub use precision::*;
 pub use vectorization::*;
 
-// Internal-only — external crates import this directly from cubek-std.
+// Internal-only: external crates import this directly from cubek-std.
 #[cfg(feature = "multi-level")]
 pub(crate) use cubek_std::StageIdent;

@@ -560,7 +560,7 @@ impl<T: Numeric> Tile<T> {
 
     /// What this tile's cells are to the plane's lanes: whole, or a partial only true once
     /// combined across the plane. A resident form inherits it from the memory it was promoted
-    /// from — the split is the space's, not the storage's.
+    /// from: the split is the space's, not the storage's.
     pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
@@ -833,7 +833,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
-    /// own width): index `i` reads line `origin + i` — one add, no layout
+    /// own width): index `i` reads line `origin + i`, one add and no layout
     /// walk. See [`MemData::dense_lines`] for the (caller-owned) contiguity
     /// contract; the streaming fold's operands satisfy it by construction.
     pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
@@ -902,7 +902,10 @@ impl<T: Numeric> Tile<T> {
     /// type. [`copy_from`](Self::copy_from) can't: its transports move bytes so stay same-type,
     /// but a register accumulator (`f32`) is wider than the output it writes (`f16`). Only a
     /// fragment partition drains this way.
-    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+    ///
+    /// Crate-internal: what closes an accumulator's scope is the scope's own business
+    /// ([`AccumulatorScope`](crate::AccumulatorScope)), not a call site's.
+    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::PlanePartition(s) => s.drain_cast_into(dst),
             TileKind::Gmem(_)

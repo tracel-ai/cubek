@@ -68,7 +68,7 @@ pub fn strategy_result(
 /// inputs, run the naive flash-attention-v2 reference, return the result as
 /// a [`HostData`].
 ///
-/// Slow on bench-scale problems by design — only useful as a ground truth.
+/// Slow on bench-scale problems by design: only useful as a ground truth.
 pub fn cpu_reference_result(
     client: ComputeClient<TestRuntime>,
     problem: AttentionProblem,
@@ -88,7 +88,7 @@ pub fn cpu_reference_result(
 }
 
 /// Number of progress bumps [`flash_attention_v2_reference`] will produce for
-/// `problem`. Granularity is one bump per `(batch, head, seq_q)` row — the
+/// `problem`. Granularity is one bump per `(batch, head, seq_q)` row: the
 /// inner `seq_kv` reduction dominates runtime, so per-cell bumps would be
 /// noisy rather than informative.
 pub fn flash_attention_v2_reference_total(problem: &AttentionProblem) -> u64 {
@@ -236,7 +236,7 @@ pub fn attention_epsilon(elems: &AttentionElems, safety_factor: f32) -> f32 {
     total_eps as f32 * safety_factor
 }
 
-/// Naive flash-attention-v2 reference. Slow on large payloads — intended only
+/// Naive flash-attention-v2 reference. Slow on large payloads: intended only
 /// for testing.
 pub fn flash_attention_v2_reference(
     query: &HostData,
