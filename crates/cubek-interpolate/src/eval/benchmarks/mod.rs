@@ -7,7 +7,9 @@ mod strategy;
 pub use benchmark::bench;
 pub use correctness::InterpolateCorrectness;
 pub use problem::{problems, problems_scaled};
-pub use strategy::{InterpolateBenchmarkStrategy, strategies};
+pub use strategy::{
+    BenchTarget, BenchTier, InterpolateBenchmarkStrategy, every_strategy, strategies, strategies_at,
+};
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
@@ -32,7 +34,7 @@ impl cubek_test_utils::Category for Category {
     }
 
     fn strategies(&self) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
-        strategies()
+        strategies(BenchTarget::Gpu)
     }
 
     fn bench(
@@ -83,7 +85,7 @@ impl cubek_test_utils::Category for CpuCategory {
     }
 
     fn strategies(&self) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
-        strategies()
+        strategies(BenchTarget::Cpu)
     }
 
     fn bench(

@@ -21,9 +21,9 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 }
 
 fn run(strategy_id: &str, problem_id: &str) {
-    use cubek_interpolate::eval::benchmarks::{problems, strategies};
+    use cubek_interpolate::eval::benchmarks::{every_strategy, problems};
 
-    let strategy: InterpolateBenchmarkStrategy = lookup(strategies(), strategy_id);
+    let strategy: InterpolateBenchmarkStrategy = lookup(every_strategy(), strategy_id);
     let problem: InterpolateProblem = lookup(problems(), problem_id);
 
     let actual = match InterpolateCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
