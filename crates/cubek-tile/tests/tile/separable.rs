@@ -629,3 +629,354 @@ fn masked_normalization_excludes_a_procedural_overhang() {
     // Sum across chunks yields 1.5 + 3.0 = 4.5.
     assert!((got - 4.5).abs() < 1.0e-6, "got {got}, want 4.5");
 }
+
+// ---- masked normalization against Gmem Boundary::Zero input -----------------
+
+#[cube(launch)]
+fn resample_kernel_masked<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weights = Tile::<E>::procedural_separable::<Weights<E>>(
+        comptime!(space.project(&[ROW, TAP[0]])),
+        resample_weights::<E>(),
+    )
+    .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
+
+    let mut output = output.tile(space);
+    output.zero();
+    output.mma(&weights, &input);
+}
+
+#[test]
+fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    // Deliberately clip input rows so the last output row's tap window overhangs the edge.
+    let in_rows = resample_origin(RROWS - 1) + 1;
+    let in_shape = shape![in_rows, RCOLS];
+    let in_data = ramp(in_shape.num_elements());
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![RROWS, RCOLS])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(RROWS))
+                .axis(COL, Cut::sequential(RCOLS))
+                .axis(TAP[0], Cut::sequential(RTAPS))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[ROW, TAP[0], COL],
+        &[
+            PhysicalAxisMap::affine(&[(ROW, ROW_NUM), (TAP[0], RESAMPLE)]).over(RESAMPLE),
+            PhysicalAxisMap::of(COL),
+        ],
+    ))
+    .checked(true);
+
+    resample_kernel_masked::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for row in 0..RROWS {
+        for col in 0..RCOLS {
+            let mut num = 0.0f32;
+            let mut den = 0.0f32;
+            for tap in 0..RTAPS {
+                let in_r = resample_origin(row) + tap;
+                if in_r < in_rows {
+                    let w = factor_value(0, tap, row);
+                    num += w * in_data[in_r * RCOLS + col];
+                    den += w;
+                }
+            }
+            let want = if den != 0.0 { num / den } else { 0.0 };
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-4,
+                "masked gmem resample: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
+}
+
+// ---- column-spanning normalized separable contraction -----------------------
+
+#[cube(launch)]
+fn column_spanning_resample_kernel<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weights = Tile::<E>::procedural_separable::<Weights<E>>(
+        comptime!(space.project(&[ROW, COL, TAP[0]])),
+        resample_weights::<E>(),
+    )
+    .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
+
+    let mut output = output.tile(space);
+    output.zero();
+    output.mma(&weights, &input);
+}
+
+#[test]
+fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    // `Weights` only reads `TAP[0]` and `ROW`, so adding `COL` to the LHS space isolates the
+    // column-spanning coordinate schedule without changing the mathematical values.
+    let in_rows = resample_origin(RROWS - 1) + RTAPS;
+    let in_shape = shape![in_rows, RCOLS];
+    let in_data = ramp(in_shape.num_elements());
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![RROWS, RCOLS])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(RROWS))
+                .axis(COL, Cut::sequential(RCOLS))
+                .axis(TAP[0], Cut::sequential(RTAPS))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[ROW, TAP[0], COL],
+        &[
+            PhysicalAxisMap::affine(&[(ROW, ROW_NUM), (TAP[0], RESAMPLE)]).over(RESAMPLE),
+            PhysicalAxisMap::of(COL),
+        ],
+    ));
+
+    column_spanning_resample_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for row in 0..RROWS {
+        for col in 0..RCOLS {
+            let mut want = 0.0f32;
+            for tap in 0..RTAPS {
+                let at = (resample_origin(row) + tap) * RCOLS + col;
+                want += factor_value(0, tap, row) * in_data[at];
+            }
+            want /= (0..RTAPS).map(|tap| factor_value(0, tap, row)).sum::<f32>();
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-4,
+                "column spanning separable resample: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
+}
+
+#[cube(launch)]
+fn column_spanning_resample_kernel_masked<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weights = Tile::<E>::procedural_separable::<Weights<E>>(
+        comptime!(space.project(&[ROW, COL, TAP[0]])),
+        resample_weights::<E>(),
+    )
+    .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
+
+    let mut output = output.tile(space);
+    output.zero();
+    output.mma(&weights, &input);
+}
+
+#[test]
+fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    // Deliberately clip input rows so trailing output rows overhang the Boundary::Zero edge.
+    let in_rows = resample_origin(RROWS - 1) + 1;
+    let in_shape = shape![in_rows, RCOLS];
+    let in_data = ramp(in_shape.num_elements());
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![RROWS, RCOLS])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(RROWS))
+                .axis(COL, Cut::sequential(RCOLS))
+                .axis(TAP[0], Cut::sequential(RTAPS))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[ROW, TAP[0], COL],
+        &[
+            PhysicalAxisMap::affine(&[(ROW, ROW_NUM), (TAP[0], RESAMPLE)]).over(RESAMPLE),
+            PhysicalAxisMap::of(COL),
+        ],
+    ))
+    .checked(true);
+
+    column_spanning_resample_kernel_masked::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for row in 0..RROWS {
+        for col in 0..RCOLS {
+            let mut num = 0.0f32;
+            let mut den = 0.0f32;
+            for tap in 0..RTAPS {
+                let in_r = resample_origin(row) + tap;
+                if in_r < in_rows {
+                    let w = factor_value(0, tap, row);
+                    num += w * in_data[in_r * RCOLS + col];
+                    den += w;
+                }
+            }
+            let want = if den != 0.0 { num / den } else { 0.0 };
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-4,
+                "column spanning masked gmem resample: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
+}
+
+// ---- zero factor sum taking fallback without poisoning siblings -------------
+
+#[cube(launch)]
+fn zero_sum_fallback_kernel<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let mut factors = Sequence::new();
+    // Factor 0: taps at k=0 (1.0) and k=1 (-1.0), sum = 0.0
+    factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(-2.0_f32)));
+    // Factor 1: taps at k=0 (2.0) and k=1 (2.0), sum = 4.0
+    factors.push(affine_along(TAP[1], E::new(2.0_f32), E::new(0.0_f32)));
+    let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
+        comptime!(space.project(&[ROW, TAP[0], TAP[1]])),
+        separable_product(factors),
+    )
+    .normalized(
+        comptime!(TapMask::Unmasked),
+        comptime!(DivGuard {
+            epsilon: 1.0e-7,
+            fallback: 3.0,
+        }),
+    );
+
+    let mut output = output.tile(space);
+    output.zero();
+    output.mma(&weights, &input);
+}
+
+#[test]
+fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    let in_handle = TestInput::builder(client.clone(), shape![2, 2, 1])
+        .dtype(f32_ty)
+        .custom(vec![1.0f32; 4])
+        .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![1, 1])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(1))
+                .axis(COL, Cut::sequential(1))
+                .axis(TAP[0], Cut::sequential(2))
+                .axis(TAP[1], Cut::sequential(2))
+        })
+        .build();
+
+    zero_sum_fallback_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            in_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[TAP[0], TAP[1], COL]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32).get_f32(&[0, 0]);
+    // Factor 0 has sum 0.0 -> fallback recip 3.0 -> taps become [3.0, -3.0].
+    // Factor 1 has sum 4.0 -> recip 0.25 -> taps become [0.5, 0.5].
+    // Product sum = (3.0 - 3.0) * (0.5 + 0.5) * 1.0 = 0.0.
+    assert!((got - 0.0).abs() < 1.0e-6, "got {got}, want 0.0");
+}

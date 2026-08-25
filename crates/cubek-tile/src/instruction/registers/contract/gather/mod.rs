@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "TapMask::Masked needs each contracted axis to move distinct input axes")]
+    #[should_panic(expected = "needs each contracted axis to move distinct input axes")]
     fn problem_rejects_masked_normalization_when_contracted_axes_share_input_axis() {
         let (lhs, rhs, acc) = spaces();
         let map = vec![
@@ -301,7 +301,7 @@ mod tests {
             &projection,
             block,
             Some(2),
-            Some((TapMask::Masked, DivGuard::default(), lhs)),
+            Some((TapMask::Masked, DivGuard::default(), lhs.clone())),
         );
     }
 
@@ -309,9 +309,11 @@ mod tests {
     #[should_panic(expected = "TapMask::Masked cannot cache weights across")]
     fn problem_rejects_masked_normalization_caching_across_shared_column_axis() {
         let (lhs, rhs, acc) = spaces();
+        // Fixture targets the column-caching check: K0 shares physical axis 0 with N, while
+        // physical axis 1 carries N to satisfy assert_separable_shapes.
         let map = vec![
             PhysicalAxisMap::affine(&[(K0, 1), (N, 1)]),
-            PhysicalAxisMap::of(K1),
+            PhysicalAxisMap::of(N),
         ];
         let projection = Projection::new(&[K0, K1, N], &map);
         let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
@@ -321,7 +323,7 @@ mod tests {
             &projection,
             block,
             Some(2),
-            Some((TapMask::Masked, DivGuard::default(), lhs)),
+            Some((TapMask::Masked, DivGuard::default(), lhs.clone())),
         );
     }
 

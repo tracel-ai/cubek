@@ -129,4 +129,41 @@ mod tests {
             );
         }
     }
+
+    fn test_scope() -> Scope {
+        Scope::root(cubecl::ir::settings::KernelSettings::new(
+            cubecl::ir::settings::Dim3::new_single(),
+            cubecl::ir::settings::ExecutionMode::Checked,
+            cubecl::ir::AddressType::U32,
+        ))
+    }
+
+    #[test]
+    #[should_panic(expected = "the procedural recipe states no separable factorization")]
+    fn normalized_rejects_an_opaque_procedural_recipe() {
+        let scope = test_scope();
+        let tile = Tile::<f32>::__expand_zeros(&scope, Space::new(&[(Axis(0), 4)]));
+        tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
+    }
+
+    #[test]
+    #[should_panic(expected = "only a separable procedural tile has factor runs")]
+    fn normalized_rejects_a_non_procedural_tile() {
+        let scope = test_scope();
+        let plane_tile = PlaneTile::<f32>::__expand_acc(
+            &scope,
+            Instruction::Cmma,
+            8,
+            8,
+            8,
+            1,
+            LaneShare::Whole,
+            LeafOp::Sum,
+        );
+        let tile = TileExpand::<f32> {
+            tile_kind: TileKindExpand::PlaneTile(plane_tile),
+            space: Space::new(&[(Axis(0), 4)]),
+        };
+        tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
+    }
 }

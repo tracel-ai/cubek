@@ -2391,7 +2391,6 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        // Delegates to factor-local axis bound checks across all physical boundary axes.
         self.axes_in_bounds(
             &pos,
             comptime!((0..self.boundaries.len()).collect::<Vec<_>>()),

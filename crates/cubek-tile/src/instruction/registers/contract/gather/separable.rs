@@ -1,13 +1,14 @@
 //! Cell-major gather for expensive procedural filters separable over the contracted axes.
 
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::instruction::registers::block;
 use crate::*;
 
 use super::{
     GatherProblem,
-    coords::{cell_position, cell_read, offset_last},
+    coords::{cell_position, offset_last},
 };
 
 /// Cache each factor's 1-D tap walk before consuming their Cartesian product for one cell.
@@ -27,10 +28,11 @@ use super::{
 /// accumulator's own column axis at coefficient `1`
 /// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so their source
 /// coordinates differ in that axis alone and one cell apart. The taps above them move only the
-/// contracted axes, which a resampling map steps outside its floor, so the whole run shares one
-/// anchor ([`AxisProjection::anchor`]) and each read is that anchor plus an addition. Re-running
-/// the map would spell every term again, and under a rational axis a divide with them, per line
-/// and per tap.
+/// contracted axes, which a resampling map steps outside its floor. Where the lhs does not span the
+/// column axis, the whole run shares one anchor ([`AxisProjection::anchor`]) per row; where it
+/// spans the column axis, each `(i, n)` cell anchors once and steps its taps via
+/// [`AxisProjection::advance`]. In both cases, reads and mask tests use the stepped physical
+/// coordinates rather than evaluating the projection terms per tap.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
     acc: &mut MemData<E>,
@@ -110,16 +112,20 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                             comptime!(factors),
                             comptime!(problem.offsets.clone()),
                         );
-                        let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
-                            &rhs_reader.view,
-                            &batch,
-                            i as u32,
-                            n as u32,
-                            &reduce_coords,
-                            comptime!(problem.rhs_space.clone()),
-                            comptime!(problem.clone()),
-                            comptime!(problem.block.vw),
-                        ));
+                        let base = rhs_reader.map.advance(
+                            &anchor,
+                            cell_position(
+                                &batch,
+                                i as u32,
+                                n as u32,
+                                &reduce_coords,
+                                comptime!(problem.rhs_space.clone()),
+                                comptime!(problem.clone()),
+                                comptime!(problem.block.vw),
+                            ),
+                            comptime!(problem.block.reduce.clone()),
+                        );
+                        let value = Vector::<E, V>::cast_from(rhs_reader.view.read(base));
                         c[i * nr + n] =
                             fma(Vector::<E, V>::cast_from(weight), value, c[i * nr + n]);
                     }

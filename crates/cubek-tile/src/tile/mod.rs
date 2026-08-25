@@ -1026,12 +1026,14 @@ impl<T: Numeric> Tile<T> {
                 }
             }
             TileKind::Smem(_) => panic!(
-                "Tile::separable_tap_in_bounds: TapMask::Masked needs the rhs source window; \
+                "Tile::separable_physical_tap_in_bounds: TapMask::Masked needs the rhs source window; \
                  staging it in Smem erases which zeros came from the boundary"
             ),
             TileKind::Procedural(data) => data.axis_in_bounds(pos, axis),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
-                panic!("Tile::separable_tap_in_bounds: a separable gather needs an addressable rhs")
+                panic!(
+                    "Tile::separable_physical_tap_in_bounds: a separable gather needs an addressable rhs"
+                )
             }
         }
     }
