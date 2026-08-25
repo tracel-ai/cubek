@@ -51,6 +51,10 @@ interpolate = ["cubek-interpolate"]
 pool = ["cubek-pool"]
 convolution = ["cubek-convolution"]
 matmul = ["cubek-matmul"]
+# The two matmul kernel architectures, each usable without the other. Both ride
+# `cubek-matmul`'s own default; these are for builds that want only one.
+matmul-tiled = ["cubek-matmul?/tiled"]
+matmul-multi-level = ["cubek-matmul?/multi-level"]
 quantization = ["cubek-quant/kernels"]
 random = ["cubek-random"]
 reduce = ["cubek-reduce"]

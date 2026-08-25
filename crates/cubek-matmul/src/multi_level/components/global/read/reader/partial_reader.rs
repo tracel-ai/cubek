@@ -62,7 +62,7 @@ pub trait AsyncPartialLoadingStrategy<RC: RuntimeConfig>:
 #[allow(clippy::type_complexity)]
 /// Loads a stage from stage memory using synchronous data movement operations.
 ///
-/// A complete load is referred to as a `Job`, which is divided into `Tasks`—
+/// A complete load is referred to as a `Job`, which is divided into `Tasks`:
 /// each Task represents a single data transfer for a specific unit
 pub struct PartialStageGlobalReader<
     'a,

@@ -3,13 +3,13 @@
 //! # Supported layouts
 //!
 //! Each operand carries its own physical layout (row/col-major rides in its strides, storage-tiling
-//! depth in its `levels`), and the kernel reads it through a layout-agnostic view — so the three
+//! depth in its `levels`), and the kernel reads it through a layout-agnostic view, so the three
 //! operands may differ. The supported set (per operand, independently):
 //!
-//! - **Row-major** (`cols` contiguous) — the only layout that takes the vectorized N path
+//! - **Row-major** (`cols` contiguous): the only layout that takes the vectorized N path
 //!   (rhs *and* output must both be row-major to vectorize; otherwise scalar).
-//! - **Col-major** (`rows` contiguous) — correct, scalar.
-//! - **Tiled** (nested contiguous blocks, single or recursive, rectangular) — correct,
+//! - **Col-major** (`rows` contiguous): correct, scalar.
+//! - **Tiled** (nested contiguous blocks, single or recursive, rectangular): correct,
 //!   scalar. Only reachable via the direct [`launch_ref`] (a tiled buffer isn't a plain
 //!   strided binding); the [`Strategy`](crate::strategy::Strategy) entry deduces row/col.
 //!
@@ -19,9 +19,9 @@
 //!
 //! # Rejected (returns [`MatmulSetupError`])
 //!
-//! - **Quantized inputs** — unsupported.
-//! - **Non-contiguous strided bindings** on the [`Strategy`](crate::strategy::Strategy) path
-//!   — a binding contiguous in neither matrix axis is not a plain row/col matrix and is
+//! - **Quantized inputs**: unsupported.
+//! - **Non-contiguous strided bindings** on the [`Strategy`](crate::strategy::Strategy) path:
+//!   a binding contiguous in neither matrix axis is not a plain row/col matrix and is
 //!   rejected by the strided deduction
 
 use std::fmt::Display;
@@ -201,7 +201,7 @@ impl CpuGemmRoutine {
 
         // Plane grid: split the leaf grid among ~`cores` worker threads by aspect ratio.
         // Each plane is a thread and the cube loop is *serial*, so the factors must divide
-        // the grid — an indivisible split inflates the cube count (serial depth) and idles
+        // the grid: an indivisible split inflates the cube count (serial depth) and idles
         // planes on the overhang. Snap the aspect-ratio target to grid divisors.
         let grid_m = m.div_ceil(tile_m).max(1);
         let grid_n = n.div_ceil(tile_n).max(1);

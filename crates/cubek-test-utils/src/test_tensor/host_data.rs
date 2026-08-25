@@ -450,7 +450,7 @@ pub fn pretty_print_zip(tensors: &[&HostData]) -> String {
 }
 
 /// Match leading indices against the leading slice of a tensor filter. The
-/// trailing two filter entries (covering the row/col axes) are ignored — we
+/// trailing two filter entries (covering the row/col axes) are ignored: we
 /// always print the full row × col table for the slices we keep.
 fn leading_indices_match(leading: &[usize], filter: &crate::TensorFilter) -> bool {
     use crate::DimFilter::*;
@@ -531,7 +531,7 @@ impl Iterator for IndexIter {
 
 fn format_leading_label(leading: &[usize], rank: usize) -> String {
     let mut parts: Vec<String> = leading.iter().map(|i| i.to_string()).collect();
-    // Rows/cols are the last two dims — render as `*` so the label reads
+    // Rows/cols are the last two dims: render as `*` so the label reads
     // `[i, j, *, *]`.
     for _ in 0..(rank - leading.len()) {
         parts.push("*".to_string());

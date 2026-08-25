@@ -1,4 +1,4 @@
-//! `TileKind::SharedTile` — the smem stage slot variant.
+//! `TileKind::SharedTile`: the smem stage slot variant.
 //!
 //! [`SharedTile`] is the enum payload (vectorization erased from the type).
 //! [`StridedTile`] is the typed form readers/writers consume.

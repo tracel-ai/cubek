@@ -16,7 +16,7 @@ use cubek_std::{MatrixLayout, StageIdent};
 
 // Fragment inner vector sizes for the three MMA roles. Bound at allocation time
 // via `mma_register_vector_sizes` to match the hardware's `def.vector_size(...)`
-// for each role — these are independent of the outer Tile enum's stage vector `V`.
+// for each role: these are independent of the outer Tile enum's stage vector `V`.
 define_size!(pub NL);
 define_size!(pub NR);
 define_size!(pub NA);
@@ -219,7 +219,7 @@ impl<A: Numeric> MmaTile<A> {
 impl<N: Numeric> MmaTile<N> {
     /// Copies into the mma fragment from `source`. Supported sources:
     /// `Shared` (per-role load) and `None` (zero-init, Acc only).
-    /// `L` / `R` / `A` are the matmul triple's role types — needed by the
+    /// `L` / `R` / `A` are the matmul triple's role types: needed by the
     /// per-role load functions. When `self` is in role X, `N` substitutes
     /// for the X type and the other two are taken from the caller's
     /// generics.

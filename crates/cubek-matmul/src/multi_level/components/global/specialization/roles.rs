@@ -3,8 +3,8 @@ use crate::{
     multi_level::components::global::{MaxGlobalReaderPlanes, specialization::config::LoadFlows},
 };
 
-// Plane-flow vocabulary lives at the root of `multi_level`; re-export the names
-// callers in this crate (and downstream crates) have always used.
+// Plane-flow vocabulary lives at the root of `multi_level`; re-export it here so a
+// caller reading specialization config finds the roles beside it.
 pub use crate::multi_level::{
     PlaneFlowConfig, PlaneFlowCounts, PlaneFlowPartition, PlaneFlowPartitionRule,
 };

@@ -1,7 +1,7 @@
 use cubecl::{Runtime, TestRuntime, prelude::Scalar};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems},
-    multi_level::definition::{MatmulPrecision, MatrixPrecision},
+    definition::{MatmulPrecision, MatrixPrecision},
 };
 use cubek_test_utils::{HostData, Progress};
 

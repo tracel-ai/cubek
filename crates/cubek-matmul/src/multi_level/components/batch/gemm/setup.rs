@@ -29,9 +29,9 @@ use crate::{
 /// Unified GEMM family. Selects a kernel variant from operand layouts:
 /// `Dot` (Row-Col) supports any `plane_dim` (plane-cooperative reduction
 /// over K); `OuterM` / `OuterN` are CPU-only (require `plane_dim == 1`).
-/// Col-Row has no variant — `launch_ref` normalizes it to Dot where planes
+/// Col-Row has no variant: `launch_ref` normalizes it to Dot where planes
 /// exist, and the CPU serves it through the `cpu_gemm` routine.
-/// Also handles GEMV when one of `m`, `n` is 1 — the vector side is
+/// Also handles GEMV when one of `m`, `n` is 1: the vector side is
 /// classified by `OperandLayout::Vector` and uses a layout-appropriate
 /// variant.
 pub struct GemmFamily {}

@@ -27,7 +27,7 @@ type PipelinedBTile<MT, Sc> =
     PipelinedTile<<<MT as MatmulTypes>::Rhs as MatrixTypes>::Register, Sc>;
 
 // =====================================================================
-// NumStages — buffer count
+// NumStages: buffer count
 // =====================================================================
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -55,7 +55,7 @@ impl NumStages {
 }
 
 // =====================================================================
-// Partitioner glue — pair the tile module's `Partitioner` with the matmul-flow
+// Partitioner glue: pair the tile module's `Partitioner` with the matmul-flow
 // `StageMatmulKind` selector + the role-rule-derived coordinate helper.
 // =====================================================================
 
@@ -78,7 +78,7 @@ impl StagePartitioner for UnitPartitioner {
 }
 
 // =====================================================================
-// PartitionedStageMatmul — shared per-variant data.
+// PartitionedStageMatmul: shared per-variant data.
 // =====================================================================
 
 /// Data carried by both [`StageMatmul`](super::StageMatmul) variants. Today

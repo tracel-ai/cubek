@@ -16,7 +16,8 @@ pub use scheduler::*;
 pub use scope::*;
 pub use variants::*;
 
-// Back-compat re-exports; prefer `crate::multi_level::stage::` in new code.
+// Stage vocabulary a tile reader needs, re-exported so a tile-side caller does not
+// reach into `stage` for it.
 pub use crate::multi_level::stage::{
     ColMajorTilingOrder, ContiguousTilingLayout, NoTilingLayout, OrderedTilingOrder,
     RowMajorTilingOrder, StridedStageMemory, StridedTilingLayout, TilingLayout, TilingLayoutEnum,

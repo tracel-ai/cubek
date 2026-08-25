@@ -51,7 +51,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
 #[expand(derive(Clone))]
 /// Loads the entire stage memory.
 ///
-/// A complete load is referred to as a `Job`, which is divided into `Tasks`—
+/// A complete load is referred to as a `Job`, which is divided into `Tasks`:
 /// each Task represents a single data transfer for a specific unit
 pub struct FullStageGlobalReader<
     'a,

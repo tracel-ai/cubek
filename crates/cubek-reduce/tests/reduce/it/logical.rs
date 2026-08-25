@@ -47,7 +47,7 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
         .generate_with_f32_host_data();
 
     // Drives the real `precision()` path: Any/All require the flag storage as
-    // output (u32 here — the bool backing callers request on runtimes without
+    // output (u32 here: the bool backing callers request on runtimes without
     // 8-bit storage, and the dtype every test runtime supports) while
     // accumulation stays = input. The kernel writes the flags directly into
     // the u32 output, so the f32-input -> flag-output conversion is exercised

@@ -323,7 +323,7 @@ fn over_seals_stages_and_omission_is_in_place() {
 }
 
 /// The type column is the data flow: moves keep the operand's type, a conversion re-types it
-/// exactly where stated, and the padding below a conversion carries the converted type — so
+/// exactly where stated, and the padding below a conversion carries the converted type, so
 /// reading one operand's stages top to bottom is reading what its bytes are at every level.
 #[test]
 fn over_type_column_moves_then_converts() {
@@ -429,6 +429,126 @@ fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
 
     // Which instruction those registers are for is said once, by the space.
     assert_eq!(space.instruction(), Some(Instruction::Cmma));
+}
+
+// ---- A level that cuts nothing --------------------------------------------
+
+/// A level whose edges are the extents handed to it has one instance on every axis, so it
+/// partitions nothing. The build drops it, and the plan compares equal to the plan without it,
+/// which is what stops the two from compiling as two kernels.
+#[test]
+fn a_level_that_cuts_nothing_is_dropped() {
+    let plain = Tiling::new()
+        .extents(&[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        })
+        .build();
+    let space = Tiling::new()
+        .extents(&[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        })
+        // The same edges again: nothing left to cut.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        })
+        .build();
+
+    assert_eq!(space, plain);
+    assert_eq!(space.partitioner().depth(), 1);
+}
+
+/// A one-instance level whose pipeline is deeper than its parent's is a real stage: it buffers
+/// two regions where its parent buffers one, so it is not a no-op and stays.
+#[test]
+fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
+    let space = Tiling::new()
+        .extents(&[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        })
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        })
+        .build();
+
+    assert_eq!(space.partitioner().depth(), 2);
+    match space.divide().partitioner() {
+        Partitioner::Level(level) => assert_eq!(level.buffering(), Buffering::DOUBLE),
+        Partitioner::Final => panic!("the deeper-buffered level was dropped"),
+    }
+}
+
+/// The only level of a space stays even when its cuts take the whole extent: a space with a
+/// level is a tile walked in cells, and a space with none is the cell. A one-region walk is the
+/// degenerate case of the first, not the second: the shape a plan takes when the knob it splits
+/// on (attention's split count, a plane grid of one) lands on 1.
+#[test]
+fn the_only_level_stays_even_when_it_cuts_nothing() {
+    let space = Tiling::new()
+        .extents(&[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(64)).axis(N, Cut::sequential(64))
+        })
+        .build();
+
+    assert_eq!(space.partitioner().depth(), 1);
+    assert!(space.divide().is_final());
+}
+
+/// An operand moving at a one-instance level is real staging and real traffic, so the level
+/// stays, and with it the residence column entry that names the move.
+#[test]
+fn a_level_that_cuts_nothing_but_moves_an_operand_stays() {
+    let mut ops = matmul_operands();
+    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage(Residence::Smem);
+        })
+        .build();
+
+    assert_eq!(space.partitioner().depth(), 2);
+    assert_eq!(ops.a.residences(), &[Residence::InPlace, Residence::Smem]);
+}
+
+/// The instruction level carries the instruction, which is its whole purpose; it stays even
+/// when its cuts take nothing off its parent. Every other operand's column shortens with the
+/// levels that go, so it keeps one entry per level of the space that was built.
+#[test]
+fn the_instruction_level_stays_and_the_columns_follow_the_levels() {
+    let mut ops = matmul_operands();
+    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+            o.a.stage(Residence::Smem);
+        })
+        // Dropped: same edges, nothing stated.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+        })
+        .instruction(Instruction::Cmma, |l, _| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
+        })
+        .build();
+
+    assert_eq!(space.partitioner().depth(), 2);
+    assert_eq!(space.instruction(), Some(Instruction::Cmma));
+    assert_eq!(ops.a.residences(), &[Residence::Smem, Residence::InPlace]);
 }
 
 /// The build seals its operands: a stage stated afterwards would describe a level that does

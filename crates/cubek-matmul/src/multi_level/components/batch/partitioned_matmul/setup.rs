@@ -153,14 +153,14 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
 /// The operands are not the whole footprint: the kernel also stages its
 /// output. `expand_config` builds that stage once and hands it back as both
 /// `acc_smem_config` and `out_smem_config`, so `out` covers both and is
-/// counted a single time — at the writer's allocation, not the full stage
+/// counted a single time: at the writer's allocation, not the full stage
 /// (see [`out_smem_bytes`]).
 ///
 /// This has to match what the kernel allocates, in both directions. A total
 /// that comes in under the real footprint admits a blueprint that then
 /// over-requests at launch, which autotune profiling surfaces as a lost device
 /// rather than a skipped candidate. A total that comes in over it rejects
-/// blueprints that do fit — and with them the kernels autotune would have
+/// blueprints that do fit, and with them the kernels autotune would have
 /// picked.
 fn requested_smem_bytes(
     lhs: &StageMemoryConfig,
@@ -175,7 +175,7 @@ fn requested_smem_bytes(
 /// No writer holds the full stage: `PartitionedStage::new` clamps
 /// `tiles_per_partition_along_{row,col}` to 1, so a plane (or unit) stages one
 /// tile at a time and loops over its partition. This mirrors that clamp.
-/// Charging the full stage instead rejected blueprints that fit — on Apple
+/// Charging the full stage instead rejected blueprints that fit: on Apple
 /// silicon the simple cmma multi-rows kernel allocates 13312 bytes but was
 /// charged 45056, past the 32768-byte budget, so the fastest kernel for the
 /// shape became unavailable.
@@ -277,7 +277,7 @@ mod tests {
     /// The writer never allocates the full out stage: `PartitionedStage::new`
     /// clamps `tiles_per_partition` to one, so each plane stages a single tile
     /// and loops. These are the stages of the simple cmma multi-rows blueprint
-    /// on Apple silicon — tile (8, 8, 8), partition (4, 8, 2), stage (4, 1, 1),
+    /// on Apple silicon: tile (8, 8, 8), partition (4, 8, 2), stage (4, 1, 1),
     /// f32. The kernel allocates 13312 bytes; charging the full out stage says
     /// 45056, past the 32768-byte budget, and rejects the fastest kernel the
     /// device has for the shape.

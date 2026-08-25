@@ -31,7 +31,7 @@ pub fn assert_equals_approx(
 ///
 /// `filter` is anything iterable whose items convert into [`DimFilter`], so
 /// both `Vec<std::ops::Range<usize>>` and the canonical [`TensorFilter`]
-/// (matching the `cubek.toml` `[print] filter` syntax) work — one DSL for
+/// (matching the `cubek.toml` `[print] filter` syntax) work: one DSL for
 /// selective comparison and selective printing.
 pub fn assert_equals_approx_in_slice<I>(
     // One of the tensor to compare
@@ -55,7 +55,7 @@ where
 /// [`crate::write_host_data`].
 ///
 /// Returns `Error` when either file is missing or doesn't decode as a HostData
-/// blob — callers can surface that as "regenerate one of the reference files".
+/// blob: callers can surface that as "regenerate one of the reference files".
 /// Otherwise behaves identically to [`assert_equals_approx`] on the loaded
 /// pair.
 pub fn compare_host_data_files(
@@ -97,7 +97,7 @@ fn assert_equals_approx_inner(
     filter: Option<TensorFilter>,
 ) -> ValidationResult {
     // Route the diff through the unified renderer. It is a no-op when
-    // printing is disabled or when shapes differ — same code path as
+    // printing is disabled or when shapes differ: same code path as
     // pretty-printing two unrelated tensors.
     let print_cfg = &config().print;
     print_tensors(print_cfg, "diff", &[lhs, rhs], Some(epsilon));
@@ -114,7 +114,7 @@ fn assert_equals_approx_inner(
 
     let mut summary_visitor = SummaryCollector::new(DEFAULT_MAX_REPORTED_MISMATCHES);
 
-    // Up-front rank check on the comparison filter — bail out cleanly so a
+    // Up-front rank check on the comparison filter: bail out cleanly so a
     // mistyped filter doesn't silently exclude every index.
     if let Some(f) = &filter
         && !f.is_empty()
@@ -234,7 +234,7 @@ impl SummaryCollector {
                 out.push_str(&format!(", worst at {:?}", idx));
             }
             out.push(')');
-            out.push_str(&format!(" — shape={:?}", shape));
+            out.push_str(&format!(": shape={:?}", shape));
         }
 
         // In Print modes, the per-element output is on stdout already; don't
@@ -380,7 +380,7 @@ fn compare_tensors(
         return failed;
     }
 
-    // Recurse over full dimension — filter check happens at leaf
+    // Recurse over full dimension: filter check happens at leaf
     for i in 0..shape[dim] {
         index.push(i);
         if compare_tensors(actual, expected, shape, epsilon, visitor, index, filter) {

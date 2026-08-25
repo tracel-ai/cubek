@@ -17,7 +17,7 @@ use cubek_std::StageIdent;
 /// A bounce tile bundles an opaque cmma fragment together with a shared-memory
 /// scratch slice and a [`WhiteboxFragment`] view, so row-wise operations can be
 /// expressed as `copy_from` between the inner pieces. From the caller's point
-/// of view it is a single [`Tile`] variant — only valid when the tile's
+/// of view it is a single [`Tile`] variant: only valid when the tile's
 /// scope is `Plane`.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BounceConfig {

@@ -32,7 +32,7 @@ fn run_pair(strategy_id: &str, problem_id: &str) {
 
     // Route kernel failures (e.g. "no mma instruction available on this
     // backend") through `TestOutcome::CompileError` so the active
-    // `cubek.toml` test policy decides whether to skip or fail — same
+    // `cubek.toml` test policy decides whether to skip or fail: same
     // contract as the existing launcher tests.
     let actual = match AttentionCorrectness.kernel_result(&strategy, &spec, &SEEDS) {
         Ok(host) => host,

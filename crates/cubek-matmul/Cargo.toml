@@ -11,8 +11,12 @@ repository = "https://github.com/tracel-ai/cubek/tree/main/crates/cubek-matmul"
 version.workspace = true
 
 [features]
-default = ["std", "cubecl/default"]
+default = ["std", "tiled", "multi-level", "cubecl/default"]
 std = ["cubecl/std"]
+
+# The two kernel architectures. At least one is required; both are on by default.
+tiled = ["dep:cubek-tile"]
+multi-level = []
 
 heavy = []
 extended = ["heavy"]
@@ -29,7 +33,7 @@ cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.2", default-featu
     "kernels",
 ], optional = true }
 cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.2", default-features = false }
-cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.2", default-features = false }
+cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.2", default-features = false, optional = true }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false, optional = true }
 
 bytemuck = { workspace = true }
@@ -40,7 +44,7 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-matmul = { path = ".", features = ["cpu-reference"] }
+cubek-matmul = { path = ".", default-features = false, features = ["cpu-reference"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.2", default-features = false }
 cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.2", features = [
     "kernels",

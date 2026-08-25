@@ -119,7 +119,7 @@ impl<T: Numeric> PlaneTile<T> {
             },
             PlaneTile::Mma(d) => d.load_window(src),
             // Only an accumulator takes this encoding, and an accumulator is filled by
-            // `zero` or by contracting into it — never by loading an operand window.
+            // `zero` or by contracting into it, never by loading an operand window.
             PlaneTile::Register(_) => {
                 panic!("PlaneTile::load_window: a register accumulator is not a fill sink")
             }
@@ -191,7 +191,7 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// The plane-resident form of an accumulator over `space`: a partition mirroring its grid,
-    /// tiles uninitialized. `promote` is purely structural; the caller states the init.
+    /// tiles uninitialized. Opening the scope is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
         #[comptime] form: Instruction,
@@ -230,7 +230,7 @@ impl<T: Numeric> PlanePartition<T> {
             // The fragments above were sized from the partitioner alone (`partition_shape`
             // and `final_space` read edges, never extents), so the tile carries the space it
             // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
-            // register-resident tile has no buffer bound to resolve a `Dynamic` axis from —
+            // register-resident tile has no buffer bound to resolve a `Dynamic` axis from, and
             // inheriting it verbatim would make `runtime_space` unanswerable.
             space: comptime!(space.sub_tile_space()),
         }
