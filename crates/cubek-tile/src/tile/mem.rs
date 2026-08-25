@@ -279,8 +279,11 @@ impl<T: Numeric> Tile<T> {
         };
         let vector_size = comptime!(bound_width * pack);
         // The operand's own contract, checked here rather than at `TileSpec` construction because
-        // it turns on the served width, which only this call, not the spec, ever knows.
+        // it turns on the served width, which only this call, not the spec, ever knows. Same for a
+        // padded stage width, which `StridedTileSource` already checked for the specs it builds;
+        // this catches hand-built ones too.
         comptime!(projection.validate(vector_size));
+        comptime!(spec.validate_stage_width(vector_size, quant.is_some()));
         let coord_rank = comptime!(projection.coordinate_rank());
         comptime!(assert!(
             spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
@@ -817,6 +820,15 @@ impl<T: Numeric> MemData<T> {
                         "MemData::fill_from: a plain source is scanned at the destination's width, \
                          so a padded stage has to take the straight fill"
                     ));
+                    // Equal widths here, so this only asks that the innermost extent is whole
+                    // lines: `storage_extents` rounds it up, and nothing on the scan path would
+                    // otherwise notice the last line the source cannot fill.
+                    comptime!(fill_extent(
+                        &space,
+                        src.store.vector_size,
+                        self.store.vector_size,
+                        src.access.overhang.masks()
+                    ));
                     self.scan_transparent::<T, W, W>(src)
                 }
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
@@ -892,33 +904,25 @@ impl<T: Numeric> MemData<T> {
             .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
             .fcast::<usize>();
         let projection = comptime!(self.layout.projection.clone());
+        // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
+        // the same agreement between the two boxes.
+        let lanes = comptime!(fill_extent(&space, sw, w, check));
         let src_rank = comptime!(src.projection.physical_rank());
-        // The fill reads whole source lines, so the innermost extent has to be a whole number of
-        // them. Only the *destination* may hold a partial one: that is what a padded stage is, and
-        // its spare lanes hold zero. Without this the two boxes silently disagree, the stage
-        // rounding its line count up ([`storage_extents`], [`Compaction::line_extents`]) where the
-        // source truncated its own.
-        let lanes = comptime!(match space.extent_raw(space.axis_at(space.rank() - 1)) {
-            Extent::Static(e) => {
-                assert!(
-                    e.is_multiple_of(sw),
-                    "MemData::fill_straight: the innermost extent {e} is not a whole number of \
-                     the source's {sw}-wide lines, so the stage holds cells the source cannot \
-                     hand it"
-                );
-                Some(e)
+        let padding = comptime!((sw != w).then(|| {
+            // `source_lane` swaps the innermost entry of a destination coordinate to address the
+            // source, which only lands on a source cell when the two boxes have the same rank. A
+            // storage-tiled stage splits each axis into a grid and a block digit and does not.
+            assert!(
+                src_rank == plen,
+                "MemData::fill_straight: a padded stage is a rank-{plen} box filled from a \
+                 rank-{src_rank} source, so a destination coordinate does not address it"
+            );
+            Padding {
+                width: w,
+                lanes,
+                rank: src_rank,
             }
-            // Padding is the only reader of `lanes`, so an equal-width fill owes nothing here.
-            Extent::Dynamic => {
-                assert!(
-                    sw == w || check,
-                    "MemData::fill_straight: a padded stage over a Dynamic innermost extent \
-                     cannot know at comptime which lanes are padding, so its source must be \
-                     bounds-checked for them to read as zero"
-                );
-                None
-            }
-        });
+        }));
         // A comptime worker count emits the tasks straight-line: a rolled loop's runtime `CUBE_DIM`
         // stride blocks unrolling, and on Metal's in-order pipe each line's store then stalls the
         // next line's read. Only a spilling last task needs its guard; unknown or tiny cubes take
@@ -959,7 +963,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, WP2>(
-                d, &s, projection, &shape, total, total_c, units, straight, src_rank, sw, w, lanes,
+                d, &s, projection, &shape, total, total_c, units, straight, padding,
             );
         } else {
             let s = if comptime!(steps.is_empty()) {
@@ -982,7 +986,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, projection, &shape, total, total_c, units, straight, src_rank, sw, w, lanes,
+                d, &s, projection, &shape, total, total_c, units, straight, padding,
             );
         }
     }
@@ -1619,7 +1623,20 @@ impl<T: Numeric> MemData<T> {
                 let axis = space.axis_at(p);
                 // The innermost (vectorized) axis's edge is a line count, so `/ width`.
                 let edge = comptime!(if p == last {
-                    space.partitioner().edge(axis).div_ceil(w)
+                    let e = space.partitioner().edge(axis);
+                    // A padded stage's innermost extent need not fill whole lines, but then its
+                    // partial tail line has no sibling to start after it: the axis has to be cut
+                    // whole, or the next region would begin mid-line. `extent_raw` because a
+                    // `Dynamic` axis has no extent to be cut whole, and owes the divisibility.
+                    assert!(
+                        e.is_multiple_of(w)
+                            || matches!(space.extent_raw(axis), Extent::Static(x) if x == e),
+                        "MemData::at: the innermost edge {e} is neither a whole number of \
+                         {w}-wide lines nor the axis's whole extent ({:?}), so a region would \
+                         start mid-line",
+                        space.extent_raw(axis)
+                    );
+                    e.div_ceil(w)
                 } else {
                     space.partitioner().edge(axis)
                 });
@@ -2196,11 +2213,56 @@ fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<
         extents.push(outer.extent_at(p));
     }
     // Rounded up, not truncated: a padded stage's innermost extent need not fill whole lines, and
-    // the spare lanes of the last one are its padding. `fill_straight` refuses the case where the
-    // rounding would instead mean the stage and its source disagree.
+    // the spare lanes of the last one are its padding. `fill_extent` refuses the case where the
+    // rounding would instead mean the stage and its source disagree; every fill path asks it.
     let last = extents.len() - 1;
     extents[last] = extents[last].div_ceil(vector_size);
     extents
+}
+
+/// What a padded fill needs beyond the two boxes: `width` scalar source cells assembled per
+/// destination line, and `lanes` the innermost extent past which those cells are padding. `None`
+/// lanes is a `Dynamic` extent, where nothing is known at comptime and the source's own bounds
+/// check is what zeroes them ([`fill_extent`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Padding {
+    width: usize,
+    lanes: Option<usize>,
+    /// The physical rank both boxes share, which only this path needs: the 1:1 copy reads its
+    /// line whole and never rebuilds a coordinate.
+    rank: usize,
+}
+
+/// The innermost extent of `space` in cells, with the two widths a fill pairs checked against it.
+///
+/// The fill reads whole `sw`-wide source lines, so the innermost extent has to be a whole number
+/// of them, and only the *destination* may hold a partial `w`-wide one. That partial line is what
+/// a padded stage is, and its spare lanes hold zero. Without this the two boxes silently disagree,
+/// the stage rounding its line count up ([`storage_extents`], `Compaction::line_extents`) where
+/// the source truncated its own.
+///
+/// `None` for a `Dynamic` extent: nothing can be said at comptime, so a padded stage over one
+/// leans on `check` to zero its spare lanes instead.
+fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Option<usize> {
+    match space.extent_raw(space.axis_at(space.rank() - 1)) {
+        Extent::Static(e) => {
+            assert!(
+                e.is_multiple_of(sw),
+                "MemData: the innermost extent {e} is not a whole number of the source's \
+                 {sw}-wide lines, so the stage holds cells the source cannot hand it"
+            );
+            Some(e)
+        }
+        Extent::Dynamic => {
+            assert!(
+                sw == w || check,
+                "MemData: a padded stage over a Dynamic innermost extent cannot know at comptime \
+                 which lanes are padding, so its source must be bounds-checked for them to read \
+                 as zero"
+            );
+            None
+        }
+    }
 }
 
 /// Schedule cooperative cyclic writing of destination stage lines across cube units.
@@ -2217,10 +2279,7 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     #[comptime] total_c: Option<u64>,
     #[comptime] units: usize,
     #[comptime] straight: bool,
-    #[comptime] src_rank: usize,
-    #[comptime] sw: usize,
-    #[comptime] w: usize,
-    #[comptime] lanes: Option<usize>,
+    #[comptime] padding: Option<Padding>,
 ) {
     if comptime!(straight) {
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
@@ -2232,20 +2291,14 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
                     d[i] = read_stage_line::<I2, WP2, SW>(
                         s,
                         &physical_pos(comptime!(projection.clone()), i, shape),
-                        comptime!(src_rank),
-                        comptime!(sw),
-                        comptime!(w),
-                        comptime!(lanes),
+                        comptime!(padding),
                     );
                 }
             } else {
                 d[i] = read_stage_line::<I2, WP2, SW>(
                     s,
                     &physical_pos(comptime!(projection.clone()), i, shape),
-                    comptime!(src_rank),
-                    comptime!(sw),
-                    comptime!(w),
-                    comptime!(lanes),
+                    comptime!(padding),
                 );
             }
         }
@@ -2256,34 +2309,27 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             d[i] = read_stage_line::<I2, WP2, SW>(
                 s,
                 &physical_pos(comptime!(projection.clone()), i, shape),
-                comptime!(src_rank),
-                comptime!(sw),
-                comptime!(w),
-                comptime!(lanes),
+                comptime!(padding),
             );
             i += workers;
         }
     }
 }
 
-/// Read one destination line from the masked source view at `pos`.
-///
-/// When the source served width `sw` matches the destination width `width`, reads the line
-/// directly and casts to storage width `WP2`. When the stage is wider than its source (`sw != width`),
-/// assembles the line lane-by-lane from scalar source cells via [`widen_line`].
+/// Read one destination line from the masked source view at `pos`: whole for a 1:1 copy, or
+/// assembled lane by lane from scalar source cells for a padded stage ([`widen_line`]).
 #[cube]
 fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
     pos: &CoordsDyn,
-    #[comptime] rank: usize,
-    #[comptime] sw: usize,
-    #[comptime] width: usize,
-    #[comptime] lanes: Option<usize>,
+    #[comptime] padding: Option<Padding>,
 ) -> Vector<I2, WP2> {
-    if comptime!(sw == width) {
-        Vector::<I2, WP2>::cast_from(s.read(pos.clone()))
+    if comptime!(padding.is_some()) {
+        widen_line::<I2, WP2, SW>(s, pos, comptime!(padding.unwrap()))
     } else {
-        widen_line::<I2, WP2, SW>(s, pos, rank, sw, width, lanes)
+        // The unpadded caller builds its view at the destination's own width, so `SW` *is* `WP2`
+        // here and the cast is an identity the trace folds away; the two only differ as types.
+        Vector::<I2, WP2>::cast_from(s.read(pos.clone()))
     }
 }
 
@@ -2304,21 +2350,21 @@ fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32
 
 /// Assemble one padded destination line from adjacent scalar source cells.
 ///
-/// When `lanes` is `None` (a dynamic innermost extent), the source window must be
-/// bounds-checked so that reads past the extent return zero. When `lanes` is `Some(n)`,
-/// reads past `n` are masked off explicitly so the padding lanes zero out.
+/// When `Padding::lanes` is `None` (a `Dynamic` innermost extent), the source window must be
+/// bounds-checked so that reads past the extent return zero. When it is `Some(n)`, reads past `n`
+/// are masked off explicitly so the padding lanes keep the zero they start at.
 #[cube]
 fn widen_line<T: Numeric, W: Size, SW: Size>(
     s: &MaskedView<'_, Vector<T, SW>, CoordsDyn>,
     pos: &CoordsDyn,
-    #[comptime] rank: usize,
-    #[comptime] sw: usize,
-    #[comptime] width: usize,
-    #[comptime] lanes: Option<usize>,
+    #[comptime] padding: Padding,
 ) -> Vector<T, W> {
+    let width = comptime!(padding.width);
+    let rank = comptime!(padding.rank);
     comptime!(assert!(
-        sw == 1,
-        "widen_line: a padded stage is filled from a scalar source, got width {sw}"
+        SW::try_value_const() == Some(1),
+        "widen_line: a padded stage is filled from a scalar source, got a {:?}-wide one",
+        SW::try_value_const()
     ));
     comptime!(assert!(
         W::try_value_const().is_none_or(|n| n == width),
@@ -2328,7 +2374,7 @@ fn widen_line<T: Numeric, W: Size, SW: Size>(
     let last = comptime!(rank - 1);
     let line = pos[last];
     let mut out = Vector::<T, W>::cast_from(T::from_int(0));
-    let guarded = comptime!(match lanes {
+    let guarded = comptime!(match padding.lanes {
         Some(n) => !n.is_multiple_of(width),
         None => false,
     });
@@ -2336,7 +2382,7 @@ fn widen_line<T: Numeric, W: Size, SW: Size>(
     for l in 0..width {
         let cell = line.fmul(comptime!(width as u32)).fadd(comptime!(l as u32));
         let valid = if comptime!(guarded) {
-            cell < comptime!(lanes.unwrap() as u32)
+            cell < comptime!(padding.lanes.unwrap() as u32)
         } else {
             true.runtime()
         };

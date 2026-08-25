@@ -185,8 +185,8 @@ impl Compaction {
     /// lines.
     ///
     /// That rounding is only sound for a *padded* stage, one served wider than the source it is
-    /// filled from. `MemData::fill_straight` is where the two boxes meet, so it is what refuses an
-    /// extent that is not a whole number of source lines.
+    /// filled from. `fill_extent` is where the two boxes meet, so it is what refuses an
+    /// extent that is not a whole number of source lines, on every path a fill can take.
     pub fn line_extents(&self, vector_size: usize) -> Vec<usize> {
         let last = self.extents.len() - 1;
         assert!(
