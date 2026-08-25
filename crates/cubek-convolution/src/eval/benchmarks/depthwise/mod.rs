@@ -13,21 +13,7 @@ pub use problem::{DepthwiseProblem, blocks_running, problems, strategies};
 
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
-use crate::DepthwiseTiling;
-
-/// What to run a problem under: the tiling the routine picks for itself, or a stated one.
-///
-/// The routine's own choice is a catalogue entry rather than a number computed on the side
-/// because it is the one that ships. A sweep that only timed stated tilings would leave the
-/// question the sweep exists to answer — is the rule picking the right one — to arithmetic done
-/// somewhere else.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum DepthwiseStrategy {
-    /// [`DepthwiseTiling::for_problem`], which is what [`launch_depthwise`](crate::launch_depthwise)
-    /// runs.
-    Routine,
-    Fixed(DepthwiseTiling),
-}
+use crate::DepthwiseStrategy;
 
 pub struct Category;
 

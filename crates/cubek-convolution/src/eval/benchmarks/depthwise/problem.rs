@@ -2,9 +2,8 @@
 
 use cubek_test_utils::CatalogEntry;
 
-use crate::DepthwiseTiling;
+use crate::{DepthwiseStrategy, DepthwiseTiling};
 
-use super::DepthwiseStrategy;
 
 /// One depthwise convolution: square map, square window, one filter per channel.
 ///

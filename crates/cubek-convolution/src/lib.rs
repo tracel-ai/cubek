@@ -19,4 +19,6 @@ pub use launch::{
 
 // The depthwise routine is its own entry point rather than a `ConvAlgorithm`: it shares no
 // blueprint with the accelerated routines, so there is nothing for `Strategy` to select.
-pub use kernels::forward::{DepthwiseTiling, launch_depthwise, launch_depthwise_tiled};
+pub use kernels::forward::{
+    DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling, launch_depthwise,
+};

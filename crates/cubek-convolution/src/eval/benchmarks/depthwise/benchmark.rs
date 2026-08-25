@@ -11,9 +11,7 @@ use cubecl::{
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{ConvolutionArgs, DepthwiseTiling, launch_depthwise_tiled};
-
-use super::DepthwiseStrategy;
+use crate::{ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, launch_depthwise};
 
 use super::problem::DepthwiseProblem;
 
@@ -25,18 +23,9 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
 
-    let tiling = match *strategy {
-        DepthwiseStrategy::Fixed(tiling) => tiling,
-        DepthwiseStrategy::Routine => DepthwiseTiling::for_problem(
-            problem.channels,
-            problem.kernel * problem.kernel,
-            client.properties().hardware.plane_size_max as usize,
-        ),
-    };
-
     let bench = DepthwiseBench {
         problem: *problem,
-        tiling,
+        strategy: *strategy,
         client,
         device,
         samples: num_samples,
@@ -52,7 +41,7 @@ pub fn bench(
 
 struct DepthwiseBench {
     problem: DepthwiseProblem,
-    tiling: DepthwiseTiling,
+    strategy: DepthwiseStrategy,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     samples: usize,
@@ -97,18 +86,17 @@ impl Benchmark for DepthwiseBench {
             dilation: [problem.dilation; 2],
         };
 
-        launch_depthwise_tiled::<TestRuntime>(
+        launch_depthwise::<TestRuntime>(
             &self.client,
-            input.binding(),
-            weight.binding(),
-            out.binding(),
-            &problem.in_shape(),
-            &problem.weight_shape(),
-            &problem.out_shape(),
+            DepthwiseTensors {
+                input: input.binding(),
+                weight: weight.binding(),
+                out: out.binding(),
+            },
             args,
             problem.channels,
             dtype(),
-            self.tiling,
+            self.strategy,
         )
         .map_err(|e| format!("{e:?}"))
     }

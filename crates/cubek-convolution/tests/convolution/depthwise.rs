@@ -6,7 +6,9 @@
 //! moves whenever the kernel is optimized. A tiling that is fast and wrong has to fail here.
 
 use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape};
-use cubek_convolution::{ConvolutionArgs, DepthwiseTiling, launch_depthwise_tiled};
+use cubek_convolution::{
+    ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling, launch_depthwise,
+};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 /// One depthwise convolution, in the layout the routine takes: NHWC in and out, `[C, kh, kw, 1]`
@@ -120,14 +122,13 @@ impl Case {
                 .zeros()
                 .generate_without_host_data();
 
-        launch_depthwise_tiled::<TestRuntime>(
+        launch_depthwise::<TestRuntime>(
             &client,
-            input.binding(),
-            weight,
-            out.clone().binding(),
-            &in_shape,
-            &w_shape,
-            &out_shape,
+            DepthwiseTensors {
+                input: input.binding(),
+                weight,
+                out: out.clone().binding(),
+            },
             ConvolutionArgs::<2> {
                 stride: [self.stride; 2],
                 padding: [self.padding; 2],
@@ -135,7 +136,7 @@ impl Case {
             },
             self.c,
             dtype,
-            tiling,
+            DepthwiseStrategy::Fixed(tiling),
         )
         .expect("the routine accepts a depthwise convolution");
 

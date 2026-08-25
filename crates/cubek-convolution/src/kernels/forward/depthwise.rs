@@ -195,122 +195,66 @@ impl DepthwiseTiling {
     }
 }
 
-/// One line of channels per lane, dealt round-robin, so a lane holding several takes every
-/// `plane_size`-th line rather than a contiguous run of them.
+/// The three tensors this routine moves, named because they are all `TensorBinding<R>` and a
+/// positional triple lets two of them be swapped without a word from the compiler.
 ///
-/// [`Cut::unit`] deals contiguous runs, which puts a stride between what neighbouring lanes read
-/// and breaks the coalescing the whole NHWC layout is for. Taking turns instead keeps lane `i` on
-/// line `i` of every round, so a round is one contiguous stretch of memory however many rounds
-/// there are.
-fn interleaved_lanes(width: usize) -> Cut {
-    Cut::new(
-        width,
-        Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            spread: Spread::Interleaved,
-            coverage: Coverage::PlaneLanes,
-        },
-    )
+/// NHWC maps, and Burn's `[out_channels, kh, kw, in_channels / groups]` filter — whose trailing
+/// axis is 1 for a depthwise convolution.
+pub struct DepthwiseTensors<R: Runtime> {
+    pub input: TensorBinding<R>,
+    pub weight: TensorBinding<R>,
+    pub out: TensorBinding<R>,
 }
 
-/// The problem, in the terms the space is built from. NHWC throughout.
-struct Geometry {
-    b: usize,
-    oh: usize,
-    ow: usize,
-    c: usize,
-    rh: usize,
-    rw: usize,
-    stride: [usize; 2],
-    padding: [usize; 2],
-    dilation: [usize; 2],
+/// Which tiling to run a problem under.
+///
+/// [`Routine`](Self::Routine) is what ships; [`Fixed`](Self::Fixed) is what the benchmark
+/// catalogue sweeps, and what a test uses to reach a tiling the rule would not pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DepthwiseStrategy {
+    /// Decided from the problem, by [`DepthwiseTiling::for_problem`].
+    Routine,
+    /// Stated by the caller.
+    Fixed(DepthwiseTiling),
 }
 
-/// Launch a depthwise convolution, tiled as [`DepthwiseTiling::for_problem`] has it.
+/// Launch a depthwise convolution under `strategy`.
 ///
-/// Returns [`ConvSetupError::NotDepthwise`] rather than computing a wrong answer when handed a
-/// convolution that is not one filter per channel; the tuner reads that as "this candidate does
-/// not apply here", which is exactly what it is.
-#[allow(clippy::too_many_arguments)]
+/// # Errors
+///
+/// [`ConvSetupError::NotDepthwise`] when the convolution is not one filter per channel — the
+/// tuner reads that as "this candidate does not apply here", which is exactly what it is — and
+/// [`ConvSetupError::Unknown`] when re-laying the filter cannot be launched.
 pub fn launch_depthwise<R: Runtime>(
     client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    weight: TensorBinding<R>,
-    out: TensorBinding<R>,
-    in_shape: &[usize],
-    weight_shape: &[usize],
-    out_shape: &[usize],
+    tensors: DepthwiseTensors<R>,
     args: ConvolutionArgs<2>,
     groups: usize,
     dtype: ElemType,
+    strategy: DepthwiseStrategy,
 ) -> Result<(), ConvSetupError> {
-    launch_depthwise_tiled(
-        client,
-        input,
-        weight,
-        out,
-        in_shape,
-        weight_shape,
-        out_shape,
-        args,
-        groups,
-        dtype,
-        DepthwiseTiling::for_problem(
-            in_shape[3],
-            weight_shape[1] * weight_shape[2],
-            client.properties().hardware.plane_size_max as usize,
-        ),
-    )
-}
-
-/// [`launch_depthwise`] with the tiling stated rather than defaulted. The benchmark catalogue
-/// sweeps it; the tuner does not, yet.
-#[allow(clippy::too_many_arguments)]
-pub fn launch_depthwise_tiled<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    weight: TensorBinding<R>,
-    out: TensorBinding<R>,
-    in_shape: &[usize],
-    weight_shape: &[usize],
-    out_shape: &[usize],
-    args: ConvolutionArgs<2>,
-    groups: usize,
-    dtype: ElemType,
-    tiling: DepthwiseTiling,
-) -> Result<(), ConvSetupError> {
-    // NHWC throughout: [batch, h, w, channels].
-    let channels = in_shape[3];
-    if groups != channels || out_shape[3] != channels {
-        return Err(ConvSetupError::NotDepthwise { groups, channels });
-    }
-
-    let geometry = Geometry {
-        b: out_shape[0],
-        oh: out_shape[1],
-        ow: out_shape[2],
-        c: channels,
-        // Burn hands weights as [out_channels, kh, kw, in_channels / groups]; depthwise makes
-        // that last axis 1, so the filter is [c, kh, kw] with the channel outermost.
-        rh: weight_shape[1],
-        rw: weight_shape[2],
-        stride: args.stride,
-        padding: args.padding,
-        dilation: args.dilation,
+    let geometry = Geometry::new(&tensors, args, groups)?;
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let tiling = match strategy {
+        DepthwiseStrategy::Routine => {
+            DepthwiseTiling::for_problem(geometry.c, geometry.taps(), lanes)
+        }
+        DepthwiseStrategy::Fixed(tiling) => tiling,
     };
+    let DepthwiseTensors { input, weight, out } = tensors;
 
     // The filter, re-laid so the channel is its innermost dim like every other operand's. It has
     // to be: the leaf serves a cell in lines along the channel, and one filter value broadcast
     // over a line would give every channel of it the first channel's filter. This is the one
     // copy the routine makes, and it is the smallest tensor in the problem by three orders of
     // magnitude — a 1632-channel 5x5 filter is 163 KB against 60 MB of map.
-    let weight = channels_innermost(client, weight, &geometry, dtype)
+    let weight = geometry
+        .channels_innermost(client, weight, dtype)
         .map_err(|_| ConvSetupError::Unknown)?;
 
-    let lanes = client.properties().hardware.plane_size_max as usize;
     let width = line_width(
         client,
-        channels,
+        geometry.c,
         dtype,
         tiling.lines,
         &[&input, &weight, &out],
@@ -322,8 +266,7 @@ pub fn launch_depthwise_tiled<R: Runtime>(
     // have to be guarded. Per axis, because the guard is real work per access and the axes that
     // need one are rarely the same: a 48x48 map divides evenly by any tile here while a
     // 24-channel block never fills one lane-width.
-    let guard = |ragged: bool| ragged.then_some(Boundary::Zero);
-    let ragged_c = !channels.is_multiple_of(lanes * width * tiling.chans);
+    let ragged_c = !geometry.c.is_multiple_of(lanes * width * tiling.chans);
     let ragged_oh = !geometry.oh.is_multiple_of(tiling.rows);
     let ragged_ow = !geometry.ow.is_multiple_of(tiling.cols);
     let [ph, pw] = geometry.padding;
@@ -378,34 +321,109 @@ pub fn launch_depthwise_tiled<R: Runtime>(
     );
 
     Ok(())
+
 }
 
-/// The filter as `[kh, kw, c]`, contiguous.
-///
-/// Burn stores it `[c, kh, kw]` (its trailing `in_channels / groups` is 1 here), which is the one
-/// layout this kernel cannot read: the channel has to be the innermost dim for a line to cover a
-/// cell's worth of filter. Permuting the binding's existing strides re-presents that logical
-/// tensor without assuming anything about its storage; `into_contiguous` is what makes the new
-/// layout physical.
-fn channels_innermost<R: Runtime>(
-    client: &ComputeClient<R>,
-    weight: TensorBinding<R>,
-    geometry: &Geometry,
-    dtype: ElemType,
-) -> Result<TensorBinding<R>, LaunchError> {
-    let (c, rh, rw) = (geometry.c, geometry.rh, geometry.rw);
-    let mut permuted = weight;
-    let channel_stride = permuted.strides[0];
-    let row_stride = permuted.strides[1];
-    let col_stride = permuted.strides[2];
-    permuted.shape = Shape::from(vec![rh, rw, c]);
-    // `[C, kh, kw, 1] -> [kh, kw, C]`. The omitted axis is singleton, so it contributes no
-    // offset; every surviving axis must retain its actual stride for sliced/strided bindings.
-    permuted.strides = Strides::new(&[row_stride, col_stride, channel_stride]);
+/// The problem, in the terms the space is built from. NHWC throughout.
+struct Geometry {
+    b: usize,
+    oh: usize,
+    ow: usize,
+    c: usize,
+    rh: usize,
+    rw: usize,
+    stride: [usize; 2],
+    padding: [usize; 2],
+    dilation: [usize; 2],
+}
 
-    Ok(InputBinding::new(permuted, dtype)
-        .into_contiguous(client)?
-        .into_data())
+impl Geometry {
+    /// Read the problem off the bindings themselves, so the shapes the space is built from are
+    /// the shapes the kernel will address rather than a second copy that can disagree with them.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvSetupError::NotDepthwise`] when the convolution is not one filter per channel. The
+    /// tuner reads that as "this candidate does not apply here", which is exactly what it is.
+    fn new<R: Runtime>(
+        tensors: &DepthwiseTensors<R>,
+        args: ConvolutionArgs<2>,
+        groups: usize,
+    ) -> Result<Self, ConvSetupError> {
+        // NHWC throughout: [batch, h, w, channels].
+        let channels = tensors.input.shape[3];
+        if groups != channels || tensors.out.shape[3] != channels {
+            return Err(ConvSetupError::NotDepthwise { groups, channels });
+        }
+
+        Ok(Self {
+            b: tensors.out.shape[0],
+            oh: tensors.out.shape[1],
+            ow: tensors.out.shape[2],
+            c: channels,
+            // Burn hands weights as [out_channels, kh, kw, in_channels / groups]; depthwise makes
+            // that last axis 1, so the filter is [c, kh, kw] with the channel outermost.
+            rh: tensors.weight.shape[1],
+            rw: tensors.weight.shape[2],
+            stride: args.stride,
+            padding: args.padding,
+            dilation: args.dilation,
+        })
+    }
+
+    /// How many taps one filter has.
+    fn taps(&self) -> usize {
+        self.rh * self.rw
+    }
+
+    /// The filter as `[kh, kw, c]`, contiguous.
+    ///
+    /// Burn stores it `[c, kh, kw]`, which is the one layout this kernel cannot read: the channel
+    /// has to be the innermost dim for a line to cover a cell's worth of filter. Permuting the
+    /// binding's existing strides re-presents that logical tensor without assuming anything about
+    /// its storage; `into_contiguous` is what makes the new layout physical.
+    fn channels_innermost<R: Runtime>(
+        &self,
+        client: &ComputeClient<R>,
+        weight: TensorBinding<R>,
+        dtype: ElemType,
+    ) -> Result<TensorBinding<R>, LaunchError> {
+        let mut permuted = weight;
+        let channel_stride = permuted.strides[0];
+        let row_stride = permuted.strides[1];
+        let col_stride = permuted.strides[2];
+        permuted.shape = Shape::from(vec![self.rh, self.rw, self.c]);
+        // `[C, kh, kw, 1] -> [kh, kw, C]`. The omitted axis is singleton, so it contributes no
+        // offset; every surviving axis must retain its actual stride for sliced/strided bindings.
+        permuted.strides = Strides::new(&[row_stride, col_stride, channel_stride]);
+
+        Ok(InputBinding::new(permuted, dtype)
+            .into_contiguous(client)?
+            .into_data())
+    }
+}
+
+/// The boundary an axis needs, or `None` when every read along it is in bounds by construction.
+fn guard(ragged: bool) -> Option<Boundary> {
+    ragged.then_some(Boundary::Zero)
+}
+
+/// One line of channels per lane, dealt round-robin, so a lane holding several takes every
+/// `plane_size`-th line rather than a contiguous run of them.
+///
+/// [`Cut::unit`] deals contiguous runs, which puts a stride between what neighbouring lanes read
+/// and breaks the coalescing the whole NHWC layout is for. Taking turns instead keeps lane `i` on
+/// line `i` of every round, so a round is one contiguous stretch of memory however many rounds
+/// there are.
+fn interleaved_lanes(width: usize) -> Cut {
+    Cut::new(
+        width,
+        Distribution::Spatial {
+            scope: ComputeScope::Unit,
+            spread: Spread::Interleaved,
+            coverage: Coverage::PlaneLanes,
+        },
+    )
 }
 
 /// The widest line the channel axis can be served in across all three operands, up to what the
