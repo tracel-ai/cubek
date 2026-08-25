@@ -121,8 +121,8 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         lhs_lines_col,
     ));
 
-    let lhs_view = lhs.nd_packed::<L>();
-    let rhs_view = rhs.nd_packed::<V>();
+    let lhs_view = lhs.nd_packed::<L>(comptime!(Guard::Checked));
+    let rhs_view = rhs.nd_packed::<V>(comptime!(Guard::Checked));
     // Loop-invariant, and `comptime!`-bound so the `unroll` flag below stays a comptime binding:
     // `#[unroll(flag)]` silently rolls the loop when the macro cannot see `flag` as one.
     let lhs_check = comptime!(lhs_view.check);
@@ -148,19 +148,18 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     // nothing from an unguarded view: the split is worth its second copy of the walk only when
     // the fast side would actually unroll.
     let eligible = comptime!(mr * nr * served * aw * spread <= config.budget);
-    // Dropping a clamp is not the same as dropping a redundant zero mask: clamped reads are
-    // semantically in bounds after remapping, so the corner check below cannot prove their raw
-    // coordinates safe. Keep those operands on the guarded walk.
-    let lhs_has_clamp = lhs.has_clamp_boundary();
-    let rhs_has_clamp = rhs.has_clamp_boundary();
-    let has_clamp = comptime!(lhs_has_clamp || rhs_has_clamp);
+    // Not every guard is a redundant zero mask the corner check below can retire; a clamp is
+    // the one it cannot. `Tile::guard_provable` is where that list lives.
+    let lhs_provable = lhs.guard_provable();
+    let rhs_provable = rhs.guard_provable();
+    let provable = comptime!(lhs_provable && rhs_provable);
     // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
     // extent — one past the far corner [`box_in_bounds`] proves, which counts whole lines. The
     // accumulator has [`block::seed`]/[`block::commit`]'s per-lane mask for those spare lanes; an
     // operand read that has dropped its guard has nothing, so keep the whole leaf checked.
     let spread_overhang = comptime!(block::spread_guard(spread, cols));
     let split_operands = comptime!(
-        config.split_edge && eligible && !has_clamp && !spread_overhang && (lhs_check || rhs_check)
+        config.split_edge && eligible && provable && !spread_overhang && (lhs_check || rhs_check)
     );
     // Whether the operands' whole boxes are inside their buffers. Hoisted out of the matrix loop
     // because it is a statement about the operand, not about which batch matrix is being read,
@@ -209,8 +208,8 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             let inside = operands_inside;
             if inside {
                 walk::<E, EL, L, ER, V, A>(
-                    &lhs.nd_packed_guarded::<L>(comptime!(false)),
-                    &rhs.nd_packed_guarded::<V>(comptime!(false)),
+                    &lhs.nd_packed::<L>(comptime!(Guard::Proved)),
+                    &rhs.nd_packed::<V>(comptime!(Guard::Proved)),
                     &mut acc,
                     &batch,
                     served,
