@@ -66,15 +66,22 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// `c = (a ⊗ s) · b`: [`mm`](Tile::mm) with the lhs scaled by a real operand.
+    /// `c = (a ⊗ s) · b`, or `c = a · (b ⊗ s)`: [`mm`](Tile::mm) with one operand scaled by a
+    /// real operand.
     ///
     /// The scales are an operand like any other — their own tensor, their own axes, named at the
     /// call — and the arithmetic that folds them in is this verb. Nothing decodes behind a read:
     /// an operand that arrives quantized arrives as what it is, and what it takes to serve it is
     /// written here.
     ///
-    /// `s` spans the lhs's axes and resolves at whatever granularity its own tensor has: omitted
-    /// axes broadcast, and a [coarse](crate::Projection) axis — `⌊k / block⌋`, spelled
+    /// **Which operand it scales is not stated**: the scales' own axes say it
+    /// ([`ScaleSide`](crate::ScaleSide)). A scale spanning the output's columns is a fact about
+    /// the rhs's columns and nothing else could fold it in; anything else scales the lhs. The two
+    /// are the same sum of terms — the scale is one more factor of each — so one verb serves both,
+    /// folding once per `(row, k)` or once per `(col, k)`, whichever the operand asks for.
+    ///
+    /// `s` resolves at whatever granularity its own tensor has: omitted axes broadcast, and a
+    /// [coarse](crate::Projection) axis — `⌊k / block⌋`, spelled
     /// `PhysicalAxisMap::of(K).over(block)` — is one value per block. A served line takes one
     /// scale, so a line may not straddle a block; state the cut that holds it.
     pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
@@ -94,8 +101,8 @@ impl<Acc: Numeric> Tile<Acc> {
         self.request_init_from(comptime!(InitFrom::Cell));
     }
 
-    /// `c += (a ⊗ s) · b`: [`mma`](Tile::mma)'s scaled twin, and the recursion the walk re-enters
-    /// per region.
+    /// `c += (a ⊗ s) · b` (or its rhs twin): [`mma`](Tile::mma)'s scaled form, and the recursion
+    /// the walk re-enters per region.
     pub fn mma_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,

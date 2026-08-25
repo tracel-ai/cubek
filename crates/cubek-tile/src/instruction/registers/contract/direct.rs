@@ -4,6 +4,7 @@ use cubecl::prelude::*;
 
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
+use crate::instruction::registers::contract::ScaleSide;
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -215,9 +216,9 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
 }
 
-/// [`contract`] with the lhs scaled: `c += (lhs ⊗ scale) · rhs`, the scale a real operand read
-/// through its own view. Same nest, same block, one more read per step — see
-/// [`block::contract_scaled`].
+/// [`contract`] with one operand scaled: `c += (lhs ⊗ scale) · rhs` or `c += lhs · (rhs ⊗ scale)`,
+/// the scale a real operand read through its own view and [`ScaleSide`] saying which factor it
+/// meets. Same nest, same block, one more read per step — see [`block::contract_scaled`].
 ///
 /// The scales are read where the values are, never staged: one value per block is already
 /// cache-served, and a stage would materialize the expansion the coarse read exists to avoid.
@@ -230,6 +231,7 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
     scales: &Tile<ES>,
     #[comptime] space: Space,
     #[comptime] served: usize,
+    #[comptime] side: ScaleSide,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
@@ -263,13 +265,13 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
         let size!(W) = served;
         let size!(A) = 1usize;
         nest_scaled::<E, EL, W, ER, W, A, ES, S>(
-            acc, lhs, rhs, scales, space, served, lw, 1usize, config, semiring,
+            acc, lhs, rhs, scales, space, served, lw, 1usize, side, config, semiring,
         );
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
         nest_scaled::<E, EL, W, ER, A, A, ES, S>(
-            acc, lhs, rhs, scales, space, served, lw, aw, config, semiring,
+            acc, lhs, rhs, scales, space, served, lw, aw, side, config, semiring,
         );
     }
 }
@@ -295,6 +297,7 @@ fn nest_scaled<
     #[comptime] served: usize,
     #[comptime] lw: usize,
     #[comptime] aw: usize,
+    #[comptime] side: ScaleSide,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
@@ -337,6 +340,7 @@ fn nest_scaled<
             kc,
             unroll,
             lane_fanout,
+            side,
             semiring,
         );
     }
@@ -368,6 +372,7 @@ fn body_scaled<
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
+    #[comptime] side: ScaleSide,
     #[comptime] semiring: Semiring,
 ) {
     let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
@@ -378,11 +383,13 @@ fn body_scaled<
         &mut c,
         lw,
         served,
+        aw,
         mr,
         nr,
         kc,
         unroll,
         lane_fanout,
+        side,
         semiring,
     );
     block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);

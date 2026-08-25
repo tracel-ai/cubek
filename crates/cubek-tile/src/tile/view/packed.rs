@@ -1,7 +1,7 @@
 //! The scale-free unpacking read: a stored `u32`'s fields served as values.
 //!
 //! A packed operand is values and nothing else, so unpacking is not dequantization missing a
-//! scale: it is the whole read. [`Packing::Packed`] names the field, this view unpacks it, and no
+//! scale: it is the whole read. [`Packing::Packed`](crate::Packing::Packed) names the field, this view unpacks it, and no
 //! scheme, scale binding or block grid is anywhere in the path. What folds a scale back in, where
 //! there is one, is a verb the kernel writes ([`Tile::mm_scaled`](crate::Tile::mm_scaled)).
 

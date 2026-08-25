@@ -8,6 +8,7 @@
 
 use cubecl::prelude::*;
 
+use crate::instruction::registers::contract::ScaleSide;
 use crate::instruction::registers::horizontal;
 use crate::*;
 
@@ -177,8 +178,9 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     }
 }
 
-/// [`contract`] with the lhs scaled: `c += (lhs ⊗ scale) · rhs`, the scale read from its own
-/// operand at the step's own coordinate. One value per block of the contracted axis, so a
+/// [`contract`] with one operand scaled: `c += (lhs ⊗ scale) · rhs` or `c += lhs · (rhs ⊗ scale)`,
+/// the scale read from its own operand at the step's own coordinate and [`ScaleSide`] saying which
+/// factor it meets. One value per block of the contracted axis, so a
 /// [coarse](crate::Projection) scales view answers the same value for every `k` its block covers
 /// and nothing here divides anything.
 ///
@@ -203,11 +205,13 @@ pub(crate) fn contract_scaled<
     c: &mut Array<Vector<E, V>>,
     #[comptime] lw: usize,
     #[comptime] served: usize,
+    #[comptime] aw: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
+    #[comptime] side: ScaleSide,
     #[comptime] semiring: Semiring,
 ) {
     let mut b = Array::<Vector<E, V>>::new(nr);
@@ -226,9 +230,11 @@ pub(crate) fn contract_scaled<
                 comptime!(None),
                 served,
                 lw,
+                aw,
                 mr,
                 nr,
                 unroll,
+                side,
                 semiring,
             );
         }
@@ -251,9 +257,11 @@ pub(crate) fn contract_scaled<
                     comptime!(Some(lane)),
                     served,
                     lw,
+                    aw,
                     mr,
                     nr,
                     unroll,
+                    side,
                     semiring,
                 );
             }
@@ -273,9 +281,11 @@ pub(crate) fn contract_scaled<
                 comptime!(Some(lane)),
                 served,
                 lw,
+                aw,
                 mr,
                 nr,
                 unroll,
+                side,
                 semiring,
             );
         }
@@ -293,22 +303,27 @@ pub(crate) fn contract_scaled<
                 comptime!(None),
                 served,
                 lw,
+                aw,
                 mr,
                 nr,
                 unroll,
+                side,
                 semiring,
             );
         }
     }
 }
 
-/// [`rank1_update`] with the lhs value scaled before it forms its products: `k_scalar` is the
-/// step's own coordinate along the contracted axis, which is what addresses the scale (the line
-/// index addresses the lhs, and the two differ by its width).
+/// [`rank1_update`] with one factor scaled before the products form: `k_scalar` is the step's own
+/// coordinate along the contracted axis, which is what addresses the scale (the line index
+/// addresses the values, and the two differ by the line's width).
 ///
 /// The scale enters on the product side — `semiring.mul()` — because that is what it is: one more
 /// factor of the term, not one more term. A whole served line takes one scale, which holds exactly
 /// while a line does not straddle a block; the caller states that constraint.
+///
+/// Which factor it meets is [`ScaleSide`]'s. An lhs scale folds once per `(row, k)`, an rhs one
+/// once per `(col, k)`: the same sum of terms either way, folded where it costs least.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update_scaled<
@@ -331,18 +346,39 @@ fn rank1_update_scaled<
     #[comptime] lane: Option<usize>,
     #[comptime] served: usize,
     #[comptime] lw: usize,
+    #[comptime] aw: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
+    #[comptime] side: ScaleSide,
     #[comptime] semiring: Semiring,
 ) {
     #[unroll(unroll)]
     for n in 0..nr {
-        if comptime!(served > 1) {
-            b[n] = Vector::<E, V>::cast_from(rhs.read((n as u32, k_line)));
+        let line = if comptime!(served > 1) {
+            Vector::<E, V>::cast_from(rhs.read((n as u32, k_line)))
         } else {
-            b[n] = Vector::<E, V>::cast_from(rhs.read((k as u32, n as u32)));
-        }
+            Vector::<E, V>::cast_from(rhs.read((k as u32, n as u32)))
+        };
+        b[n] = match comptime!(side) {
+            ScaleSide::Lhs => line,
+            // The scales mirror the rhs's own read with the step's scalar coordinate in place of
+            // its line: an rhs lined along `k` reads `(col, k)`, one lined along the accumulator
+            // reads `(k, col)`, and the coarse view resolves `⌊k / block⌋` either way.
+            ScaleSide::Rhs => {
+                // `n` counts the rhs's *lines*, the scales' coordinate counts its own values, so
+                // the column is `n * aw` (and `aw` is 1 at a folded step, where `n` already is a
+                // column). One line takes one scale, which is the caller's stated constraint.
+                let col = n as u32 * comptime!(aw as u32);
+                let scale = if comptime!(served > 1) {
+                    scales.read((col, k_scalar))
+                } else {
+                    scales.read((k_scalar, col))
+                };
+                let scale = Vector::<E, V>::cast_from(scale.extract(0usize));
+                semiring.mul().fold::<Vector<E, V>>(line, scale)
+            }
+        };
     }
     #[unroll(unroll)]
     for i in 0..mr {
@@ -356,10 +392,16 @@ fn rank1_update_scaled<
         } else {
             Vector::<E, V>::cast_from(lhs_line.extract_dynamic(k % lw))
         };
-        // Broadcast: the scale is one value whatever the line's width, so it multiplies every
-        // component of the served line.
-        let scale = Vector::<E, V>::cast_from(scales.read((i as u32, k_scalar)).extract(0usize));
-        let a = semiring.mul().fold::<Vector<E, V>>(a, scale);
+        let a = match comptime!(side) {
+            ScaleSide::Rhs => a,
+            // Broadcast: the scale is one value whatever the line's width, so it multiplies every
+            // component of the served line.
+            ScaleSide::Lhs => {
+                let scale =
+                    Vector::<E, V>::cast_from(scales.read((i as u32, k_scalar)).extract(0usize));
+                semiring.mul().fold::<Vector<E, V>>(a, scale)
+            }
+        };
         #[unroll(unroll)]
         for n in 0..nr {
             c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);

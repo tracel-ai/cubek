@@ -48,7 +48,42 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
-/// [`memory`] with the lhs scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`.
+/// Which factor of the term a scales operand multiplies. Read off the axes it spans, never
+/// stated: a scale over the accumulator's column axis is a fact about the rhs's columns and
+/// nothing else could fold it in; anything else scales the lhs.
+///
+/// One verb, then, not two. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms — the scale
+/// is one more factor of each — and which operand it rides is only *where* it folds in cheapest:
+/// once per `(row, k)` beside the lhs, or once per `(col, k)` beside the rhs.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ScaleSide {
+    /// The scale spans the accumulator's rows (or the contracted axis alone): folded into the
+    /// lhs value before it forms its products.
+    Lhs,
+    /// The scale spans the accumulator's columns: folded into each rhs line.
+    Rhs,
+}
+
+/// The side a scales operand multiplies on, from the axes it spans against the accumulator's.
+///
+/// A scale over neither matrix axis (per-tensor, or one value per block of `k`) is the same
+/// number wherever it folds, so it takes the lhs side.
+pub(crate) fn scale_side(scales: &Space, output: &Space) -> ScaleSide {
+    let rank = output.rank();
+    let (rows, cols) = (output.axis_at(rank - 2), output.axis_at(rank - 1));
+    let spans = |axis| scales.axes().any(|a| a == axis);
+    assert!(
+        !(spans(rows) && spans(cols)),
+        "mm_scaled: a scales operand over both {rows:?} and {cols:?} is a scale of the output,          not a factor of either operand's term"
+    );
+    match spans(cols) {
+        true => ScaleSide::Rhs,
+        false => ScaleSide::Lhs,
+    }
+}
+
+/// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
+/// rhs twin, whichever [`scale_side`] reads off the scales' axes.
 ///
 /// The 2-D nest only, deliberately. The N-D nest reads its operands through compacted gather
 /// windows, where a step has no single scalar `k` to address a scale with; that is a second
@@ -84,8 +119,9 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
          read as batch matrices. This one needs the N-D nest, which has no scalar step \
          coordinate to address a scale with"
     ));
+    let side = comptime!(scale_side(&scales.space, &space));
     direct::contract_scaled::<E, EL, ER, ES>(
-        acc, lhs, rhs, scales, space, served, config, semiring,
+        acc, lhs, rhs, scales, space, served, side, config, semiring,
     );
 }
 

@@ -13,4 +13,5 @@ mod gather;
 mod promoted;
 mod shape;
 
+pub use base::ScaleSide;
 pub(crate) use base::{memory, memory_scaled};

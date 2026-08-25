@@ -68,11 +68,21 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
    vectors reach the packing factor (a packed line serves a whole word); verified on cpu, Q8S runs
    everywhere.
 
+4. **The side is read, not stated** (`ScaleSide`, `tests/tile/scaled.rs`, `tests/tile/packed.rs`).
+   `mm_scaled` scales whichever operand the scales' *own axes* name: one spanning the output's
+   columns is a fact about the rhs's columns and nothing else could fold it in; anything else
+   scales the lhs. Same verb, same kernel body, both sides — `(a ⊗ s) · b` and `a · (b ⊗ s)` are
+   the same sum of terms, and the side is only where the factor folds in cheapest (once per
+   `(row, k)`, or once per `(col, k)` into each rhs line).
+
+   `n` counts the rhs's lines while the scales count their own values, so the rhs read widens the
+   column by the accumulator's width; a line still may not straddle a block. A scale over *both*
+   matrix axes is refused: that is a scale of the output, not a factor of either term.
+
 ## Next, in order
 
 | # | item | notes |
 |---|---|---|
-| 2 | **the rhs case** | `mm_scaled` scales the lhs. The shipped quant matmul test scales the rhs (`[1, bn]` blocks along `N`), so porting it needs the twin. Two verbs, or one taking both scale operands — settle when the second caller exists |
 | 3 | **the N-D nest** | `memory_scaled` serves the 2-D nest and refuses the rest loudly. A gathered operand's step has no single scalar `k` to address a scale with; that is a design question, not a copy |
 | 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test |
 | 5 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling |

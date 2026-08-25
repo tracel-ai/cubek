@@ -102,6 +102,25 @@ fn packed_matmul<E: Numeric>(
     c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
+/// `c = x · (w ⊗ s)` with `w` packed along its columns: the q4 kernel with the *weights on the
+/// right*, which is the shape the shipped quant matmul has. Same verb, same body — only the
+/// scales' axes differ, and that is what says which factor they meet.
+#[cube(launch)]
+fn packed_matmul_rhs<E: Numeric, V: Size>(
+    x: &TileArg<'_, E, Const<1>>,
+    w: &TileArg<'_, u32, Const<1>>,
+    scales: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(comptime!(space.clone()));
+    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
+}
+
 /// Run [`packed_copy`] over a `[ROWS, COLS]` tensor of `field`-wide values.
 fn run_copy(field: QuantValue, rows: usize, cols: usize) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -267,4 +286,112 @@ fn a_packed_operand_contracts_against_its_scales() {
 #[test]
 fn eight_bit_fields_contract_against_their_scales() {
     run_matmul(QuantValue::Q8S);
+}
+
+/// The rhs twin of [`run_matmul`]: the packed operand is the *right* one, lined along the
+/// accumulator's columns, and its scales are per `(block of K, block of N)`.
+fn run_matmul_rhs(field: QuantValue) {
+    const ROWS: usize = 4;
+    const DEPTH: usize = 32;
+    /// Contracted values per scale.
+    const BLOCK_K: usize = 8;
+    const BLOCKS_K: usize = DEPTH / BLOCK_K;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+    if !fits(&client, factor) {
+        return;
+    }
+    // Two column blocks, each exactly one packed line: a line never straddles a scale.
+    let (cols, bn) = (factor * 2, factor);
+    let blocks_n = cols / bn;
+
+    let x: Vec<f32> = (0..ROWS * DEPTH).map(|i| (i % 7) as f32 - 3.0).collect();
+    let w = field_values(DEPTH * cols, bits);
+    let s: Vec<f32> = (0..BLOCKS_K * blocks_n)
+        .map(|i| (i as f32 + 1.0) / 2.0)
+        .collect();
+
+    let dtype = f32::elem_type_native();
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![ROWS, DEPTH])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let w_tensor = packed_tensor(&client, &w, DEPTH, cols, bits);
+    let (s_tensor, _) = TestInput::builder(client.clone(), shape![BLOCKS_K, blocks_n])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![ROWS, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let scales_spec = TileSpec::new(Projection::new(
+        &[K, N],
+        &[
+            PhysicalAxisMap::of(K).over(BLOCK_K),
+            PhysicalAxisMap::of(N).over(bn),
+        ],
+    ));
+    let space = Tiling::new()
+        .extents(&[(M, ROWS), (N, cols), (K, DEPTH)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(ROWS))
+                .axis(N, Cut::sequential(cols))
+                .axis(K, Cut::sequential(BLOCK_K))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    packed_matmul_rhs::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        factor,
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]).packed(field),
+        ),
+        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), scales_spec),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..ROWS {
+        for n in 0..cols {
+            let want: f32 = (0..DEPTH)
+                .map(|k| {
+                    x[m * DEPTH + k] * w[k * cols + n] as f32 * s[(k / BLOCK_K) * blocks_n + n / bn]
+                })
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// The q4 matmul with the weights on the right: what the shipped quant matmul does.
+#[test]
+fn a_packed_rhs_contracts_against_its_scales() {
+    run_matmul_rhs(QuantValue::Q4S);
+}
+
+/// The same over 8-bit fields.
+#[test]
+fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
+    run_matmul_rhs(QuantValue::Q8S);
 }
