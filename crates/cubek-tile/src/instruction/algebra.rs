@@ -133,26 +133,6 @@ impl Semiring {
     }
 }
 
-impl Monoid {
-    /// The contraction that accumulates under this monoid: the named pair whose
-    /// [`add`](Semiring::add) this is. An accumulation states its algebra once, as the monoid its
-    /// partials fold under, and a contraction reads the product back from here rather than being
-    /// told a second time, which is how the two halves cannot disagree.
-    ///
-    /// [`Prod`](Monoid::Prod) names no semiring: it reduces, it does not contract.
-    pub const fn contraction(self) -> Semiring {
-        match self {
-            Monoid::Sum => Semiring::SUM_PROD,
-            Monoid::Min => Semiring::MIN_SUM,
-            Monoid::Max => Semiring::MAX_SUM,
-            Monoid::Prod => panic!(
-                "Monoid::contraction: no semiring accumulates under Prod; a contraction folds \
-                 under Sum, Min or Max"
-            ),
-        }
-    }
-}
-
 #[cube]
 impl Semiring {
     /// One accumulation step: `acc + (lhs * rhs)` under this semiring's two monoids. Takes its

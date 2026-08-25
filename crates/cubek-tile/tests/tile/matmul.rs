@@ -1812,7 +1812,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// Quantized `A` through the resident K walk: `A` is served via its quant arg, so `acc.mma`
@@ -1832,7 +1832,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The CPU kernel: `c.zero()` then `c.mma(a, b)` straight on the output, with no accumulator
@@ -1868,7 +1868,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The register leaf contracts through a promoted block rather than through the output, so a
@@ -1933,28 +1933,27 @@ fn register_matmul_promoted_accumulator() {
         .enforce()
 }
 
-/// The same three lines under another algebra: the scope opens under `monoid` and the
-/// contraction reads its product back off it ([`Monoid::contraction`]), so `Min` runs min-plus
-/// and `Max` max-plus. Nothing here names a semiring.
+/// The same three lines under another algebra: the scope opens under the semiring's own fold and
+/// the contraction runs the whole semiring, so `MIN_SUM` is min-plus and `MAX_SUM` max-plus.
 #[cube(launch)]
 fn launch_tropical_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] monoid: Monoid,
+    #[comptime] semiring: Semiring,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&a, monoid);
-    acc.mm(&a, &b);
+    let mut acc = c.accumulate::<E, _>(&a, comptime!(semiring.add()));
+    acc.mm(&a, &b, semiring);
 }
 
 /// Min-plus in place: the memory nest seeds `+∞`, forms `a + b` and folds under `min`, all of it
-/// read off the monoid the scope stated. Random operands, so the winning `p` differs cell by
-/// cell and a leaf that kept the ordinary `fma` cannot land on these numbers.
+/// off the semiring the contraction was handed. Random operands, so the winning `p` differs cell
+/// by cell and a leaf that kept the ordinary `fma` cannot land on these numbers.
 #[test]
 fn tropical_matmul_in_place() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -1990,7 +1989,7 @@ fn tropical_matmul_in_place() {
         b.arg(),
         c.arg(),
         space.with_instruction(Instruction::registers(16)),
-        Monoid::Min,
+        Semiring::MIN_SUM,
         dtype,
     );
 
@@ -2015,8 +2014,8 @@ fn tropical_matmul_in_place() {
 }
 
 /// Max-plus through a promoted block: the register accumulator is built under `Max`, so it starts
-/// at the lowest value, steps with `+`, and drains its lanes under the same fold. The block
-/// refuses a contraction whose add is not the one it drains under, so this is one statement.
+/// at the lowest value, steps with `+`, and drains its lanes under the same fold. A contraction
+/// adding under anything else is refused, at the scope and again at the block.
 #[test]
 fn tropical_matmul_promoted() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -2052,7 +2051,7 @@ fn tropical_matmul_promoted() {
         b.arg(),
         c.arg(),
         space.with_instruction(Instruction::registers(16)),
-        Monoid::Max,
+        Semiring::MAX_SUM,
         dtype,
     );
 
@@ -2178,7 +2177,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
