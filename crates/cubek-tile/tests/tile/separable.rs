@@ -788,6 +788,95 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
     }
 }
 
+/// The staged twin of [`masked_normalization_dedarkens_a_boundary_zero_gmem_input`].
+///
+/// `TapMask::Masked` has to drop the taps that overhang the input, and the fill has already
+/// replaced those with zeros by the time the leaf reads them: a staged window cannot tell a padded
+/// zero from a real sample. The stage therefore records the window it was filled from, and the
+/// mask is put to that rectangle instead. The expected values are the gmem test's, because staging
+/// is a placement decision and must not move a number.
+#[test]
+fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+
+    // Same clipped input as the gmem twin, so the last output row's taps overhang the edge.
+    let in_rows = resample_origin(RROWS - 1) + 1;
+    let in_shape = shape![in_rows, RCOLS];
+    let in_data = ramp(in_shape.num_elements());
+    let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
+        .dtype(f32_ty)
+        .custom(in_data.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![RROWS, RCOLS])
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(ROW, Cut::sequential(RROWS))
+                .axis(COL, Cut::sequential(RCOLS))
+                .axis(TAP[0], Cut::sequential(RTAPS))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[ROW, TAP[0], COL],
+        &[
+            PhysicalAxisMap::affine(&[(ROW, ROW_NUM), (TAP[0], RESAMPLE)]).over(RESAMPLE),
+            PhysicalAxisMap::of(COL),
+        ],
+    ))
+    .checked(true)
+    .residence(&[Residence::Smem]);
+
+    resample_kernel_masked::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[ROW, COL]),
+        ),
+        space,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    let mut overhanging = 0usize;
+    for row in 0..RROWS {
+        for col in 0..RCOLS {
+            let mut num = 0.0f32;
+            let mut den = 0.0f32;
+            for tap in 0..RTAPS {
+                let in_r = resample_origin(row) + tap;
+                if in_r < in_rows {
+                    let w = factor_value(0, tap, row);
+                    num += w * in_data[in_r * RCOLS + col];
+                    den += w;
+                } else if col == 0 {
+                    overhanging += 1;
+                }
+            }
+            let want = if den != 0.0 { num / den } else { 0.0 };
+            let have = got.get_f32(&[row, col]);
+            assert!(
+                (have - want).abs() < 1e-4,
+                "masked smem resample: at ({row}, {col}) got {have}, want {want}"
+            );
+        }
+    }
+    // Without an overhanging tap the mask is a no-op and the test would pass on a stage that
+    // dropped the boundary entirely, which is the bug this defends.
+    assert!(
+        overhanging > 0,
+        "masked smem resample: no tap overhangs the input, so the mask was never exercised"
+    );
+}
+
 // ---- column-spanning normalized separable contraction -----------------------
 
 #[cube(launch)]
