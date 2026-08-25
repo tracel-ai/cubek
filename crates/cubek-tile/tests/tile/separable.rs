@@ -624,6 +624,8 @@ fn masked_normalization_excludes_a_procedural_overhang() {
     );
 
     let got = HostData::from_tensor_handle(&client, output, HostDataType::F32).get_f32(&[0, 0]);
-    // First child: (1 + 2) / 2. Trailing child: 3 / 1, with its padded fourth tap excluded.
+    // Mechanism assertion: tests that `TapMask::Masked` excludes the overhang tap across chunks.
+    // First chunk: (1 + 2) / 2. Trailing chunk: 3 / 1 (with its padded fourth tap excluded).
+    // Sum across chunks yields 1.5 + 3.0 = 4.5.
     assert!((got - 4.5).abs() < 1.0e-6, "got {got}, want 4.5");
 }

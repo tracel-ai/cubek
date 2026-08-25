@@ -73,11 +73,13 @@ impl GatherProblem {
             );
         }
         let normalization = normalization.map(|(mask, guard, original)| {
+            validate_guard(guard);
             for &axis in &block.reduce {
                 assert!(
                     original.contains(axis) && original.extent_raw(axis) == lhs.extent_raw(axis),
-                    "contract gather: a normalized factor axis cannot be partitioned above the \
-                     gather leaf; normalize the full factor run in one leaf"
+                    "contract gather: a normalized factor axis cannot be partitioned between \
+                     .normalized() and the gather leaf; calling .normalized() below a split \
+                     normalizes each chunk independently"
                 );
             }
             (mask, guard)
@@ -280,6 +282,46 @@ mod tests {
             block,
             Some(2),
             Some((TapMask::Unmasked, DivGuard::default(), original)),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "TapMask::Masked needs each contracted axis to move distinct input axes")]
+    fn problem_rejects_masked_normalization_when_contracted_axes_share_input_axis() {
+        let (lhs, rhs, acc) = spaces();
+        let map = vec![
+            PhysicalAxisMap::affine(&[(K0, 1), (K1, 1)]),
+            PhysicalAxisMap::of(N),
+        ];
+        let projection = Projection::new(&[K0, K1, N], &map);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
+        GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            Some(2),
+            Some((TapMask::Masked, DivGuard::default(), lhs)),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "TapMask::Masked cannot cache weights across")]
+    fn problem_rejects_masked_normalization_caching_across_shared_column_axis() {
+        let (lhs, rhs, acc) = spaces();
+        let map = vec![
+            PhysicalAxisMap::affine(&[(K0, 1), (N, 1)]),
+            PhysicalAxisMap::of(K1),
+        ];
+        let projection = Projection::new(&[K0, K1, N], &map);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
+        GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            Some(2),
+            Some((TapMask::Masked, DivGuard::default(), lhs)),
         );
     }
 

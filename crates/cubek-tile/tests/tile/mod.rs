@@ -3,7 +3,6 @@ mod conv;
 mod instruction;
 mod launcher;
 mod matmul;
-mod normalize;
 mod procedural;
 mod quant;
 mod recursive;

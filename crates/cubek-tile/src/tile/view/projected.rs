@@ -499,6 +499,9 @@ impl<T: Numeric> Tile<T> {
                 g.nd_physical::<I, WP, W>(),
                 comptime!(g.projection.physical_rank()),
             ),
+            // A procedural tile is always scalar-addressed at the leaf (`vector_size() == 1`,
+            // enforced by `ProceduralDataExpand::__expand_vector_size_method`). The direct
+            // projection therefore steps by single elements along the innermost axis.
             TileKind::Procedural(_) => NdReader::new(
                 axis_projection(
                     comptime!(self.space.clone()),

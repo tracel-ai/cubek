@@ -72,11 +72,25 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
             if comptime!(problem.lhs_spans_col) {
                 #[unroll(unroll)]
                 for n in 0..nr {
+                    let anchor = rhs_reader.map.anchor(
+                        cell_position(
+                            &batch,
+                            i as u32,
+                            n as u32,
+                            &factor_coords(comptime!(factors), 0usize, 0usize),
+                            comptime!(problem.rhs_space.clone()),
+                            comptime!(problem.clone()),
+                            comptime!(problem.block.vw),
+                        ),
+                        comptime!(problem.block.reduce.clone()),
+                    );
                     let mut weights = Array::<EL>::new(taps);
                     tap_walk::<EL, ER>(
                         &mut weights,
                         lhs,
                         rhs,
+                        &rhs_reader.map,
+                        &anchor,
                         &batch,
                         i as u32,
                         n as u32,
@@ -111,18 +125,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                     }
                 }
             } else {
-                let mut weights = Array::<EL>::new(taps);
-                tap_walk::<EL, ER>(
-                    &mut weights,
-                    lhs,
-                    rhs,
-                    &batch,
-                    i as u32,
-                    0u32,
-                    comptime!(factors),
-                    comptime!(problem.clone()),
-                );
-
                 // The taps are the only coordinates moving under this row, so the map's rational
                 // axes carry the same numerator at all `kc` of them: their floor is taken once
                 // here and each tap steps the result.
@@ -137,6 +139,20 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size>(
                         comptime!(problem.block.vw),
                     ),
                     comptime!(problem.block.reduce.clone()),
+                );
+
+                let mut weights = Array::<EL>::new(taps);
+                tap_walk::<EL, ER>(
+                    &mut weights,
+                    lhs,
+                    rhs,
+                    &rhs_reader.map,
+                    &anchor,
+                    &batch,
+                    i as u32,
+                    0u32,
+                    comptime!(factors),
+                    comptime!(problem.clone()),
                 );
 
                 #[unroll(unroll_taps)]
@@ -189,6 +205,8 @@ fn tap_walk<EL: Numeric, ER: Numeric>(
     weights: &mut Array<EL>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
+    rhs_map: &AxisProjection,
+    anchor: &CoordsDyn,
     batch: &Coords<u32>,
     row: u32,
     col: u32,
@@ -244,9 +262,14 @@ fn tap_walk<EL: Numeric, ER: Numeric>(
                                 comptime!(problem.clone()),
                                 comptime!(problem.block.vw),
                             );
+                            let physical_pos = rhs_map.advance(
+                                anchor,
+                                rhs_pos,
+                                comptime!(problem.block.reduce.clone()),
+                            );
                             select(
-                                rhs.separable_tap_in_bounds(
-                                    rhs_pos,
+                                rhs.separable_physical_tap_in_bounds(
+                                    &physical_pos,
                                     comptime!(problem.block.reduce[f]),
                                 ),
                                 weight,

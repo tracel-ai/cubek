@@ -65,6 +65,9 @@ impl<T: Numeric> Tile<T> {
         space: Space,
         recipe: R::ExpandType,
     ) -> TileExpand<T> {
+        // A separable procedural tile is always evaluated in place. This invariant is load-bearing
+        // for normalization: staging a recipe into shared memory would drop its factorization and
+        // normalization metadata without diagnostic.
         Self::__expand_procedural_virtual(
             scope,
             space,
@@ -993,19 +996,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether one factor tap lands inside the input axes that factor moves. The logical position
-    /// is projected first; the memory window then checks only the physical carriers of `axis`, so
-    /// another factor's placeholder coordinate cannot mask this one.
-    pub(crate) fn separable_tap_in_bounds(&self, pos: CoordsDyn, #[comptime] axis: Axis) -> bool {
+    /// Whether one factor tap lands inside the input axes that factor moves. The physical position
+    /// is already stepped from the row's hoisted anchor; the memory window then checks only the
+    /// physical carriers of `axis`, avoiding rebuilding the projection per tap.
+    pub(crate) fn separable_physical_tap_in_bounds(
+        &self,
+        pos: &CoordsDyn,
+        #[comptime] axis: Axis,
+    ) -> bool {
         match &self.tile_kind {
             TileKind::Gmem(data) => {
                 let projection = comptime!(data.projection.clone());
-                let layout = axis_projection(
-                    comptime!(self.space.clone()),
-                    comptime!(projection.clone()),
-                    data.map.clone(),
-                    self.vector_size(),
-                );
                 if comptime!(projection.logical_axes().contains(&axis)) {
                     let carriers = comptime!(projection.carriers(axis));
                     let mut valid = true;
@@ -1016,8 +1017,7 @@ impl<T: Numeric> Tile<T> {
                             data.window.boundaries.get(pa).copied().flatten()
                                 == Some(Boundary::Zero)
                         ) {
-                            let physical = layout.project_axis(&pos, pa, comptime!(Vec::new()));
-                            valid = valid && data.window.axis_in_bounds(physical, pa);
+                            valid = valid && data.window.axis_in_bounds(pos[pa], pa);
                         }
                     }
                     valid
@@ -1029,7 +1029,7 @@ impl<T: Numeric> Tile<T> {
                 "Tile::separable_tap_in_bounds: TapMask::Masked needs the rhs source window; \
                  staging it in Smem erases which zeros came from the boundary"
             ),
-            TileKind::Procedural(data) => data.axis_in_bounds(&pos, axis),
+            TileKind::Procedural(data) => data.axis_in_bounds(pos, axis),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
                 panic!("Tile::separable_tap_in_bounds: a separable gather needs an addressable rhs")
             }

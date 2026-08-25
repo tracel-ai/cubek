@@ -2391,8 +2391,7 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        // `origin`, not `bound`: the two share a rank on every window a mode can reach, and this
-        // is the one `pos` and `boundaries` are indexed by.
+        // Delegates to factor-local axis bound checks across all physical boundary axes.
         self.axes_in_bounds(
             &pos,
             comptime!((0..self.boundaries.len()).collect::<Vec<_>>()),
