@@ -27,17 +27,18 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     let rhs_gathered = rhs.gathered();
     let lhs_procedural = lhs.is_procedural();
     let rhs_procedural = rhs.is_procedural();
+    let lw = lhs.vector_size();
+    let rw = rhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
     let nd = comptime!(
         Space::contracted(&[&lhs.space, &rhs.space], &space).len() > 1
             || lhs_gathered
             || rhs_gathered
             || lhs_procedural
             || rhs_procedural
+            || (served == 1 && rw != aw)
     );
-    let lw = lhs.vector_size();
-    let rw = rhs.vector_size();
-    let aw = comptime!(acc.store.vector_size);
-    let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
 
     if nd {
         gather::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config);
@@ -58,10 +59,11 @@ fn step_served(lhs: &Space, rhs: &Space, acc: &Space, lw: usize, rw: usize, aw: 
     let k = contracted[contracted.len() - 1];
     let lined = rhs.axis_at(rhs.rank() - 1);
     if lined != k {
-        assert_eq!(
-            rw, aw,
+        assert!(
+            rw == aw || aw == 1,
             "contract: the rhs lines along {lined:?} together with the accumulator, so both must \
-             be served at one width (rhs {rw}, accumulator {aw})"
+             be served at one width unless the accumulator is scalar and the rhs is a padded \
+             stage (rhs {rw}, accumulator {aw})"
         );
         return 1;
     }

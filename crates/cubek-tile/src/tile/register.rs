@@ -17,12 +17,11 @@ define_size!(pub(crate) RA);
 /// An `mr × nr` block of `RA`-wide accumulators living in registers, the software instruction's
 /// encoding of a [`PlaneTile`].
 ///
-/// The block exists so the software leaf can accumulate the way the hardware ones do. It used
-/// to allocate its own inside the instruction, which meant the accumulator could not outlive a
-/// single call: a `K` walk that visits the leaf repeatedly round-tripped its partials through
-/// the output's element between visits, so a deep contraction into `f16` lost precision it did
-/// not have to. Created by [`accumulate`](Tile::accumulate) and passed in, it survives the whole walk
-/// and only meets memory at [`drain_cast_into`](Tile::drain_cast_into).
+/// The block exists so the software leaf can accumulate the way the hardware ones do: created by
+/// [`accumulate`](Tile::accumulate) and passed in, it outlives a single leaf call and only meets
+/// memory on drain. An accumulator allocated inside the instruction would round-trip its partials
+/// through the output's element on every visit, so a deep contraction into `f16` would lose
+/// precision it does not have to.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RegisterData<T: Numeric> {
@@ -110,16 +109,18 @@ impl<T: Numeric> RegisterData<T> {
     /// the answer until those lanes are combined: fold first, then let one of them write. This is
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
     /// every lane writing its own fraction over the last.
-    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
-        let vw = comptime!(self.vector_size);
-        // `row_stride` counts scalars, but the window is indexed in *lines* (its offset is a
-        // line offset, and the buffer's real element is `Vector<Out, vector_size>`). Write whole
-        // lines at line indices: stepping by scalars here spreads each row `vw` times too far.
-        let line_stride = mem.row_stride() / comptime!(vw as u32);
-        let window = mem.window_slice_mut();
-        // The sink's storage is vectorized at the same width the block was promoted at, so re-view
-        // it at `RA` too: this is a real vector store, not the reinterpret the block once did.
-        let out_lines = window.as_vectorized_mut().with_vector_size_mut::<RA>();
+    ///
+    /// The write goes through the sink's masked matrix view, the same door
+    /// [`AccumulateView::commit`] uses: a block is sized to the leaf, so it may overhang the real
+    /// extent, and the lines past the edge belong to the next row. The mask is a comptime flag,
+    /// so a block that fits emits a straight-line store.
+    pub(crate) fn store_cast_window<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
+        // Addressed in lines at the width the block was promoted at, bounded by the window extent.
+        let mut sink = mem.matrix_mut::<RA>(0usize, space);
 
         // Split comptime rather than branching per line: a value-producing `match` plus a
         // lane guard emits a binding the CPU backend cannot resolve ("Value should have been
@@ -132,9 +133,10 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let offset = (i as u32) * line_stride + comptime!(n as u32);
-                        out_lines[offset as usize] =
-                            Vector::<Out, RA>::cast_from(self.data[comptime!(i * self.nr + n)]);
+                        sink.write(
+                            ((i as u32).runtime(), (n as u32).runtime()),
+                            Vector::<Out, RA>::cast_from(self.data[comptime!(i * self.nr + n)]),
+                        );
                     }
                 }
             }
@@ -149,8 +151,10 @@ impl<T: Numeric> RegisterData<T> {
                             comptime!(self.monoid),
                         );
                         if UNIT_POS_X == 0 {
-                            let offset = (i as u32) * line_stride + comptime!(n as u32);
-                            out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
+                            sink.write(
+                                ((i as u32).runtime(), (n as u32).runtime()),
+                                Vector::<Out, RA>::cast_from(combined),
+                            );
                         }
                     }
                 }
@@ -168,8 +172,10 @@ impl<T: Numeric> RegisterData<T> {
                         );
                         let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                         if lane_in_group == 0 {
-                            let offset = (i as u32) * line_stride + comptime!(n as u32);
-                            out_lines[offset as usize] = Vector::<Out, RA>::cast_from(combined);
+                            sink.write(
+                                ((i as u32).runtime(), (n as u32).runtime()),
+                                Vector::<Out, RA>::cast_from(combined),
+                            );
                         }
                     }
                 }

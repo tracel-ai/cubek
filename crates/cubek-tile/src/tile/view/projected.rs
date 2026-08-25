@@ -371,6 +371,11 @@ pub(crate) fn axis_projection(
 
 /// Returns the extents of `space` in the range `from..to`, with the innermost axis
 /// converted to line count by dividing by `vector_size`.
+///
+/// Rounded up, matching the buffer these extents index into (`storage_extents` and
+/// `Compaction::line_extents`): a padded stage's innermost extent need not fill whole lines, and
+/// the box a read is bounds-checked against has to include the partial last one the stage really
+/// holds.
 pub(crate) fn line_extents(
     space: &Space,
     vector_size: usize,
@@ -381,7 +386,11 @@ pub(crate) fn line_extents(
     (from..to)
         .map(|p| {
             let e = space.extent_at(p);
-            if p == last { e / vector_size } else { e }
+            if p == last {
+                e.div_ceil(vector_size)
+            } else {
+                e
+            }
         })
         .collect()
 }

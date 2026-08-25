@@ -164,6 +164,10 @@ pub struct StagePlan {
     /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
     /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
     pub units: usize,
+    /// The line width the next shared-memory stage is served at, `None` to serve it at the source
+    /// operand's own. A wider stage is padded to whole lines. Other residences carry it forward;
+    /// the Smem level that consumes it clears it on descent.
+    pub stage_width: Option<usize>,
 }
 
 impl StagePlan {
@@ -179,7 +183,22 @@ impl StagePlan {
             residence: SmallVec::from_slice(residence),
             storage,
             units,
+            stage_width: None,
         }
+    }
+
+    /// Serve this plan's next shared-memory stage at `width` rather than at the source operand's
+    /// own line width.
+    /// See [`stage_width`](StagePlan::stage_width).
+    pub fn staged_at(mut self, width: Option<usize>) -> Self {
+        self.stage_width = width;
+        self
+    }
+
+    /// The line width this plan's next shared-memory stage is served in: the padded
+    /// [`stage_width`](StagePlan::stage_width) when one is stated, else `source` unchanged.
+    pub fn effective_width(&self, source: usize) -> usize {
+        self.stage_width.unwrap_or(source)
     }
 
     /// The finest register stage still ahead of this operand: what it is at the instruction
@@ -197,12 +216,18 @@ impl StagePlan {
     }
 
     /// The plan one level down, this level's residence consumed. Called wherever a space is
-    /// divided, so the two descend together.
+    /// divided, so the two descend together. A pending stage width follows non-Smem residences;
+    /// the Smem level it configures consumes it exactly once.
     pub fn descend(&self) -> Self {
         StagePlan {
             residence: self.residence.iter().skip(1).copied().collect(),
             storage: self.storage,
             units: self.units,
+            stage_width: if self.head() == Residence::Smem {
+                None
+            } else {
+                self.stage_width
+            },
         }
     }
 }
@@ -281,6 +306,42 @@ mod tests {
         assert_eq!(plan.descend().head(), Residence::InPlace);
         assert_eq!(plan.descend().descend().head(), Residence::InPlace);
         assert_eq!(StagePlan::in_place().head(), Residence::InPlace);
+    }
+
+    #[test]
+    fn an_unstated_stage_width_is_the_operands_own() {
+        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0);
+        assert_eq!(plan.effective_width(1), 1);
+        assert_eq!(plan.effective_width(4), 4);
+    }
+
+    #[test]
+    fn a_padded_stage_widens_its_source() {
+        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0).staged_at(Some(4));
+        assert_eq!(plan.effective_width(1), 4);
+    }
+
+    #[test]
+    fn a_stage_width_follows_non_smem_and_clears_after_the_first_smem() {
+        let plan = StagePlan::new(
+            &[
+                Residence::InPlace,
+                Residence::Register,
+                Residence::Smem,
+                Residence::Smem,
+            ],
+            StageStorage::Strided,
+            0,
+        )
+        .staged_at(Some(4));
+        let after_in_place = plan.descend();
+        assert_eq!(after_in_place.effective_width(1), 4);
+        let at_first_smem = after_in_place.descend();
+        assert_eq!(at_first_smem.head(), Residence::Smem);
+        assert_eq!(at_first_smem.effective_width(1), 4);
+        let at_second_smem = at_first_smem.descend();
+        assert_eq!(at_second_smem.head(), Residence::Smem);
+        assert_eq!(at_second_smem.effective_width(1), 1);
     }
 
     /// The layout and worker count are facts about the operand, not about one level, so they

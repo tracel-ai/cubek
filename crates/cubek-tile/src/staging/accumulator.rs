@@ -9,9 +9,16 @@
 //! accumulator for that whole region, and every level below runs inside it.
 //!
 //! ```ignore
-//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope, uninitialized
-//! acc.seed();                       // the scope's own monoid states what that means
-//! acc.mma(&a, &b);                  // the contraction, and the drain that closes the scope
+//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope
+//! acc.mm(&a, &b);                   // `c = a·b`, and the drain that closes the scope
+//! ```
+//!
+//! `mm` states `c = a·b`, so it owns the init. To fold onto what `c` already holds, state that
+//! init and use the accumulating verb instead:
+//!
+//! ```ignore
+//! acc.seed();
+//! acc.mma(&a, &b);
 //! ```
 //!
 //! An output stating nothing is [`InPlace`](Residence::InPlace) and contracts where it already
@@ -63,8 +70,26 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
         }
     }
 
-    /// Contract `lhs · rhs` into the accumulator, then drain: the contraction exhausts the scope
-    /// the accumulator was opened for, so leaving it is what writes the result back.
+    /// `c = lhs · rhs`: contract into the accumulator and drain, the contraction owning the init.
+    /// The scope's whole body at every call site that is not accumulating onto `c`.
+    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+        match self {
+            AccumulatorScope::Register {
+                tile,
+                sink,
+                monoid: _,
+            } => {
+                tile.mm(lhs, rhs);
+                tile.drain_cast_into(sink);
+            }
+            AccumulatorScope::InPlace { sink, monoid: _ } => sink.mm(lhs, rhs),
+        }
+    }
+
+    /// `c += lhs · rhs`: [`mm`](AccumulatorScope::mm) with the accumulate its name carries,
+    /// folding onto an accumulator the caller [`seed`](AccumulatorScope::seed)ed. Drains the same
+    /// way: the contraction exhausts the scope the accumulator was opened for, so leaving it is
+    /// what writes the result back.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
         match self {
             AccumulatorScope::Register {
@@ -79,8 +104,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
         }
     }
 
-    /// Fold `input` along the axes the accumulator does not span, then drain, as
-    /// [`mma`](AccumulatorScope::mma) does.
+    /// `c = fold(input)`: reduce `input` along the axes the accumulator does not span, then
+    /// drain, as [`mm`](AccumulatorScope::mm) does. Owns the init the same way.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>) {
         match self {
             AccumulatorScope::Register { tile, sink, monoid } => {
@@ -92,6 +117,20 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             }
         }
     }
+
+    /// `c = fold(c, input)`: [`reduce_axis`](AccumulatorScope::reduce_axis) folding onto an
+    /// accumulator the caller [`seed`](AccumulatorScope::seed)ed.
+    pub fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
+        match self {
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                tile.reduce_axis_accumulate(input, comptime!(*monoid));
+                tile.drain_cast_into(sink);
+            }
+            AccumulatorScope::InPlace { sink, monoid } => {
+                sink.reduce_axis_accumulate(input, comptime!(*monoid))
+            }
+        }
+    }
 }
 
 #[cube]
@@ -100,8 +139,10 @@ impl<Acc: Numeric> Tile<Acc> {
     /// matmul, whichever fold a reduce asked for. `monoid` is stated here because it is read on
     /// drain, when the plane's lanes are combined, and comptime state cannot be set after a thing is
     /// built, and because it is the accumulation's one algebra rather than a fact about each
-    /// call. The caller states the init ([`seed`](AccumulatorScope::seed)); the op that closes the
-    /// scope drains it.
+    /// call. The op that closes the scope drains it; where that op is
+    /// [`mm`](AccumulatorScope::mm) or [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the
+    /// init too, and only the accumulating verbs ask the caller to state one
+    /// ([`seed`](AccumulatorScope::seed)).
     ///
     /// Where the accumulator lives is the output operand's own statement, read off the residence
     /// it stated at this level ([`Operand::stage`]). `EA` is the register accumulate type, read

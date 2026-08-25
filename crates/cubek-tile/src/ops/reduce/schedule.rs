@@ -62,7 +62,7 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         }
         slot.consume(|staged| {
             let input = read_operand(staged, region, payload);
-            self.acc.at(region).reduce_axis(&input, monoid);
+            self.acc.at(region).reduce_axis_accumulate(&input, monoid);
         });
     }
 }

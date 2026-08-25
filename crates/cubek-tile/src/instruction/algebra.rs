@@ -176,6 +176,7 @@ impl Semiring {
 /// A [`Monoid`] is comptime-only: a kernel never holds one in a register, it reads one to decide
 /// which instruction to emit. Expanding as itself is what lets a [`CubeType`] carry one in a
 /// `#[cube(comptime)]` field, the way an accumulator's scope carries the algebra it folds under.
+/// Each impl below is one `CubeType` requires of an expand type; none is spare.
 impl CubeType for Monoid {
     type ExpandType = Self;
 }

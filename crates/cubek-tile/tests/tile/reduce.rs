@@ -1207,7 +1207,6 @@ fn resident_fold_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let out = output.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, monoid);
-    acc.seed();
     acc.reduce_axis(&input);
 }
 
@@ -1234,9 +1233,12 @@ fn resident_max_over_lane_split_k() {
         .dtype(f32_ty)
         .custom(values.clone())
         .generate_with_f32_host_data();
+    // Poisoned with values above every input, so a fold that let the sink take part would win the
+    // maximum and be caught. `reduce_axis` owns the init, and the lane-split contraction is
+    // exactly the case where it must seed rather than overwrite.
     let out_handle = TestInput::builder(client.clone(), shape![m, n])
         .dtype(f32_ty)
-        .zeros()
+        .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
     resident_fold_kernel::launch::<TestRuntime>(
