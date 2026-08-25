@@ -1,11 +1,11 @@
 //! Shared helpers for the extended (forced-blueprint) tier.
 
 use cubecl::prelude::Scalar;
+use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems},
     multi_level::definition::TilingScheme,
 };
-use cubek_std::{PartitionSize, StageSize, TileSize};
 
 use crate::convolution::launcher_strategy::ConvolutionSize;
 

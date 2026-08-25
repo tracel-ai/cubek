@@ -40,7 +40,7 @@ impl Display for GemmStrategy {
     }
 }
 
-/// Returns `(m_units, n_units)` — count of per-plane blocks along each
+/// Returns `(m_units, n_units)`: count of per-plane blocks along each
 /// output axis for the chosen variant. Outer-product variants pack
 /// `vector_size` cells per block along their natural-vector axis.
 fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -> (usize, usize) {

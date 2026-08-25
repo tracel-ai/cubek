@@ -1,4 +1,4 @@
-use cubek_std::TileSize;
+use cubek_matmul::multi_level::TileSize;
 use cubek_std::cube_count::{Count3d, CubeCountPlan};
 
 use crate::forward::definition::{AttentionDims, AttentionVectorSizes, HypercubeBlueprint};

@@ -75,7 +75,7 @@ pub enum TestOutcome {
 impl TestOutcome {
     /// Apply the current test mode to this outcome and fail the test if rejected.
     ///
-    /// Convenience wrapper for `decide(self).enforce()` — applies the
+    /// Convenience wrapper for `decide(self).enforce()`: applies the
     /// active test policy (from `cubek.toml`) to this outcome and fails the
     /// test if the decision is `Reject`.
     ///

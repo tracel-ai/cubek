@@ -1,10 +1,10 @@
 use cubecl;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::{
+use cubek_matmul::multi_level::{
     stage::StageMemoryConfig,
     tile::{StridedTile, TilingValidation},
-    {InvalidConfigError, MatrixLayout},
 };
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use crate::components::stage::bias_stage::BiasStageMemory;
 

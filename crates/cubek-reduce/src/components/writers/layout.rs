@@ -75,15 +75,15 @@ impl Layout for ReduceOutputLayout {
 /// Build a [`ReduceOutputLayout`] from the output tensor and reduce/vec axes.
 ///
 /// For simple reduces (`accumulator_length == 1`) `k_iter` never advances, so
-/// the layout degenerates to `position = write_index` — a flat enumeration of
+/// the layout degenerates to `position = write_index`: a flat enumeration of
 /// output vectors.
 ///
 /// For topk-style reduces (`accumulator_length > 1`) the k slots live along
 /// `reduce_axis` with stride `stride(reduce_axis) / vec` vectors, and the vec
 /// axis (contiguous in the output, scalar stride 1) advances by one vector
-/// per step, so `write_stride = 1`. When the two axes coincide — i.e. a
-/// rank-1 output or any degenerate case where there is no separate SIMD axis
-/// — `write_stride` collapses to `0` and `num_writes` to `1`, so every
+/// per step, so `write_stride = 1`. When the two axes coincide: i.e. a
+/// rank-1 output or any degenerate case where there is no separate SIMD axis:
+/// `write_stride` collapses to `0` and `num_writes` to `1`, so every
 /// `write_index` lands on the same k slot (should not matter because this collapse happens
 /// only if we have only one unit).
 #[cube]

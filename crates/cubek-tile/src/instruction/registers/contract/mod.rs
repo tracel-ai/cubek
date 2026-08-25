@@ -9,7 +9,6 @@
 
 mod base;
 mod direct;
-mod gather;
 mod promoted;
 mod shape;
 

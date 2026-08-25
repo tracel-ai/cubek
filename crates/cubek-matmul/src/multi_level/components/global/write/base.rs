@@ -7,12 +7,12 @@ use crate::multi_level::{
     },
     definition,
     definition::MatrixTypes,
+    stage::StageMemoryConfig,
 };
 use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},
 };
-use cubek_std::stage::StageMemoryConfig;
 
 pub type WriterStage<GW, MT> = <<GW as GlobalWriterFamily>::Stage as StageFamily>::Stage<
     definition::Stage<MT>,

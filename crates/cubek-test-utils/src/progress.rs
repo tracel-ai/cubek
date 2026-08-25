@@ -9,7 +9,7 @@
 //! Granularity is per-output-write: for matmul that's one bump per output
 //! cell, for reduce that's one bump per output position, for attention that's
 //! one bump per (batch, head, seq_q) row, etc. References are free to declare
-//! a coarser granularity if a per-cell bump would dominate runtime — the only
+//! a coarser granularity if a per-cell bump would dominate runtime: the only
 //! invariant is that `current()` reaches `total` by the time the reference
 //! returns.
 
@@ -54,7 +54,7 @@ impl Progress {
         self.current.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Increment the counter by `n` output writes — useful when a reference
+    /// Increment the counter by `n` output writes: useful when a reference
     /// writes a contiguous run of outputs in one inner loop.
     pub fn bump_by(&self, n: u64) {
         self.current.fetch_add(n, Ordering::Relaxed);

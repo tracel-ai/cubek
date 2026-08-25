@@ -7,7 +7,7 @@
 //! carried struct, and per-method 5-arm matches that forward into the
 //! variant's [`TileVariant`] impl. The `allocate_*` dispatchers at the bottom
 //! follow the same shape, unpacking each matmul-config into the primitive
-//! comptime fields the cubek-std allocators take.
+//! comptime fields the [`crate::multi_level::tile`] allocators take.
 
 mod cmma;
 mod common;
@@ -25,20 +25,21 @@ pub use register::RegisterMatmul;
 pub use variant::TileVariant;
 
 use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    CubeDimResource, InvalidConfigError, MatrixLayout, TileSize,
-    tile::{
-        Tile, TileScope, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
-        interleaved_allocate_acc, interleaved_allocate_lhs, interleaved_allocate_rhs,
-        mma_allocate_acc, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_acc,
-        planevec_allocate_lhs, planevec_allocate_rhs, register_allocate_acc, register_allocate_lhs,
-        register_allocate_rhs,
-    },
-};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
-    multi_level::definition::BatchMatmulBlueprint,
+    multi_level::{
+        CubeDimResource, TileSize,
+        definition::BatchMatmulBlueprint,
+        tile::{
+            Tile, TileScope, cmma_allocate_acc, cmma_allocate_lhs, cmma_allocate_rhs,
+            interleaved_allocate_acc, interleaved_allocate_lhs, interleaved_allocate_rhs,
+            mma_allocate_acc, mma_allocate_lhs, mma_allocate_rhs, planevec_allocate_acc,
+            planevec_allocate_lhs, planevec_allocate_rhs, register_allocate_acc,
+            register_allocate_lhs, register_allocate_rhs,
+        },
+    },
 };
 
 /// Tile-level matmul configuration. Each variant carries the per-kind config.

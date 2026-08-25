@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::{Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
+use cubek_matmul::multi_level::tile::{Plane, RowWise, SoftmaxKind, Tile, softmax_init_state};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
 use crate::{components::tile::MaskTile, forward::definition::AttentionPartitionSize};

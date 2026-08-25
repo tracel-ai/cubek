@@ -45,7 +45,12 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     for mat in 0..matrices {
         let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
 
-        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(problem.block.space.clone()));
+        // The contraction's own algebra, as [`direct`](super::direct) states it.
+        let mut acc = acc.matrix_accumulate::<A>(
+            mat,
+            comptime!(problem.block.space.clone()),
+            comptime!(Semiring::SUM_PROD.add()),
+        );
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
@@ -240,8 +245,8 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     comptime!(problem.block.vw),
                 ))
             };
-            // Explicit `fma`, for the reason [`block::rank1_update`] gives.
-            c[i * nr + n] = fma(a, v, c[i * nr + n]);
+            // One semiring step, for the reason [`block::rank1_update`] gives.
+            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, v, c[i * nr + n]);
         }
     }
 }

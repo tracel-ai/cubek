@@ -6,18 +6,15 @@ use crate::{
             stage::StageFamily,
         },
         definition::MatmulTypes,
+        stage::{StageMemoryConfig, SwizzleMode},
+        tile::TilingLayout,
     },
 };
 use cubecl::{
     ir::{DeviceProperties, OpaqueType},
     prelude::*,
 };
-use cubek_std::{
-    launch::tma::stride_align_bits,
-    stage::{StageMemoryConfig, SwizzleMode},
-    tile::TilingLayout,
-    {InvalidConfigError, MatrixLayout},
-};
+use cubek_std::{InvalidConfigError, MatrixLayout, launch::tma::stride_align_bits};
 
 #[cube]
 /// A loading job represents a sequence of loading tasks.

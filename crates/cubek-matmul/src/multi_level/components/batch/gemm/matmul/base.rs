@@ -134,7 +134,7 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
         let out_view = out.view_mut(MatLayout::new(out_batch, (m, n)));
 
         // Map cube + plane coords to the per-plane block origin. Per
-        // variant, each axis is enumerated in *blocks* — the split axis
+        // variant, each axis is enumerated in *blocks*: the split axis
         // is `cube_axis * num_planes + plane_id`, the non-split axis is
         // just `cube_axis`. A block is 1 cell for the axis that the
         // variant covers per-plane (Dot covers 1×1; OuterN covers 1

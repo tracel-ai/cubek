@@ -1,8 +1,9 @@
+use crate::multi_level::stage::StageMemoryConfig;
 use cubecl::{
     prelude::*,
     std::tensor::layout::{Coords2d, Layout, LayoutExpand},
 };
-use cubek_std::{MatrixLayout, stage::StageMemoryConfig};
+use cubek_std::MatrixLayout;
 
 use crate::definition::StageIdent;
 

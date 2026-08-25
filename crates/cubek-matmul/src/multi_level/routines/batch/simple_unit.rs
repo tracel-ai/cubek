@@ -1,5 +1,4 @@
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
-use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -26,6 +25,7 @@ use crate::{
             PartitionScaling, StageScaling, TileSizeSelection, UnitTilingBlueprintOptions,
             infer_blueprint_unit,
         },
+        tile::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };

@@ -4,7 +4,6 @@
 use cubecl::prelude::*;
 
 use super::direct;
-use super::gather;
 use crate::*;
 
 /// Run the register instruction over each batch matrix, reading operands through the

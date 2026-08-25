@@ -10,13 +10,14 @@ use crate::{
             stage::{PlanePartitioner, partition_coordinates},
         },
         definition::MatrixTypes,
+        stage::StageMemoryConfig,
+        tile::StridedTile,
     },
 };
 use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},
 };
-use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 #[derive(CubeType)]
 /// Writes tiles from out shared memory to output global memory

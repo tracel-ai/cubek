@@ -1,16 +1,12 @@
 use std::fmt::Display;
 
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
-use cubek_std::{
-    PartitionSize, TileSize,
-    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    tile::{ColMajorTilingOrder, RowMajorTilingOrder},
-};
+use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
     multi_level::{
-        BatchMatmulRoutine, ExpandInfo, LaunchInfo,
+        BatchMatmulRoutine, ExpandInfo, LaunchInfo, PartitionSize, TileSize,
         args::{ConfigRuntimeArg, InputRuntimeArg, MatmulArgs, OutputRuntimeArg, RuntimeConfig},
         batch_validate_blueprint,
         components::{
@@ -30,6 +26,7 @@ use crate::{
             tile::TileMatmulKind,
         },
         definition::{BatchMatmulBlueprint, CubeMappingLaunch, TilingScheme},
+        tile::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };

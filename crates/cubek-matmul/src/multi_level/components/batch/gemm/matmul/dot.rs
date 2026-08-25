@@ -6,7 +6,7 @@ use crate::multi_level::components::batch::{
     gemm::io::{read, write},
 };
 
-/// Plane-cooperative dot product over K — one output cell per plane.
+/// Plane-cooperative dot product over K: one output cell per plane.
 ///
 /// Units within a plane share the K traversal in `plane_dim`-wide steps and
 /// accumulate a `Vector<AccR, vs>` of partials; a final horizontal (and

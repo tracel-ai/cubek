@@ -142,7 +142,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                         partial[g] += horizontal::vector::<EA, N>(
                             self.q[g * per_lane + p] * kv,
                             w,
-                            LeafOp::Sum,
+                            Monoid::Sum,
                         );
                     }
                 }
@@ -152,7 +152,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             let mut weights = Array::<EA>::new(rows);
             #[unroll]
             for g in 0..rows {
-                let dot = plane::reduce::<EA>(partial[g], lanes, LeafOp::Sum);
+                let dot = plane::reduce::<EA>(partial[g], lanes, Monoid::Sum);
                 let score = dot * scale;
                 let rescale = self.state.absorb(g, score);
                 corrections[g] = rescale.correction;

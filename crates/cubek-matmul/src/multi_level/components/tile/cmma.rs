@@ -1,12 +1,14 @@
 use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    CubeDimResource, InvalidConfigError, SwizzleModes, TileSize,
-    tile::{Plane, TileScope},
-};
+use cubek_std::InvalidConfigError;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError, MatmulVectorSizes},
-    multi_level::definition::BatchMatmulBlueprint,
+    multi_level::{
+        CubeDimResource, TileSize,
+        definition::BatchMatmulBlueprint,
+        stage::SwizzleModes,
+        tile::{Plane, TileScope},
+    },
 };
 
 use super::variant::TileVariant;
@@ -109,7 +111,7 @@ impl TileVariant for CmmaMatmul {
                     lhs,
                     rhs,
                     output: acc,
-                    size: Some(TileSize::new(size.m(), size.n(), size.k())),
+                    size: Some((size.m(), size.n(), size.k())),
                 },
             ));
         }

@@ -15,11 +15,12 @@ use crate::{
     },
 };
 use cubecl::ir::DeviceProperties;
-use cubek_matmul::multi_level::components::stage::StageFamily;
-use cubek_std::{
-    CubeDimResource, MatrixLayout,
+use cubek_matmul::multi_level::{
+    CubeDimResource,
+    components::stage::StageFamily,
     stage::{StageMemoryConfig, SwizzleMode},
 };
+use cubek_std::MatrixLayout;
 
 pub struct UnitPartitionStageAttentionFamily<SK: StageFamily, SV: StageFamily, SO: StageFamily> {
     _phantom: PhantomData<(SK, SV, SO)>,

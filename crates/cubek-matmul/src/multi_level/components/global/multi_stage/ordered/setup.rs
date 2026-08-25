@@ -145,7 +145,7 @@ where
             plane_dim: blueprint.plane_dim,
         };
 
-        // The readers' config constraints, checked here — where a violation is
+        // The readers' config constraints, checked here: where a violation is
         // a recoverable setup error the tuner can skip and a dispatch can
         // degrade on. The kernel re-checks them at comptime, but an error
         // raised there only surfaces as an asynchronous compile failure at the

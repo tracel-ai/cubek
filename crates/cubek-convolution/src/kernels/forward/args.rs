@@ -11,6 +11,7 @@ use cubecl::{
     },
     zspace::{shape, strides},
 };
+use cubek_matmul::multi_level::stage::SwizzleMode;
 use cubek_matmul::{
     definition::MatmulElems,
     multi_level::{
@@ -20,8 +21,7 @@ use cubek_matmul::{
         definition::{BatchMatmulBlueprint, Blueprint},
     },
 };
-use cubek_std::launch::tma::remap_storage_for_tma;
-use cubek_std::{InputBinding, MatrixLayout, stage::SwizzleMode};
+use cubek_std::{InputBinding, MatrixLayout, launch::tma::remap_storage_for_tma};
 use enumset::EnumSet;
 
 use crate::components::{

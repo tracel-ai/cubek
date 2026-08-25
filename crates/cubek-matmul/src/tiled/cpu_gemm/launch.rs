@@ -10,14 +10,15 @@ use crate::{
     definition::{
         AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
     },
-    routine::{BlueprintStrategy, DeviceSettings, K, M, MatmulOperands, N, batch_axis},
+    routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
+    tiled::{K, M, MatmulOperands, N, batch_axis},
 };
 
 /// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
 /// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the
-/// binding's own shape/strides don't reveal — a tiled buffer just looks like a higher-rank strided
-/// one — so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
+/// binding's own shape/strides don't reveal: a tiled buffer just looks like a higher-rank strided
+/// one, so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
 /// layout is derived at launch by [`cubek_tile::StridedTileSource`].
 pub struct WithLayout<B> {
     pub binding: B,
@@ -183,7 +184,7 @@ pub fn launch_ref<R: Runtime>(
         .build();
 
     // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
-    // shape family), overhang checks derived per operand — all inside the launcher.
+    // shape family), overhang checks derived per operand: all inside the launcher.
     let launch = space.launcher(client);
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);

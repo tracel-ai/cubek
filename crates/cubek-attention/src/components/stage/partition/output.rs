@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::{Plane, RowWise, Tile};
+use cubek_matmul::multi_level::tile::{Plane, RowWise, Tile};
 
 use crate::components::tile::matmul::{self as attn_matmul, AttentionTileMatmul};
 use crate::forward::definition::AttentionPartitionSize;
