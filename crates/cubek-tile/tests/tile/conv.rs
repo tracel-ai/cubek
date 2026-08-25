@@ -2115,7 +2115,29 @@ impl Resize1d {
         vector_size: usize,
         residence: &[Residence],
     ) {
-        let in_spec = TileSpec::new(Projection::new(
+        self.check_staged(oh_edges, buffering, vector_size, residence, None);
+    }
+
+    /// The scalar operand staged into `stage_width`-wide padded shared-memory lines.
+    fn check_padded(
+        &self,
+        oh_edges: &[usize],
+        buffering: Buffering,
+        stage_width: usize,
+        residence: &[Residence],
+    ) {
+        self.check_staged(oh_edges, buffering, 1, residence, Some(stage_width));
+    }
+
+    fn check_staged(
+        &self,
+        oh_edges: &[usize],
+        buffering: Buffering,
+        vector_size: usize,
+        residence: &[Residence],
+        stage_width: Option<usize>,
+    ) {
+        let mut in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
                 PhysicalAxisMap::affine_with_offset(
@@ -2128,6 +2150,9 @@ impl Resize1d {
         ))
         .checked(true)
         .residence(residence);
+        if let Some(width) = stage_width {
+            in_spec = in_spec.stage_width(width);
+        }
 
         let (got, input, weight) = run(
             shape![self.in_len, self.ci],
@@ -2148,57 +2173,7 @@ impl Resize1d {
                     got.get_f32(&[o, c]),
                     want[o * self.co + c],
                     "resize1d {}/{} offset {} edges {oh_edges:?} buffering {buffering:?} \
-                     v {vector_size}: wrong at ({o}, {c})",
-                    self.scale,
-                    self.divisor,
-                    self.offset
-                );
-            }
-        }
-    }
-
-    fn check_padded(
-        &self,
-        oh_edges: &[usize],
-        buffering: Buffering,
-        stage_width: usize,
-        residence: &[Residence],
-    ) {
-        let in_spec = TileSpec::new(Projection::new(
-            &[OH, RH, CI],
-            &[
-                PhysicalAxisMap::affine_with_offset(
-                    &[(OH, self.scale), (RH, self.tap)],
-                    self.offset,
-                )
-                .over(self.divisor),
-                PhysicalAxisMap::of(CI),
-            ],
-        ))
-        .checked(true)
-        .residence(residence)
-        .stage_width(stage_width);
-
-        let (got, input, weight) = run(
-            shape![self.in_len, self.ci],
-            shape![self.rh, self.ci, self.co],
-            shape![self.oh, self.co],
-            in_spec,
-            &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO]).checked(true),
-            self.space_with_buffering(oh_edges, buffering),
-            1,
-            Instruction::registers(16),
-        );
-
-        let want = self.reference(&input, &weight);
-        for o in 0..self.oh {
-            for c in 0..self.co {
-                assert_eq!(
-                    got.get_f32(&[o, c]),
-                    want[o * self.co + c],
-                    "resize1d {}/{} offset {} edges {oh_edges:?} buffering {buffering:?} \
-                     stage_width {stage_width}: wrong at ({o}, {c})",
+                     v {vector_size} stage_width {stage_width:?}: wrong at ({o}, {c})",
                     self.scale,
                     self.divisor,
                     self.offset

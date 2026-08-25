@@ -728,25 +728,11 @@ fn stage_width_without_smem_panics() {
         .build();
 }
 
+/// A padded stage assembles its lines out of scalar cells, so there is nothing for it to do for
+/// an operand global memory already vectorizes.
 #[test]
-#[should_panic(expected = "whole number of the operand's own")]
-fn stage_width_must_hold_whole_source_lines() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let space = batched_space(1, 1, 64, 64, 16);
-    let launch = space.launcher(&client);
-    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
-    operand.stage(Residence::Smem);
-    operand.stage(Residence::InPlace);
-    let _ = launch
-        .bind(&operand, binding(&client, &[64, 16]))
-        .vectorize(3)
-        .stage_width(4)
-        .build();
-}
-
-#[test]
-#[should_panic(expected = "whole number of the operand's own")]
-fn stage_width_never_narrows() {
+#[should_panic(expected = "must be unvectorized")]
+fn stage_width_refuses_a_vectorized_operand() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let space = batched_space(1, 1, 64, 64, 16);
     let launch = space.launcher(&client);
@@ -756,7 +742,24 @@ fn stage_width_never_narrows() {
     let _ = launch
         .bind(&operand, binding(&client, &[64, 16]))
         .vectorize(4)
-        .stage_width(2)
+        .stage_width(8)
+        .build();
+}
+
+/// A stage served at the operand's own scalar width pads nothing, so stating it is a mistake
+/// rather than a no-op.
+#[test]
+#[should_panic(expected = "must widen the operand's own")]
+fn stage_width_must_widen() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = batched_space(1, 1, 64, 64, 16);
+    let launch = space.launcher(&client);
+    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
+    operand.stage(Residence::Smem);
+    operand.stage(Residence::InPlace);
+    let _ = launch
+        .bind(&operand, binding(&client, &[64, 16]))
+        .stage_width(1)
         .build();
 }
 

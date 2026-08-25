@@ -527,23 +527,6 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             residence.len()
         );
 
-        if let Some(width) = stage_width {
-            assert!(
-                residence.contains(&Residence::Smem),
-                "StridedTileSource::stage_width: a padded stage width was stated for an operand \
-                 that is never Smem-resident, so no stage would ever be served at it"
-            );
-            assert!(
-                width >= v && width.is_multiple_of(v),
-                "StridedTileSource::stage_width: a stage served at {width}-wide lines must be a whole \
-                 number of the operand's own {v}-wide ones"
-            );
-            assert!(
-                quant.is_none(),
-                "StridedTileSource::stage_width: a padded stage width is not supported for quantized operands"
-            );
-        }
-
         let mut spec = TileSpec::new(projection)
             .boundaries(&boundaries)
             .units(units)
@@ -551,6 +534,9 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         if let Some(width) = stage_width {
             spec = spec.stage_width(width);
         }
+        // At launch rather than at trace time, so the failure carries a host backtrace; the same
+        // check runs again in `Tile::of` for specs that never pass through this builder.
+        spec.validate_stage_width(v, quant.is_some());
         if let Some(storage) = storage {
             spec = spec.storage(storage);
         }
