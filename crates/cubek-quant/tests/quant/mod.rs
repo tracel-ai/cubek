@@ -1,5 +1,6 @@
 use cubecl::{Runtime, prelude::*};
 use cubek_quant::scheme::ScaleDtype;
+mod fp4;
 mod harness;
 mod scale_rounding;
 mod tiled;

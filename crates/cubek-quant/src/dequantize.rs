@@ -10,7 +10,7 @@ use crate::{
     scheme::{QuantMode, QuantScheme, QuantStore, QuantValue},
     utils::packed_storage_elem,
 };
-use cubecl::std::quant::check_scale_bindings;
+use cubecl::std::quant::{check_scale_bindings, fp4::e2m1_bits_to_float};
 use cubecl::std::tensor::{
     View,
     layout::linear::{LinearView, linear_view},
@@ -106,27 +106,48 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
     let size_store = store.size_bits(&quant);
     let num_quant = size_store / size_quant;
 
-    let mut output = Vector::empty();
-
     let mask = QS::from_int((1 << size_quant) - 1);
-    let sign_bit = QS::from_int(1 << (size_quant - 1));
-    let two_pow_n = 1 << size_quant;
 
+    // The raw fields, before anything decides what they mean.
+    let mut fields = Vector::<u32, NF>::empty();
     #[unroll]
     for position in 0..num_quant {
         let offset = QS::cast_from(position * size_quant);
-        let raw = (value >> offset) & mask;
-
-        // Branchless two's complement conversion
-        // If raw >= 2^(n-1), then result = raw - 2^n
-        let raw_i32 = i32::cast_from(raw);
-        let is_negative = i32::cast_from(raw >= sign_bit); // 1 if negative, 0 if positive
-        let signed_value = raw_i32 - (is_negative * two_pow_n);
-
-        output.insert(position, F::cast_from(signed_value));
+        fields.insert(position, u32::cast_from((value >> offset) & mask));
     }
 
-    output
+    match quant {
+        // A field is an `e2m1` code, not a small signed integer — the two disagree on every
+        // magnitude below 2. Decoded in software so the read lowers on every backend rather than
+        // only where the fp4 conversion intrinsic exists.
+        QuantValue::E2M1 => e2m1_bits_to_float::<F, NF>(fields),
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S
+        | QuantValue::E4M3
+        | QuantValue::E5M2 => {
+            let sign_bit = 1u32 << (size_quant - 1);
+            let two_pow_n = 1 << size_quant;
+
+            let mut output = Vector::empty();
+            #[unroll]
+            for position in 0..num_quant {
+                let raw = fields.extract(position);
+
+                // Branchless two's complement conversion
+                // If raw >= 2^(n-1), then result = raw - 2^n
+                let raw_i32 = i32::cast_from(raw);
+                let is_negative = i32::cast_from(raw >= sign_bit); // 1 if negative, 0 if positive
+                let signed_value = raw_i32 - (is_negative * two_pow_n);
+
+                output.insert(position, F::cast_from(signed_value));
+            }
+            output
+        }
+    }
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -217,11 +238,6 @@ pub fn launch_ref<R: Runtime>(
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,
             store: QuantStore::Native,
-            ..
-        }
-        | QuantScheme {
-            value: QuantValue::E2M1,
-            store: QuantStore::PackedNative(_),
             ..
         } => {
             if !i8::supported_uses(client).contains(TypeUsage::Conversion) {
