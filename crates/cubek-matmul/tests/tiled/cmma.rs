@@ -159,3 +159,53 @@ fn cmma_tma_rejects_oversized_box() {
         Ok(_) => panic!("expected a box-limit rejection, got a blueprint"),
     }
 }
+
+/// A caller asking for an input register type of its own (tf32 fragments off an f32 tensor)
+/// is asking for a cast this routine does not emit. It is rejected at setup rather than run
+/// at the global type behind the caller's back.
+#[test]
+fn cmma_rejects_input_register_type() {
+    use cubecl::{
+        ir::{ElemType, FloatKind},
+        prelude::*,
+    };
+    use cubek_matmul::{
+        definition::{MatmulElems, MatmulSetupError},
+        tiled::cmma::launch_ref,
+    };
+    use cubek_std::{InputBinding, MatrixLayout};
+    use cubek_test_utils::TestInput;
+
+    let client = client();
+    let f32t = f32::elem_type_native();
+    let tensor = |seed| {
+        TestInput::builder(client.clone(), vec![64, 64])
+            .dtype(f32t)
+            .layout(MatrixLayout::RowMajor)
+            .uniform(seed, -1., 1.)
+            .generate_without_host_data()
+    };
+    let (lhs, rhs, out) = (tensor(1234), tensor(5678), tensor(4242));
+
+    // Everything f32 but the lhs fragment: the one field the kernel has no `EL` for.
+    let mut dtypes = MatmulElems::from_single_dtype(f32t);
+    dtypes.lhs_register = ElemType::Float(FloatKind::TF32);
+
+    match launch_ref(
+        &client,
+        InputBinding::Normal(lhs.binding(), f32t),
+        InputBinding::Normal(rhs.binding(), f32t),
+        out.binding(),
+        &Default::default(),
+        &dtypes,
+    ) {
+        Err(MatmulSetupError::InvalidConfig(msg)) => {
+            let msg = msg.to_string();
+            assert!(
+                msg.contains("Lhs") && msg.contains("TF32"),
+                "wrong rejection: {msg}"
+            );
+        }
+        other => panic!("expected a type rejection, got {other:?}"),
+    }
+}

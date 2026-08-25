@@ -1,12 +1,12 @@
 //! An operand of a [`Tiling::over`](crate::Tiling::over) build: the facts of the global tensor
 //! (axes, element type, quantization scheme), plus the typed stages the level closures write.
-//! Each level states [`stage`](Operand::stage) (a move) or [`stage_as`](Operand::stage_as)
-//! (a conversion) for the operands it materializes; an operand a level leaves unstated is
-//! [`InPlace`](Residence::InPlace) there. Read one operand's stated types top to bottom and
-//! you have its type flow: unchanged through every move, re-typed at each conversion, meeting
-//! the instruction's port at the bottom. Direction is not the operand's to say: whether a
-//! stage fills or drains is stated by the op call that consumes the tile (a written operand
-//! is the call's `&mut` receiver).
+//! Each level states [`stage`](Operand::stage) (keep the type) or
+//! [`stage_as`](Operand::stage_as) (state the type) for the operands it materializes; an
+//! operand a level leaves unstated is [`InPlace`](Residence::InPlace) there. Read one
+//! operand's stated types top to bottom and you have its type flow: unchanged through every
+//! move, re-typed wherever a stated type differs, meeting the instruction's port at the
+//! bottom. Direction is not the operand's to say: whether a stage fills or drains is stated
+//! by the op call that consumes the tile (a written operand is the call's `&mut` receiver).
 //!
 //! A conversion's extra inputs must be facts of the operand: a quantized type decodes with the
 //! scales its own binding carries, read in place from global memory (cache-served, never
@@ -66,16 +66,11 @@ impl Operand {
         self.push(Stage { residence, dtype });
     }
 
-    /// Stage this operand at the level currently being declared, converting it to `dtype`.
-    /// The written type is the statement that work happens here; a conversion to the type the
-    /// operand already holds is a move wearing a conversion's clothes, and is rejected.
+    /// Stage this operand at the level currently being declared, at `dtype`. Total in the
+    /// type: the conversion is the difference from what the operand already holds, so a
+    /// `dtype` it already holds is the same statement [`stage`](Self::stage) makes. Callers
+    /// whose type is computed say it here and never ask which of the two verbs applies.
     pub fn stage_as(&mut self, residence: Residence, dtype: ElemType) {
-        assert_ne!(
-            dtype,
-            self.current_dtype(),
-            "Operand::stage_as: {:?} already holds {dtype:?}; use stage",
-            self.axes
-        );
         self.push(Stage { residence, dtype });
     }
 

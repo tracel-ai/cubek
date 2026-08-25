@@ -1,7 +1,7 @@
 //! Launch wiring for the Cmma routine: one entry ([`launch_ref`]) serving both
 //! deliveries; the blueprint decides, and only the operand construction differs.
 
-use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubecl::{Runtime, client::ComputeClient, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
@@ -13,7 +13,8 @@ use cubek_tile::{
 
 use crate::{
     definition::{
-        AvailableVectorSizes, MatmulElems, MatmulProblem, MatmulSetupError, broadcast_batches,
+        AvailableVectorSizes, MatmulElems, MatmulIdent, MatmulProblem, MatmulSetupError,
+        broadcast_batches,
     },
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
@@ -22,16 +23,6 @@ use crate::{
     },
     tiled::{K, M, MatmulOperands, N, batch_axis},
 };
-
-/// The register accumulate type the routine mandates, independent of how the caller built
-/// `dtypes` (some paths build a single-dtype `MatmulElems` that never upgrades): tensor
-/// cores accumulate `f16`/`bf16` in `f32`, and the epilogue casts back on drain, so the
-/// accumulator is always at least the output's precision. Reuses the canonical upgrade in
-/// [`MatmulElems::from_globals`]. Keying both the `MmaConfig` lookup and the kernel's `EA`
-/// type on this keeps selection and codegen consistent.
-fn mandated_acc(dtypes: &MatmulElems) -> ElemType {
-    MatmulElems::from_globals(&dtypes.as_global_elems()).acc_register
-}
 
 /// A cmma operand must be row-major contiguous: the transport addresses each window
 /// by a row stride off a scalar offset.
@@ -46,6 +37,26 @@ fn validate_row_major(strides: &[usize]) -> Result<(), MatmulSetupError> {
     }
 }
 
+/// Cmma carries one type per input from global memory down to the fragment (the kernel's
+/// `EL`/`ER`), so a stage or register type of its own is a cast this routine does not emit.
+/// The accumulator is the exception: its upgrade is plumbed, `EA` plus a cast on drain.
+#[allow(clippy::result_large_err)]
+fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), MatmulSetupError> {
+    let (global, stage, register) = (
+        dtypes.global(ident),
+        dtypes.stage(ident),
+        dtypes.register(ident),
+    );
+    if stage == global && register == global {
+        Ok(())
+    } else {
+        Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "Cmma runs {ident:?} at {global:?} throughout; stage {stage:?} and register \
+             {register:?} would need a cast it does not emit"
+        ))))
+    }
+}
+
 /// The derivation both entries share: reject what the routine can't run, build the
 /// [`MatmulProblem`], and resolve the [`CmmaBlueprint`]. Returns the problem, the
 /// plan, and the output's broadcast batch shape.
@@ -57,6 +68,7 @@ fn setup<R: Runtime>(
     out: &TensorBinding<R>,
     strategy: &BlueprintStrategy<(), CmmaRoutine>,
     dtypes: &MatmulElems,
+    acc: ElemType,
 ) -> Result<(MatmulProblem, CmmaBlueprint, Vec<usize>), MatmulSetupError> {
     if matches!(lhs, InputBinding::Quantized { .. })
         || matches!(rhs, InputBinding::Quantized { .. })
@@ -68,6 +80,9 @@ fn setup<R: Runtime>(
     validate_row_major(&lhs.data().strides)?;
     validate_row_major(&rhs.data().strides)?;
     validate_row_major(&out.strides)?;
+
+    validate_single_type(dtypes, MatmulIdent::Lhs)?;
+    validate_single_type(dtypes, MatmulIdent::Rhs)?;
 
     // Logical dims off each strided operand: trailing two axes are the matrix, leading
     // dims its own (possibly broadcast) batch shape.
@@ -111,8 +126,7 @@ fn setup<R: Runtime>(
         max_cube_count: client.properties().hardware.max_cube_count,
     };
 
-    let blueprint =
-        CmmaRoutine::blueprint(strategy, &problem, &device_settings, mandated_acc(dtypes))?;
+    let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc)?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -143,9 +157,9 @@ fn tile_space(
     (m, n, k): (usize, usize, usize),
     batch: &[(Axis, usize)],
     dtypes: &MatmulElems,
+    acc: ElemType,
 ) -> (Space, MatmulOperands) {
     let (i, c) = (blueprint.instruction, blueprint.partition);
-    let acc = mandated_acc(dtypes);
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
 
@@ -163,15 +177,9 @@ fn tile_space(
                 .axis(M, Cut::cube(CubeAxis::X, stage_m))
                 .axis(N, Cut::cube(CubeAxis::Y, stage_n))
                 .axis(K, Cut::sequential(stage_k));
-            o.a.stage(Residence::Smem);
-            o.b.stage(Residence::Smem);
-            // Same residence, one type or two: tensor cores accumulate `f16`/`bf16` in `f32`,
-            // and that upgrade is the conversion `stage_as` states. Under an `f32` output there
-            // is no upgrade, so the move is all there is to say.
-            match acc == dtypes.acc_global {
-                true => o.out.stage(Residence::Register),
-                false => o.out.stage_as(Residence::Register, acc),
-            }
+            o.a.stage_as(Residence::Smem, dtypes.lhs_stage);
+            o.b.stage_as(Residence::Smem, dtypes.rhs_stage);
+            o.out.stage_as(Residence::Register, acc);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batch_axes, Cut::sequential(1))
@@ -184,8 +192,8 @@ fn tile_space(
                 .axis(M, Cut::sequential(c.m * i.m))
                 .axis(N, Cut::sequential(c.n * i.n))
                 .axis(K, Cut::sequential(i.k));
-            o.a.stage(Residence::Register);
-            o.b.stage(Residence::Register);
+            o.a.stage_as(Residence::Register, dtypes.lhs_register);
+            o.b.stage_as(Residence::Register, dtypes.rhs_register);
         })
         .instruction(Instruction::Cmma, |l, _| {
             l.axes(&batch_axes, Cut::sequential(1))
@@ -210,7 +218,15 @@ pub fn launch_ref<R: Runtime>(
     strategy: &BlueprintStrategy<(), CmmaRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let (problem, blueprint, out_batches) = setup(client, &lhs, &rhs, &out, strategy, dtypes)?;
+    // The accumulate type the routine mandates, whatever `dtypes` says (some callers build a
+    // single-dtype `MatmulElems` that never upgrades): tensor cores accumulate `f16`/`bf16` in
+    // `f32`, and the epilogue casts back on drain. Keys the `MmaConfig` lookup, the `out`
+    // register stage and the kernel's `EA`, so selection and codegen cannot disagree.
+    let acc = match dtypes.acc_global {
+        ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
+        out_elem => out_elem,
+    };
+    let (problem, blueprint, out_batches) = setup(client, &lhs, &rhs, &out, strategy, dtypes, acc)?;
     let (m, n, k) = (problem.m, problem.n, problem.k);
 
     // Output batch dims that survive (extent > 1) ride one-per-cube on Z (none under TMA;
@@ -219,7 +235,7 @@ pub fn launch_ref<R: Runtime>(
         .filter(|&p| out_batches[p] > 1)
         .map(|p| (batch_axis(p), out_batches[p]))
         .collect();
-    let (space, ops) = tile_space(&blueprint, (m, n, k), &batch, dtypes);
+    let (space, ops) = tile_space(&blueprint, (m, n, k), &batch, dtypes, acc);
 
     let launch = space.launcher(client);
     let lhs = lhs.into_data();
@@ -241,7 +257,6 @@ pub fn launch_ref<R: Runtime>(
             rhs,
             out,
             &out_batch_axes,
-            dtypes,
         ),
         CmmaDelivery::Tma => launch_tma::<R>(
             client,
@@ -254,7 +269,6 @@ pub fn launch_ref<R: Runtime>(
             out,
             &out_batch_axes,
             &blueprint,
-            dtypes,
             (m, n, k),
         ),
     }
@@ -276,7 +290,6 @@ fn launch_strided<R: Runtime>(
     rhs: TensorBinding<R>,
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
-    dtypes: &MatmulElems,
 ) {
     let v_a = launch.vector_size(K, &[(&lhs, ops.a.axes())], ops.a.dtype().size());
     let a = launch
@@ -307,10 +320,10 @@ fn launch_strided<R: Runtime>(
         b.arg(),
         c.arg(),
         launch.space().clone(),
-        dtypes.lhs_global,
-        dtypes.rhs_global,
-        dtypes.acc_global,
-        mandated_acc(dtypes),
+        ops.a.dtype(),
+        ops.b.dtype(),
+        ops.out.dtype(),
+        ops.out.current_dtype(),
     );
 }
 
@@ -329,7 +342,6 @@ fn launch_tma<R: Runtime>(
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
     blueprint: &CmmaBlueprint,
-    dtypes: &MatmulElems,
     (m, n, k): (usize, usize, usize),
 ) {
     let (stage_m, stage_n) = blueprint.stage();
@@ -370,9 +382,9 @@ fn launch_tma<R: Runtime>(
         b,
         c.arg(),
         launch.space().clone(),
-        dtypes.lhs_global,
-        dtypes.rhs_global,
-        dtypes.acc_global,
-        mandated_acc(dtypes),
+        ops.a.dtype(),
+        ops.b.dtype(),
+        ops.out.dtype(),
+        ops.out.current_dtype(),
     );
 }
