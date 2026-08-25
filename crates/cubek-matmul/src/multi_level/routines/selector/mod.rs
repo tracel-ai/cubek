@@ -2,8 +2,8 @@ mod base;
 mod plane;
 mod unit;
 
+use crate::multi_level::TileSize;
 pub use base::*;
-use cubek_std::TileSize;
 pub use plane::*;
 pub use unit::*;
 

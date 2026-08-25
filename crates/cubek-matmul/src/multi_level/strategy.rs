@@ -1,12 +1,9 @@
-//! Strategies built on the batch/global/stage/tile level tower.
+//! Strategies built on the batch/global/stage/tile levels.
 
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
-use cubek_std::{
-    InputBinding,
-    tile::{ColMajorTilingOrder, RowMajorTilingOrder},
-};
+use cubek_std::InputBinding;
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError},
@@ -44,6 +41,7 @@ use crate::{
             },
             naive::launch as launch_naive,
         },
+        tile::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
     routine::{BlueprintStrategy, Routine},
 };
@@ -505,10 +503,10 @@ impl Strategy {
             // Ordered loading carries a hard divisibility constraint on the
             // *device's* plane size (each loading plane must own a whole
             // number of vectors per lane), so a selection recorded on one
-            // device — or under an older selector — can be invalid on
+            // device (or under an older selector) can be invalid on
             // another. The entry stays reliable by degrading to the universal
             // unit kernel on an invalid config, like the gemv/gemm routines
-            // below — availability and validation errors surface unchanged.
+            // below: availability and validation errors surface unchanged.
             Strategy::OrderedDoubleCmma(s) => {
                 match launch_tiling::launch_ref(
                     client,
@@ -559,7 +557,7 @@ impl Strategy {
             // selection per *anchored* key: a winner picked on an aligned
             // representative must still run on the bucket's other raw shapes.
             // The entry stays reliable by degrading to the universal unit
-            // kernel on an invalid config, like [`auto`] does — availability
+            // kernel on an invalid config, like [`auto`] does: availability
             // and validation errors surface unchanged.
             Strategy::GemvUnitPerpendicular(blueprint_strategy) => {
                 match launch_gemv_unit_perpendicular::launch_ref(

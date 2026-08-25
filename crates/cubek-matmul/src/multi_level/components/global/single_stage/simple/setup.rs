@@ -146,7 +146,7 @@ where
             plane_dim,
         };
 
-        // Checked here — where a violation is a recoverable setup error —
+        // Checked here, where a violation is a recoverable setup error,
         // rather than only at the kernel's comptime re-check, whose failure
         // surfaces as an asynchronous compile error no caller can recover
         // from. See the same block in the ordered family's `expand_config`.

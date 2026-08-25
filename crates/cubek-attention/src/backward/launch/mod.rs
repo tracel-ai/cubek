@@ -28,12 +28,12 @@ use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
 ///
 /// Inputs:
 /// - `q, k, v`: `[B, H, N, d]`.
-/// - `o`:       `[B, H, N, d]` — saved from forward.
-/// - `lse`:     `[B, H, N]` fp32 — saved from forward.
+/// - `o`:       `[B, H, N, d]`: saved from forward.
+/// - `lse`:     `[B, H, N]` fp32: saved from forward.
 /// - `do_`:     `[B, H, N, d]` upstream gradient.
 ///
 /// Outputs (caller pre-allocates, matching the convention of `launch_ref`):
-/// - `dq, dk, dv`: `[B, H, N, d]` — written cleanly.
+/// - `dq, dk, dv`: `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward<R: Runtime>(
     client: &ComputeClient<R>,

@@ -137,8 +137,8 @@ impl MatmulAutotuneKey {
             k: k as u32,
         });
 
-        // The alignment factors below are computed from the *anchored* dims —
-        // the same bucketing the `m`/`n`/`k` fields get — never from the raw
+        // The alignment factors below are computed from the *anchored* dims,
+        // the same bucketing the `m`/`n`/`k` fields get, never from the raw
         // values. A dimension carrying a runtime-dependent length (a KV-cache
         // width, a dynamic batch) would otherwise re-split every anchored
         // bucket into one key per pow2-alignment class of the raw value, and
@@ -169,7 +169,7 @@ impl MatmulAutotuneKey {
         };
 
         // The canonical tightest non-contiguous stride of each layout: the
-        // row stride — `cols` for a contiguous `[.., rows, cols]`, `rows` for
+        // row stride: `cols` for a contiguous `[.., rows, cols]`, `rows` for
         // its transposed view. Batch strides are products of these, so their
         // alignment can only be higher.
         let lhs_stride_factor = match matrix_layout_lhs {
@@ -208,8 +208,8 @@ impl MatmulAutotuneKey {
         let analysis = MatmulAutotuneAnalysis {
             // From the anchored dims, like every derived field above: the raw
             // thresholds (512/2048) otherwise split an anchored bucket at its
-            // maximum — raw 257..511 keyed `Small` while exactly 512 keyed
-            // `Medium` — so a runtime-dependent dim landing on the bucket
+            // maximum: raw 257..511 keyed `Small` while exactly 512 keyed
+            // `Medium`, so a runtime-dependent dim landing on the bucket
             // ceiling minted a "new" problem and re-tuned mid-run.
             scale_global: MatmulGlobalScale::from_size(m_anchored, n_anchored, k_anchored),
             kind,
@@ -220,7 +220,7 @@ impl MatmulAutotuneKey {
 }
 
 /// Stride alignment (in powers of two of bytes) of the canonical row stride
-/// `cols` — the tightest non-contiguous stride of the layout.
+/// `cols`: the tightest non-contiguous stride of the layout.
 fn stride_factor(cols: usize, elem: ElemType) -> u8 {
     let bytes = (cols * elem.size_bits()) / 8;
     bytes.trailing_zeros().min(MAX_STRIDE_FACTOR) as u8
@@ -275,7 +275,7 @@ mod tests {
     /// The bucket maximum shares its bucket's key. The scale thresholds sit
     /// exactly on the pow2 bucket ceilings (512, 2048), so deriving the scale
     /// from the raw dims used to split the (256, 512] bucket into
-    /// 257..511 = `Small` and 512 = `Medium` — and a KV cache landing on
+    /// 257..511 = `Small` and 512 = `Medium`, and a KV cache landing on
     /// exactly 512 positions re-tuned mid-conversation.
     #[test]
     fn bucket_maxima_share_the_bucket_key() {

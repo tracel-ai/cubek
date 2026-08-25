@@ -70,7 +70,7 @@ pub enum StageStorage {
 
 /// Where an operand's cells physically sit while the level below reads or writes them. One
 /// vocabulary for both directions: an input is *filled* from its source into its residence, an
-/// output *drains* from its residence into its sink ([`promote`](crate::Tile::promote)).
+/// output *drains* from its residence into its sink ([`accumulate`](crate::Tile::accumulate)).
 ///
 /// Stated per level, coarse to fine, by the operand itself ([`StagePlan`]). A level says only how
 /// deeply its walk is buffered ([`Buffering`](crate::Buffering)); where each of its operands lives

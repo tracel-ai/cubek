@@ -1,15 +1,16 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_matmul::multi_level::components::tile::{CmmaMatmul, RegisterMatmul};
-use cubek_std::{
-    MatrixLayout, SwizzleModes,
+use cubek_matmul::multi_level::{
+    TileSize,
+    components::tile::{CmmaMatmul, RegisterMatmul},
+    stage::SwizzleModes,
     tile::{
         BounceConfig, CmmaTile, InnerLayout, Plane, ProductType, Tile, allocate_bounce_tile,
         cmma_allocate_lhs, cmma_allocate_rhs, register_allocate_acc, register_allocate_lhs,
         register_allocate_rhs,
     },
 };
-use cubek_std::{TileSize, as_cmma_layout};
+use cubek_std::{MatrixLayout, as_cmma_layout};
 
 /// Cmma variant of [`AttentionTileMatmul`]. Carries the underlying [`CmmaMatmul`]
 /// alongside the comptime parameters needed to build per-tile [`BounceConfig`]s
@@ -41,7 +42,7 @@ impl AttentionCmmaMatmul {
 }
 
 /// Attention's tile-level matmul configuration. Each variant carries the per-kind
-/// config from cubek-std.
+/// config from cubek-matmul.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum AttentionTileMatmul {
     Cmma(AttentionCmmaMatmul),

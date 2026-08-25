@@ -10,13 +10,11 @@ use crate::{
             },
             stage::StridedStageFamily,
         },
+        tile::{ContiguousTilingLayout, OrderedTilingOrder, TilingValidation},
     },
 };
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    tile::{ContiguousTilingLayout, OrderedTilingOrder, TilingValidation},
-    {FormattedConfigError, InvalidConfigError},
-};
+use cubek_std::{FormattedConfigError, InvalidConfigError};
 
 use super::{LoadingValidation, sync_full_tilewise};
 

@@ -674,7 +674,7 @@ fn quantized_block_straddling_a_cut_panics() {
     quantize(1, quant_scheme().per_block([64, 6], ScaleDtype::F32));
 }
 
-/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine — but a line is one
+/// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine, but a line is one
 /// read, and a 4-wide line spans two of them.
 #[test]
 #[should_panic(expected = "straddles two scales")]

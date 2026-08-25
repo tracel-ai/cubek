@@ -201,8 +201,8 @@ fn spread_cube_count_plan(
     max_z: u32,
 ) -> CubeCountPlanKind {
     // Fast path: the problem's natural (x, y, z) already fits within the
-    // hardware limits. Preserve it instead of collapsing into the heuristic
-    // — flattening the work into a single dimension wastes the structure
+    // hardware limits. Preserve it instead of collapsing into the heuristic:
+    // flattening the work into a single dimension wastes the structure
     // (e.g. (512, 16, 1) → (8192, 1, 1)) and the halving search below would
     // never even visit configurations like y=2/y=16, so it can't recover
     // them.

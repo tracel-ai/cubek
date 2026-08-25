@@ -1,12 +1,14 @@
 use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    CubeDimResource, InvalidConfigError, MatrixLayout, SwizzleModes, TileSize,
-    tile::{Plane, TileScope},
-};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
-    multi_level::definition::BatchMatmulBlueprint,
+    multi_level::{
+        CubeDimResource, TileSize,
+        definition::BatchMatmulBlueprint,
+        stage::SwizzleModes,
+        tile::{Plane, TileScope},
+    },
 };
 
 use super::{common::check_types_available, variant::TileVariant};

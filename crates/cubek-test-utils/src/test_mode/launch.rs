@@ -18,7 +18,7 @@ use crate::ExecutionOutcome;
 /// flushing for any compile/launch errors that surface only asynchronously.
 ///
 /// The pre-flush also catches stale errors from a prior launch on the same
-/// client — without it, an earlier failure would be attributed to this one.
+/// client, without it, an earlier failure would be attributed to this one.
 pub fn launch_and_capture_outcome<F>(
     client: &ComputeClient<TestRuntime>,
     launch: F,

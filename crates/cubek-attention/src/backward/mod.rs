@@ -1,10 +1,10 @@
 //! FlashAttention backward pass.
 //!
 //! Three-kernel pipeline (same shape as FlashAttention-3):
-//! 1. [`flash_attention_backward_prepass`] — compute `D = rowsum(dO ⊙ O)`.
-//! 2. [`flash_attention_backward_dq`]      — compute `dQ` with a Q-outer
+//! 1. [`flash_attention_backward_prepass`]: compute `D = rowsum(dO ⊙ O)`.
+//! 2. [`flash_attention_backward_dq`]: compute `dQ` with a Q-outer
 //!    loop, no atomics.
-//! 3. [`flash_attention_backward_dkdv`]    — compute `dK` and `dV` with a
+//! 3. [`flash_attention_backward_dkdv`]: compute `dK` and `dV` with a
 //!    KV-outer loop, no atomics.
 //!
 //! Kernels 2 and 3 are independent and may run concurrently once the

@@ -248,7 +248,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// [`quantized`](Self::quantized) for a lookup scheme
     /// ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)): each stored field indexes
     /// `table` and a read reconstructs `table[field] * scale`. The table must hold `2^bits`
-    /// f32 entries — the unpack's mask bounds every index to that range, so a shorter buffer
+    /// f32 entries: the unpack's mask bounds every index to that range, so a shorter buffer
     /// is read out of bounds, and no check here can see its length.
     pub fn quantized_lookup(
         mut self,
@@ -267,7 +267,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
 
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
 /// back in, and how far the quantized form travels before something decodes it. One thing, because
-/// none of the three says anything on its own — a scheme without scales cannot be applied, and an
+/// none of the three says anything on its own: a scheme without scales cannot be applied, and an
 /// [`DequantAt`] without a scheme has nothing to bound.
 pub struct Quantization<R: Runtime> {
     /// The innermost level's scales, the only ones addressed per position.
@@ -684,9 +684,9 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
 /// [`Delivery::Copy`](crate::Delivery) by construction (that is what a [`StridedTileSource`] is),
 /// and a strided load runs code per element, so it decodes whatever it moves. Only the form is
 /// left: a fragment load takes a raw window at one element type, so a form that loads fragments
-/// needs its values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this
-/// — a bulk copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the
-/// only site it can honour — but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)),
+/// needs its values already served. A [`Delivery::Tma`](crate::Delivery) operand would invert this:
+/// a bulk copy moves raw bytes, so its stage keeps the stored form and [`DequantAt::Read`] is the
+/// only site it can honour, but a tensor map carries no scales ([`TmaTileArg`](crate::TmaTileArg)),
 /// so a quantized TMA operand is not expressible and the rule has no site to fire at yet.
 pub(crate) fn validate_dequant_at(dequant_at: DequantAt, register_stage: Option<Instruction>) {
     match (dequant_at, register_stage) {

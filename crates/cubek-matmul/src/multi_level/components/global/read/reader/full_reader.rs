@@ -14,13 +14,13 @@ use crate::multi_level::{
         },
         stage::LoadStageFamily,
     },
+    tile::TilingLayout,
 };
 
 use cubecl::{
     prelude::*,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_std::tile::TilingLayout;
 
 pub type SyncBarrier<S> = <S as SyncStrategy>::Barrier;
 
@@ -51,7 +51,7 @@ pub trait FullLoadingStrategy<RC: RuntimeConfig>:
 #[expand(derive(Clone))]
 /// Loads the entire stage memory.
 ///
-/// A complete load is referred to as a `Job`, which is divided into `Tasks`—
+/// A complete load is referred to as a `Job`, which is divided into `Tasks`:
 /// each Task represents a single data transfer for a specific unit
 pub struct FullStageGlobalReader<
     'a,
