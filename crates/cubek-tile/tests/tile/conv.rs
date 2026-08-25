@@ -2116,7 +2116,29 @@ impl Resize1d {
         vector_size: usize,
         residence: &[Residence],
     ) {
-        let in_spec = TileSpec::new(Projection::new(
+        self.check_staged(oh_edges, buffering, vector_size, residence, None);
+    }
+
+    /// The scalar operand staged into `stage_width`-wide padded shared-memory lines.
+    fn check_padded(
+        &self,
+        oh_edges: &[usize],
+        buffering: Buffering,
+        stage_width: usize,
+        residence: &[Residence],
+    ) {
+        self.check_staged(oh_edges, buffering, 1, residence, Some(stage_width));
+    }
+
+    fn check_staged(
+        &self,
+        oh_edges: &[usize],
+        buffering: Buffering,
+        vector_size: usize,
+        residence: &[Residence],
+        stage_width: Option<usize>,
+    ) {
+        let mut in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
                 PhysicalAxisMap::affine_with_offset(
@@ -2129,6 +2151,9 @@ impl Resize1d {
         ))
         .checked(true)
         .residence(residence);
+        if let Some(width) = stage_width {
+            in_spec = in_spec.stage_width(width);
+        }
 
         let (got, input, weight) = run(
             shape![self.in_len, self.ci],
@@ -2149,7 +2174,7 @@ impl Resize1d {
                     got.get_f32(&[o, c]),
                     want[o * self.co + c],
                     "resize1d {}/{} offset {} edges {oh_edges:?} buffering {buffering:?} \
-                     v {vector_size}: wrong at ({o}, {c})",
+                     v {vector_size} stage_width {stage_width:?}: wrong at ({o}, {c})",
                     self.scale,
                     self.divisor,
                     self.offset
@@ -2157,6 +2182,23 @@ impl Resize1d {
             }
         }
     }
+}
+
+/// A gathered resample whose `CI = 3` is padded into 4-wide shared memory lines.
+#[test]
+fn resize1d_staged_padded_stage_width() {
+    Resize1d {
+        oh: 6,
+        co: 2,
+        rh: 2,
+        ci: 3,
+        in_len: 4,
+        scale: 4,
+        tap: 6,
+        offset: -2,
+        divisor: 6,
+    }
+    .check_padded(&[2], Buffering::SINGLE, 4, &[Residence::Smem]);
 }
 
 /// The tap axis carries the divisor as its coefficient, so it survives the division whole: the
@@ -2442,4 +2484,163 @@ fn resize1d_dynamic_stage_read_before_fill() {
         space,
         f32_ty,
     );
+}
+
+/// A gathered convolution with multiple reduce axes (`[RH, CI]`, where `RH = 3, CI = 3`),
+/// with the gathered input staged at line width 4. The flat walk must extract lanes using the
+/// fastest contracted axis (`CI`) coordinate, not flat step `p`.
+#[test]
+fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
+    let oh = 6;
+    let co = 4;
+    let rh = 3;
+    let ci = 3;
+    let stride = 1;
+    let dilation = 1;
+    let padding = 1;
+    let in_len = 6;
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(OH, Cut::sequential(3))
+                .axis(CO, Cut::sequential(4))
+                .axis(RH, Cut::sequential(rh))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true)
+    .residence(&[Residence::Smem])
+    .stage_width(4);
+
+    let (got, input, weight) = run(
+        shape![in_len, ci],
+        shape![rh, ci, co],
+        shape![oh, co],
+        in_spec,
+        &[RH, CI, CO],
+        TileSpec::direct(&[OH, CO]).checked(true),
+        space,
+        1,
+        Instruction::registers(16),
+    );
+
+    let mut want = vec![0.0f32; oh * co];
+    for o in 0..oh {
+        for c in 0..co {
+            let mut acc = 0.0f32;
+            for r in 0..rh {
+                for i in 0..ci {
+                    let h = (o * stride + r * dilation) as isize - padding as isize;
+                    let x = if h >= 0 && (h as usize) < in_len {
+                        input[(h as usize) * ci + i]
+                    } else {
+                        0.0
+                    };
+                    let w = weight[(r * ci + i) * co + c];
+                    acc += x * w;
+                }
+            }
+            want[o * co + c] = acc;
+        }
+    }
+
+    for o in 0..oh {
+        for c in 0..co {
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want[o * co + c],
+                "conv1d_staged_padded_multi_axis_reduce: wrong at ({o}, {c})"
+            );
+        }
+    }
+}
+
+/// A staged padded conv with `lane_fanout = true` requested on the register block.
+/// The innermost reduction extent `CI = 3` is not divisible by stage line width `4`,
+/// so it correctly falls back to the coordinate-decoded flat walk rather than corrupting lanes.
+#[test]
+fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
+    let (in_len, ci, co, rh) = (16, 3, 4, 3);
+    let (stride, dilation, padding) = (1, 1, 1);
+    let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
+
+    let space = Tiling::new()
+        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(OH, Cut::sequential(3))
+                .axis(CO, Cut::sequential(4))
+                .axis(RH, Cut::sequential(rh))
+                .axis(CI, Cut::sequential(ci))
+        })
+        .build();
+
+    let in_spec = TileSpec::new(Projection::new(
+        &[OH, RH, CI],
+        &[
+            PhysicalAxisMap::affine_with_offset(
+                &[(OH, stride), (RH, dilation)],
+                -(padding as isize),
+            ),
+            PhysicalAxisMap::of(CI),
+        ],
+    ))
+    .checked(true)
+    .residence(&[Residence::Smem])
+    .stage_width(4);
+
+    let (got, input, weight) = run(
+        shape![in_len, ci],
+        shape![rh, ci, co],
+        shape![oh, co],
+        in_spec,
+        &[RH, CI, CO],
+        TileSpec::direct(&[OH, CO]).checked(true),
+        space,
+        1,
+        Instruction::Registers {
+            config: RegisterBlock::new(16, false, true),
+        },
+    );
+
+    let mut want = vec![0.0f32; oh * co];
+    for o in 0..oh {
+        for c in 0..co {
+            let mut acc = 0.0f32;
+            for r in 0..rh {
+                for i in 0..ci {
+                    let h = (o * stride + r * dilation) as isize - padding as isize;
+                    let x = if h >= 0 && (h as usize) < in_len {
+                        input[(h as usize) * ci + i]
+                    } else {
+                        0.0
+                    };
+                    let w = weight[(r * ci + i) * co + c];
+                    acc += x * w;
+                }
+            }
+            want[o * co + c] = acc;
+        }
+    }
+
+    for o in 0..oh {
+        for c in 0..co {
+            assert_eq!(
+                got.get_f32(&[o, c]),
+                want[o * co + c],
+                "conv1d_staged_padded_multi_axis_reduce_lane_fanout: wrong at ({o}, {c})"
+            );
+        }
+    }
 }

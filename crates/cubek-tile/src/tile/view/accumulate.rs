@@ -42,6 +42,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         comptime!(self.values.check)
     }
 
+    /// How these cells are shared across the plane's lanes. A leaf that commits *conditionally*
+    /// has to ask: past `Whole`, [`commit`](Self::commit) folds across the plane, and a plane op
+    /// under divergent control flow is undefined.
+    pub fn lane_share(&self) -> comptime_type!(LaneShare) {
+        comptime!(self.lane_share)
+    }
+
     /// Whether a non-empty output block is wholly valid for unchecked seed/commit accesses.
     pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
         self.values.block_in_bounds(pos, extent)

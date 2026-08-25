@@ -178,6 +178,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
+    // `step_served` only returns 1 for an rhs lining along the accumulator, where it already
+    // refused anything but a matched pair or a scalar sink, so the division is exact.
+    comptime!(assert!(
+        rw == aw || aw == 1,
+        "contract gather: a rhs staged wider than its sink spreads its lanes across scalar cells, \
+         so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
+    ));
     let factors = lhs.factors();
     let normalization = lhs.factor_normalization();
     let rhs_projection = rhs.projection();
@@ -199,7 +206,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
             "contract gather: a separable lhs needs scalar weights served one value a step"
         ));
         let size!(V) = rw;
-        separable::contract::<E, EL, ER, V>(acc, lhs, rhs, problem, config);
+        let size!(A) = aw;
+        separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config);
     } else if comptime!(served > 1) {
         // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.

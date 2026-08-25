@@ -181,18 +181,23 @@ impl Compaction {
     /// The innermost physical axis is one logical axis at coefficient `1`
     /// ([`Projection::validate`]), so it is never gathered: its step is `1`, its window has no
     /// holes, and its extent is the logical edge itself. A stage therefore keeps the store's full
-    /// line width whatever the outer axes do, and compaction only ever removes whole lines.
+    /// line width whatever the outer axes do, and compaction pads the innermost axis out to whole
+    /// lines.
+    ///
+    /// That rounding is only sound for a *padded* stage, one served wider than the source it is
+    /// filled from. `fill_extent` is where the two boxes meet, so it is what refuses an
+    /// extent that is not a whole number of source lines, on every path a fill can take.
     pub fn line_extents(&self, vector_size: usize) -> Vec<usize> {
         let last = self.extents.len() - 1;
         assert!(
-            self.steps[last] == 1 && self.extents[last].is_multiple_of(vector_size),
+            self.steps[last] == 1,
             "Compaction: the innermost physical axis is addressed in {vector_size}-wide lines, so \
-             it must be an ungathered multiple of that width (extent {}, step {})",
+             it must be an ungathered axis (extent {}, step {})",
             self.extents[last],
             self.steps[last]
         );
         let mut lines: Vec<usize> = self.extents.to_vec();
-        lines[last] /= vector_size;
+        lines[last] = lines[last].div_ceil(vector_size);
         lines
     }
 
@@ -307,11 +312,11 @@ mod tests {
         assert_eq!(c.extents(), &[8, 16]);
     }
 
-    /// The innermost axis is addressed in lines, so its extent must divide by the store width.
+    /// A ragged innermost extent is padded out to whole lines.
     #[test]
-    #[should_panic(expected = "addressed in 4-wide lines")]
-    fn a_ragged_innermost_extent_is_refused() {
-        Compaction::of(&conv(1, 1), 4, extents(8, 3, 6)).line_extents(4);
+    fn a_ragged_innermost_extent_is_padded() {
+        let lines = Compaction::of(&conv(1, 1), 4, extents(8, 3, 6)).line_extents(4);
+        assert_eq!(lines, &[10, 2]);
     }
 
     /// A 1-D resample gathers its only axis, with no passthrough axis behind it: illegal at any

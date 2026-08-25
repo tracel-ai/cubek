@@ -21,8 +21,11 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
 ) {
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
+    let cols = comptime!(problem.block.cols);
     let served = comptime!(problem.block.served);
+    let spread = comptime!(problem.block.spread);
     let lw = comptime!(problem.block.lw);
+    let aw = comptime!(problem.block.aw);
     let matrices = comptime!(problem.block.matrices());
     let batch_extents = comptime!(problem.block.batch_extents());
     let kc = comptime!(problem.block.kc);
@@ -41,6 +44,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let k_tail = comptime!(kc % lw);
 
     let lane_fanout = comptime!(config.lane_fanout);
+    let lane_index_exact = comptime!(problem.block.lane_index_exact());
 
     for mat in 0..matrices {
         let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
@@ -57,13 +61,22 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         let unroll = comptime!(
             problem.block.scalars() <= config.budget && !lhs_check && !rhs_check && !acc_check
         );
-        let mut c = block::seed::<E, V, A>(&mut acc, served, comptime!(mr), comptime!(nr), unroll);
+        let mut c = block::seed::<E, V, A>(
+            &mut acc,
+            served,
+            spread,
+            aw,
+            comptime!(mr),
+            comptime!(nr),
+            comptime!(cols),
+            unroll,
+        );
 
         // One rhs line per accumulator column, reused by every row of the rank-1 update. Held
         // across the whole K walk rather than re-declared per step, so the trace allocates it once
         // however many lane bodies the fan-out below emits. An rhs varying down the rows has no
         // such per-column value, and leaves this unwritten for the trace to fold away.
-        let mut b = Array::<Vector<E, V>>::new(nr);
+        let mut b = Array::<Vector<E, V>>::new(comptime!(nr));
 
         if comptime!(served > 1) {
             for step in 0..comptime!(kc / served) {
@@ -79,7 +92,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
                     comptime!(problem.clone()),
                 );
             }
-        } else if comptime!(lane_fanout && lw > 1) {
+        } else if comptime!(lane_fanout && lw > 1 && lane_index_exact) {
             for line in 0..k_lines {
                 #[unroll]
                 for lane in 0..lw {
@@ -129,13 +142,23 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
             }
         }
 
-        block::commit::<E, V, A>(&mut acc, c, served, comptime!(mr), comptime!(nr), unroll);
+        block::commit::<E, V, A>(
+            &mut acc,
+            c,
+            served,
+            spread,
+            aw,
+            comptime!(mr),
+            comptime!(nr),
+            comptime!(cols),
+            unroll,
+        );
     }
 }
 
 /// One gathered rank-1 update. `lane` names the component to take when the caller walks `K` as
 /// (line, lane), so shader backends see a fixed `extract`; `None` is the flat walk, which resolves
-/// the component from `p` instead.
+/// the component from `reduce_coords` on the fastest contracted axis instead.
 ///
 /// The span flags say which operand reads hoist out of the cell loop: each read is taken at the
 /// coarsest cell the operand is invariant over, so the plain outer product still reads one lhs
@@ -164,6 +187,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 
     // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
     // down the `i` loop.
+    let k_axis_idx = comptime!(problem.block.reduce.len() - 1);
     if comptime!(!problem.rhs_spans_row) {
         #[unroll(unroll)]
         for n in 0..nr {
@@ -197,7 +221,8 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 comptime!(problem.clone()),
                 lw,
             );
-            a_row = lane_component::<E, EL, L, V>(line, p, lane, served, lw);
+            a_row =
+                lane_component::<E, EL, L, V>(line, &reduce_coords, lane, served, lw, k_axis_idx);
         }
         let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
         if comptime!(problem.rhs_spans_row && !problem.rhs_spans_col) {
@@ -225,7 +250,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     comptime!(problem.clone()),
                     lw,
                 );
-                lane_component::<E, EL, L, V>(line, p, lane, served, lw)
+                lane_component::<E, EL, L, V>(line, &reduce_coords, lane, served, lw, k_axis_idx)
             } else {
                 a_row
             };
@@ -252,15 +277,16 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 }
 
 /// The `K` component of one lhs line, widened into the accumulate element. The whole line at a
-/// folded step, fixed when the caller walks `K` as (line, lane), resolved from `p` on the flat
-/// walk.
+/// folded step, fixed when the caller walks `K` as (line, lane), resolved from the fastest
+/// contracted coordinate in `reduce_coords` on the flat walk.
 #[cube]
 fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     line: Vector<EL, L>,
-    p: usize,
+    reduce_coords: &Coords<u32>,
     #[comptime] lane: Option<usize>,
     #[comptime] served: usize,
     #[comptime] lw: usize,
+    #[comptime] k_axis_idx: usize,
 ) -> Vector<E, V> {
     if comptime!(served > 1) {
         Vector::<E, V>::cast_from(line)
@@ -269,6 +295,9 @@ fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     } else if comptime!(lw == 1) {
         Vector::<E, V>::cast_from(line.extract(0usize))
     } else {
-        Vector::<E, V>::cast_from(line.extract_dynamic(p % lw))
+        let last_k = reduce_coords.at(comptime!(k_axis_idx));
+        Vector::<E, V>::cast_from(
+            line.extract_dynamic((last_k % comptime!(lw as u32)).fcast::<usize>()),
+        )
     }
 }

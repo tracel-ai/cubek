@@ -39,13 +39,17 @@ pub struct TileSpec {
     /// the instruction ([`Instruction::at_instruction`]), and operands that disagree meet the
     /// kind-pairing panics there.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
+    /// The line width this operand's next shared-memory stage is served at; `None` serves it at
+    /// the operand's own. See [`StagePlan::stage_width`](crate::StagePlan::stage_width).
+    pub stage_width: Option<usize>,
 }
 
 impl TileSpec {
     /// An operand's spec from its mapping; the optional halves are the safe defaults
     /// (unchecked, cube size unknown, nothing staged) and are set by
     /// [`with_boundary`](Self::with_boundary), [`checked`](Self::checked), [`units`](Self::units),
-    /// [`storage`](Self::storage), and [`residence`](Self::residence).
+    /// [`storage`](Self::storage), [`residence`](Self::residence), and
+    /// [`stage_width`](Self::stage_width).
     ///
     /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
     /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
@@ -57,6 +61,7 @@ impl TileSpec {
             units: 0,
             storage: None,
             residence: SmallVec::new(),
+            stage_width: None,
         }
     }
 
@@ -98,6 +103,48 @@ impl TileSpec {
                 .unwrap_or_else(|| StageStorage::for_stages(&self.residence, instruction)),
             self.units,
         )
+        .staged_at(self.stage_width)
+    }
+
+    /// Serve this operand's next shared-memory stage at `width`-wide lines rather than at the
+    /// width it is read from global memory in. See
+    /// [`StagePlan::stage_width`](crate::StagePlan::stage_width).
+    pub fn stage_width(mut self, width: usize) -> Self {
+        self.stage_width = Some(width);
+        self
+    }
+
+    /// A padded [`stage_width`](Self::stage_width)'s preconditions, in one place because two
+    /// entry points set it: [`StridedTileSource::stage_width`](crate::StridedTileSource::stage_width),
+    /// which checks them at launch, and a hand-built spec, which meets them at
+    /// [`Tile::of`](crate::Tile::of). `vector_size` is the width the operand is served from global
+    /// memory at and `quantized` whether it carries a quantized form: neither is a fact about the
+    /// spec, so both are passed in.
+    pub fn validate_stage_width(&self, vector_size: usize, quantized: bool) {
+        let Some(width) = self.stage_width else {
+            return;
+        };
+        assert!(
+            self.residence.contains(&Residence::Smem),
+            "TileSpec::stage_width: a padded stage width ({width}) was stated for an operand that \
+             is never Smem-resident, so no stage would ever be served at it"
+        );
+        // `MemData::fill_straight` assembles a padded line out of scalar source cells, which is
+        // the whole point: an operand that already vectorizes has nothing to pad.
+        assert!(
+            vector_size == 1,
+            "TileSpec::stage_width: a padded stage assembles its lines from scalar source cells, \
+             so the operand it pads must be unvectorized (it is served {vector_size} wide)"
+        );
+        assert!(
+            width > 1,
+            "TileSpec::stage_width: a padded stage width must widen the operand's own 1-wide \
+             lines (got {width})"
+        );
+        assert!(
+            !quantized,
+            "TileSpec::stage_width: a padded stage width is not supported for quantized operands"
+        );
     }
 
     /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. A boolean
@@ -439,5 +486,59 @@ impl Layout for TmaDynLayout {
 
     fn is_in_bounds(&self, _pos: Self::Coordinates) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const M: Axis = Axis(0);
+    const K: Axis = Axis(1);
+
+    fn staged(width: usize) -> TileSpec {
+        TileSpec::new(Projection::direct(&[M, K]))
+            .residence(&[Residence::Smem])
+            .stage_width(width)
+    }
+
+    /// The common case a padded stage exists for: an unquantized scalar operand widened into
+    /// 4-wide lines.
+    #[test]
+    fn a_scalar_operand_may_be_padded() {
+        staged(4).validate_stage_width(1, false);
+    }
+
+    /// An unstated width states nothing to check, whatever the operand looks like.
+    #[test]
+    fn an_unstated_stage_width_validates() {
+        TileSpec::new(Projection::direct(&[M, K])).validate_stage_width(4, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "never Smem-resident")]
+    fn a_padded_width_needs_an_smem_stage() {
+        TileSpec::new(Projection::direct(&[M, K]))
+            .residence(&[Residence::InPlace])
+            .stage_width(4)
+            .validate_stage_width(1, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be unvectorized")]
+    fn a_padded_width_needs_a_scalar_source() {
+        staged(8).validate_stage_width(2, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "must widen the operand's own")]
+    fn a_padded_width_must_widen() {
+        staged(1).validate_stage_width(1, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "not supported for quantized operands")]
+    fn a_padded_width_refuses_quant() {
+        staged(4).validate_stage_width(1, true);
     }
 }
