@@ -299,21 +299,30 @@ impl<T: Numeric> Tile<T> {
     /// The whole logical box, read through whatever [`Packing`] this tile carries. The N-D twin
     /// of [`matrix_packed`](Tile::matrix_packed).
     pub fn nd_packed<W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        self.nd_packed_guarded::<W>(comptime!(true))
+    }
+
+    /// [`nd_packed`](Tile::nd_packed) with the guard stated rather than taken from the tile, the
+    /// packed twin of [`nd_guarded`](Tile::nd_guarded).
+    pub fn nd_packed_guarded<W: Size>(
+        &self,
+        #[comptime] guarded: bool,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         let served = self.vector_size();
         let packing = self.packing();
         let physical = comptime!(packing.physical(served));
         match comptime!(packing) {
             Packing::Plain => {
                 let size!(WP) = physical;
-                self.nd::<T, WP, W>()
+                self.nd_guarded::<T, WP, W>(guarded)
             }
             Packing::Native => {
                 let size!(WP) = physical;
-                self.nd::<i8, WP, W>()
+                self.nd_guarded::<i8, WP, W>(guarded)
             }
             Packing::Packed { factor: _ } => {
                 let size!(WP) = physical;
-                self.nd::<u32, WP, W>()
+                self.nd_guarded::<u32, WP, W>(guarded)
             }
         }
     }
@@ -322,6 +331,17 @@ impl<T: Numeric> Tile<T> {
     /// tile's [`Space`](crate::Space) (the innermost a line index). The only read surface a
     /// gathered operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
     pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        self.nd_guarded::<I, WP, W>(comptime!(true))
+    }
+
+    /// [`nd`](Tile::nd) with the guard stated rather than taken from the tile. `guarded = false`
+    /// is for a caller that has proved every read it will take lands inside the buffer: the view
+    /// then carries neither the overhang mask nor the window's clamp, which are what a checked
+    /// leaf pays per access.
+    pub fn nd_guarded<I: Numeric, WP: Size, W: Size>(
+        &self,
+        #[comptime] guarded: bool,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let layout = axis_projection(
@@ -330,7 +350,7 @@ impl<T: Numeric> Tile<T> {
                     g.map.clone(),
                     self.vector_size(),
                 );
-                g.nd_transparent::<I, WP, W>(layout)
+                g.nd_transparent::<I, WP, W>(layout, guarded)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::nd: a plane tile has no memory view")
@@ -347,7 +367,7 @@ impl<T: Numeric> Tile<T> {
                     View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(
                         data, layout,
                     ),
-                    comptime!(data.bounds_check),
+                    comptime!(guarded && data.bounds_check),
                 )
             }
         }

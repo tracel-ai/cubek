@@ -23,9 +23,15 @@ use cubecl::{
     prelude::*,
     zspace::{Shape, shape},
 };
-use cubek_test_utils::{HostData, HostDataType, MEMORY_LEAF, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput};
 
 use cubek_tile::*;
+
+/// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
+/// specialization, no lane fan-out — the lines here run along the channel, not along `K`.
+const INSTRUCTION: Instruction = Instruction::Registers {
+    config: RegisterBlock::new(16, false, false),
+};
 
 // Output positions, window taps, and the one channel axis every operand shares.
 const B: Axis = Axis(5);
@@ -144,31 +150,29 @@ impl Depthwise {
                     .axis(RH, Cut::sequential(self.rh))
                     .axis(RW, Cut::sequential(self.rw))
             })
-            .build();
+            .build()
+            .with_instruction(INSTRUCTION);
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
         // it does for the dense case — it is only the weight and accumulator that change.
-        let in_spec = TileSpec::new(
-            Projection::new(
-                // The contracted taps come last: the gather leaf lines the input along the
-                // fastest contracted axis, so `RW` has to be the operand's innermost logical
-                // axis. The physical maps below stay in physical order (H, W, C) regardless.
-                &[B, OH, OW, C, RH, RW],
-                &[
-                    PhysicalAxisMap::of(B),
-                    PhysicalAxisMap::affine_with_offset(
-                        &[(OH, self.sh), (RH, self.dh)],
-                        -(self.ph as isize),
-                    ),
-                    PhysicalAxisMap::affine_with_offset(
-                        &[(OW, self.sw), (RW, self.dw)],
-                        -(self.pw as isize),
-                    ),
-                    PhysicalAxisMap::of(C),
-                ],
-            ),
-            MEMORY_LEAF,
-        )
+        let in_spec = TileSpec::new(Projection::new(
+            // The contracted taps come last: the gather leaf lines the input along the
+            // fastest contracted axis, so `RW` has to be the operand's innermost logical
+            // axis. The physical maps below stay in physical order (H, W, C) regardless.
+            &[B, OH, OW, C, RH, RW],
+            &[
+                PhysicalAxisMap::of(B),
+                PhysicalAxisMap::affine_with_offset(
+                    &[(OH, self.sh), (RH, self.dh)],
+                    -(self.ph as isize),
+                ),
+                PhysicalAxisMap::affine_with_offset(
+                    &[(OW, self.sw), (RW, self.dw)],
+                    -(self.pw as isize),
+                ),
+                PhysicalAxisMap::of(C),
+            ],
+        ))
         .checked(true);
 
         let (got, want) = self.run(space, in_spec);
@@ -212,8 +216,8 @@ impl Depthwise {
             .generate_without_host_data();
 
         // The weight follows the gathered input's plan, as the dense case has it do.
-        let w_spec = TileSpec::direct(&[RH, RW, C], MEMORY_LEAF).residence(&in_spec.residence);
-        let out_spec = TileSpec::direct(&[B, OH, OW, C], MEMORY_LEAF);
+        let w_spec = TileSpec::direct(&[RH, RW, C]).residence(&in_spec.residence);
+        let out_spec = TileSpec::direct(&[B, OH, OW, C]);
 
         depthwise_kernel::launch::<TestRuntime>(
             &client,

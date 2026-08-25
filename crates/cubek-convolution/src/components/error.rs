@@ -8,7 +8,10 @@ pub enum ConvSetupError {
     Groups(usize),
     /// The depthwise routine was handed a convolution that is not depthwise: it requires
     /// `groups == in_channels == out_channels`, one filter per channel.
-    NotDepthwise { groups: usize, channels: usize },
+    NotDepthwise {
+        groups: usize,
+        channels: usize,
+    },
     Unknown,
     Launch(LaunchError),
 }

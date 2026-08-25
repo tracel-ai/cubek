@@ -284,7 +284,7 @@ impl<T: Numeric> Tile<T> {
                     vector_size,
                     i,
                 );
-                g.masked::<W, Coords2d, ProjectedBatchMatrix>(layout)
+                g.masked::<W, Coords2d, ProjectedBatchMatrix>(layout, comptime!(true))
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix: a plane tile has no memory view")

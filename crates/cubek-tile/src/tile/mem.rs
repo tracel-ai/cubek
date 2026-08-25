@@ -1297,6 +1297,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn masked<W: Size, C: Coordinates, L: TileLayout<C>>(
         &self,
         layout: L,
+        #[comptime] guarded: bool,
     ) -> MaskedView<'_, Vector<T, W>, C> {
         if comptime!(self.store.quant.is_some()) {
             panic!(
@@ -1307,9 +1308,9 @@ impl<T: Numeric> MemData<T> {
         MaskedView::new(
             self.lines::<W>()
                 .view(self.base())
-                .view(self.window())
+                .view(self.window().with_guard(guarded))
                 .view(layout),
-            comptime!(self.access.overhang.masks()),
+            comptime!(guarded && self.access.overhang.masks()),
         )
     }
 
@@ -1410,6 +1411,7 @@ impl<T: Numeric> MemData<T> {
     >(
         &self,
         layout: L,
+        #[comptime] guarded: bool,
     ) -> MaskedView<'_, Vector<T, W>, C> {
         #[comptime]
         match &self.store.quant {
@@ -1421,7 +1423,7 @@ impl<T: Numeric> MemData<T> {
                 let values = self
                     .lines_storage::<I, WP>()
                     .view(self.base())
-                    .view(self.window())
+                    .view(self.window().with_guard(guarded))
                     .view(layout.clone());
                 // The scales over this same window: `ScaleLayout` resolves a window coordinate
                 // to its block's scale, addressed by the same `layout` as the values, so both
@@ -1437,9 +1439,12 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(layout);
                 let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
-                MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+                MaskedView::new(
+                    dequant.view(),
+                    comptime!(guarded && self.access.overhang.masks()),
+                )
             }
-            ComptimeOption::None => self.masked::<W, C, L>(layout),
+            ComptimeOption::None => self.masked::<W, C, L>(layout, guarded),
         }
     }
 
@@ -1451,7 +1456,7 @@ impl<T: Numeric> MemData<T> {
         &self,
         layout: L,
     ) -> MatrixView<'_, Vector<T, W>> {
-        self.transparent::<I, WP, W, Coords2d, L>(layout)
+        self.transparent::<I, WP, W, Coords2d, L>(layout, comptime!(true))
     }
 
     /// [`transparent`](MemData::transparent) over the tile's whole logical box, applying the
@@ -1459,8 +1464,9 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn nd_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         layout: AxisProjection,
+        #[comptime] guarded: bool,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
-        self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout)
+        self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout, guarded)
     }
 
     /// The mutable twin of [`flat`](MemData::flat).
@@ -2290,6 +2296,30 @@ impl Window {
             bound,
             signed,
             boundaries,
+        }
+    }
+}
+
+#[cube]
+impl Window {
+    /// This window, or the same one with its boundary machinery dropped: no clamp for an origin
+    /// that can go negative, and no per-axis [`Boundary`] mode. `guarded = false` is for a caller
+    /// that has proved the whole box it is about to read lands inside the buffer — both are then
+    /// work whose answer is already known, and the window pays for them once per access.
+    ///
+    /// One path either way, differing only in comptime fields. A branch here would be a runtime
+    /// select over the window's *runtime* halves as well, which is both slower and, on the
+    /// accelerated leaves that share this constructor, wrong.
+    pub(crate) fn with_guard(self, #[comptime] guarded: bool) -> Window {
+        Window {
+            origin: self.origin,
+            extent: self.extent,
+            bound: self.bound,
+            signed: comptime!(guarded && self.signed),
+            boundaries: comptime!(match guarded {
+                true => self.boundaries.clone(),
+                false => SmallVec::new(),
+            }),
         }
     }
 }
