@@ -25,13 +25,6 @@ pub fn tile_result(
     config: TileConfig,
     seed: u64,
 ) -> Result<HostData, String> {
-    if matches!(problem.options.mode, InterpolateMode::Lanczos3) {
-        return Err(
-            "tile correctness is covered by focused tile tests; Lanczos3 border normalization is pending"
-                .to_string(),
-        );
-    }
-
     let dtype = f32_elem_type();
     let input_shape = problem.input_shape().to_vec();
     let (input_handle, _input_host) = make_random_f32_host(&client, input_shape, seed);

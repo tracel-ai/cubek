@@ -113,8 +113,7 @@ fn test_interpolate_tile_padded_channel_stage() {
 /// scalar sink writes over, so each `kc` has to land on the reference too.
 #[test]
 fn test_interpolate_tile_padded_channel_stage_every_mode() {
-    // Lanczos3 is left out: it does not normalize its weights after the tap accumulation, so it
-    // misses the reference at every channel count, padded or not.
+    // Lanczos3 is left out: masked tap normalization requires the input window to remain in place.
     for mode in [
         InterpolateMode::Nearest(NearestMode::Exact),
         InterpolateMode::Bilinear,
@@ -154,6 +153,11 @@ fn test_interpolate_tile_bicubic() {
 }
 
 #[test]
+fn test_interpolate_tile_lanczos3() {
+    tile_output(InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false));
+}
+
+#[test]
 fn test_interpolate_tile_lanczos3_identity() {
     let client = TestRuntime::client(&Default::default());
     let options = InterpolateOptions::new(InterpolateMode::Lanczos3);
@@ -175,8 +179,6 @@ fn test_interpolate_tile_lanczos3_identity() {
     let actual = output_host_f32(&client, output);
 
     result.unwrap();
-    // At integral coordinates every non-central Lanczos weight is zero, so this validates the
-    // six-tap path without exercising its intentionally unnormalized border behavior.
     assert_equals_approx(&actual, &expected, TOLERANCE)
         .as_test_outcome()
         .enforce();

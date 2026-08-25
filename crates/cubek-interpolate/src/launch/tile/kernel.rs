@@ -58,6 +58,10 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         comptime!(space.project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])),
         separable_product(factors),
     );
+    let weights = match comptime!(F::NORMALIZATION) {
+        Some((mask, guard)) => weights.normalized(comptime!(mask), comptime!(guard)),
+        None => weights,
+    };
 
     let mut output = output.tile(space);
     output.mma(&weights, &input);

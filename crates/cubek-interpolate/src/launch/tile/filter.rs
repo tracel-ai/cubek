@@ -1,8 +1,8 @@
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 use cubek_tile::{
-    AffineCoordinate, Boundary, Constant, Cubic, Lanczos, Linear, Phase, Recipe, SeparableProduct,
-    Sum,
+    AffineCoordinate, Boundary, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe,
+    SeparableProduct, Sum, TapMask,
 };
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
@@ -31,6 +31,7 @@ pub type SeparableWeights<E, F> = SeparableProduct<<F as SeparableFilter<E>>::Ax
 /// Bridges host-side mode selection to the element type selected when a kernel is launched.
 pub trait SeparableFilterFamily: TapSupport + Send + std::marker::Sync + 'static {
     type Filter<E: Float>: SeparableFilter<E>;
+    const NORMALIZATION: Option<(TapMask, DivGuard)> = None;
 }
 
 pub struct NearestFilter;
@@ -88,8 +89,7 @@ impl<E: Float> SeparableFilter<E> for BicubicFilter {
     }
 }
 
-/// Six-tap Lanczos filtering. At image edges this intentionally zero-pads without renormalizing
-/// the surviving weights, so its border pixels differ from the CPU reference.
+/// Six-tap Lanczos filtering.
 pub struct Lanczos3Filter;
 impl TapSupport for Lanczos3Filter {
     const TAPS: usize = 6;
@@ -97,6 +97,13 @@ impl TapSupport for Lanczos3Filter {
 }
 impl SeparableFilterFamily for Lanczos3Filter {
     type Filter<E: Float> = Self;
+    const NORMALIZATION: Option<(TapMask, DivGuard)> = Some((
+        TapMask::Masked,
+        DivGuard {
+            epsilon: 1e-7,
+            fallback: 0.0,
+        },
+    ));
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for Lanczos3Filter {
