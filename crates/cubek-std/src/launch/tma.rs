@@ -36,7 +36,7 @@ pub fn remap_storage_for_tma(ty: ElemType) -> ElemType {
 
 /// TMA assumes the last stride is contiguous and discards it. For ColMajor inputs we therefore
 /// swap the inner two dims so the contiguous one ends up last. The tensor's own metadata stays
-/// in its original layout — only the TMA descriptor sees the transposed form.
+/// in its original layout: only the TMA descriptor sees the transposed form.
 ///
 /// `shape` and `strides` may have different ranks (the matmul builder constructs them
 /// transiently mismatched and aligns them afterwards). Each is swapped on its own inner pair.

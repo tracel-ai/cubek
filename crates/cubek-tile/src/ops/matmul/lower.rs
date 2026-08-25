@@ -1,8 +1,8 @@
 //! Lowering `c.mma(a, b)`: at a final tile, the leaf dispatch ([`mma_leaf`]); while levels remain,
 //! walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
 //! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
-//! allocate nothing. Register residency is the kernel's explicit bracket
-//! ([`promote`](Tile) then [`copy_from`](Tile::copy_from)), not a lowering decision.
+//! allocate nothing. An accumulator's register residency is read the same way, by
+//! [`accumulate`](Tile::accumulate) opening the scope it states, not by a lowering decision.
 
 use cubecl::prelude::*;
 
@@ -81,8 +81,8 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 Some(Instruction::Registers { config }) => config,
                 Some(other) => panic!(
                     "mma_leaf: a Gmem/Smem accumulator contracts in place through the software \
-                     instruction, but the space's instruction is {other:?}; promote the accumulator for \
-                     a hardware instruction"
+                     instruction, but the space's instruction is {other:?}; state \
+                     Residence::Register on the output so its accumulator is register-resident"
                 ),
                 None => panic!(
                     "mma_leaf: a Gmem/Smem accumulator contracts through the software \

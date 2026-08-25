@@ -1,12 +1,13 @@
 //! Forced-blueprint tests covering awkward / non-aligned spatial sizes,
 //! channel counts, and tall/skinny problems. Uses the simple sync-cyclic
-//! algorithm as the representative routine — the goal is to exercise
+//! algorithm as the representative routine: the goal is to exercise
 //! bounds-checking and vector-size handling under odd shapes, not to cover
 //! every routine.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::multi_level::components::stage::PartitionBuffering;
-use cubek_std::{PartitionSize, StageSize, SwizzleModes};
+use cubek_matmul::multi_level::{
+    PartitionSize, StageSize, components::stage::PartitionBuffering, stage::SwizzleModes,
+};
 
 use super::common::{default_tile_size, f16_dtypes, tiling_scheme};
 use crate::convolution::launcher_strategy::{ConvolutionSize, test_algo};

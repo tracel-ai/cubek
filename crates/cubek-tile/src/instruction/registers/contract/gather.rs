@@ -109,7 +109,12 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             mat.fcast::<u32>(),
         );
 
-        let mut acc = acc.matrix_accumulate::<A>(mat, comptime!(space.clone()));
+        // The contraction's own algebra, as [`direct`](super::direct) states it.
+        let mut acc = acc.matrix_accumulate::<A>(
+            mat,
+            comptime!(space.clone()),
+            comptime!(Semiring::SUM_PROD.add()),
+        );
 
         // Unroll only when no mask, otherwise compilation too long.
         let acc_check = acc.check();
@@ -364,8 +369,8 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     vw,
                 ))
             };
-            // Explicit `fma`, for the reason [`block::rank1_update`] gives.
-            c[i * nr + n] = fma(a, v, c[i * nr + n]);
+            // One semiring step, for the reason [`block::rank1_update`] gives.
+            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, v, c[i * nr + n]);
         }
     }
 }

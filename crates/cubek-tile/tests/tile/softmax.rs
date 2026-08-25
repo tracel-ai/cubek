@@ -269,7 +269,7 @@ const V: Axis = Axis(2);
 /// routine takes: softmax row owners publish their correction through a rank-1
 /// factors tile ([`store_rows`](cubek_tile::Tile)), the whole cube rescales the
 /// accumulator ([`scale_rows`](cubek_tile::Tile)), and the value accumulate
-/// runs under a *different* ownership (cyclic) than the softmax rows — the
+/// runs under a *different* ownership (cyclic) than the softmax rows: the
 /// cross-unit handoff the smem path exists for.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -348,7 +348,7 @@ fn softmax_smem_acc_kernel(
         acc.scale_rows(&factors);
         sync_cube();
 
-        // `O += P·V_blk`, cyclic ownership — deliberately not the softmax rows'.
+        // `O += P·V_blk`, cyclic ownership: deliberately not the softmax rows'.
         let p_view = p.view::<Const<1>>();
         let mut acc_view = acc.view_mut::<Const<1>>();
         let total = comptime!(rows * val_dim);

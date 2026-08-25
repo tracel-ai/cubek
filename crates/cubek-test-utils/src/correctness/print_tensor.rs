@@ -15,10 +15,10 @@ use crate::correctness::render::print_tensors as render;
 /// ```ignore
 /// use cubek_test_utils::print_tensors;
 ///
-/// // Single tensor — just pretty-print, no color.
+/// // Single tensor: just pretty-print, no color.
 /// print_tensors("input", &[&host], None);
 ///
-/// // Two tensors of the same shape — colored diff. Same path is used by
+/// // Two tensors of the same shape: colored diff. Same path is used by
 /// // `assert_equals_approx` for actual-vs-expected.
 /// print_tensors("a vs b", &[&a, &b], Some(1e-3));
 /// ```

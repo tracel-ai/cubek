@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn round_trips_for_fp8_native() {
         // Like the kernel, fp8 quantization rounds to an integer and then casts
-        // to fp8 — so the stored value also carries fp8 representation error.
+        // to fp8, so the stored value also carries fp8 representation error.
         // Pick scales that keep the quants within each format's exactly
         // representable integer range (E4M3: |q| ≤ 8, E5M2: |q| ≤ 4).
         assert_round_trips(QuantValue::E4M3, QuantStore::Native, 1.0 / 8.0);

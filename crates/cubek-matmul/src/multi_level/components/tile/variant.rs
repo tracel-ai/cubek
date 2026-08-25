@@ -9,11 +9,11 @@
 //! `validate_blueprint`, `cubedim_resource`).
 
 use cubecl::{features::MmaConfig, ir::DeviceProperties, prelude::*};
-use cubek_std::{CubeDimResource, InvalidConfigError, TileSize};
+use cubek_std::InvalidConfigError;
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError, MatmulVectorSizes},
-    multi_level::definition::BatchMatmulBlueprint,
+    multi_level::{CubeDimResource, TileSize, definition::BatchMatmulBlueprint},
 };
 
 pub trait TileVariant: Sized {

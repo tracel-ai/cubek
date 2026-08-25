@@ -15,7 +15,7 @@ pub enum LaneShare {
     /// Nothing carried either, so every lane of the plane holds a partial of the *same* cell and
     /// the plane's own reduction is the drain.
     Plane,
-    /// Both, so the plane splits into groups — one cell each, several cells in flight at once.
+    /// Both, so the plane splits into groups: one cell each, several cells in flight at once.
     /// `fold_mask` is the set of lane-index bits the folded axes occupy, so a cell's partials
     /// live on exactly the lanes that agree outside it and differ inside.
     Group { fold_mask: usize },
@@ -24,7 +24,7 @@ pub enum LaneShare {
 /// A descent's share, given the parent's and the level's: the folds compose, since each level
 /// takes its own bits of the lane index.
 ///
-/// [`LaneShare::Plane`] already spans every lane, so nothing can fold under it — and nothing
+/// [`LaneShare::Plane`] already spans every lane, so nothing can fold under it, and nothing
 /// builds that, since [`Space::cube_dim`](crate::Space::cube_dim) caps the tree's `Unit` instance
 /// product at the plane width.
 pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare {
@@ -33,7 +33,7 @@ pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare 
         (LaneShare::Group { fold_mask: a }, LaneShare::Group { fold_mask: b }) => {
             LaneShare::Group { fold_mask: a | b }
         }
-        _ => panic!("join_lane_share: {parent:?} under {level:?} — nothing folds under a plane"),
+        _ => panic!("join_lane_share: {parent:?} under {level:?}: nothing folds under a plane"),
     }
 }
 

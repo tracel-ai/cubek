@@ -18,6 +18,7 @@ use crate::{
             },
             stage::{StridedStageFamily, StridedStageMemory},
         },
+        tile::{StridedTilingLayout, TilingValidation},
     },
 };
 use cubecl::{
@@ -25,10 +26,7 @@ use cubecl::{
     std::tensor::layout::{Layout, LayoutExpand},
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{
-    InvalidConfigError,
-    tile::{StridedTilingLayout, TilingValidation},
-};
+use cubek_std::InvalidConfigError;
 
 use super::{LoadingJob, LoadingValidation};
 

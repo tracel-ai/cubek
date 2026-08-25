@@ -1,9 +1,7 @@
 #![allow(clippy::type_complexity)]
 
-use crate::multi_level::components::global::multi_stage::{
-    DoubleBufferingEventListener, JobExecutor,
-};
 use crate::multi_level::{
+    components::global::multi_stage::{DoubleBufferingEventListener, JobExecutor},
     components::{
         global::{
             GlobalConfig, GlobalReaderConfig, GlobalWriter, LoadingSides, PlaneFlowPartition,
@@ -15,9 +13,9 @@ use crate::multi_level::{
     definition::{
         AccRE, AccSS, LhsRE, LhsSE, LhsSS, MatmulTypes, MatrixTypes, RhsRE, RhsSE, RhsSS,
     },
+    tile::{NoEvent, PartitionScheduler, Tile, write_partition_to_stage},
 };
 use cubecl::prelude::*;
-use cubek_std::tile::{NoEvent, PartitionScheduler, Tile, write_partition_to_stage};
 
 #[cube]
 /// Read the first stage for both Lhs and Rhs

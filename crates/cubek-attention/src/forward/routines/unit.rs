@@ -1,8 +1,9 @@
 use cubecl::{CubeDim, Runtime};
-use cubek_matmul::multi_level::components::{
-    global::PartitionedStageFamily, stage::StridedStageFamily,
+use cubek_matmul::multi_level::{
+    CubeDimResource,
+    components::{global::PartitionedStageFamily, stage::StridedStageFamily},
 };
-use cubek_std::{CubeDimResource, cube_count::CubeCountStrategy};
+use cubek_std::cube_count::CubeCountStrategy;
 
 use crate::{
     components::{

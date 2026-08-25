@@ -1,6 +1,6 @@
 use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::Scalar, tf32};
 use cubek_std::{
-    MatrixLayout, SwizzleModes,
+    MatrixLayout,
     cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
 };
 
@@ -14,6 +14,7 @@ use crate::{
             tile::TileMatmulKind,
         },
         definition::TilingScheme,
+        stage::SwizzleModes,
     },
     routine::DeviceSettings,
 };

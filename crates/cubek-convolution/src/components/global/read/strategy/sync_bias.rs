@@ -1,4 +1,5 @@
 use cubecl::{ir::DeviceProperties, prelude::*};
+use cubek_matmul::multi_level::tile::{NoTilingLayout, TilingValidation};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
     multi_level::{
@@ -14,10 +15,7 @@ use cubek_matmul::{
         },
     },
 };
-use cubek_std::{
-    InvalidConfigError, StageIdent,
-    tile::{NoTilingLayout, TilingValidation},
-};
+use cubek_std::{InvalidConfigError, StageIdent};
 
 use crate::components::stage::{
     bias_stage::{BiasStageFamily, BiasStageMemory},

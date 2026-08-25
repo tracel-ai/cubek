@@ -11,17 +11,17 @@ use crate::multi_level::{
         },
     },
     definition::*,
+    tile::{
+        NoEvent, PartitionScheduler, Tile, load_partition_from_stage, write_partition_to_stage,
+    },
 };
 use cubecl::{
     prelude::*,
     std::tensor::{View, ViewMut, layout::Coords2d},
 };
-use cubek_std::tile::{
-    NoEvent, PartitionScheduler, Tile, load_partition_from_stage, write_partition_to_stage,
-};
 use std::marker::PhantomData;
 
-// Type aliases for the (long) per-flow Stage types — saves repeating the
+// Type aliases for the (long) per-flow Stage types: saves repeating the
 // `FullLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>` shape at every
 // PartitionMatmul call site below.
 type LhsStageFor<MP, RC, LL> = FullLoaderStage<RC, LL, Stage<Lhs<MP>>, StageSize<Lhs<MP>>>;

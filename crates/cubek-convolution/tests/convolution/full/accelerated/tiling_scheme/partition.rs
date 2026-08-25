@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! testgen_convolution_accelerated_partition {
     ($algorithm: expr, $dtypes: expr, $tiling_scheme_builder: expr) => {
-        use cubek_std::PartitionSize;
+        use cubek_matmul::multi_level::PartitionSize;
 
         mod p1x1x1 {
             use super::*;

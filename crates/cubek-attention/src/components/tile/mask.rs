@@ -1,7 +1,7 @@
 use cubecl;
 use cubecl::std::tensor::layout::Coordinates;
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
-use cubek_std::tile::{
+use cubek_matmul::multi_level::tile::{
     Mask, MaskExpand, MaskLayout, Plane, StridedTile, Tile, allocate_unit_tile,
     allocate_whitebox_fragment, mask_layout_absolute_pos,
 };

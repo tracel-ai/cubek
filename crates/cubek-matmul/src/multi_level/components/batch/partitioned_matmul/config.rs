@@ -1,8 +1,9 @@
-use cubek_std::GlobalPartitionSize;
-
-use crate::multi_level::components::{
-    batch::BatchConfig,
-    global::{GlobalConfig, memory::GlobalLayoutConfig},
+use crate::multi_level::{
+    GlobalPartitionSize,
+    components::{
+        batch::BatchConfig,
+        global::{GlobalConfig, memory::GlobalLayoutConfig},
+    },
 };
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

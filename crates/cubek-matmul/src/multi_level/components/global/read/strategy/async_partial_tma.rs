@@ -15,17 +15,15 @@ use crate::{
             stage::{StridedStageFamily, StridedStageMemory},
         },
         definition::{LhsS, MatmulTypes, RhsS},
+        stage::SwizzleMode,
+        tile::{TilingValidation, TmaTilingLayout},
     },
 };
 use cubecl::{
     prelude::*,
     {ir::DeviceProperties, prelude::barrier::Barrier},
 };
-use cubek_std::{
-    stage::SwizzleMode,
-    tile::{TilingValidation, TmaTilingLayout},
-    {InvalidConfigError, MatrixLayout},
-};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use super::{LoadingJob, LoadingValidation};
 

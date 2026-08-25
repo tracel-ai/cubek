@@ -1,5 +1,5 @@
 use cubecl::{CubeCount, CubeDim, VectorizationError, ir::ElemType, server::LaunchError};
-use cubek_std::{InvalidConfigError, MatrixLayout, TileSize};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 use std::fmt::{Debug, Display};
 
 /// Errors that can occur during the setup phase of a matmul operation.
@@ -41,12 +41,13 @@ pub enum MatmulAvailabilityError {
         output: ElemType,
     },
 
-    /// The required CMMA instruction is not supported for the given element types and tile size.
+    /// The required CMMA instruction is not supported for the given element types and shape.
     CmmaInstructionUnavailable {
         lhs: ElemType,
         rhs: ElemType,
         output: ElemType,
-        size: Option<TileSize>,
+        /// The instruction shape, as `(m, n, k)`.
+        size: Option<(u32, u32, u32)>,
     },
 
     /// Impossible to find a supported tile size for the problem.
@@ -151,16 +152,10 @@ impl Debug for MatmulAvailabilityError {
                 lhs,
                 rhs,
                 output,
-                size: Some(size),
+                size: Some((m, n, k)),
             } => writeln!(
                 f,
-                "Cmma on lhs {:?} rhs {:?} and output {:?} with shape m={:?}, n={:?}, k={:?} not supported.",
-                lhs,
-                rhs,
-                output,
-                size.m(),
-                size.n(),
-                size.k()
+                "Cmma on lhs {lhs:?} rhs {rhs:?} and output {output:?} with shape m={m:?}, n={n:?}, k={k:?} not supported.",
             ),
             MatmulAvailabilityError::LayoutUnsupported { lhs, rhs } => {
                 writeln!(

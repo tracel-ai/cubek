@@ -7,7 +7,7 @@
 use std::fmt::Display;
 
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
-use cubek_std::{InputBinding, tile::ColMajorTilingOrder};
+use cubek_std::InputBinding;
 
 use crate::{
     definition::{MatmulElems, MatmulSetupError},
@@ -26,6 +26,7 @@ use crate::{
                 simple::SimpleBarrierAlgorithm,
             },
         },
+        tile::ColMajorTilingOrder,
     },
     routine::{BlueprintStrategy, Routine},
 };

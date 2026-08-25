@@ -14,16 +14,14 @@ use crate::{
             },
             stage::{StridedStageFamily, StridedStageMemory},
         },
+        tile::{StridedTilingLayout, TilingValidation},
     },
 };
 use cubecl::{
     ir::DeviceProperties,
     prelude::{barrier::Barrier, *},
 };
-use cubek_std::{
-    InvalidConfigError, MatrixLayout,
-    tile::{StridedTilingLayout, TilingValidation},
-};
+use cubek_std::{InvalidConfigError, MatrixLayout};
 
 use super::LoadingValidation;
 

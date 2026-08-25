@@ -85,7 +85,7 @@ fn generate_blueprint<R: Runtime>(
     let (cube_count, cube_launched) = cube_count_spread_with_total(client, working_cubes);
 
     // Unchecked comptime fast path only when raw shapes are their own
-    // autotune keys — see the twin comment in `plane.rs`.
+    // autotune keys: see the twin comment in `plane.rs`.
     let unit_idle = !settings.unchecked_fast_paths
         || !working_units.is_multiple_of(num_units_in_cube as usize)
         || cube_launched != working_cubes;
