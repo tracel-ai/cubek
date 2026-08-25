@@ -41,7 +41,7 @@ fn conv_kernel<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
-    out.mma(&input, &weight);
+    out.mma(&input, &weight, Semiring::SUM_PROD);
 }
 
 /// [`conv_kernel`] serving the input in two-wide lines. The gathered operand lines along its
@@ -59,7 +59,7 @@ fn conv_kernel_lined<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
-    out.mma(&input, &weight);
+    out.mma(&input, &weight, Semiring::SUM_PROD);
 }
 
 /// Small integers, so the accumulation is exact in `f32` and the reference can be compared for
@@ -918,7 +918,7 @@ fn conv_kernel_dynamic<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
-    out.mma(&input, &weight);
+    out.mma(&input, &weight, Semiring::SUM_PROD);
 }
 
 impl Conv1d {
@@ -1051,7 +1051,7 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
-    out.mma(&input, &weight);
+    out.mma(&input, &weight, Semiring::SUM_PROD);
 }
 
 /// [`conv_kernel_dynamic`] with the padding runtime too: nothing of the input's affine map is
@@ -1077,7 +1077,7 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
-    out.mma(&input, &weight);
+    out.mma(&input, &weight, Semiring::SUM_PROD);
 }
 
 impl Conv1d {
@@ -1933,7 +1933,7 @@ fn conv_mma_kernel<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(space);
     let mut acc = out.accumulate::<E, _>(&input, Monoid::Sum);
-    acc.mm(&input, &weight);
+    acc.mm(&input, &weight, Semiring::SUM_PROD);
 }
 
 #[test]
@@ -2331,7 +2331,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
     out.zero();
-    out.mma(&input, &weight);
+    out.mma(&input, &weight, Semiring::SUM_PROD);
 }
 
 #[test]

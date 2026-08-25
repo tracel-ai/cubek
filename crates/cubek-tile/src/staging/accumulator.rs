@@ -9,8 +9,8 @@
 //! accumulator for that whole region, and every level below runs inside it.
 //!
 //! ```ignore
-//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope
-//! acc.mm(&a, &b);                   // `c = a·b`, and the drain that closes the scope
+//! let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);  // opens the scope under its fold
+//! acc.mm(&a, &b, Semiring::SUM_PROD);                    // `c = a·b`, and the drain that closes it
 //! ```
 //!
 //! `mm` states `c = a·b`, so it owns the init. To fold onto what `c` already holds, state that
@@ -18,7 +18,7 @@
 //!
 //! ```ignore
 //! acc.seed();
-//! acc.mma(&a, &b);
+//! acc.mma(&a, &b, Semiring::SUM_PROD);
 //! ```
 //!
 //! An output stating nothing is [`InPlace`](Residence::InPlace) and contracts where it already
@@ -54,6 +54,17 @@ pub enum AccumulatorScope<EA: Numeric, Out: Numeric> {
     },
 }
 
+/// A contraction into this accumulation has to add the way the accumulation folds: the scope
+/// seeds and drains under its monoid, so a semiring adding under another would merge the plane's
+/// partials one way and accumulate the steps another, and the result is neither.
+fn adds_the_way_it_folds(monoid: Monoid, semiring: Semiring) {
+    assert!(
+        semiring.add() == monoid,
+        "AccumulatorScope: this accumulation folds under {monoid:?}, so it cannot contract under \
+         {semiring:?}"
+    );
+}
+
 #[cube]
 impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
     /// Seed the accumulator with its monoid's identity: `0` under `Sum`, the lowest value under
@@ -72,17 +83,26 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 
     /// `c = lhs · rhs`: contract into the accumulator and drain, the contraction owning the init.
     /// The scope's whole body at every call site that is not accumulating onto `c`.
-    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+    ///
+    /// `semiring` is the algebra of the contraction itself: the product it forms from a pair of
+    /// operands and the monoid those products accumulate into. The scope holds a fold and nothing
+    /// more, so a contraction, which needs more than a fold, is handed one.
+    pub fn mm<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] semiring: Semiring,
+    ) {
         match self {
-            AccumulatorScope::Register {
-                tile,
-                sink,
-                monoid: _,
-            } => {
-                tile.mm(lhs, rhs);
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                tile.mm(lhs, rhs, semiring);
                 tile.drain_cast_into(sink);
             }
-            AccumulatorScope::InPlace { sink, monoid: _ } => sink.mm(lhs, rhs),
+            AccumulatorScope::InPlace { sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                sink.mm(lhs, rhs, semiring)
+            }
         }
     }
 
@@ -90,17 +110,22 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
     /// folding onto an accumulator the caller [`seed`](AccumulatorScope::seed)ed. Drains the same
     /// way: the contraction exhausts the scope the accumulator was opened for, so leaving it is
     /// what writes the result back.
-    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+    pub fn mma<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] semiring: Semiring,
+    ) {
         match self {
-            AccumulatorScope::Register {
-                tile,
-                sink,
-                monoid: _,
-            } => {
-                tile.mma(lhs, rhs);
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                tile.mma(lhs, rhs, semiring);
                 tile.drain_cast_into(sink);
             }
-            AccumulatorScope::InPlace { sink, monoid: _ } => sink.mma(lhs, rhs),
+            AccumulatorScope::InPlace { sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                sink.mma(lhs, rhs, semiring)
+            }
         }
     }
 
@@ -136,13 +161,16 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// Open this output's accumulator scope, uninitialized, folding under `monoid`: `Sum` for a
-    /// matmul, whichever fold a reduce asked for. `monoid` is stated here because it is read on
-    /// drain, when the plane's lanes are combined, and comptime state cannot be set after a thing is
-    /// built, and because it is the accumulation's one algebra rather than a fact about each
-    /// call. The op that closes the scope drains it; where that op is
-    /// [`mm`](AccumulatorScope::mm) or [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the
-    /// init too, and only the accumulating verbs ask the caller to state one
-    /// ([`seed`](AccumulatorScope::seed)).
+    /// matmul, `Min` for a min-plus one, whichever fold a reduce asked for. `monoid` is stated
+    /// here because it is read on drain, when the plane's lanes are combined, and comptime state
+    /// cannot be set after a thing is built, and because it is the accumulation's one algebra
+    /// rather than a fact about each call. It is a fold and nothing more: an op needing more,
+    /// [`mm`](AccumulatorScope::mm) and [`mma`](AccumulatorScope::mma), is handed the
+    /// [`Semiring`] it runs, whose add this must be.
+    ///
+    /// The op that closes the scope drains it; where that op is [`mm`](AccumulatorScope::mm) or
+    /// [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the init too, and only the
+    /// accumulating verbs ask the caller to state one ([`seed`](AccumulatorScope::seed)).
     ///
     /// Where the accumulator lives is the output operand's own statement, read off the residence
     /// it stated at this level ([`Operand::stage`]). `EA` is the register accumulate type, read

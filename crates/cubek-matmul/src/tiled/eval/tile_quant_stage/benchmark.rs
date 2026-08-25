@@ -39,7 +39,7 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 pub fn bench(

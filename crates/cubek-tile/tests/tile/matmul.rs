@@ -1776,7 +1776,7 @@ fn launch_staged_matmul_accumulate<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The kernel is `c.mm(a, b)`: `c` is a whole tensor, so it lowers; the move comes
@@ -1794,7 +1794,7 @@ fn launch_staged_matmul<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mm(&a, &b);
+    c.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The tensor-core kernel: promote the accumulator to its register form, zero it (the
@@ -1812,7 +1812,7 @@ fn launch_resident_matmul<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// Quantized `A` through the resident K walk: `A` is served via its quant arg, so `acc.mma`
@@ -1832,7 +1832,7 @@ fn launch_resident_matmul_quant<I: Numeric, E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The CPU kernel: `c.zero()` then `c.mma(a, b)` straight on the output, with no accumulator
@@ -1850,7 +1850,7 @@ fn launch_cpu_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.zero();
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The promoted twin of [`launch_cpu_matmul`]: the register leaf's accumulator lifted out of
@@ -1868,7 +1868,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The register leaf contracts through a promoted block rather than through the output, so a
@@ -1928,6 +1928,148 @@ fn register_matmul_promoted_accumulator() {
     let (_, expected) = TestInput::builder(client, shape![m, n])
         .custom(expected)
         .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The same three lines under another algebra: the scope opens under the semiring's own fold and
+/// the contraction runs the whole semiring, so `MIN_SUM` is min-plus and `MAX_SUM` max-plus.
+#[cube(launch)]
+fn launch_tropical_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[comptime] semiring: Semiring,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, comptime!(semiring.add()));
+    acc.mm(&a, &b, semiring);
+}
+
+/// Min-plus in place: the memory nest seeds `+∞`, forms `a + b` and folds under `min`, all of it
+/// off the semiring the contraction was handed. Random operands, so the winning `p` differs cell
+/// by cell and a leaf that kept the ordinary `fma` cannot land on these numbers.
+#[test]
+fn tropical_matmul_in_place() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .uniform(7, 1., 9.);
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .uniform(13, 1., 9.);
+    // Poisoned: `mm` owns the init under this algebra too, and its identity is not zero.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_tropical_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        Semiring::MIN_SUM,
+        dtype,
+    );
+
+    let lhs = HostData::from_tensor_handle(&client, a.handle(), HostDataType::F32);
+    let rhs = HostData::from_tensor_handle(&client, b.handle(), HostDataType::F32);
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| lhs.get_f32(&[i, p]) + rhs.get_f32(&[p, j]))
+                .fold(f32::INFINITY, f32::min)
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// Max-plus through a promoted block: the register accumulator is built under `Max`, so it starts
+/// at the lowest value, steps with `+`, and drains its lanes under the same fold. A contraction
+/// adding under anything else is refused, at the scope and again at the block.
+#[test]
+fn tropical_matmul_promoted() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .uniform(11, 1., 9.);
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .uniform(17, 1., 9.);
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    launch_tropical_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(16)),
+        Semiring::MAX_SUM,
+        dtype,
+    );
+
+    let lhs = HostData::from_tensor_handle(&client, a.handle(), HostDataType::F32);
+    let rhs = HostData::from_tensor_handle(&client, b.handle(), HostDataType::F32);
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| lhs.get_f32(&[i, p]) + rhs.get_f32(&[p, j]))
+                .fold(f32::NEG_INFINITY, f32::max)
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
         .enforce()
@@ -2018,7 +2160,7 @@ fn launch_cpu_matmul_lined<E: Numeric, LV: Size, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.zero();
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// [`launch_cpu_matmul_lined`] through the promoted block instead of through the output.
@@ -2035,7 +2177,7 @@ fn launch_promoted_matmul_lined<E: Numeric, EA: Numeric, LV: Size, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 /// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
@@ -2166,7 +2308,7 @@ fn launch_matmul_folded<E: Numeric, AV: Size, BV: Size, CV: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.zero();
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// `A·Bᵀ` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(j, p) = j·k + p`.
@@ -2330,7 +2472,7 @@ fn launch_matmul_folded_quant<I: Numeric, E: Numeric, BV: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.zero();
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// A folded step whose lhs is packed `q8s` (4 values per word): the pack factor narrows the
@@ -3094,7 +3236,7 @@ fn cmma_matmul<E: Numeric>(
     );
     acc.copy_from(&c_smem_tile);
 
-    acc.mma(&a_frag, &b_frag);
+    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
 
     c_smem_tile.copy_from(&acc);
     sync_cube();
@@ -3169,7 +3311,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     );
     acc.copy_from(&c_smem);
 
-    acc.mma(&a_frag, &b_frag);
+    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
 
     c_smem.copy_from(&acc);
     sync_cube();
@@ -4123,7 +4265,7 @@ fn launch_staged_matmul_quant<I: Numeric, E: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The output operand of a promoting plan: [`Residence::Register`] at the top level, in place
@@ -4406,7 +4548,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]`: the exact scheme

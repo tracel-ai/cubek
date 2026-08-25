@@ -3,6 +3,9 @@
 //! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
 //! allocate nothing. An accumulator's register residency is read the same way, by
 //! [`accumulate`](Tile::accumulate) opening the scope it states, not by a lowering decision.
+//!
+//! The [`Semiring`] rides down the same way: the accumulation states its algebra once and every
+//! level hands the same one to the leaf that runs the steps.
 
 use cubecl::prelude::*;
 
@@ -18,14 +21,19 @@ impl<Acc: Numeric> Tile<Acc> {
     /// identity instead of reading `c` back, which is one load per cell and, for a `kc` too short
     /// to amortize it, a measurable share of the leaf. Where it does not, the seed the caller
     /// would have written happens here instead, so the verb costs nothing to reach for.
-    pub fn mm<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+    pub fn mm<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] semiring: Semiring,
+    ) {
         let spans = self.contracts_whole_at_leaf(lhs, rhs);
         let init_from = self.request_init_from(comptime!(spans));
         match comptime!(init_from) {
             InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(comptime!(Semiring::SUM_PROD.add())),
+            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
         }
-        self.mma(lhs, rhs);
+        self.mma(lhs, rhs, semiring);
         self.request_init_from(comptime!(InitFrom::Cell));
     }
 
@@ -36,13 +44,24 @@ impl<Acc: Numeric> Tile<Acc> {
     /// accumulation starts from is decided once, at the top, from the undivided operand spaces. A
     /// region's operands are one contracted step of the whole and always span their own leaf, so
     /// re-deciding down here would overwrite at every step of a walk that must fold them together.
-    pub fn mma<Lhs: Numeric, Rhs: Numeric>(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) {
+    pub fn mma<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] semiring: Semiring,
+    ) {
         let partitioner = comptime!(self.space.partitioner().clone());
         match comptime!(partitioner) {
-            Partitioner::Final => mma_leaf(self, lhs, rhs),
+            Partitioner::Final => mma_leaf(self, lhs, rhs, semiring),
             Partitioner::Level(level) => {
                 let op_space = self.op_space(lhs, rhs);
-                self.mma_buffered(lhs, rhs, op_space, comptime!(level.buffering().depth()));
+                self.mma_buffered(
+                    lhs,
+                    rhs,
+                    op_space,
+                    comptime!(level.buffering().depth()),
+                    semiring,
+                );
             }
         }
     }
@@ -97,11 +116,12 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
+    #[comptime] semiring: Semiring,
 ) {
     let space = comptime!(acc.space.clone());
     let tile_kind = &mut acc.tile_kind;
     match tile_kind {
-        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space),
+        TileKind::PlaneTile(t) => t.mma(lhs, rhs, space, semiring),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
         // consumed earlier, at its partition level.
         TileKind::PlanePartition(p) => {
@@ -110,7 +130,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                 "mma_leaf: a multi-tile partition must be contracted at its partition level"
             ));
             let mut t = p.at(0usize, 0usize);
-            t.mma(lhs, rhs, space)
+            t.mma(lhs, rhs, space, semiring)
         }
         // A memory accumulator runs the software instruction, under the config the kernel bound
         // on it. A plane-form accumulator that was never promoted lands in the arms above and
@@ -130,7 +150,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
                      `.instruction(Instruction::Registers {{ config }})`"
                 ),
             });
-            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config)
+            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config, semiring)
         }
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
@@ -145,22 +165,35 @@ impl<E: Numeric> PlaneTile<E> {
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
         #[comptime] out: Space,
+        #[comptime] semiring: Semiring,
     ) {
         match self {
             PlaneTile::Cmma(d) => {
                 strided_2d(lhs, rhs, out);
+                hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
             PlaneTile::Mma(d) => {
                 flattened_k(lhs, rhs, out);
+                hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
             PlaneTile::Register(d) => {
                 strided_2d(lhs, rhs, out);
-                d.mma(lhs, rhs)
+                d.mma(lhs, rhs, semiring)
             }
         }
     }
+}
+
+/// Asserts that the algebra is the one a hardware instruction implements: it multiplies and adds.
+#[cube]
+fn hardware_semiring(#[comptime] semiring: Semiring) {
+    comptime!(assert!(
+        semiring == Semiring::SUM_PROD,
+        "mma: a hardware instruction contracts under the sum-product semiring alone, not \
+         {semiring:?}; contract in memory or in a register block to fold under another"
+    ));
 }
 
 /// Asserts that operands are not gathered and have a single contracted axis.

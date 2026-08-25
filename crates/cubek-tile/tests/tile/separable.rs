@@ -80,8 +80,7 @@ fn separable_kernel<E: Float>(
     };
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 /// Small integers, so the accumulation is exact in `f32`.
@@ -286,8 +285,7 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     );
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 /// Native Q8S served in `QV`-wide lines: `served / pack` is `QV`, so a scalar physical width
@@ -545,8 +543,7 @@ fn resample_kernel<E: Float>(
     };
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 #[test]
@@ -655,7 +652,7 @@ fn procedural_mask_kernel<E: Float>(
             separable_product(factors),
         )
         .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
-        output.at(&region).mma(&weights, &rhs);
+        output.at(&region).mma(&weights, &rhs, Semiring::SUM_PROD);
     }
 }
 
@@ -712,8 +709,7 @@ fn resample_kernel_masked<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 #[test]
@@ -894,8 +890,7 @@ fn column_spanning_resample_kernel<E: Float>(
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 #[test]
@@ -980,8 +975,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 #[test]
@@ -1084,8 +1078,7 @@ fn zero_sum_fallback_kernel<E: Float>(
     );
 
     let mut output = output.tile(space);
-    output.zero();
-    output.mma(&weights, &input);
+    output.mm(&weights, &input, Semiring::SUM_PROD);
 }
 
 #[test]
