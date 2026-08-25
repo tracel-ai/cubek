@@ -93,6 +93,12 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         comptime!(self.lane_share)
     }
 
+    /// The monoid these cells fold under, stated where the view was built. A register block asks
+    /// so its own seed and commit start from and collapse under the same fold this does.
+    pub fn monoid(&self) -> comptime_type!(Monoid) {
+        comptime!(self.monoid)
+    }
+
     /// Whether a non-empty output block is wholly valid for unchecked seed/commit accesses.
     pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
         self.values.block_in_bounds(pos, extent)

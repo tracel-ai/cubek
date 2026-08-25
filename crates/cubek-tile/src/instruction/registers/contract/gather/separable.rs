@@ -38,6 +38,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
@@ -64,7 +65,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
             comptime!(problem.block.space.clone()),
-            comptime!(Semiring::SUM_PROD.add()),
+            comptime!(semiring.add()),
         );
         // A comptime `p` folds the tap coordinates, the operand coordinate resolution and the
         // weight indices, which is what lets the walk stay in registers and vectorize. It costs
@@ -124,7 +125,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                             comptime!(problem.block.vw),
                         ));
                         // One semiring step, for the reason [`block::rank1_update`] gives.
-                        c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(
+                        c[i * nr + n] = semiring.step::<Vector<E, V>>(
                             Vector::<E, V>::cast_from(weight),
                             value,
                             c[i * nr + n],
@@ -194,8 +195,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                             n as u32,
                         )));
                         // One semiring step, for the reason [`block::rank1_update`] gives.
-                        c[i * nr + n] =
-                            Semiring::SUM_PROD.step::<Vector<E, V>>(weight, value, c[i * nr + n]);
+                        c[i * nr + n] = semiring.step::<Vector<E, V>>(weight, value, c[i * nr + n]);
                     }
                 }
             }

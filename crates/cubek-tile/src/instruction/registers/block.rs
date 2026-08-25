@@ -30,6 +30,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] kc: usize,
     #[comptime] unroll: bool,
     #[comptime] lane_fanout: bool,
+    #[comptime] semiring: Semiring,
 ) {
     let mut b = Array::<Vector<E, V>>::new(nr);
 
@@ -48,6 +49,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 mr,
                 nr,
                 unroll,
+                semiring,
             );
         }
     } else if comptime!(lane_fanout && lw > 1) {
@@ -70,6 +72,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     mr,
                     nr,
                     unroll,
+                    semiring,
                 );
             }
         }
@@ -91,6 +94,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 mr,
                 nr,
                 unroll,
+                semiring,
             );
         }
     } else {
@@ -109,6 +113,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 mr,
                 nr,
                 unroll,
+                semiring,
             );
         }
     }
@@ -139,6 +144,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
 ) {
     #[unroll(unroll)]
     for n in 0..nr {
@@ -162,10 +168,11 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         };
         #[unroll(unroll)]
         for n in 0..nr {
-            // One step of the sum-product semiring, which is a single `fma`: `+= a * b` would
-            // lower to a separate mul + dependent add (no fast-math contraction on the CPU
-            // backend), doubling the FP instruction count and serializing the accumulate.
-            c[i * nr + n] = Semiring::SUM_PROD.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
+            // One step of the accumulation's own semiring, a single `fma` where that is the
+            // ordinary one: `+= a * b` would lower to a separate mul + dependent add (no
+            // fast-math contraction on the CPU backend), doubling the FP instruction count and
+            // serializing the accumulate.
+            c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
         }
     }
 }
@@ -223,6 +230,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
         "block::seed"
     ));
     let guard = comptime!(spread_guard(spread, cols));
+    let monoid = acc.monoid();
     let mut c = Array::<Vector<E, V>>::new(mr * nr);
     #[unroll(unroll)]
     for i in 0..mr {
@@ -231,8 +239,8 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
             if comptime!(spread > 1) {
                 let base = (n as u32).fmul(comptime!(spread as u32));
                 // The spare lanes of an overhanging last column have no cell to seed from, and
-                // the zero they keep is `Sum`'s identity, so they contribute nothing.
-                let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(Monoid::Sum));
+                // the identity they keep contributes nothing to the fold.
+                let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(monoid));
                 #[unroll]
                 for l in 0..spread {
                     let col = base.fadd(comptime!(l as u32));
@@ -249,7 +257,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
             } else {
                 let cell = acc.seed((i as u32, n as u32));
                 if comptime!(served > 1) {
-                    let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(Monoid::Sum));
+                    let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(monoid));
                     lanes.insert(0usize, cell.extract(0usize));
                     c[i * nr + n] = lanes;
                 } else {
@@ -286,6 +294,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     ));
     let guard = comptime!(spread_guard(spread, cols));
     let lane_share = acc.lane_share();
+    let monoid = acc.monoid();
     comptime!(assert!(
         !guard || matches!(lane_share, LaneShare::Whole),
         "block::commit: a spread block skips the lanes overhanging the sink, and a lane-split \
@@ -314,7 +323,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
                     }
                 }
             } else if comptime!(served > 1) {
-                let total = horizontal::vector::<E, V>(cell, served, Monoid::Sum);
+                let total = horizontal::vector::<E, V>(cell, served, monoid);
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(total));
             } else {
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(cell));

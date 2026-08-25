@@ -47,8 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Space, TileArg, TileArgLaunch,
-    Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Semiring, Space, TileArg,
+    TileArgLaunch, Tiling, WalkOrder,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -75,7 +75,7 @@ fn launch_split_k_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// How a problem is mapped onto the plane's lanes.

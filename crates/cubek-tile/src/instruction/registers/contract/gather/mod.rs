@@ -111,6 +111,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     #[comptime] space: Space,
     #[comptime] served: usize,
     #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
 ) {
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
@@ -142,18 +143,18 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         ));
         let size!(V) = rw;
         let size!(A) = aw;
-        separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config);
+        separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
     } else if comptime!(served > 1) {
         // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.
         let size!(W) = served;
         let size!(A) = 1usize;
-        nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config);
+        nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config, semiring);
     } else {
         let size!(W) = lw;
         let size!(V) = rw;
         let size!(A) = aw;
-        nd::nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, problem, config);
+        nd::nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
     }
 }
 
