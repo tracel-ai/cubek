@@ -10,7 +10,7 @@ use crate::{
     definition::{InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
-use cubek_tile::{Operand, Residence};
+use cubek_tile::Residence;
 
 /// Every choice the tile-backed interpolation launch makes.
 ///
@@ -130,7 +130,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     let row = Rational::of(get_transform(input_h, output_h, options));
     let col = Rational::of(get_transform(input_w, output_w, options));
     let lanes = client.properties().hardware.plane_size_max as usize;
-    let space = space::interpolate_space(
+    let (space, in_operand) = space::interpolate_space(
         output.shape[0],
         output_h,
         output_w,
@@ -139,6 +139,8 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         F::TAPS,
         geometry,
         space::instruction(client),
+        dtype,
+        config.input_residence,
     );
     let launch = space.launcher_over(client, &[]);
 
@@ -189,20 +191,6 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
             available: max_smem,
         });
     }
-    let mut in_operand = Operand::new(
-        &[
-            space::BATCH,
-            space::OUTPUT_H,
-            space::OUTPUT_W,
-            space::TAP_H,
-            space::TAP_W,
-            space::CHANNEL,
-        ],
-        dtype,
-    );
-    in_operand.stage(residence);
-    in_operand.stage(Residence::InPlace);
-    in_operand.stage(Residence::InPlace);
 
     let mut input_arg = launch
         .arg(input)

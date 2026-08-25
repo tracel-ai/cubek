@@ -61,6 +61,9 @@ fn test_interpolate_tile_staging_configurations() {
 fn test_interpolate_tile_geometry_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for config in [
+        TileConfig::new(Residence::InPlace, 1, 1, 1),
+        TileConfig::new(Residence::Smem, 1, 1, 1),
+        TileConfig::new(Residence::InPlace, 1, 2, 1),
         TileConfig::new(Residence::InPlace, 4, 2, 2),
         TileConfig::new(Residence::InPlace, 4, 4, 1),
         TileConfig::new(Residence::InPlace, 2, 2, 1),

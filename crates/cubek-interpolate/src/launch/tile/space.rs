@@ -1,8 +1,9 @@
 use super::geometry::TileGeometry;
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::{Runtime, client::ComputeClient, ir::ElemType};
 use cubek_tile::{
     Axis, Buffering, Compaction, ComputeScope, Coverage, CubeAxis, Cut, Distribution, Instruction,
-    PhysicalAxisMap, Projection, RegisterBlock, Space, Spread, Tiling, WalkOrder,
+    Operand, PhysicalAxisMap, Projection, RegisterBlock, Residence, Space, Spread, Tiling,
+    WalkOrder,
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -27,6 +28,7 @@ pub fn instruction<R: Runtime>(client: &ComputeClient<R>) -> Instruction {
 /// Every level runs a single-slot ring. CHANNEL is the cube walk's only moving axis, and it moves
 /// only past `lanes * 4` channels; below that the walk is one region, where a deeper pipeline has
 /// no fill to hide and pays the ring's prologue and drain for nothing.
+#[allow(clippy::too_many_arguments)]
 pub fn interpolate_space(
     batch: usize,
     height: usize,
@@ -36,56 +38,67 @@ pub fn interpolate_space(
     taps: usize,
     geometry: TileGeometry,
     instruction: Instruction,
-) -> Space {
+    dtype: ElemType,
+    residence: Residence,
+) -> (Space, Operand) {
     assert!(
         geometry.lane_cols * geometry.lane_channels == lanes,
         "interpolate_space: the lane split covers {} of the plane's {lanes} lanes",
         geometry.lane_cols * geometry.lane_channels
     );
     let channels_per_cube = geometry.channels_per_cube();
-    Tiling::new()
-        .extents(&[
+    let mut in_operand = (Operand::new(
+        &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
+        dtype,
+    ),);
+    let space = Tiling::over(
+        &mut in_operand,
+        &[
             (BATCH, batch),
             (OUTPUT_H, height),
             (OUTPUT_W, width),
             (TAP_H, taps),
             (TAP_W, taps),
             (CHANNEL, channels),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(BATCH, Cut::cube(CubeAxis::Z, 1))
-                .axis(OUTPUT_H, Cut::cube(CubeAxis::Y, geometry.rows_per_cube()))
-                .axis(OUTPUT_W, Cut::cube(CubeAxis::X, geometry.cols_per_cube()))
-                .axis(TAP_H, Cut::sequential(taps))
-                .axis(TAP_W, Cut::sequential(taps))
-                .axis(CHANNEL, Cut::sequential(channels_per_cube))
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(BATCH, Cut::sequential(1))
-                .axis(OUTPUT_H, Cut::plane(geometry.rows_per_plane))
-                .axis(OUTPUT_W, Cut::sequential(geometry.cols_per_cube()))
-                .axis(TAP_H, Cut::sequential(taps))
-                .axis(TAP_W, Cut::sequential(taps))
-                .axis(CHANNEL, Cut::sequential(channels_per_cube))
-        })
-        .instruction(instruction, |level| {
-            level
-                .axis(BATCH, Cut::sequential(1))
-                .axis(OUTPUT_H, Cut::sequential(geometry.rows_per_plane))
-                .axis(
-                    OUTPUT_W,
-                    lanes_over(geometry.lane_cols, geometry.cols_per_lane),
-                )
-                .axis(TAP_H, Cut::sequential(taps))
-                .axis(TAP_W, Cut::sequential(taps))
-                .axis(
-                    CHANNEL,
-                    lanes_over(geometry.lane_channels, geometry.channel_block),
-                )
-        })
-        .build()
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, input| {
+        level
+            .axis(BATCH, Cut::cube(CubeAxis::Z, 1))
+            .axis(OUTPUT_H, Cut::cube(CubeAxis::Y, geometry.rows_per_cube()))
+            .axis(OUTPUT_W, Cut::cube(CubeAxis::X, geometry.cols_per_cube()))
+            .axis(TAP_H, Cut::sequential(taps))
+            .axis(TAP_W, Cut::sequential(taps))
+            .axis(CHANNEL, Cut::sequential(channels_per_cube));
+        input.0.stage(residence);
+    })
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+        level
+            .axis(BATCH, Cut::sequential(1))
+            .axis(OUTPUT_H, Cut::plane(geometry.rows_per_plane))
+            .axis(OUTPUT_W, Cut::sequential(geometry.cols_per_cube()))
+            .axis(TAP_H, Cut::sequential(taps))
+            .axis(TAP_W, Cut::sequential(taps))
+            .axis(CHANNEL, Cut::sequential(channels_per_cube));
+    })
+    .instruction(instruction, |level, _| {
+        level
+            .axis(BATCH, Cut::sequential(1))
+            .axis(OUTPUT_H, Cut::sequential(geometry.rows_per_plane))
+            .axis(
+                OUTPUT_W,
+                lanes_over(geometry.lane_cols, geometry.cols_per_lane),
+            )
+            .axis(TAP_H, Cut::sequential(taps))
+            .axis(TAP_W, Cut::sequential(taps))
+            .axis(
+                CHANNEL,
+                lanes_over(geometry.lane_channels, geometry.channel_block),
+            );
+    })
+    .build();
+
+    (space, in_operand.0)
 }
 
 /// `edge`-sized tiles dealt to `instances` lanes of the plane. [`Cut::unit`] claims the whole plane
