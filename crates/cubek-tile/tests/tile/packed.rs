@@ -10,7 +10,7 @@
 //! [`scaled`](super::scaled)). The last test here is a q4 matmul spelled that way, end to end.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, prelude::*, quant::scheme::QuantValue,
+    Runtime, TestRuntime, bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
     std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
@@ -119,6 +119,26 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let scales = scales.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
+}
+
+/// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
+/// at all. The binding says `i8`, the tile serves `i8`, and the contraction casts each value into
+/// the accumulator's element as it always does — a value is whatever its tensor holds, for the
+/// same reason a scale is.
+#[cube(launch)]
+fn native_matmul<E: Numeric>(
+    w: &TileArg<'_, i8, Const<1>>,
+    x: &TileArg<'_, E, Const<1>>,
+    scales: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let w = w.tile(comptime!(space.clone()));
+    let x = x.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
 /// Run [`packed_copy`] over a `[ROWS, COLS]` tensor of `field`-wide values.
@@ -405,4 +425,96 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
 #[test]
 fn several_lines_may_share_one_scale() {
     run_matmul_rhs(QuantValue::Q8S, 32 / QuantValue::Q8S.size_bits() * 2);
+}
+
+/// **The native store needs no engine feature.** `i8` weights, their scales beside them, one
+/// contraction — the tile serves the element its binding names and the block casts it, so
+/// `Packing::Native` never has to be *stated* for a store that carries no scales in its element.
+#[test]
+fn an_i8_operand_contracts_against_its_scales() {
+    const ROWS: usize = 4;
+    const COLS: usize = 4;
+    const DEPTH: usize = 32;
+    const BLOCK: usize = 8;
+    const BLOCKS: usize = DEPTH / BLOCK;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend has no native i8".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let w = field_values(ROWS * DEPTH, 8);
+    let x: Vec<f32> = (0..DEPTH * COLS).map(|i| (i % 7) as f32 - 3.0).collect();
+    let s: Vec<f32> = (0..ROWS * BLOCKS).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let dtype = f32::elem_type_native();
+    let (w_tensor, _) = TestInput::builder(client.clone(), shape![ROWS, DEPTH])
+        .dtype(i8::elem_type_native())
+        .custom(w.iter().map(|&v| v as f32).collect::<Vec<_>>())
+        .generate_with_f32_host_data();
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![DEPTH, COLS])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let (s_tensor, _) = TestInput::builder(client.clone(), shape![ROWS, BLOCKS])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![ROWS, COLS])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let scales_spec = TileSpec::new(Projection::new(
+        &[M, K],
+        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(K).over(BLOCK)],
+    ));
+    let space = Tiling::new()
+        .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(ROWS))
+                .axis(N, Cut::sequential(COLS))
+                .axis(K, Cut::sequential(BLOCK))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    native_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]),
+        ),
+        TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), scales_spec),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..ROWS {
+        for n in 0..COLS {
+            let want: f32 = (0..DEPTH)
+                .map(|k| w[m * DEPTH + k] as f32 * s[m * BLOCKS + k / BLOCK] * x[k * COLS + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
 }

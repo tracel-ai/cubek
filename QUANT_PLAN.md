@@ -95,8 +95,38 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
 | # | item | notes |
 |---|---|---|
 | 3 | **the N-D nest** | `memory_scaled` serves the 2-D nest and refuses the rest loudly. A gathered operand's step has no single scalar `k` to address a scale with; that is a design question, not a copy |
-| 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test |
-| 5 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling |
+| 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
+| 5 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more**: packed values, a scales operand, the rhs side and a promoted accumulator all landed |
+
+### Item 4, surveyed
+
+Three groups, and only the first is a port.
+
+**Ports as it stands** — the register leaf reading its operand in place, one scale level, block or
+per-tensor:
+`register_matmul_quant_packed_q8` / `_q4`, `register_matmul_quant_rhs_packed_q8` / `_q4`,
+`register_matmul_quant_native_block_m`, `register_matmul_quant_native_direct_serve`, the three
+`register_matmul_quant_rhs_*_gemv*`, and every `copy_quantized_*` whose point is the *unpack*
+rather than the scale. `tests/tile/packed.rs` already carries the lhs and rhs shapes of this in the
+new spelling, plus the native one.
+
+**The native store needs nothing at all.** `an_i8_operand_contracts_against_its_scales`: bind the
+`i8` tensor as `i8`, `tile()` it, contract. The block casts each value into the accumulator's
+element the way it always has, so a store whose element carries no fields never needs a packing
+*stated* — a value is whatever its tensor holds, for the same reason a scale is.
+
+**Needs a decision first** (each is a design question, not a copy):
+
+| what | why it does not port |
+|---|---|
+| every `cmma_matmul_quant_*` | the fragment is loaded from a *staged* operand, so the scale has to fold in at the fill: decode-into-smem, which is Deferred, plus a fill that scales. `mm_scaled` refuses a fragment accumulator on purpose |
+| `*_staged_dequantized_smem` | same: a stage holding dequantized values is a *scaled copy*, and `copy_from`'s arithmetic is on the deletion list. So either the verb comes back under its own name, or the stage stays packed and the scale folds at the contraction |
+| `copy_quantized_two_level_*` | two scale levels are two scale operands; `mm_scaled` takes one. Either the verb takes a second, or the global scale multiplies into the block scales before the launch (which is what a per-tensor level *is*) |
+| `copy_quantized_lookup_*` | a lookup scheme decodes a field through a `2^bits` table. `Packing` names a field's width and sign, not a table; a table is a third operand |
+| `copy_quantized_subword_*` | the served line is *narrower* than a stored word. A stated packing ties the served width to `bound_width × factor`, so it cannot spell it. Only the staged fill needs it (`scan_words`) |
+
+The deletions in item 4 are gated on these: `flat()`'s dequantizing read and `copy_from`'s
+arithmetic are exactly what the second and third rows still use.
 
 ## Deferred
 
@@ -121,7 +151,9 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
 - A packed operand cannot be *staged in its packed form*: `smem_stored` keys the stored stage on
   the scheme, so a stated packing stages unpacked (correct, just larger). Wanted where a routine
   has reuse to amortize; see Deferred.
-- `Packing::Native` with no scales beside it (an `i8` tensor served as floats) is refused: the
-  unpacking view is `u32`-only. A widening read, not a hard one, but nothing asks for it yet.
+- `Packing::Native` cannot be *stated* on a spec: the unpacking view is `u32`-only, and the
+  refusal says what to do instead (bind the tensor at its own element and let the contraction cast
+  it, which is what `an_i8_operand_contracts_against_its_scales` does). It stays reachable through
+  a scheme, which is the only thing that mints it.
 - The old machinery is untouched and still shipping. Both spellings compile; nothing is deleted
   until item 4.

@@ -990,8 +990,8 @@ impl<T: Numeric> MemData<T> {
                     match comptime!(packing) {
                         Packing::Plain => self.scan_transparent::<T, W, W>(src),
                         Packing::Native => panic!(
-                            "MemData::fill_from: an i8 store with nothing to fold in serves its \
-                             own element; bind it as that element"
+                            "MemData::fill_from: a native store with nothing to fold in serves \
+                             its own element; bind it as that element"
                         ),
                         Packing::Packed { field: _ } => {
                             let size!(WP) = comptime!(packing.physical(src.store.vector_size));
