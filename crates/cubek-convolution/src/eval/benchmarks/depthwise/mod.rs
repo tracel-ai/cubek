@@ -11,7 +11,8 @@ mod problem;
 pub use benchmark::bench;
 pub use problem::{DepthwiseProblem, blocks_running, problems, strategies};
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 use crate::DepthwiseStrategy;
 
@@ -44,5 +45,25 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
+    }
+
+    /// One multiply-add per output pixel per kernel tap, and both maps plus the
+    /// filter moved once. A depthwise pass has too little arithmetic per byte to
+    /// be anything but bandwidth-bound, so the read and write counts are the ones
+    /// that decide its row.
+    fn work(&self, problem: &DepthwiseProblem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let elem_size = dtype.size();
+
+        let out = problem.out_size();
+        let maps = problem.batch * problem.channels;
+        let filter_elems = problem.channels * problem.kernel * problem.kernel;
+
+        Some(CategoryWork {
+            compute_ops: problem.flops() as usize,
+            dtype,
+            bytes_read: (maps * problem.size * problem.size + filter_elems) * elem_size,
+            bytes_written: maps * out * out * elem_size,
+        })
     }
 }

@@ -10,9 +10,12 @@ use cubecl::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::definition::{MatmulElems, MatmulPrecision};
-use crate::eval::benchmarks::gemm::problem::{GemmProblem, Precision};
-use crate::{launch::launch_ref, strategy::Strategy};
+use crate::{
+    definition::{MatmulElems, MatmulPrecision},
+    eval::benchmarks::gemm::problem::{GemmProblem, Precision},
+    launch::launch_ref,
+    strategy::Strategy,
+};
 
 pub fn bench(
     strategy: &Strategy,
@@ -32,6 +35,7 @@ fn bench_with<MP: MatmulPrecision>(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
+    let elems = MatmulElems::new_deprecated::<MP>();
 
     let bench = GemmBench {
         b: problem.b,
@@ -41,9 +45,9 @@ fn bench_with<MP: MatmulPrecision>(
         lhs_layout: problem.lhs_layout,
         rhs_layout: problem.rhs_layout,
         strategy: strategy.clone(),
-        client,
+        client: client.clone(),
         device,
-        dtypes: MatmulElems::new_deprecated::<MP>(),
+        dtypes: elems.clone(),
         samples: num_samples,
     };
 

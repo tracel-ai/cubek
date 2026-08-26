@@ -3,15 +3,16 @@
 pub use cubek_attention::eval::backward::benchmarks as attention_backward;
 pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_convolution::eval::benchmarks as conv2d;
+pub use cubek_convolution::eval::benchmarks::depthwise;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
 pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
-pub use cubek_matmul::eval::benchmarks::gemm_cpu_tiled;
-pub use cubek_matmul::eval::benchmarks::gemv;
-pub use cubek_matmul::eval::benchmarks::quantized_matmul;
-pub use cubek_matmul::eval::benchmarks::split_k;
-pub use cubek_matmul::eval::benchmarks::tile_quant_stage;
+pub use cubek_matmul::multi_level::eval::gemv;
+pub use cubek_matmul::multi_level::eval::quantized_matmul;
+pub use cubek_matmul::tiled::eval::gemm_cpu_tiled;
+pub use cubek_matmul::tiled::eval::split_k;
+pub use cubek_matmul::tiled::eval::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
 pub use cubek_random::eval::benchmarks as random;
 pub use cubek_reduce::eval::benchmarks as reduce;
@@ -31,6 +32,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::attention_backward::Category,
         &crate::contiguous::Category,
         &crate::conv2d::Category,
+        &crate::depthwise::Category,
         &crate::fft::Category,
         &crate::gemm::Category,
         &crate::gemm_cpu::Category,
@@ -81,6 +83,8 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                     if let Some(tflops) = samples.tflops {
                         println!("{tflops:.3} TFLOPS");
                     }
+                    // Which ceiling the row ran into, rather than only how fast
+                    // it went.
                     if let Some(binding) = &samples.binding {
                         let pct = 100.0 * binding.fraction_of_peak;
                         let over_peak = binding.fraction_of_peak > 1.0;
@@ -116,7 +120,7 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
 
     if any_over_peak {
         println!(
-            "note: \"over peak\" rows beat the measured ceiling. The memory probes stream cold, so a working set that stays in cache can exceed them, and the write probe under-measures a contiguous fill."
+            "note: \"over peak\" rows beat the measured ceiling. The memory probes stream cold, so a working set that stays in cache can exceed them."
         );
     }
 }

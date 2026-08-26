@@ -8,7 +8,7 @@
 //! Finding: with tiled reads vectorized (`Launcher::vector_size` accepts tiled operands whose
 //! leaf tile is `N`-contiguous)
 //! the tiled path is ~10× faster than when it was scalar, but still ~1.5× *slower* than strided and
-//! **insensitive to block size** (a 16²→256² sweep was flat) — it is addressing-bound on the
+//! **insensitive to block size** (a 16²→256² sweep was flat): it is addressing-bound on the
 //! `TiledViewLayout` coord math, never reaching the memory wall. Storage packing buys no locality
 //! here; cache locality is a compute-tiling (schedule) matter, not a storage-reblocking one. Kept as
 //! the evidence for that + a regression guard on the vectorized tiled path.
@@ -23,12 +23,12 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_std::InputBinding;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples, TestInput};
+use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 
-use crate::definition::MatmulElems;
-use crate::routines::BlueprintStrategy;
-use crate::routines::cpu_gemm::{
-    CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref,
+use crate::{
+    definition::MatmulElems,
+    routine::BlueprintStrategy,
+    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
 };
 
 /// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` instruction (no
@@ -43,9 +43,9 @@ const EDGE: usize = 64;
 /// How an operand's matrix axes are physically stored.
 #[derive(Clone, Copy)]
 enum Packing {
-    /// Plain row-major (`levels = 0`) — the vectorized reference path.
+    /// Plain row-major (`levels = 0`): the vectorized reference path.
     RowMajor,
-    /// One level of square `edge × edge` storage tiles (`levels = 1`) — the packed path under test.
+    /// One level of square `edge × edge` storage tiles (`levels = 1`): the packed path under test.
     Tiled { edge: usize },
 }
 
@@ -196,12 +196,13 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
+    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = TiledBench {
         problem: *problem,
         strategy: *strategy,
-        client,
-        dtypes: MatmulElems::from_single_dtype(f32::elem_type_native()),
+        client: client.clone(),
+        dtypes: elems.clone(),
         samples: num_samples,
     };
 
@@ -290,18 +291,5 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
-    }
-
-    fn work(&self, problem: &TiledProblem) -> Option<CategoryWork> {
-        let dtype = f32::elem_type_native();
-        let elem_size = dtype.size();
-        let TiledProblem { b, m, n, k } = *problem;
-
-        Some(CategoryWork {
-            compute_ops: 2 * b * m * n * k,
-            dtype,
-            bytes_read: (b * m * k + b * k * n) * elem_size,
-            bytes_written: b * m * n * elem_size,
-        })
     }
 }

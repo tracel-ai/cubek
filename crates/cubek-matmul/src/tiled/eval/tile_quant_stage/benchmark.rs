@@ -17,7 +17,7 @@ use super::problem::TileQuantStageProblem;
 /// fan-out. Bound on the accumulator at the kernel top so the numbers measure the staging, not
 /// the instruction.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64, false, false),
+    config: RegisterBlock::new(64),
 };
 use super::strategy::StageDepth;
 
@@ -25,7 +25,7 @@ const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
-/// `C = A · dequant(B)`, `B` the packed weight — the staged lowering picks the stage form.
+/// `C = A · dequant(B)`, `B` the packed weight: the staged lowering picks the stage form.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
@@ -39,7 +39,7 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// The packed-weight scheme this bench quantizes `B` under: `Q8S`, block size `1 × bn`
@@ -89,6 +89,8 @@ pub fn bench(
         .run(TimingMethod::Device)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
+    // The mma contracts in f32; the packed u32 is how the RHS is stored, not what the
+    // arithmetic runs at.
 
     Ok(RunSamples::new(durations))
 }
@@ -106,7 +108,7 @@ struct TileQuantStageBench {
 
 impl TileQuantStageBench {
     /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's lanes,
-    /// one served line each, so the leaf is `mr = m`, `nr = 1` — unrolled while `m <= 64` (the
+    /// one served line each, so the leaf is `mr = m`, `nr = 1`: unrolled while `m <= 64` (the
     /// `mr·nr` cliff), keeping the unroll state constant as depth varies. Both inputs state
     /// their shared stage where L0 is declared: L0 fills it, L1 reads windows of it, which is
     /// the staging this bench measures. The output stages nothing.

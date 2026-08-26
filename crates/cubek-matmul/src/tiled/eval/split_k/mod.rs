@@ -4,12 +4,12 @@
 //! the down-proj) leaves a plane's lanes with nothing to do unless something is spread across
 //! them. Three mappings of the same problem, differing only in that:
 //!
-//! - `seq_k`    — nothing on the lanes: one lane per cube walks the whole K. The literal "no
+//! - `seq_k`: nothing on the lanes, so one lane per cube walks the whole K. The literal "no
 //!   split-K" baseline, launched at `CubeDim::new_single()` so it really is one lane.
-//! - `n_spread` — `Cut::unit` on N: each lane owns disjoint output columns and still walks the
-//!   whole K. No combine (the columns are disjoint) — today's strategy, the
+//! - `n_spread`: `Cut::unit` on N: each lane owns disjoint output columns and still walks the
+//!   whole K. No combine (the columns are disjoint): today's strategy, the
 //!   `GemvUnitPerpendicular` mapping. Needs `n ≥ plane_size · cols` *per cube* to fill the lanes.
-//! - `split_k`  — `Cut::unit` on K: each lane contracts a disjoint K-slice and the plane
+//! - `split_k`: `Cut::unit` on K: each lane contracts a disjoint K-slice and the plane
 //!   `plane_sum`-combines, one lane writing. Works however small N gets.
 //!
 //! All three solve the same `(m, n, k)`; only the mapping differs, so the comparison is total time
@@ -21,8 +21,8 @@
 //! reads one scalar per row while the neighboring columns belong to other cubes, wasting the rest
 //! of every cache line; `cols` per cube restores full lines and amortizes the lhs broadcast, at
 //! the price of `cols`× fewer cubes. `split_kt` (rhs layout): the same split on a K-contiguous
-//! rhs — a `[N, K]` buffer presented as `[K, N]` by stride swap ([`rhs_arg`]), sound at
-//! `vector_size == 1` where the tile carries strides verbatim — making each lane's walk down its
+//! rhs: a `[N, K]` buffer presented as `[K, N]` by stride swap ([`rhs_arg`]), sound at
+//! `vector_size == 1` where the tile carries strides verbatim: making each lane's walk down its
 //! K-slice sequential in memory (a pre-transposed weight, the layout the legacy `execute_dot`
 //! demands). There `cols` flips sign: extra columns sit a whole K apart, so `split_kt` wants
 //! `cols = 1`.
@@ -30,7 +30,7 @@
 //! Measured (Metal): `split_kt_c1` dominates small/mid N; large N stays with `n_spread`. The
 //! residual gap is the traversal, not the layout: the legacy kernel interleaves K across the
 //! lanes per step (adjacent lanes touch adjacent addresses every instant), and the tile DSL can
-//! only hand a lane one *dense* K-window — an interleaved Unit-K cut would put a `plane_sum`
+//! only hand a lane one *dense* K-window: an interleaved Unit-K cut would put a `plane_sum`
 //! after every K element. Per-lane-sequential is as close as a dense window gets.
 //!
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
@@ -44,18 +44,18 @@ use cubecl::{
     std::tensor::TensorHandle,
 };
 use cubek_test_utils::{
-    CatalogEntry, CategoryWork, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
+    CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Space, TileArg, TileArgLaunch,
-    Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Semiring, Space, TileArg,
+    TileArgLaunch, Tiling, WalkOrder,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
 /// instruction; bound on the accumulator at the kernel top.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64, false, false),
+    config: RegisterBlock::new(64),
 };
 
 const M: Axis = Axis(0);
@@ -75,7 +75,7 @@ fn launch_split_k_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mma(&a, &b);
+    c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
 /// How a problem is mapped onto the plane's lanes.
@@ -93,13 +93,13 @@ pub enum Mapping {
     SplitKT { cols: usize },
 }
 
-/// Which rhs axis is contiguous in the buffer. The *space* is `[K, N]` either way — layout
+/// Which rhs axis is contiguous in the buffer. The *space* is `[K, N]` either way: layout
 /// lives in the tensor's strides, never in the space.
 #[derive(Clone, Copy)]
 enum RhsLayout {
-    /// Row-major `[K, N]`: adjacent columns adjacent in memory — `n_spread`'s home.
+    /// Row-major `[K, N]`: adjacent columns adjacent in memory: `n_spread`'s home.
     NContiguous,
-    /// Transposed buffer `[N, K]` presented as `[K, N]` by stride swap — `split_k`'s home.
+    /// Transposed buffer `[N, K]` presented as `[K, N]` by stride swap: `split_k`'s home.
     KContiguous,
 }
 
@@ -145,7 +145,7 @@ impl Mapping {
                 })
                 .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
-            // The transposed variant is the same *space* — only the rhs strides differ.
+            // The transposed variant is the same *space*: only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
@@ -215,7 +215,7 @@ fn rhs_input(
 }
 
 /// The launch arg for [`rhs_input`]'s tensor: as-is, or the `[N, K]` buffer presented as shape
-/// `[K, N]` with swapped strides `[1, k]` — a metadata-only transpose, exactly how
+/// `[K, N]` with swapped strides `[1, k]`: a metadata-only transpose, exactly how
 /// [`TileInput::tensor_arg`] re-presents for vectorization. Sound at `vector_size == 1`, where
 /// [`MemData::from_tensor`](cubek_tile::MemData) carries strides verbatim.
 fn rhs_arg(b: &TileInput, mapping: Mapping) -> TensorArg<TestRuntime> {
@@ -349,7 +349,7 @@ fn verify(
     let out = HostData::from_tensor_handle(client, c.handle(), HostDataType::F32);
 
     // Arange lands on the *physical* buffer: lhs(i, p) = i·k + p either way, but the logical
-    // rhs value depends on the layout — row-major [K, N] gives rhs(p, j) = p·n + j, the
+    // rhs value depends on the layout: row-major [K, N] gives rhs(p, j) = p·n + j, the
     // transposed [N, K] buffer gives rhs(p, j) = j·k + p.
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
@@ -370,7 +370,7 @@ fn verify(
         let g = out.data.get_f32(i);
         if (g - e).abs() > e.abs() * 1e-3 + 1e-3 {
             return Err(format!(
-                "{} computes the wrong result at {i}: got {g}, expected {e} — the mapping is \
+                "{} computes the wrong result at {i}: got {g}, expected {e}: the mapping is \
                  misconfigured, so its timing would be meaningless",
                 mapping.tag()
             ));
@@ -422,6 +422,7 @@ pub fn bench(
     let space = mapping.space(*problem, lanes);
     let cube_count = space.cube_count();
     let cube_dim = mapping.cube_dim(&space, &client);
+    // The tile inputs are built as f32 and the accumulator contracts in f32.
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
@@ -434,7 +435,7 @@ pub fn bench(
     let bench = SplitKBench {
         problem: *problem,
         mapping,
-        client,
+        client: client.clone(),
         samples: num_samples,
         cube_count,
         cube_dim,
@@ -533,20 +534,5 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
-    }
-
-    /// Every mapping solves the same `(m, n, k)`, so the read/write counts are the
-    /// mapping's `a`/`b`/`c` element counts regardless of how the lanes split the work.
-    fn work(&self, problem: &SplitKProblem) -> Option<CategoryWork> {
-        let dtype = f32::elem_type_native();
-        let elem_size = dtype.size();
-        let SplitKProblem { m, n, k } = *problem;
-
-        Some(CategoryWork {
-            compute_ops: 2 * m * n * k,
-            dtype,
-            bytes_read: (m * k + k * n) * elem_size,
-            bytes_written: m * n * elem_size,
-        })
     }
 }

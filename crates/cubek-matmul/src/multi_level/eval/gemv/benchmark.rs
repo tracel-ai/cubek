@@ -11,9 +11,12 @@ use cubecl::{
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::definition::MatmulElems;
-use crate::eval::benchmarks::gemv::problem::{GemvProblem, ProblemKind};
-use crate::{launch::launch_ref, strategy::Strategy};
+use crate::{
+    definition::MatmulElems,
+    launch::launch_ref,
+    multi_level::eval::gemv::problem::{GemvProblem, ProblemKind},
+    strategy::Strategy,
+};
 
 pub fn bench(
     strategy: &Strategy,
@@ -22,6 +25,7 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
+    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = GemvBench {
         kind: problem.kind,
@@ -32,8 +36,8 @@ pub fn bench(
         rhs_layout: problem.rhs_layout,
         strategy: strategy.clone(),
         device,
-        client,
-        dtypes: MatmulElems::from_single_dtype(f32::elem_type_native()),
+        client: client.clone(),
+        dtypes: elems.clone(),
         samples: num_samples,
     };
 
