@@ -14,5 +14,6 @@ mod reduce;
 mod references;
 mod scaled;
 mod separable;
+mod sink;
 mod softmax;
 mod space;
