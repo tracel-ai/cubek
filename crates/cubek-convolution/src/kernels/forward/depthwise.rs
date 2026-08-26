@@ -195,7 +195,7 @@ impl DepthwiseTiling {
     /// useless one. The second separates what one cube took across the cube's own threads: rows
     /// go to planes, channels to lanes. The taps stay `sequential` throughout — they are the
     /// contraction, and every tap of one output position accumulates into the same register.
-    fn space(&self, geometry: &Geometry, tile_c: usize, width: usize) -> Space {
+    fn space(&self, geometry: &Geometry, lanes: usize, tile_c: usize, width: usize) -> Space {
         let Self { rows, cols, .. } = *self;
         let Geometry {
             b,
@@ -301,7 +301,7 @@ pub fn launch_depthwise<R: Runtime>(
         &[&input, &weight, &out],
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
-    let space = tiling.space(&geometry, tile_c, width);
+    let space = tiling.space(&geometry, lanes, tile_c, width);
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and
