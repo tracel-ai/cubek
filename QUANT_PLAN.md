@@ -94,7 +94,7 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
 
 | # | item | notes |
 |---|---|---|
-| 3 | **the N-D nest** | `memory_scaled` serves the 2-D nest and refuses the rest loudly. A gathered operand's step has no single scalar `k` to address a scale with; that is a design question, not a copy |
+| 3 | **the N-D nest** | `memory_scaled` serves the 2-D nest and refuses the rest loudly. It was built once (read the scale at the cell through `cell_read`, no `ScaleSide` needed) and dropped in the port: `gather.rs` split into `gather/` upstream, and the per-cell read is the *degenerate* form anyway — see "the block is an axis" below. Rebuild it against the new module only if something needs it before that lands |
 | 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
 | 5 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
 
