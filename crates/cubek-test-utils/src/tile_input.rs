@@ -7,8 +7,13 @@
 
 use cubecl::prelude::{Numeric, Size};
 use cubecl::{
-    TestRuntime, bytes::Bytes, client::ComputeClient, prelude::TensorArg, prelude::TensorBinding,
-    quant::scheme::QuantScheme, zspace::Shape,
+    TestRuntime,
+    bytes::Bytes,
+    client::ComputeClient,
+    prelude::TensorArg,
+    prelude::TensorBinding,
+    quant::scheme::{QuantScheme, QuantValue},
+    zspace::Shape,
 };
 use cubecl::{
     frontend::Scalar,
@@ -330,7 +335,21 @@ impl QuantizedTileInputBuilder {
     /// `lo, lo+1, …, hi, lo, …`, so every representable value (and its sign extension)
     /// appears. Scales are a distinct-per-block ramp (`0.05 · (block + 1)`) on the scheme's
     /// block grid.
+    ///
+    /// Integer value types only. The walk is over whole numbers packed as two's complement, and
+    /// [`q`](QuantizedTileInput::q) is handed to tests as the magnitude each field stands for —
+    /// both of which hold only where a format's codes are its magnitudes. Under a minifloat the
+    /// fields would be codes, so a test folding `q · scale` would compare the kernel against the
+    /// integer grid the format exists to avoid.
     pub fn arange(self) -> QuantizedTileInput {
+        assert!(
+            integer_valued(self.scheme.value),
+            "QuantizedTileInputBuilder::arange: {:?} is a minifloat, whose fields are codes rather \
+             than magnitudes; state the codes with `pack_q_values` and fold the format's grid into \
+             the test's own reference",
+            self.scheme.value
+        );
+
         let rank = self.space.rank();
         let shape: Vec<usize> = (0..rank)
             .map(|i| self.space.extent(self.space.axis_at(i)))
@@ -428,6 +447,20 @@ impl QuantizedTileInputBuilder {
             scale_values,
             table_values: table.to_vec(),
         }
+    }
+}
+
+/// Whether the format's codes are the integers they stand for, which is what makes an integer
+/// walk over the fields a walk over the values. Mirrors `rounds_to_integers` in the quant stub.
+fn integer_valued(value: QuantValue) -> bool {
+    match value {
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S => true,
+        QuantValue::E5M2 | QuantValue::E4M3 | QuantValue::E2M1 => false,
     }
 }
 

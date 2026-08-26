@@ -1,6 +1,6 @@
 use cubecl::quant::scheme::QuantMode;
 use cubecl_common::{
-    e4m3, e5m2,
+    e2m1, e4m3, e5m2,
     quant::scheme::{QuantScheme, QuantStore, QuantValue},
 };
 
@@ -56,13 +56,38 @@ fn quantized_values(
             .enumerate()
             .map(|(i, &v)| {
                 let scale = scales[scale_index(i, shape, block_dims, scales_shape)];
-                (v / scale).round().clamp(range_min, range_max)
+                let scaled = v / scale;
+                let snapped = if rounds_to_integers(scheme.value) {
+                    scaled.round()
+                } else {
+                    scaled
+                };
+                snapped.clamp(range_min, range_max)
             })
             .collect(),
         // A lookup field is a table index, not a rounded value; these stubs carry no table, so
         // a lookup test states its indices exactly ([`pack_q_values`]) and folds the table into
         // its own host reference.
         QuantMode::Lookup => panic!("quantize stub: lookup takes exact indices via pack_q_values"),
+    }
+}
+
+/// Whether the format's representable values are the integers in its range, which is what makes
+/// rounding to a whole number here the right rounding for it.
+///
+/// Mirrors `quantize_symmetric` in `cubek-quant`: a minifloat's grid is not the integers — `e2m1`
+/// holds `0.5` and `1.5` — so rounding one here would quantize it twice, and this reference would
+/// then demand of the kernel exactly the degradation the format exists to avoid. Those formats
+/// round where they are encoded, against the codes they actually have.
+fn rounds_to_integers(quant: QuantValue) -> bool {
+    match quant {
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S => true,
+        QuantValue::E5M2 | QuantValue::E4M3 | QuantValue::E2M1 => false,
     }
 }
 
@@ -114,8 +139,11 @@ fn decode_native(bytes: &[u8], value: QuantValue) -> Vec<f32> {
     }
 }
 
-/// [`encode_packed_u32`] over exact integer quant values, as `u32` words: for tests that
-/// need bit-exact control of the packed payload rather than the quantize stub's rounding.
+/// [`encode_packed_u32`] over exact fields, as `u32` words: for tests that need bit-exact control
+/// of the packed payload rather than the quantize stub's rounding.
+///
+/// The fields are taken as given, so under a minifloat scheme they are that format's *codes*, not
+/// the magnitudes they stand for.
 pub fn pack_q_values(q: &[i32], scheme: &QuantScheme) -> Vec<u32> {
     let size_quant = scheme.size_bits_value();
     let num_quants = scheme.num_quants();
@@ -145,7 +173,7 @@ fn encode_packed_u32(quantized: &[f32], scheme: &QuantScheme) -> Vec<u8> {
         .chunks(num_quants)
         .map(|chunk| {
             chunk.iter().enumerate().fold(0u32, |acc, (p, &q)| {
-                let bits = (q as i32 as u32) & mask;
+                let bits = field_code(q, scheme.value) & mask;
                 acc | (bits << (p * size_quant))
             })
         })
@@ -154,29 +182,68 @@ fn encode_packed_u32(quantized: &[f32], scheme: &QuantScheme) -> Vec<u8> {
     bytemuck::cast_slice(&packed).to_vec()
 }
 
-/// Inverse of [`encode_packed_u32`]: unpack each `u32` into `num_quants`
-/// sign-extended quant values, matching `unpack_q`.
+/// The field `q` occupies: the format's *code* for it, which is the value itself only for the
+/// integer formats. Mirrors `pack_q`/`encode_minifloat` in `cubek-quant`.
+///
+/// A minifloat encoded by casting would leave the reference reconstructing on the integer grid —
+/// `e2m1` losing `0.5` and `1.5`, `e4m3` wrapping its codes above ±127 — and a kernel that made
+/// the same mistake would then match it.
+fn field_code(q: f32, value: QuantValue) -> u32 {
+    match value {
+        QuantValue::E2M1 => e2m1::from_f32(q).to_bits() as u32,
+        QuantValue::E4M3 => e4m3::from_f32(q).to_bits() as u32,
+        QuantValue::E5M2 => e5m2::from_f32(q).to_bits() as u32,
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S => q as i32 as u32,
+    }
+}
+
+/// Inverse of [`encode_packed_u32`]: unpack each `u32` into `num_quants` quant values, matching
+/// `unpack_q`.
 #[allow(dead_code)]
 fn decode_packed_u32(bytes: &[u8], scheme: &QuantScheme) -> Vec<f32> {
     let size_quant = scheme.size_bits_value();
     let num_quants = scheme.num_quants();
     let mask = quant_mask(size_quant);
-    let sign_bit = 1u32 << (size_quant - 1);
 
     let mut out = Vec::with_capacity((bytes.len() / 4) * num_quants);
     for &word in bytemuck::cast_slice::<u8, u32>(bytes) {
         for p in 0..num_quants {
             let raw = (word >> (p * size_quant)) & mask;
+            out.push(code_value(raw, size_quant, scheme.value));
+        }
+    }
+    out
+}
+
+/// The value a field stands for: the inverse of [`field_code`]. A minifloat code is decoded by its
+/// format, and only an integer format's field is a two's complement number.
+fn code_value(raw: u32, size_quant: usize, value: QuantValue) -> f32 {
+    match value {
+        QuantValue::E2M1 => e2m1::from_bits(raw as u8).to_f32(),
+        QuantValue::E4M3 => e4m3::from_bits(raw as u8).to_f32(),
+        QuantValue::E5M2 => e5m2::from_bits(raw as u8).to_f32(),
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S => {
+            let mask = quant_mask(size_quant);
+            let sign_bit = 1u32 << (size_quant - 1);
             // Two's-complement sign extension.
             let q = if raw & sign_bit != 0 {
                 (raw | !mask) as i32
             } else {
                 raw as i32
             };
-            out.push(q as f32);
+            q as f32
         }
     }
-    out
 }
 
 fn quant_mask(size_quant: usize) -> u32 {
@@ -286,12 +353,50 @@ mod tests {
 
     #[test]
     fn round_trips_for_fp8_native() {
-        // Like the kernel, fp8 quantization rounds to an integer and then casts
-        // to fp8, so the stored value also carries fp8 representation error.
-        // Pick scales that keep the quants within each format's exactly
-        // representable integer range (E4M3: |q| ≤ 8, E5M2: |q| ≤ 4).
+        // Like the kernel, fp8 quantization scales and then encodes, with no rounding of its own:
+        // the only error the round trip carries is the format's own representation error.
         assert_round_trips(QuantValue::E4M3, QuantStore::Native, 1.0 / 8.0);
         assert_round_trips(QuantValue::E5M2, QuantStore::Native, 1.0 / 4.0);
+    }
+
+    /// Quantize then dequantize `values` at a scale of one, so what comes back is the codec's
+    /// answer and nothing else.
+    fn round_trip_at_unit_scale(value: QuantValue, store: QuantStore, values: &[f32]) -> Vec<f32> {
+        let s = scheme(value, store).per_tensor(ScaleDtype::F32);
+        let n = values.len();
+        let bytes = quantize(values, &[n], &[1.0], &[n], &s);
+
+        dequantize(&bytes, &[n], &[1.0], &[n], &s)
+    }
+
+    /// A packed minifloat field is the format's code, so every value the format holds comes back as
+    /// itself — the fractions included. The integer codec this replaced returned `1.0` for `0.5`
+    /// and `2.0` for `1.5`, having rounded both before they ever reached the format.
+    #[test]
+    fn packed_e2m1_holds_the_format_grid() {
+        let values = [0.0f32, 0.5, 1.0, 1.5, 2.0, 3.0, -0.5, -6.0];
+        let restored =
+            round_trip_at_unit_scale(QuantValue::E2M1, QuantStore::PackedU32(0), &values);
+
+        assert_eq!(
+            restored, values,
+            "an e2m1 code point did not come back as itself"
+        );
+    }
+
+    /// The same for `e4m3`, whose codes reach ±448 while a byte read as two's complement stops at
+    /// ±127: a field cast from the value rather than encoded wraps rather than merely losing
+    /// precision.
+    #[test]
+    fn packed_e4m3_holds_fractions_and_large_magnitudes() {
+        let values = [0.5f32, 1.5, -0.5, 0.0625, 288.0, -288.0, 256.0, 144.0];
+        let restored =
+            round_trip_at_unit_scale(QuantValue::E4M3, QuantStore::PackedU32(0), &values);
+
+        assert_eq!(
+            restored, values,
+            "an e4m3 code point did not come back as itself"
+        );
     }
 
     #[test]
