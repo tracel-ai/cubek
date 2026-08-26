@@ -141,6 +141,28 @@ impl Overhang {
     }
 }
 
+/// Whether a read still proves its own bounds, stated by the reader rather than read off the
+/// tile. Comptime, so the arm not taken costs nothing.
+///
+/// A tile records what it *could* need ([`Overhang`], the window's [`Boundary`]); this records
+/// what a particular reader has established it needs, which is the weaker claim and the only one
+/// a leaf splitting itself across an edge can make.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Guard {
+    /// Mask the overhang and apply the window's [`Boundary`] on every access.
+    Checked,
+    /// The reader has proved the whole box it will touch lands inside the buffer, so the view
+    /// carries neither. Reading through it past that box is out of bounds, not masked.
+    Proved,
+}
+
+impl Guard {
+    /// Whether this guard still costs a test per access.
+    pub fn checks(self) -> bool {
+        matches!(self, Guard::Checked)
+    }
+}
+
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one
@@ -1433,6 +1455,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn masked<W: Size, C: Coordinates, L: TileLayout<C>>(
         &self,
         layout: L,
+        #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, C> {
         if comptime!(self.store.quant.is_some()) {
             panic!(
@@ -1443,9 +1466,9 @@ impl<T: Numeric> MemData<T> {
         MaskedView::new(
             self.lines::<W>()
                 .view(self.base())
-                .view(self.window())
+                .view(self.window().with_guard(guard))
                 .view(layout),
-            comptime!(self.access.overhang.masks()),
+            comptime!(guard.checks() && self.access.overhang.masks()),
         )
     }
 
@@ -1546,6 +1569,7 @@ impl<T: Numeric> MemData<T> {
     >(
         &self,
         layout: L,
+        #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, C> {
         #[comptime]
         match &self.store.quant {
@@ -1557,7 +1581,7 @@ impl<T: Numeric> MemData<T> {
                 let values = self
                     .lines_storage::<I, WP>()
                     .view(self.base())
-                    .view(self.window())
+                    .view(self.window().with_guard(guard))
                     .view(layout.clone());
                 // The scales over this same window: `ScaleLayout` resolves a window coordinate
                 // to its block's scale, addressed by the same `layout` as the values, so both
@@ -1573,9 +1597,12 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(layout);
                 let dequant = info.dequant_view::<I, WP, T, W, C>(values, scales);
-                MaskedView::new(dequant.view(), comptime!(self.access.overhang.masks()))
+                MaskedView::new(
+                    dequant.view(),
+                    comptime!(guard.checks() && self.access.overhang.masks()),
+                )
             }
-            ComptimeOption::None => self.masked::<W, C, L>(layout),
+            ComptimeOption::None => self.masked::<W, C, L>(layout, guard),
         }
     }
 
@@ -1587,7 +1614,7 @@ impl<T: Numeric> MemData<T> {
         &self,
         layout: L,
     ) -> MatrixView<'_, Vector<T, W>> {
-        self.transparent::<I, WP, W, Coords2d, L>(layout)
+        self.transparent::<I, WP, W, Coords2d, L>(layout, comptime!(Guard::Checked))
     }
 
     /// [`transparent`](MemData::transparent) over the tile's whole logical box, applying the
@@ -1595,8 +1622,9 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn nd_transparent<I: Numeric, WP: Size, W: Size>(
         &self,
         layout: AxisProjection,
+        #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
-        self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout)
+        self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout, guard)
     }
 
     /// [`nd_transparent`](MemData::nd_transparent) over the *physical* box instead of the logical
@@ -1616,7 +1644,9 @@ impl<T: Numeric> MemData<T> {
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         let rank = comptime!(self.projection.physical_rank());
         let identity = StepUp::new(self.window.extent.clone(), comptime!(vec![1; rank]));
-        self.transparent::<I, WP, W, CoordsDyn, StepUp>(identity)
+        // A folded caller hands in coordinates it derived itself, so it has proved nothing about
+        // them: the window's boundary and the overhang mask both stay on.
+        self.transparent::<I, WP, W, CoordsDyn, StepUp>(identity, comptime!(Guard::Checked))
     }
 
     /// The mutable twin of [`flat`](MemData::flat).
@@ -2767,6 +2797,29 @@ impl SourceWindow {
             }
         } else {
             true.runtime()
+        }
+    }
+}
+
+#[cube]
+impl Window {
+    /// This window under `guard`: [`Guard::Proved`] drops the boundary machinery — no clamp for
+    /// an origin that can go negative, and no per-axis [`Boundary`] mode — which is work whose
+    /// answer the reader already knows and the window would otherwise pay for once per access.
+    ///
+    /// One path either way, differing only in comptime fields. A branch here would be a runtime
+    /// select over the window's *runtime* halves as well, which is both slower and, on the
+    /// accelerated leaves that share this constructor, wrong.
+    pub(crate) fn with_guard(self, #[comptime] guard: Guard) -> Window {
+        Window {
+            origin: self.origin,
+            extent: self.extent,
+            bound: self.bound,
+            signed: comptime!(guard.checks() && self.signed),
+            boundaries: comptime!(match guard {
+                Guard::Checked => self.boundaries.clone(),
+                Guard::Proved => SmallVec::new(),
+            }),
         }
     }
 }

@@ -384,32 +384,61 @@ impl Layout for StepUp {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The whole logical box, read through whatever [`Packing`] this tile carries. The N-D twin
-    /// of [`matrix_packed`](Tile::matrix_packed).
-    pub fn nd_packed<W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+    /// The whole logical box, read through whatever [`Packing`] this tile carries, under the
+    /// guard the reader states. The N-D twin of [`matrix_packed`](Tile::matrix_packed).
+    pub fn nd_packed<W: Size>(
+        &self,
+        #[comptime] guard: Guard,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         let served = self.vector_size();
         let packing = self.packing();
         let physical = comptime!(packing.physical(served));
         match comptime!(packing) {
             Packing::Plain => {
                 let size!(WP) = physical;
-                self.nd::<T, WP, W>()
+                self.nd::<T, WP, W>(guard)
             }
             Packing::Native => {
                 let size!(WP) = physical;
-                self.nd::<i8, WP, W>()
+                self.nd::<i8, WP, W>(guard)
             }
             Packing::Packed { factor: _ } => {
                 let size!(WP) = physical;
-                self.nd::<u32, WP, W>()
+                self.nd::<u32, WP, W>(guard)
             }
+        }
+    }
+
+    /// Whether [`Guard::Proved`] would drop a guard no box check can stand in for.
+    ///
+    /// Kept next to [`nd`](Tile::nd), the operation that drops it. A [`Boundary::Clamp`] axis is
+    /// the one such guard: a clamped read is in bounds *after* remapping, so the window reports
+    /// it in bounds whatever its raw coordinate was, and nothing a reader can measure recovers
+    /// that coordinate. The remaining kinds carry no [`Window`](crate::Window) boundary at all;
+    /// the ones that cannot form an N-D view are rejected by `nd` itself.
+    pub(crate) fn guard_provable(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(data) | TileKind::Smem(data) => {
+                comptime!(!data.window.boundaries.contains(&Some(Boundary::Clamp)))
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(true),
         }
     }
 
     /// [`nd_packed`](Tile::nd_packed) at a stated storage element, one coordinate per axis of the
     /// tile's [`Space`](crate::Space) (the innermost a line index). The only read surface a
     /// gathered operand has: its logical rank exceeds its buffer's, so no 2-D window describes it.
-    pub fn nd<I: Numeric, WP: Size, W: Size>(&self) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+    ///
+    /// Under [`Guard::Proved`] the view carries neither the overhang mask nor the window's clamp,
+    /// which are what a checked leaf pays per access; [`guard_provable`](Tile::guard_provable)
+    /// says when that is a claim a reader is allowed to make.
+    pub fn nd<I: Numeric, WP: Size, W: Size>(
+        &self,
+        #[comptime] guard: Guard,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 let layout = axis_projection(
@@ -418,7 +447,7 @@ impl<T: Numeric> Tile<T> {
                     g.map.clone(),
                     self.vector_size(),
                 );
-                g.nd_transparent::<I, WP, W>(layout)
+                g.nd_transparent::<I, WP, W>(layout, guard)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::nd: a plane tile has no memory view")
@@ -435,7 +464,7 @@ impl<T: Numeric> Tile<T> {
                     View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(
                         data, layout,
                     ),
-                    comptime!(data.bounds_check),
+                    comptime!(guard.checks() && data.bounds_check),
                 )
             }
         }
@@ -509,7 +538,9 @@ impl<T: Numeric> Tile<T> {
                     RuntimeMap::integral(comptime!(self.space.rank())),
                     comptime!(1usize),
                 ),
-                self.nd::<I, WP, W>(),
+                // The caller steps the map by hand but reads through the tile's own bounds, so
+                // it has proved nothing this could drop.
+                self.nd::<I, WP, W>(comptime!(Guard::Checked)),
                 comptime!(self.space.rank()),
             ),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {

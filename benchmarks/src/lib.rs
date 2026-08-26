@@ -3,6 +3,7 @@
 pub use cubek_attention::eval::backward::benchmarks as attention_backward;
 pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_convolution::eval::benchmarks as conv2d;
+pub use cubek_convolution::eval::benchmarks::depthwise;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
 pub use cubek_matmul::eval::benchmarks::gemm;
@@ -31,6 +32,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::attention_backward::Category,
         &crate::contiguous::Category,
         &crate::conv2d::Category,
+        &crate::depthwise::Category,
         &crate::fft::Category,
         &crate::gemm::Category,
         &crate::gemm_cpu::Category,

@@ -117,6 +117,10 @@ name = "conv2d"
 
 [[bench]]
 harness = false
+name = "depthwise"
+
+[[bench]]
+harness = false
 name = "memcpy_async"
 
 [[bench]]
