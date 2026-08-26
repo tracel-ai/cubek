@@ -100,7 +100,7 @@ fn bound_check_ops(mode: InterpolateMode) -> usize {
     }
 
     let halo = get_halo(mode);
-    // Per tap: four comparisons and the three ands that fold them into one flag, the two
+    // Per tap: four comparisons and the three and operations that fold them into one flag, the two
     // selects that zero an out-of-bounds value and its weight, and the extra add that
     // accumulates the weight alongside the value.
     let per_tap = 7 + 2 + 1;
