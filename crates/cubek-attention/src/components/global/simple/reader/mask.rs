@@ -11,8 +11,10 @@ use cubecl::{
     std::tensor::{View, layout::Coords2d},
     std::{Swizzle, tensor::layout::Coordinates},
 };
-use cubek_matmul::multi_level::components::global::memory::{GlobalIterator, GlobalMemoryConfig};
-use cubek_std::tile::StridedTile;
+use cubek_matmul::multi_level::{
+    components::global::memory::{GlobalIterator, GlobalMemoryConfig},
+    tile::StridedTile,
+};
 
 #[derive(CubeType)]
 pub struct LogicalIterator {

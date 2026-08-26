@@ -2,7 +2,6 @@ use cubecl::{
     prelude::*,
     std::tensor::{ViewMut, layout::Coords2d},
 };
-use cubek_std::{stage::StageMemoryConfig, tile::StridedTile};
 
 use crate::{
     definition::StageIdent,
@@ -16,6 +15,8 @@ use crate::{
             stage::{UnitPartitioner, partition_coordinates},
         },
         definition::MatrixTypes,
+        stage::StageMemoryConfig,
+        tile::StridedTile,
     },
 };
 

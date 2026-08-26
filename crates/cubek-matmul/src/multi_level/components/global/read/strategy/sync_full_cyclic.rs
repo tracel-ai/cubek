@@ -16,14 +16,12 @@ use crate::{
             },
             stage::{StridedStageFamily, StridedStageMemory},
         },
+        tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
     },
 };
 
 use cubecl::{ir::DeviceProperties, prelude::*};
-use cubek_std::{
-    InvalidConfigError,
-    tile::{ContiguousTilingLayout, TilingOrder, TilingValidation},
-};
+use cubek_std::InvalidConfigError;
 
 use super::{LoadingJob, LoadingValidation, ReaderMode};
 

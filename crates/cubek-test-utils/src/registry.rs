@@ -54,7 +54,7 @@ impl<T> CatalogEntry<T> {
     }
 }
 
-/// Achieved bandwidth for a bench row, alongside the device's measured write
+/// Achieved bandwidth for a bench row, alongside the device's measured memory
 /// peak it is judged against. `peak_bytes_per_s` is `None` when the category
 /// couldn't get a peak measurement for this access.
 #[derive(Debug, Clone, Copy)]
@@ -63,12 +63,24 @@ pub struct Bandwidth {
     pub peak_bytes_per_s: Option<f64>,
 }
 
+/// Achieved compute throughput for a bench row, alongside the device's measured
+/// arithmetic peak it is judged against. `peak_ops_per_s` is `None` when the
+/// category couldn't get a peak measurement for this operation mix.
+///
+/// Reported next to [`Bandwidth`] rather than alone: one number says how fast a
+/// kernel ran, the pair says which of the two ceilings it ran into.
+#[derive(Debug, Clone, Copy)]
+pub struct Compute {
+    pub achieved_ops_per_s: f64,
+    pub peak_ops_per_s: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RunSamples {
     pub durations: Vec<Duration>,
-    /// Optional throughput, e.g. TFLOPS for matmul/attention. `None` when the
-    /// category doesn't have a meaningful FLOP count (memcpy, contiguous, ...).
-    pub tflops: Option<f64>,
+    /// Optional compute throughput, e.g. FLOPS for matmul/attention. `None` when
+    /// the category doesn't have a meaningful operation count (memcpy, ...).
+    pub compute: Option<Compute>,
     /// Optional achieved bandwidth, e.g. for store-bound kernels like random.
     /// `None` when the category doesn't have a meaningful byte count.
     pub bandwidth: Option<Bandwidth>,
@@ -78,13 +90,13 @@ impl RunSamples {
     pub fn new(durations: Vec<Duration>) -> Self {
         Self {
             durations,
-            tflops: None,
+            compute: None,
             bandwidth: None,
         }
     }
 
-    pub fn with_tflops(mut self, tflops: f64) -> Self {
-        self.tflops = Some(tflops);
+    pub fn with_compute(mut self, compute: Compute) -> Self {
+        self.compute = Some(compute);
         self
     }
 
@@ -93,14 +105,18 @@ impl RunSamples {
         self
     }
 
-    /// Convenience for matmul-style benches: turn a flop count into TFLOPS using
-    /// the median sample duration. Returns `self` unchanged if there are no
-    /// samples or the median is zero (avoiding NaN/inf in the dashboard).
-    pub fn with_flops(self, flops: f64) -> Self {
+    /// Convenience for compute-bound benches: turn an operation count into an
+    /// achieved ops/s using the median sample duration, alongside the device's
+    /// measured peak for the same arithmetic. Returns `self` unchanged if there
+    /// are no samples or the median is zero (avoiding NaN/inf in the dashboard).
+    pub fn with_flops(self, flops: f64, peak_ops_per_s: Option<f64>) -> Self {
         let Some(median_secs) = self.median_secs() else {
             return self;
         };
-        self.with_tflops(flops / median_secs / 1e12)
+        self.with_compute(Compute {
+            achieved_ops_per_s: flops / median_secs,
+            peak_ops_per_s,
+        })
     }
 
     /// Convenience for store/load-bound benches: turn a byte count into an
@@ -116,6 +132,11 @@ impl RunSamples {
             achieved_bytes_per_s: bytes as f64 / median_secs,
             peak_bytes_per_s,
         })
+    }
+
+    /// Achieved compute throughput in TFLOPS, for callers reporting that unit.
+    pub fn tflops(&self) -> Option<f64> {
+        self.compute.map(|it| it.achieved_ops_per_s / 1e12)
     }
 
     /// Median sample duration in seconds, or `None` when there are no samples
@@ -140,7 +161,7 @@ pub trait Category: Sync {
     type Problem;
     type Strategy;
 
-    /// Stable identifier — persisted in tuner-results history. Don't rename.
+    /// Stable identifier: persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn problems(&self) -> Vec<CatalogEntry<Self::Problem>>;
@@ -152,7 +173,7 @@ pub trait Category: Sync {
         num_samples: usize,
     ) -> Result<RunSamples, String>;
 
-    /// Which timing method [`Self::bench`] uses internally — used by the bench
+    /// Which timing method [`Self::bench`] uses internally: used by the bench
     /// runner to label its printed stats. Defaults to `System`; categories
     /// running on the device timing method (unary/contiguous/memcpy_async)
     /// override this.
@@ -209,7 +230,7 @@ pub trait Correctness: Sync {
 /// type that implements [`Category`]; categories should implement `Category`
 /// rather than this trait directly.
 pub trait BenchmarkCategory: Sync {
-    /// Stable identifier — persisted in tuner-results history. Don't rename.
+    /// Stable identifier: persisted in tuner-results history. Don't rename.
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn strategies(&self) -> Vec<ItemDescriptor>;
@@ -225,7 +246,7 @@ pub trait BenchmarkCategory: Sync {
     ) -> Result<RunSamples, String>;
 
     /// `None` means the category doesn't expose a kernel result (e.g.
-    /// memcpy_async — no semantic-level output).
+    /// memcpy_async: no semantic-level output).
     fn kernel_result(
         &self,
         _strategy_id: &str,

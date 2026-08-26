@@ -11,7 +11,7 @@ use cubecl::{
 };
 use cubek_matmul::{
     definition::MatmulElems,
-    multi_level::definition::{MatmulPrecision, MatrixPrecision},
+    definition::{MatmulPrecision, MatrixPrecision},
 };
 use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};

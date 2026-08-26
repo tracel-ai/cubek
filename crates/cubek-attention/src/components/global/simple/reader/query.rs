@@ -4,8 +4,9 @@ use cubecl::{
     std::Swizzle,
     std::tensor::{View, layout::Coords2d},
 };
-use cubek_matmul::multi_level::components::global::memory::GlobalMemoryConfig;
-use cubek_std::tile::StridedTile;
+use cubek_matmul::multi_level::{
+    components::global::memory::GlobalMemoryConfig, tile::StridedTile,
+};
 
 use crate::{
     components::stage::AttentionPartitioner,

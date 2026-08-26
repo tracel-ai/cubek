@@ -23,7 +23,7 @@ fn random_tensor_handle(
     assert_eq!(tensor_shape.len(), strides.len());
 
     // Size the physical buffer to cover every logical index under these
-    // strides — not just `shape.product()`. Jumpy strides (e.g. a slice that
+    // strides, not just `shape.product()`. Jumpy strides (e.g. a slice that
     // steps over padding) need more room; broadcast strides (0) need less.
     let physical_len = physical_extent(&Shape::from(tensor_shape.to_vec()), &Strides::new(strides));
 

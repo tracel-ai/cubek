@@ -76,6 +76,15 @@ jobs:
       - name: Lint extended tests
         run: cargo clippy --tests --features extended -- -D warnings
       # --------------------------------------------------------------------------------
+      # Every other job compiles both of cubek-matmul's architectures, so nothing else
+      # would notice a `#[cfg]` that stopped being true. These two build each
+      # architecture without the other, tests included.
+      - name: Lint matmul on tiled alone
+        run: cargo clippy -p cubek-matmul --no-default-features --features std,tiled,extended,cubecl/cpu --tests -- -D warnings
+      # --------------------------------------------------------------------------------
+      - name: Lint matmul on multi-level alone
+        run: cargo clippy -p cubek-matmul --no-default-features --features std,multi-level,extended,cubecl/cpu --tests -- -D warnings
+      # --------------------------------------------------------------------------------
       - name: Typos
         uses: tracel-ai/github-actions/check-typos@v11
 

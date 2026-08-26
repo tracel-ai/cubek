@@ -1,11 +1,40 @@
 use cubecl::{
     client::ComputeClient,
     prelude::Runtime,
+    std::throughput::measure_peak_throughput,
     throughput::{ThroughputKey, compute_throughput_key, select_cmma_tile},
     tune::Work,
 };
 
 use crate::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
+
+/// Unconstrained tile selection matches what the hardware can do rather than what a
+/// problem's own padding limits allow, so a small `m` is still judged against peak.
+const UNCONSTRAINED: (usize, usize, usize) = (usize::MAX, usize::MAX, usize::MAX);
+
+/// The throughput key a matmul over these register types probes.
+pub fn compute_key<R: Runtime>(client: &ComputeClient<R>, elems: &MatmulElems) -> ThroughputKey {
+    let cmma_tile = select_cmma_tile(
+        client,
+        elems.lhs_register,
+        elems.rhs_register,
+        elems.acc_register,
+        UNCONSTRAINED,
+    );
+
+    compute_throughput_key(cmma_tile, elems.lhs_register, elems.acc_register)
+}
+
+/// The device's measured arithmetic peak, in ops/s, for a bench row over these register
+/// types to be judged against. `None` when the probe reports nothing usable.
+pub fn compute_peak_ops_per_s<R: Runtime>(
+    client: &ComputeClient<R>,
+    elems: &MatmulElems,
+) -> Option<f64> {
+    let peak = measure_peak_throughput(client, compute_key(client, elems)).ops_per_s();
+
+    (peak > 0.0).then_some(peak)
+}
 
 /// Minimal representation of matmul cost dependencies, including dimensions and element types.
 #[derive(Debug, Clone)]
@@ -39,24 +68,8 @@ impl MatmulCost {
     }
 
     /// Generates a throughput key for compute probes representing peak hardware instruction throughput.
-    ///
-    /// Selects CMMA tiles without problem-size constraints to ensure small dimensions (e.g. `m = 1`)
-    /// evaluate against peak hardware throughput, using register element types.
     pub fn compute_key<R: Runtime>(&self, client: &ComputeClient<R>) -> ThroughputKey {
-        // Unconstrained selection allows matching hardware capability without problem-size padding limits.
-        const UNCONSTRAINED: (usize, usize, usize) = (usize::MAX, usize::MAX, usize::MAX);
-
-        let elems = MatmulElems::from_globals(&self.elems);
-
-        let cmma_tile = select_cmma_tile(
-            client,
-            elems.lhs_register,
-            elems.rhs_register,
-            elems.acc_register,
-            UNCONSTRAINED,
-        );
-
-        compute_throughput_key(cmma_tile, elems.lhs_register, elems.acc_register)
+        compute_key(client, &MatmulElems::from_globals(&self.elems))
     }
 }
 

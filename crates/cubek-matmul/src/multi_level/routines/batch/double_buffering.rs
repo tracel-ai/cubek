@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
 use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
-use cubek_std::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
@@ -37,6 +36,7 @@ use crate::{
             TilingArgs,
             selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
         },
+        tile::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };

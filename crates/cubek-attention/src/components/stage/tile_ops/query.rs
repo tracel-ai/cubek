@@ -1,6 +1,6 @@
 use cubecl;
 use cubecl::prelude::*;
-use cubek_std::tile::StridedTile;
+use cubek_matmul::multi_level::tile::StridedTile;
 
 use crate::{
     forward::definition::AttentionPrecision,

@@ -1,5 +1,6 @@
 mod attention;
 mod conv;
+mod depthwise;
 mod instruction;
 mod launcher;
 mod matmul;
@@ -8,5 +9,6 @@ mod quant;
 mod recursive;
 mod reduce;
 mod references;
+mod separable;
 mod softmax;
 mod space;

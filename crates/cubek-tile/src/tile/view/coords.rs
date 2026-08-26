@@ -33,6 +33,30 @@ pub(crate) fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
     out
 }
 
+/// [`unravel`] over extents that are known at comptime.
+///
+/// The same arithmetic, but the divisor and the modulus are constants rather than the `runtime()`
+/// entries a [`const_coords`] group carries, so each digit folds instead of being computed. What a
+/// caller unraveling a comptime index nest wants; the runtime form stays for extents read off a
+/// layout.
+#[cube]
+pub(crate) fn unravel_const(#[comptime] extents: Vec<usize>, i: u32) -> Coords<u32> {
+    let n = comptime!(extents.len());
+    let mut out = Coords::<u32>::new();
+
+    #[unroll]
+    for p in 0..n {
+        let digit = i.fdiv(comptime!(extents[p + 1..].iter().product::<usize>() as u32));
+        if comptime!(p == 0) {
+            out.push(digit);
+        } else {
+            out.push(digit.frem(comptime!(extents[p] as u32)));
+        }
+    }
+
+    out
+}
+
 /// Concatenates two coordinate lists into dynamic coordinates.
 #[cube]
 pub(crate) fn concat(leading: &Coords<u32>, trailing: &Coords<u32>) -> CoordsDyn {

@@ -3,15 +3,16 @@
 pub use cubek_attention::eval::backward::benchmarks as attention_backward;
 pub use cubek_attention::eval::forward::benchmarks as attention;
 pub use cubek_convolution::eval::benchmarks as conv2d;
+pub use cubek_convolution::eval::benchmarks::depthwise;
 pub use cubek_fft::eval::benchmarks as fft;
 pub use cubek_interpolate::eval::benchmarks as interpolate;
 pub use cubek_matmul::eval::benchmarks::gemm;
 pub use cubek_matmul::eval::benchmarks::gemm_cpu;
-pub use cubek_matmul::eval::benchmarks::gemm_cpu_tiled;
-pub use cubek_matmul::eval::benchmarks::gemv;
-pub use cubek_matmul::eval::benchmarks::quantized_matmul;
-pub use cubek_matmul::eval::benchmarks::split_k;
-pub use cubek_matmul::eval::benchmarks::tile_quant_stage;
+pub use cubek_matmul::multi_level::eval::gemv;
+pub use cubek_matmul::multi_level::eval::quantized_matmul;
+pub use cubek_matmul::tiled::eval::gemm_cpu_tiled;
+pub use cubek_matmul::tiled::eval::split_k;
+pub use cubek_matmul::tiled::eval::tile_quant_stage;
 pub use cubek_pool::eval::benchmarks as pool;
 pub use cubek_random::eval::benchmarks as random;
 pub use cubek_reduce::eval::benchmarks as reduce;
@@ -31,6 +32,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::attention_backward::Category,
         &crate::contiguous::Category,
         &crate::conv2d::Category,
+        &crate::depthwise::Category,
         &crate::fft::Category,
         &crate::gemm::Category,
         &crate::gemm_cpu::Category,
@@ -70,17 +72,26 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
             println!("---- {} / {} ----", strategy.label, problem.label);
             match category.run(&strategy.id, &problem.id, samples) {
                 Ok(samples) => {
-                    if let Some(tflops) = samples.tflops {
-                        println!("{tflops:.3} TFLOPS");
+                    // Both ceilings, so a row says which one the kernel ran into
+                    // rather than only how fast it went.
+                    if let Some(compute) = &samples.compute {
+                        let achieved_tflops = compute.achieved_ops_per_s / 1e12;
+                        match compute.peak_ops_per_s {
+                            Some(peak) if peak > 0.0 => {
+                                let pct = 100.0 * compute.achieved_ops_per_s / peak;
+                                println!("{achieved_tflops:.3} TFLOPS ({pct:.0}% of compute peak)");
+                            }
+                            _ => println!("{achieved_tflops:.3} TFLOPS (compute peak unavailable)"),
+                        }
                     }
                     if let Some(bandwidth) = &samples.bandwidth {
                         let achieved_gb_s = bandwidth.achieved_bytes_per_s / 1e9;
                         match bandwidth.peak_bytes_per_s {
                             Some(peak) if peak > 0.0 => {
                                 let pct = 100.0 * bandwidth.achieved_bytes_per_s / peak;
-                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of write peak)");
+                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of memory peak)");
                             }
-                            _ => println!("{achieved_gb_s:.1} GB/s (write peak unavailable)"),
+                            _ => println!("{achieved_gb_s:.1} GB/s (memory peak unavailable)"),
                         }
                     }
                     let durations = BenchmarkDurations {

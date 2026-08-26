@@ -26,7 +26,7 @@ fn recursive_two_level_tiled_view() {
     // is the value read at logical `(i, j)`.
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    // The copy kernel only reads/writes through the views — no partitioning, so the
+    // The copy kernel only reads/writes through the views: no partitioning, so the
     // spaces carry no partitioner.
     copy_logical::launch::<TestRuntime>(
         &client,

@@ -4,10 +4,7 @@ use cubecl::{
     ir::AddressType,
     {Runtime, client::ComputeClient},
 };
-use cubek_std::{
-    cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
-    tile::{ColMajorTilingOrder, RowMajorTilingOrder},
-};
+use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 use std::{fmt::Display, marker::PhantomData};
 
 use crate::{
@@ -38,6 +35,7 @@ use crate::{
             TilingArgs,
             selector::{PlaneTilingBlueprintOptions, infer_blueprint_plane},
         },
+        tile::{ColMajorTilingOrder, RowMajorTilingOrder},
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };

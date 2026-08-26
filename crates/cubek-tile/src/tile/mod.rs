@@ -28,8 +28,13 @@ use cubecl::{
     prelude::*,
     quant::scheme::QuantScheme,
     std::quant::view::{KnownScale, QuantizedView as DequantView},
-    std::tensor::{View, layout::Coordinates},
+    std::tensor::{
+        View,
+        layout::{Coordinates, CoordsDyn},
+    },
 };
+
+use cubecl::zspace::SmallVec;
 
 use crate::*;
 
@@ -46,6 +51,31 @@ impl<T: Numeric> Tile<T> {
         recipe: R::ExpandType,
     ) -> TileExpand<T> {
         Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place())
+    }
+
+    /// Create a procedural tile while preserving the recipe's factorization for contraction: the
+    /// consumer sees one factor per contracted axis instead of one opaque field.
+    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(
+        _space: Space,
+        _recipe: R,
+    ) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_procedural_separable<R: SeparableRecipe<T> + 'static>(
+        scope: &Scope,
+        space: Space,
+        recipe: R::ExpandType,
+    ) -> TileExpand<T> {
+        // A separable procedural tile is always evaluated in place. This invariant is load-bearing
+        // for normalization: staging a recipe into shared memory would drop its factorization and
+        // normalization metadata without diagnostic.
+        Self::__expand_procedural_virtual(
+            scope,
+            space,
+            VirtualRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
+            StagePlan::in_place(),
+        )
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
@@ -560,7 +590,7 @@ impl<T: Numeric> Tile<T> {
 
     /// What this tile's cells are to the plane's lanes: whole, or a partial only true once
     /// combined across the plane. A resident form inherits it from the memory it was promoted
-    /// from — the split is the space's, not the storage's.
+    /// from: the split is the space's, not the storage's.
     pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
@@ -569,6 +599,30 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 comptime!(LaneShare::Whole)
+            }
+        }
+    }
+
+    /// Ask this accumulator to start from `init_from`, and answer what actually took.
+    ///
+    /// Asking rather than deciding is what keeps a kind that cannot take the request from having
+    /// to be listed anywhere else.
+    pub(crate) fn request_init_from(
+        &mut self,
+        #[comptime] init_from: InitFrom,
+    ) -> comptime_type!(InitFrom) {
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => {
+                d.set_init_from(comptime!(init_from));
+                comptime!(init_from)
+            }
+            // A promoted fragment states its own init and never reads a cell back to begin with,
+            // so the request does not take and its caller seeds instead.
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(InitFrom::Cell)
             }
         }
     }
@@ -622,6 +676,78 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
+
+    /// The factorization this tile's values state, if any: `Some(n)` for a recipe presenting `n`
+    /// separable factors, `None` for a tile read from a buffer or a recipe that only answers as a
+    /// whole. A rank-one factorization is `Some(1)`, which a consumer can still exploit, and so is
+    /// deliberately not the same answer as `None`.
+    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => data.factors(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
+    /// This operand's window sign, for a stage recording where it was filled from.
+    pub(crate) fn window_signed(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.signed),
+            _ => comptime!(false),
+        }
+    }
+
+    /// This operand's per-axis boundary handling, read by a stage filled from it: the stage's own
+    /// list is empty (it never overhangs its buffer), so the padding policy has to come from here.
+    pub(crate) fn window_boundaries(
+        &self,
+    ) -> comptime_type!(SmallVec<[Option<Boundary>; MAX_AXES]>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.boundaries.clone()),
+            _ => comptime!(SmallVec::new()),
+        }
+    }
+
+    /// The separable factor-normalization request, if one was attached to this procedural tile.
+    /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
+    pub(crate) fn factor_normalization(
+        &self,
+    ) -> comptime_type!(Option<(TapMask, DivGuard, Space)>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => comptime!(data.normalization.clone()),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
+    /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
+    /// that factor reads matters, which is what lets the contraction walk it in 1-D.
+    ///
+    /// Asking [`factors`](Tile::factors) first is the whole precondition: a tile answering `None`
+    /// has no factorization to index into, and is exactly the tile kind that cannot evaluate one.
+    pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => {
+                data.evaluate_factor_dyn(&pos, factor, comptime!(self.space.clone()))
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => {
+                panic!(
+                    "Tile::separable_factor: a tile read from a buffer states no factorization, \
+                     so `factors` answered `None` and there is no factor {factor} to evaluate"
+                )
+            }
         }
     }
 
@@ -812,6 +938,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Seed this tile with `monoid`'s identity, so a fold under it starts from a value folding
+    /// it in leaves unchanged.
+    ///
+    /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
+    /// fragments included; the other monoids need a real value and so reach only the forms
+    /// [`init`](Tile::init) serves.
+    pub fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+        match comptime!(monoid) {
+            Monoid::Sum => self.zero(),
+            Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
+        }
+    }
+
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
     pub fn init(&mut self, val: T) {
         match comptime!(self.space.partitioner().clone()) {
@@ -833,7 +972,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The window as one dense run of `Vector<T, W>` lines (`W` the store's
-    /// own width): index `i` reads line `origin + i` — one add, no layout
+    /// own width): index `i` reads line `origin + i`, one add and no layout
     /// walk. See [`MemData::dense_lines`] for the (caller-owned) contiguity
     /// contract; the streaming fold's operands satisfy it by construction.
     pub fn dense<W: Size>(&self) -> &[Vector<T, W>] {
@@ -881,7 +1020,7 @@ impl<T: Numeric> Tile<T> {
                     d.load_window(src)
                 }
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
-                    s.store_window(d)
+                    s.store_window(d, space)
                 }
                 (TileKind::Smem(d), TileKind::TmaGmem(s)) => s.load_into(d),
                 (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => {
@@ -902,7 +1041,10 @@ impl<T: Numeric> Tile<T> {
     /// type. [`copy_from`](Self::copy_from) can't: its transports move bytes so stay same-type,
     /// but a register accumulator (`f32`) is wider than the output it writes (`f16`). Only a
     /// fragment partition drains this way.
-    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+    ///
+    /// Crate-internal: what closes an accumulator's scope is the scope's own business
+    /// ([`AccumulatorScope`](crate::AccumulatorScope)), not a call site's.
+    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::PlanePartition(s) => s.drain_cast_into(dst),
             TileKind::Gmem(_)
@@ -911,6 +1053,79 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
+            }
+        }
+    }
+
+    /// Whether one factor tap lands inside the input axes that factor moves. The physical position
+    /// is already stepped from the row's hoisted anchor; the memory window then checks only the
+    /// physical carriers of `axis`, avoiding rebuilding the projection per tap.
+    pub(crate) fn separable_physical_tap_in_bounds(
+        &self,
+        pos: &CoordsDyn,
+        #[comptime] axis: Axis,
+    ) -> bool {
+        match &self.tile_kind {
+            TileKind::Gmem(data) => {
+                let projection = comptime!(data.projection.clone());
+                if comptime!(projection.logical_axes().contains(&axis)) {
+                    let carriers = comptime!(projection.carriers(axis));
+                    let mut valid = true;
+                    #[unroll]
+                    for c in 0..comptime!(carriers.len()) {
+                        let pa = comptime!(carriers[c]);
+                        if comptime!(
+                            data.window.boundaries.get(pa).copied().flatten()
+                                == Some(Boundary::Zero)
+                        ) {
+                            valid = valid && data.window.axis_in_bounds(pos[pa], pa);
+                        }
+                    }
+                    valid
+                } else {
+                    true.runtime()
+                }
+            }
+            // A staged operand answers against the window it was *filled from*: the fill wrote
+            // the boundary's value wherever a tap fell outside, and this window no longer says
+            // which cells those were. A stage recorded with no source window was never gathered,
+            // so nothing it holds came from a boundary and every tap is in bounds.
+            TileKind::Smem(data) => {
+                let projection = comptime!(data.projection.clone());
+                #[comptime]
+                match &data.source_window {
+                    ComptimeOption::Some(source) => {
+                        if comptime!(projection.logical_axes().contains(&axis)) {
+                            let carriers = comptime!(projection.carriers(axis));
+                            let mut valid = true;
+                            #[unroll]
+                            for c in 0..comptime!(carriers.len()) {
+                                let pa = comptime!(carriers[c]);
+                                if comptime!(
+                                    source.boundaries.get(pa).copied().flatten()
+                                        == Some(Boundary::Zero)
+                                ) {
+                                    valid = valid
+                                        && source.axis_in_bounds(
+                                            data.window.origin.at(pa),
+                                            pos[pa],
+                                            pa,
+                                        );
+                                }
+                            }
+                            valid
+                        } else {
+                            true.runtime()
+                        }
+                    }
+                    ComptimeOption::None => true.runtime(),
+                }
+            }
+            TileKind::Procedural(data) => data.axis_in_bounds(pos, axis),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                panic!(
+                    "Tile::separable_physical_tap_in_bounds: a separable gather needs an addressable rhs"
+                )
             }
         }
     }

@@ -36,7 +36,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
-        #[comptime] fold: LeafOp,
+        #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
             Instruction::Cmma => {
@@ -53,7 +53,7 @@ impl<T: Numeric> PlaneTile<T> {
                 vector_size,
                 lane_share,
                 config,
-                fold,
+                monoid,
             )),
         }
     }
@@ -119,28 +119,34 @@ impl<T: Numeric> PlaneTile<T> {
             },
             PlaneTile::Mma(d) => d.load_window(src),
             // Only an accumulator takes this encoding, and an accumulator is filled by
-            // `zero` or by contracting into it — never by loading an operand window.
+            // `zero` or by contracting into it, never by loading an operand window.
             PlaneTile::Register(_) => {
                 panic!("PlaneTile::load_window: a register accumulator is not a fill sink")
             }
         }
     }
 
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>) {
+    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
         match self {
             PlaneTile::Cmma(d) => d.store_window(mem),
             PlaneTile::Mma(d) => d.store_window(mem),
             // Same-type store; the block drains through `store_cast_window`, which is the
             // same write with the cast the wider accumulator needs.
-            PlaneTile::Register(d) => d.store_cast_window(mem),
+            PlaneTile::Register(d) => d.store_cast_window(mem, space),
         }
     }
 
-    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
+    /// `space` is the sink window's, and only the software block reads it: a hardware fragment
+    /// is exactly the instruction's shape and stores through its own intrinsic.
+    pub(crate) fn store_cast_window<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
         match self {
             PlaneTile::Cmma(d) => d.store_cast_window(mem),
             PlaneTile::Mma(d) => d.store_cast_window(mem),
-            PlaneTile::Register(d) => d.store_cast_window(mem),
+            PlaneTile::Register(d) => d.store_cast_window(mem, space),
         }
     }
 }
@@ -191,14 +197,14 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// The plane-resident form of an accumulator over `space`: a partition mirroring its grid,
-    /// tiles uninitialized. `promote` is purely structural; the caller states the init.
+    /// tiles uninitialized. Opening the scope is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
         #[comptime] form: Instruction,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
-        #[comptime] fold: LeafOp,
+        #[comptime] monoid: Monoid,
     ) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
@@ -217,7 +223,7 @@ impl<T: Numeric> PlanePartition<T> {
                     k,
                     vector_size,
                     lane_share,
-                    fold,
+                    monoid,
                 ));
             }
         }
@@ -230,7 +236,7 @@ impl<T: Numeric> PlanePartition<T> {
             // The fragments above were sized from the partitioner alone (`partition_shape`
             // and `final_space` read edges, never extents), so the tile carries the space it
             // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
-            // register-resident tile has no buffer bound to resolve a `Dynamic` axis from —
+            // register-resident tile has no buffer bound to resolve a `Dynamic` axis from, and
             // inheriting it verbatim would make `runtime_space` unanswerable.
             space: comptime!(space.sub_tile_space()),
         }
@@ -328,8 +334,9 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let frag = self.at(mi, ni);
                 let mut window = dst.fragment_window(mi, ni);
+                let space = comptime!(window.space.clone());
                 match &mut window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g),
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g, space),
                     TileKind::PlaneTile(_)
                     | TileKind::PlanePartition(_)
                     | TileKind::TmaGmem(_)
@@ -350,8 +357,9 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let frag = self.at(mi, ni);
                 let mut window = dst.fragment_window(mi, ni);
+                let space = comptime!(window.space.clone());
                 match &mut window.tile_kind {
-                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g),
+                    TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g, space),
                     TileKind::PlaneTile(_)
                     | TileKind::PlanePartition(_)
                     | TileKind::TmaGmem(_)

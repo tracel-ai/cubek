@@ -1,8 +1,7 @@
 //! Smoke tests for the simple sync-tilewise conv routine.
 
 use cubek_convolution::ConvAlgorithm;
-use cubek_matmul::multi_level::definition::TilingScheme;
-use cubek_std::PartitionSize;
+use cubek_matmul::multi_level::{PartitionSize, definition::TilingScheme};
 
 use super::common::{default_partition_buffering, default_swizzle, f16_dtypes, small_size};
 use crate::convolution::{
