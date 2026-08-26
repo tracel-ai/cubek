@@ -6,6 +6,7 @@ pub mod matrix;
 pub mod packed;
 pub mod projected;
 pub mod quant;
+pub mod scaled;
 
 pub use accumulate::*;
 // Crate-internal helpers, so this re-export carries no public item.
@@ -16,3 +17,4 @@ pub use matrix::*;
 pub use packed::*;
 pub use projected::*;
 pub use quant::*;
+pub use scaled::*;

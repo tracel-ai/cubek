@@ -14,4 +14,4 @@ mod promoted;
 mod shape;
 
 pub use base::ScaleSide;
-pub(crate) use base::{check_lines_hold_one_scale, memory, memory_scaled, scale_side};
+pub(crate) use base::{memory, memory_scaled, scale_side};

@@ -415,6 +415,30 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// [`matrix_packed`](Tile::matrix_packed) with a scales operand folded into every read.
+    ///
+    /// The scales are read at the same matrix coordinate, through their own axes, so the caller
+    /// states each matrix once and the multiply happens under the view. Whatever consumes this
+    /// consumes an ordinary [`MatrixView`]: a contraction over a scaled operand *is* the plain
+    /// contraction.
+    pub fn matrix_scaled<'a, W: Size, S: Numeric, SW: Size>(
+        &'a self,
+        #[comptime] axes: MatrixAxes,
+        scales: &'a Tile<S>,
+        #[comptime] scale_axes: MatrixAxes,
+        i: usize,
+    ) -> MatrixView<'a, Vector<T, W>> {
+        let width = self.vector_size();
+        let values = self.matrix_packed::<W>(axes, i);
+        let scale_lines = scales.matrix_packed::<SW>(scale_axes, i);
+        // A scale read past the values' bound is never used: the values mask first, and a masked
+        // value is zero whatever it is multiplied by.
+        let check = comptime!(values.check);
+        let scaled =
+            ScaledView::<T, W, S, SW>::new(values.into_view(), scale_lines.into_view(), width);
+        MaskedView::new(scaled.view(), check)
+    }
+
     /// [`matrix_packed`](Tile::matrix_packed) at a stated storage element `I` and physical line
     /// `WP`: a plain tile is read as it stands, a quantized one dequantizes each `(row, col)` per
     /// its scheme, with no dequantize-into-`f32` fill.

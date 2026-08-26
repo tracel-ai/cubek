@@ -10,7 +10,7 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::block;
-use crate::instruction::registers::contract::{check_lines_hold_one_scale, scale_side};
+use crate::instruction::registers::contract::{ScaleSide, scale_side};
 use crate::*;
 
 #[cube]
@@ -129,38 +129,33 @@ impl<T: Numeric> RegisterData<T> {
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
         let scales_axes = comptime!(MatrixAxes::trailing_pair(&scales.space));
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
-        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
-        let scales_mat = scales.matrix_packed::<S>(scales_axes, 0usize);
+        let side = comptime!(scale_side(&scales.space, &out));
+        // The scale folds in under the operand's view, so the block below runs the plain
+        // contraction.
+        let lhs_mat = match comptime!(side) {
+            ScaleSide::Lhs => lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, 0),
+            ScaleSide::Rhs => lhs.matrix_packed::<L>(lhs_axes, 0usize),
+        };
+        let rhs_mat = match comptime!(side) {
+            ScaleSide::Lhs => rhs.matrix_packed::<RA>(rhs_axes, 0usize),
+            ScaleSide::Rhs => rhs.matrix_scaled::<RA, ES, S>(rhs_axes, scales, scales_axes, 0),
+        };
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
-        let side = comptime!(scale_side(&scales.space, &out));
-        let scales_projection = scales.projection();
-        comptime!(check_lines_hold_one_scale(
-            &scales_projection,
-            Space::contracted(&[&lhs.space, &rhs.space], &out)[0],
-            out.axis_at(out.rank() - 1),
-            1usize,
-            self.vector_size,
-            side,
-        ));
 
-        block::contract_scaled::<T, EL, L, ER, RA, ES, S>(
+        block::contract::<T, EL, L, ER, RA>(
             &lhs_mat,
             &rhs_mat,
-            &scales_mat,
             &mut self.data,
             lw,
             1usize,
-            comptime!(self.vector_size),
             mr,
             nr,
             kc,
             unroll,
             lane_fanout,
-            side,
             semiring,
         );
     }

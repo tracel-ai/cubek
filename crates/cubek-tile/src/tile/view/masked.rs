@@ -56,6 +56,11 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
     pub fn shape(&self) -> C {
         self.view.shape()
     }
+
+    /// The view underneath, for a reader that wraps it in another one and re-masks the result.
+    pub(crate) fn into_view(self) -> View<'a, T, C> {
+        self.view
+    }
 }
 
 /// The mutable twin of [`MaskedView`]. Its `write` skips the overhang under `check`, matching

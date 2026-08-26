@@ -222,7 +222,8 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
 /// [`contract`] with one operand scaled: `c += (lhs ⊗ scale) · rhs` or `c += lhs · (rhs ⊗ scale)`,
 /// the scale a real operand read through its own view and [`ScaleSide`] saying which factor it
-/// meets. Same nest, same block, one more read per step — see [`block::contract_scaled`].
+/// meets. Same nest, same block: the scale folds in under the operand's view, so the block
+/// below runs the plain contraction.
 ///
 /// The scales are read where the values are, never staged: one value per block is already
 /// cache-served, and a stage would materialize the expansion the coarse read exists to avoid.
@@ -323,25 +324,28 @@ fn nest_scaled<
     let scales_axes = comptime!(MatrixAxes::trailing_pair(&scales.space));
 
     for mat in 0..matrices {
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
-        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
-        let scales_mat = scales.matrix_packed::<S>(scales_axes, mat);
+        // The scale folds in under the view, so what the block below contracts is two ordinary
+        // matrices and the plain body runs them.
+        let lhs_mat = match comptime!(side) {
+            ScaleSide::Lhs => lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, mat),
+            ScaleSide::Rhs => lhs.matrix_packed::<L>(lhs_axes, mat),
+        };
+        let rhs_mat = match comptime!(side) {
+            ScaleSide::Lhs => rhs.matrix_packed::<V>(rhs_axes, mat),
+            ScaleSide::Rhs => rhs.matrix_scaled::<V, ES, S>(rhs_axes, scales, scales_axes, mat),
+        };
         let mut acc_view =
             acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
 
         let lhs_check = comptime!(lhs_mat.check);
         let rhs_check = comptime!(rhs_mat.check);
-        let scales_check = comptime!(scales_mat.check);
         let acc_check = acc_view.check();
         let eligible = comptime!(mr * nr * served * aw <= config.budget);
-        // A checked scales view is not proved in bounds here — its window is the block grid, not
-        // the operands' — so it takes the masked body rather than the split edge.
-        let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check && !scales_check);
-        body_scaled::<E, EL, L, ER, V, A, ES, S>(
+        let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
+        body::<E, EL, L, ER, V, A>(
             &mut acc_view,
             &lhs_mat,
             &rhs_mat,
-            &scales_mat,
             lw,
             served,
             aw,
@@ -351,57 +355,7 @@ fn nest_scaled<
             kc,
             unroll,
             lane_fanout,
-            side,
             semiring,
         );
     }
-}
-
-/// [`body`] over the scaled contraction.
-#[cube]
-#[allow(clippy::too_many_arguments)]
-fn body_scaled<
-    E: Numeric,
-    EL: Numeric,
-    L: Size,
-    ER: Numeric,
-    V: Size,
-    A: Size,
-    ES: Numeric,
-    S: Size,
->(
-    acc: &mut AccumulateView<'_, E, A>,
-    lhs: &MatrixView<'_, Vector<EL, L>>,
-    rhs: &MatrixView<'_, Vector<ER, V>>,
-    scales: &MatrixView<'_, Vector<ES, S>>,
-    #[comptime] lw: usize,
-    #[comptime] served: usize,
-    #[comptime] aw: usize,
-    #[comptime] mr: usize,
-    #[comptime] nr: usize,
-    #[comptime] cols: usize,
-    #[comptime] kc: usize,
-    #[comptime] unroll: bool,
-    #[comptime] lane_fanout: bool,
-    #[comptime] side: ScaleSide,
-    #[comptime] semiring: Semiring,
-) {
-    let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
-    block::contract_scaled::<E, EL, L, ER, V, ES, S>(
-        lhs,
-        rhs,
-        scales,
-        &mut c,
-        lw,
-        served,
-        aw,
-        mr,
-        nr,
-        kc,
-        unroll,
-        lane_fanout,
-        side,
-        semiring,
-    );
-    block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
 }
