@@ -621,7 +621,7 @@ fn conv1d_vectorized_input_fanout() {
         Buffering::SINGLE,
         &[],
         Instruction::Registers {
-            config: RegisterBlock::new(16, false, true),
+            config: RegisterBlock::new(16).lane_fanout(),
         },
     );
 }
@@ -2432,7 +2432,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let stage = MemData::smem_like(&input);
-    let _view = stage.nd::<E, Const<1>, Const<1>>();
+    let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 
 #[test]
@@ -2609,7 +2609,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         space,
         1,
         Instruction::Registers {
-            config: RegisterBlock::new(16, false, true),
+            config: RegisterBlock::new(16).lane_fanout(),
         },
     );
 

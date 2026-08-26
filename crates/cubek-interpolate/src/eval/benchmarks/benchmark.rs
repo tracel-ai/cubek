@@ -75,7 +75,7 @@ pub fn bench(
     let work = InterpolateCost::new(problem.clone(), dtype).work();
 
     Ok(RunSamples::new(durations)
-        .with_flops(work.compute_ops as f64)
+        .with_flops(work.compute_ops as f64, None)
         .with_bytes(work.bytes, memory_peak_bytes_per_s(&client)))
 }
 

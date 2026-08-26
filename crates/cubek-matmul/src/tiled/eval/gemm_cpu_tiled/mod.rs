@@ -26,7 +26,7 @@ use cubek_std::InputBinding;
 use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 
 use crate::{
-    definition::MatmulElems,
+    definition::{MatmulElems, compute_peak_ops_per_s},
     routine::BlueprintStrategy,
     tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
 };
@@ -197,12 +197,13 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
     let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
+    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = TiledBench {
         problem: *problem,
         strategy: *strategy,
-        client,
-        dtypes: MatmulElems::from_single_dtype(f32::elem_type_native()),
+        client: client.clone(),
+        dtypes: elems.clone(),
         samples: num_samples,
     };
 
@@ -211,7 +212,7 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_flops(flops))
+    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
 }
 
 /// Square-ish shapes whose dims all divide `EDGE`, so both packings run maskless. `1536³` carries a

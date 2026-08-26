@@ -1,5 +1,6 @@
 mod attention;
 mod conv;
+mod depthwise;
 mod instruction;
 mod launcher;
 mod matmul;

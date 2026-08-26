@@ -17,10 +17,10 @@ pub const CHANNEL: Axis = Axis(5);
 pub fn instruction<R: Runtime>(client: &ComputeClient<R>) -> Instruction {
     match client.properties().hardware.num_cpu_cores {
         Some(_) => Instruction::Registers {
-            config: RegisterBlock::new(256, true, false),
+            config: RegisterBlock::new(256).split_edge(),
         },
         None => Instruction::Registers {
-            config: RegisterBlock::new(64, false, true),
+            config: RegisterBlock::new(64).lane_fanout(),
         },
     }
 }

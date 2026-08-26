@@ -201,7 +201,7 @@ pub fn launch_ref<R: Runtime>(
         // specialization, and a flat scalar K-walk (no lanes to fan out over).
         .instruction(
             Instruction::Registers {
-                config: RegisterBlock::new(256, true, false),
+                config: RegisterBlock::new(256).split_edge(),
             },
             |l, _| {
                 l.axes(&batch_axes, Cut::sequential(1))

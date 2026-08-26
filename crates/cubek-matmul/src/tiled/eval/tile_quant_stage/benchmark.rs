@@ -17,9 +17,10 @@ use super::problem::TileQuantStageProblem;
 /// fan-out. Bound on the accumulator at the kernel top so the numbers measure the staging, not
 /// the instruction.
 const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64, false, false),
+    config: RegisterBlock::new(64),
 };
 use super::strategy::StageDepth;
+use crate::definition::{MatmulElems, compute_peak_ops_per_s};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -85,7 +86,11 @@ pub fn bench(
         .durations;
 
     let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
-    Ok(RunSamples::new(durations).with_flops(flops))
+    // The mma contracts in f32; the packed u32 is how the RHS is stored, not what the
+    // arithmetic runs at.
+    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
+
+    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
 }
 
 struct TileQuantStageBench {

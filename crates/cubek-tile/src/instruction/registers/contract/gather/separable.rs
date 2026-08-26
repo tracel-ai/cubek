@@ -7,15 +7,15 @@ use crate::instruction::registers::block;
 use crate::*;
 
 use super::{
-    GatherProblem,
+    GatherProblem, LhsRole,
     coords::{cell_position, offset_last},
 };
 
 /// Cache each factor's 1-D tap walk before consuming their Cartesian product for one cell.
 ///
-/// The walk is cached per accumulator row unless `lhs_spans_col`: with no factor reading the
-/// accumulator's innermost axis the weights cannot vary along it, so evaluating them per cell
-/// repeats one identical walk `nr` times.
+/// The walk is cached per accumulator row unless the lhs spans the column: with no factor
+/// reading the accumulator's innermost axis the weights cannot vary along it, so evaluating them
+/// per cell repeats one identical walk `nr` times.
 ///
 /// That same condition decides the nesting. Where no factor reads the innermost axis, a tap's
 /// coordinate and its factor product are invariant along it, so the taps go outside the lines and
@@ -90,7 +90,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
 
         #[unroll(unroll)]
         for i in 0..mr {
-            if comptime!(problem.lhs_spans_col) {
+            if comptime!(problem.lhs != LhsRole::FreeOfColumn) {
                 #[unroll(unroll)]
                 for n in 0..nr {
                     let anchor = rhs_reader.map.anchor(

@@ -112,12 +112,31 @@ pub struct RegisterBlock {
 }
 
 impl RegisterBlock {
-    /// The only way to build one: every knob stated, none inferred.
-    pub const fn new(budget: usize, split_edge: bool, lane_fanout: bool) -> Self {
+    /// A budget with neither specialization turned on. Both are named at the call site by the
+    /// method that turns them on, so a reader never has to open this file to learn what a bare
+    /// `true` in a constructor meant.
+    pub const fn new(budget: usize) -> Self {
         Self {
             budget,
-            split_edge,
-            lane_fanout,
+            split_edge: false,
+            lane_fanout: false,
+        }
+    }
+
+    /// Generate the dual-path specialization for masked edge tiles: a fast path that proves its
+    /// reads in bounds once, plus the checked fallback for the instances that straddle an edge.
+    pub const fn split_edge(self) -> Self {
+        Self {
+            split_edge: true,
+            ..self
+        }
+    }
+
+    /// Walk `K` as (line, lane) with fixed comptime extracts, rather than as a flat scalar walk.
+    pub const fn lane_fanout(self) -> Self {
+        Self {
+            lane_fanout: true,
+            ..self
         }
     }
 }

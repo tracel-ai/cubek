@@ -11,6 +11,36 @@ use cubecl::prelude::*;
 use super::shape::ContractShape;
 use crate::*;
 
+/// How the lhs varies over the accumulator's axes, which is what decides how much one read of
+/// it covers.
+///
+/// The outer product the nest is written around holds only in the first case; the other two are
+/// what a gathered or batched operand degenerates to, and they differ in whether one read still
+/// covers a whole cell.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum LhsRole {
+    /// Free of the accumulator's innermost axis, so one read serves every cell of a row.
+    FreeOfColumn,
+    /// Lined *along* that axis: the line it reads is the cell, every lane a different column,
+    /// and there is no `K` component to extract. What a batched contraction needs -- an axis
+    /// every operand spans, like a depthwise convolution's channel.
+    LinedAlongColumn,
+    /// Spans that axis without lining along it, so the value differs cell by cell and the
+    /// rank-1 update degenerates to a per-cell `fma`.
+    PerCell,
+}
+
+/// The same for the rhs, over the row the outer product assumes it is free of.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum RhsRole {
+    /// Free of the row: its `nr` lines are read once per step and reused down every row.
+    FreeOfRow,
+    /// Varies down the rows, but still holds for a whole row of cells.
+    PerRow,
+    /// Varies cell by cell.
+    PerCell,
+}
+
 /// The gather-specific half of a contraction's comptime geometry, over the
 /// [`ContractShape`] every schedule shares.
 ///
@@ -32,9 +62,9 @@ pub(super) struct GatherProblem {
     pub taps: usize,
     /// Where each factor's taps start in that walk.
     pub offsets: Vec<usize>,
-    pub lhs_spans_col: bool,
-    pub rhs_spans_row: bool,
-    pub rhs_spans_col: bool,
+    /// How each operand varies over the accumulator's own axes.
+    pub lhs: LhsRole,
+    pub rhs: RhsRole,
 }
 
 impl GatherProblem {
@@ -47,16 +77,30 @@ impl GatherProblem {
         normalization: Option<(TapMask, DivGuard, Space)>,
     ) -> Self {
         let rank = block.space.rank();
-        let lhs_spans_col = lhs.contains(block.space.axis_at(rank - 1));
-        let rhs_spans_row = rhs.contains(block.space.axis_at(rank - 2));
-        let rhs_spans_col = rhs.contains(block.space.axis_at(rank - 1));
+        let col = block.space.axis_at(rank - 1);
+        // A separable lhs is never col-lined however it states its axes: its factors answer one
+        // scalar at a time, so no read of it covers a cell, and it takes the schedule below that
+        // evaluates the weights per cell.
+        let lhs_role = match lhs.contains(col) {
+            false => LhsRole::FreeOfColumn,
+            true if factors.is_none() && lhs.axis_at(lhs.rank() - 1) == col => {
+                LhsRole::LinedAlongColumn
+            }
+            true => LhsRole::PerCell,
+        };
+        let rhs_role = match rhs.contains(block.space.axis_at(rank - 2)) {
+            false => RhsRole::FreeOfRow,
+            true if rhs.contains(col) => RhsRole::PerCell,
+            true => RhsRole::PerRow,
+        };
         coords::assert_operand_shapes(
             lhs,
             rhs,
             &block.space,
             &block.reduce,
+            block.lw,
             block.vw,
-            lhs_spans_col,
+            lhs_role,
         );
         if let Some(factors) = factors {
             assert_eq!(
@@ -64,7 +108,7 @@ impl GatherProblem {
                 block.reduce.len(),
                 "contract gather: a separable lhs needs one factor per contracted axis"
             );
-            coords::assert_separable_shapes(rhs_projection, &block.space, rhs_spans_col);
+            coords::assert_separable_shapes(rhs_projection, &block.space, rhs.contains(col));
         }
         if normalization.is_some() {
             assert!(
@@ -88,8 +132,8 @@ impl GatherProblem {
             assert_factorized_mask(
                 rhs_projection,
                 &block.reduce,
-                block.space.axis_at(rank - 1),
-                lhs_spans_col,
+                col,
+                lhs_role != LhsRole::FreeOfColumn,
             );
         }
         let offsets = block
@@ -110,9 +154,8 @@ impl GatherProblem {
             offsets,
             factors,
             normalization,
-            lhs_spans_col,
-            rhs_spans_row,
-            rhs_spans_col,
+            lhs: lhs_role,
+            rhs: rhs_role,
         }
     }
 }
@@ -340,5 +383,45 @@ mod tests {
     #[test]
     fn problem_accepts_an_unfactorized_lhs() {
         assert_eq!(problem(None, 4).factors, None);
+    }
+
+    /// Every operand spanning one axis, with the lhs lining along it, is what a batched
+    /// contraction is -- a depthwise convolution's channel. `lhs` names how the lhs orders its
+    /// own axes, which is what separates lining along the column from merely spanning it.
+    fn batched(lhs: &[(Axis, usize)], factors: Option<usize>, width: usize) -> GatherProblem {
+        let lhs = Space::new(lhs);
+        let rhs = Space::new(&[(M, 4), (K0, 2), (K1, 3), (N, 8)]);
+        let acc = Space::new(&[(M, 4), (N, 8)]);
+        let projection = Projection::direct(&[M, K0, K1, N]);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, width, width, width);
+        GatherProblem::new(&lhs, &rhs, &projection, block, factors, None)
+    }
+
+    /// An lhs lined along the accumulator's column reads its line *as* the cell, with no `K`
+    /// component left to extract -- so it is exempt from lining along the contracted axis.
+    #[test]
+    fn a_col_lined_lhs_is_read_as_the_cell() {
+        let problem = batched(&[(K0, 2), (K1, 3), (N, 8)], None, 4);
+
+        assert_eq!(problem.lhs, LhsRole::LinedAlongColumn);
+        assert_eq!(problem.rhs, RhsRole::PerCell);
+    }
+
+    /// Spanning the column without lining along it is the other case: the value differs cell by
+    /// cell, so one read cannot cover a line of them and the accumulator has to be scalar.
+    #[test]
+    fn an_lhs_spanning_the_column_off_its_line_is_read_per_cell() {
+        let problem = batched(&[(K0, 2), (N, 8), (K1, 3)], None, 1);
+
+        assert_eq!(problem.lhs, LhsRole::PerCell);
+    }
+
+    /// A separable lhs answers one scalar at a time, so no read of it covers a cell and it takes
+    /// the per-cell schedule whatever its axis order says.
+    #[test]
+    fn a_separable_lhs_is_never_col_lined() {
+        let problem = batched(&[(K0, 2), (N, 8), (K1, 3)], Some(2), 1);
+
+        assert_eq!(problem.lhs, LhsRole::PerCell);
     }
 }

@@ -5,7 +5,7 @@ use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::*;
 
-use super::GatherProblem;
+use super::{GatherProblem, LhsRole};
 
 /// One operand read at the accumulator cell `(row, col)` of the batch matrix `batch` names.
 /// `width` is the operand's own line width, since only its innermost axis is addressed in lines.
@@ -113,13 +113,15 @@ pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_c
 /// treat one axis per operand as the vectorized one and address it in lines; if that is not the
 /// axis the operand actually lines along, the reads are silently off by the width rather than
 /// wrong in a way a test would localize. Host-side, so a violation is a comptime message.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn assert_operand_shapes(
     lhs: &Space,
     rhs: &Space,
     acc: &Space,
     reduce: &[Axis],
+    lhs_vec_len: usize,
     rhs_vec_len: usize,
-    lhs_spans_col: bool,
+    lhs_role: LhsRole,
 ) {
     assert!(
         !reduce.is_empty(),
@@ -136,8 +138,10 @@ pub(super) fn assert_operand_shapes(
         );
     }
     let fastest = reduce[reduce.len() - 1];
+    // A col-lined lhs is the exception: it lines along the accumulator's innermost axis, so the
+    // fastest contracted axis is walked in elements like every other contracted one.
     assert!(
-        lhs.axis_at(lhs.rank() - 1) == fastest,
+        lhs_role == LhsRole::LinedAlongColumn || lhs.axis_at(lhs.rank() - 1) == fastest,
         "contract gather: the lhs must line along the fastest contracted axis {fastest:?}"
     );
     // A vectorized rhs lines along the accumulator's innermost axis (its lanes are cells) or the
@@ -150,14 +154,21 @@ pub(super) fn assert_operand_shapes(
         "contract gather: a vectorized rhs must line along the accumulator's innermost axis or \
          the fastest contracted axis {fastest:?}"
     );
-    // An lhs varying along the column is read once per cell, and a cell is `rhs_vec_len` columns
-    // wide. The lhs lines along a contracted axis, not this one, so one read cannot cover them:
-    // it would need a value per lane off an axis it does not line along, and the broadcast would
-    // silently serve the first column's value to all of them.
+    // A [`LhsRole::PerCell`] lhs is read once per cell, and a cell is `rhs_vec_len` columns wide.
+    // One read covers them only when the column is the axis it lines along, which is the case the
+    // role separates. Lined along a contracted axis instead, it would need a value per lane off an
+    // axis it does not line along, and the broadcast would silently serve the first column's value
+    // to all of them.
     assert!(
-        !lhs_spans_col || rhs_vec_len == 1,
+        lhs_role != LhsRole::PerCell || rhs_vec_len == 1,
         "contract gather: an lhs spanning the accumulator's innermost axis needs a value per \
-         column, so that axis cannot also be served in lines (the accumulator is {rhs_vec_len} \
-         wide)"
+         column, so that axis must be the one it lines along (the accumulator is {rhs_vec_len} \
+         wide, the lhs lines {lhs_vec_len})"
+    );
+    // The col-lined line *is* the cell, so the two are the same width by construction.
+    assert!(
+        lhs_role != LhsRole::LinedAlongColumn || lhs_vec_len == rhs_vec_len,
+        "contract gather: a col-lined lhs is read as the cell itself, so its line width \
+         ({lhs_vec_len}) must be the accumulator's ({rhs_vec_len})"
     );
 }
