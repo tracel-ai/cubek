@@ -153,6 +153,41 @@ impl DepthwiseTiling {
         }
     }
 
+    /// Reject a degenerate tiling before its dimensions reach division and space construction.
+    fn validate(self) -> Result<Self, ConvSetupError> {
+        if self.rows == 0 || self.cols == 0 || self.chans == 0 || self.lines == 0 {
+            return Err(ConvSetupError::InvalidConfig(Box::new(format!(
+                "depthwise tiling dimensions must be non-zero, got rows {}, cols {}, chans {}, \
+                 lines {}",
+                self.rows, self.cols, self.chans, self.lines
+            ))));
+        }
+        Ok(self)
+    }
+
+    /// The channel edge one cube owns, checked because every factor is public configuration or
+    /// runtime hardware data.
+    fn channel_tile(self, lanes: usize, width: usize) -> Result<usize, ConvSetupError> {
+        let tile = lanes
+            .checked_mul(width)
+            .and_then(|tile| tile.checked_mul(self.chans))
+            .ok_or_else(|| {
+                ConvSetupError::InvalidConfig(Box::new(format!(
+                    "depthwise channel tile overflows: {lanes} lanes * {width} channels/line * {} \
+                     lines/lane",
+                    self.chans
+                )))
+            })?;
+        if tile == 0 {
+            return Err(ConvSetupError::InvalidConfig(Box::new(format!(
+                "depthwise channel tile must be non-zero, got {lanes} lanes * {width} \
+                 channels/line * {} lines/lane",
+                self.chans
+            ))));
+        }
+        Ok(tile)
+    }
+
     /// The space this tiling implies for a problem of these extents.
     ///
     /// Two levels. The first separates the output across the launch grid — an all-`sequential`
@@ -160,10 +195,8 @@ impl DepthwiseTiling {
     /// useless one. The second separates what one cube took across the cube's own threads: rows
     /// go to planes, channels to lanes. The taps stay `sequential` throughout — they are the
     /// contraction, and every tap of one output position accumulates into the same register.
-    fn space(&self, geometry: &Geometry, lanes: usize, width: usize) -> Space {
-        let Self {
-            rows, cols, chans, ..
-        } = *self;
+    fn space(&self, geometry: &Geometry, lanes: usize, tile_c: usize, width: usize) -> Space {
+        let Self { rows, cols, .. } = *self;
         let Geometry {
             b,
             oh,
@@ -173,8 +206,6 @@ impl DepthwiseTiling {
             rw,
             ..
         } = *geometry;
-        let tile_c = lanes * width * chans;
-
         Tiling::new()
             .extents(&[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)])
             // The channel axis takes X so that the fastest-moving cube index is the one memory is
@@ -232,6 +263,7 @@ pub enum DepthwiseStrategy {
 ///
 /// [`ConvSetupError::NotDepthwise`] when the convolution is not one filter per channel — the
 /// tuner reads that as "this candidate does not apply here", which is exactly what it is — and
+/// [`ConvSetupError::InvalidConfig`] when a fixed tiling is degenerate. Returns
 /// [`ConvSetupError::Unknown`] when re-laying the filter cannot be launched.
 pub fn launch_depthwise<R: Runtime>(
     client: &ComputeClient<R>,
@@ -248,7 +280,8 @@ pub fn launch_depthwise<R: Runtime>(
             DepthwiseTiling::for_problem(geometry.c, geometry.taps(), lanes)
         }
         DepthwiseStrategy::Fixed(tiling) => tiling,
-    };
+    }
+    .validate()?;
     let DepthwiseTensors { input, weight, out } = tensors;
 
     // The filter, re-laid so the channel is its innermost dim like every other operand's. It has
@@ -267,14 +300,15 @@ pub fn launch_depthwise<R: Runtime>(
         tiling.lines,
         &[&input, &weight, &out],
     );
-    let space = tiling.space(&geometry, lanes, width);
+    let tile_c = tiling.channel_tile(lanes, width)?;
+    let space = tiling.space(&geometry, lanes, tile_c, width);
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and
     // have to be guarded. Per axis, because the guard is real work per access and the axes that
     // need one are rarely the same: a 48x48 map divides evenly by any tile here while a
     // 24-channel block never fills one lane-width.
-    let ragged_c = !geometry.c.is_multiple_of(lanes * width * tiling.chans);
+    let ragged_c = !geometry.c.is_multiple_of(tile_c);
     let ragged_oh = !geometry.oh.is_multiple_of(tiling.rows);
     let ragged_ow = !geometry.ow.is_multiple_of(tiling.cols);
     let [ph, pw] = geometry.padding;
@@ -357,16 +391,29 @@ impl Geometry {
         groups: usize,
     ) -> Result<Self, ConvSetupError> {
         // NHWC throughout: [batch, h, w, channels].
-        let channels = tensors.input.shape[3];
-        if groups != channels || tensors.out.shape[3] != channels {
-            return Err(ConvSetupError::NotDepthwise { groups, channels });
+        let input_channels = tensors.input.shape[3];
+        let output_channels = tensors.out.shape[3];
+        let weight_channels = tensors.weight.shape[0];
+        let weight_group_channels = tensors.weight.shape[3];
+        if groups != input_channels
+            || output_channels != input_channels
+            || weight_channels != input_channels
+            || weight_group_channels != 1
+        {
+            return Err(ConvSetupError::NotDepthwise {
+                groups,
+                input_channels,
+                output_channels,
+                weight_channels,
+                weight_group_channels,
+            });
         }
 
         Ok(Self {
             b: tensors.out.shape[0],
             oh: tensors.out.shape[1],
             ow: tensors.out.shape[2],
-            c: channels,
+            c: input_channels,
             // Burn hands weights as [out_channels, kh, kw, in_channels / groups]; depthwise makes
             // that last axis 1, so the filter is [c, kh, kw] with the channel outermost.
             rh: tensors.weight.shape[1],

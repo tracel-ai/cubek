@@ -55,12 +55,12 @@ impl DepthwiseProblem {
     /// this to the measured time is the number to read — a depthwise pass has too little
     /// arithmetic per byte to be anything but bandwidth-bound, so its ceiling is the device's
     /// copy rate and not its flop rate.
-    pub fn bytes(&self, elem_size: usize) -> f64 {
+    pub fn bytes(&self, elem_size: usize) -> usize {
         let out = self.out_size();
         let elems = self.batch * self.size * self.size * self.channels
             + self.batch * out * out * self.channels
             + self.channels * self.kernel * self.kernel;
-        (elems * elem_size) as f64
+        elems * elem_size
     }
 }
 

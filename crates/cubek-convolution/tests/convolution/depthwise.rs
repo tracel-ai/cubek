@@ -7,7 +7,8 @@
 
 use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_convolution::{
-    ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling, launch_depthwise,
+    ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling,
+    components::ConvSetupError, launch_depthwise,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 
@@ -277,4 +278,59 @@ fn depthwise_strided_weight() {
     }
     .check_with_weight_gap(DepthwiseTiling::default(), 2)
     .unwrap();
+}
+
+/// The filter must carry exactly one channel's filter for every input/output channel. Reject the
+/// mismatch before re-laying the binding under a larger logical shape.
+#[test]
+fn depthwise_rejects_mismatched_weight_shape() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let input_channels = 8;
+
+    let input = TestInput::builder(client.clone(), Shape::new([1, 5, 5, input_channels]))
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    let out = TestInput::builder(client.clone(), Shape::new([1, 5, 5, input_channels]))
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    for (weight_shape, want_weight_channels, want_group_channels) in
+        [([7, 3, 3, 1], 7, 1), ([8, 3, 3, 2], 8, 2)]
+    {
+        let weight = TestInput::builder(client.clone(), Shape::new(weight_shape))
+            .dtype(dtype)
+            .zeros()
+            .generate_without_host_data();
+        let result = launch_depthwise::<TestRuntime>(
+            &client,
+            DepthwiseTensors {
+                input: input.clone().binding(),
+                weight: weight.binding(),
+                out: out.clone().binding(),
+            },
+            ConvolutionArgs::<2> {
+                stride: [1; 2],
+                padding: [1; 2],
+                dilation: [1; 2],
+            },
+            input_channels,
+            dtype,
+            DepthwiseStrategy::Routine,
+        );
+
+        assert!(matches!(
+            result,
+            Err(ConvSetupError::NotDepthwise {
+                groups: 8,
+                input_channels: 8,
+                output_channels: 8,
+                weight_channels,
+                weight_group_channels,
+            }) if weight_channels == want_weight_channels
+                && weight_group_channels == want_group_channels
+        ));
+    }
 }
