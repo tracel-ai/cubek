@@ -7,6 +7,7 @@ use cubecl::{
     features::TypeUsage,
     ir::ElemType,
     prelude::*,
+    std::tensor::TensorHandle,
     zspace::shape,
 };
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
@@ -4932,6 +4933,137 @@ fn run_register_matmul_quant_rhs(
         })
         .collect();
     let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+// ---- the sub-plane fold: LaneShare::Group --------------------------------------
+
+/// The space a rows-in-flight gemv cuts: the plane splits into aligned groups of `GROUP_LANES`,
+/// each group owning one output row and its lanes interleaving `K` between them. Every lane holds
+/// a *partial* of its group's row, so the drain is a segmented reduction — `LaneShare::Group`,
+/// where a whole-plane fold would be `LaneShare::Plane`.
+///
+/// `groups == 1` is the same space at `LaneShare::Plane`, which is the case already covered; the
+/// point here is a plane carrying several cells at once.
+fn lane_group_fold_space(lanes: usize, group_lanes: usize, edge: usize, n: usize) -> Space {
+    let groups = lanes / group_lanes;
+    let unit = |edge: usize, spread: Spread, instances: usize| {
+        Cut::new(
+            edge,
+            Distribution::Spatial {
+                scope: ComputeScope::Unit,
+                spread,
+                coverage: Coverage::Instances(instances),
+            },
+        )
+    };
+    Tiling::new()
+        .extents(&[(M, groups), (N, n), (K, group_lanes * edge)])
+        .instruction(Instruction::registers(edge * n), |l| {
+            l.axis(M, unit(1, Spread::Contiguous, groups))
+                .axis(N, Cut::sequential(n))
+                .axis(K, unit(edge, Spread::Interleaved, group_lanes))
+        })
+        .build()
+}
+
+/// The memory-backed leaf over the segmented fold — the control for
+/// [`register_matmul_promoted_lane_group_fold`]. If this one fails the space itself is wrong and
+/// the promoted result proves nothing.
+#[test]
+fn register_matmul_lane_group_fold() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
+    let (groups, k) = (lanes / group_lanes, group_lanes * edge);
+    let (m, dtype) = (groups, f32::elem_type_native());
+    let space = lane_group_fold_space(lanes, group_lanes, edge, n);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_cpu_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// The same segmented fold through a **promoted** accumulator.
+///
+/// This is the case no other test covers: every promoted test in this file folds either nothing
+/// (`Whole`) or the whole plane (`Plane`). A plane carrying one cell per group has to reduce
+/// within each group and let each group's first lane write *its own row* — and the rows a group
+/// owns are what the `M` cut hands it, which a block built before the walk descends has to be
+/// told rather than assume.
+#[test]
+fn register_matmul_promoted_lane_group_fold() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
+    let (groups, k) = (lanes / group_lanes, group_lanes * edge);
+    let (m, dtype) = (groups, f32::elem_type_native());
+    let space = lane_group_fold_space(lanes, group_lanes, edge, n);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_promoted_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+        dtype,
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// `c == a·b` for the two `arange` operands the fold tests share.
+fn assert_matmul_arange(
+    client: &ComputeClient<TestRuntime>,
+    handle: TensorHandle<TestRuntime>,
+    m: usize,
+    n: usize,
+    k: usize,
+) {
+    let output = HostData::from_tensor_handle(client, handle, HostDataType::F32);
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client.clone(), shape![m, n])
         .custom(expected)
         .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)

@@ -443,6 +443,45 @@ impl Space {
         share
     }
 
+    /// The instance-index weight this space's own axis list cannot see: the product of the
+    /// instance counts of the same-scope axes *inside* `axis* that the partitioner distributes and
+    /// this space does not span.
+    ///
+    /// A projected space is the reason this exists. The instance index is a hardware fact and its
+    /// odometer belongs to the *partitioner* — [`Partitioner::axes`] "keeps every axis of the
+    /// operation, so an output space (`{M, N}`) still names its contraction". An operand that does
+    /// not span a contracted axis still runs on an instance whose index encodes it, so it has to
+    /// divide that axis out to find its own digit. Decoding over the spanned axes alone reads every
+    /// omitted inner axis as weight `1`, which aliases the outer digits onto one value — the same
+    /// list [`lane_share`](Self::lane_share) already reads, for the same reason.
+    ///
+    /// Panics where such an axis carries no comptime instance count: there is nothing to decode
+    /// with, and assuming `1` is exactly the silent aliasing above.
+    pub(crate) fn inner_weight_unspanned(&self, axis: Axis) -> usize {
+        if self.partitioner.is_final() {
+            return 1;
+        }
+        let scope = self.partitioner.distribution(axis).scope();
+        self.partitioner
+            .axes()
+            .iter()
+            .skip_while(|&&a| a != axis)
+            .skip(1)
+            .filter(|&&a| !self.contains(a) && self.partitioner.distribution(a).scope() == scope)
+            .map(|&a| {
+                self.partitioner
+                    .distribution(a)
+                    .coverage()
+                    .instances_const()
+                    .unwrap_or_else(|| panic!(
+                        "Space::inner_weight_unspanned: {a:?} is distributed inside {axis:?} at the \
+                         same scope but this space does not span it, and its instance count is not \
+                         comptime, so {axis:?}'s digit of the instance index cannot be decoded"
+                    ))
+            })
+            .product()
+    }
+
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner.is_final() {
             return LaneShare::Whole;
