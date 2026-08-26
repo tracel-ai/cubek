@@ -1,4 +1,5 @@
 mod attention;
+mod blocked;
 mod coarse;
 mod conv;
 mod depthwise;

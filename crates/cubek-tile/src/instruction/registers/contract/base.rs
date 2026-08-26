@@ -5,6 +5,7 @@ use cubecl::prelude::*;
 
 use super::direct;
 use super::gather;
+use super::shape::ContractShape;
 use crate::*;
 
 /// Run the register instruction over each batch matrix, reading operands through the
@@ -32,8 +33,16 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
+    // several contracted axes still form one `k` edge when the operand carries them as one run,
+    // which is what a partitioned axis is.
+    let flat = comptime!(
+        ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
+            .matrix_groups(&lhs.space, &rhs.space)
+            .is_some()
+    );
     let nd = comptime!(
-        Space::contracted(&[&lhs.space, &rhs.space], &space).len() > 1
+        !flat
             || lhs_gathered
             || rhs_gathered
             || lhs_procedural

@@ -74,6 +74,27 @@ pub(crate) fn concat(leading: &Coords<u32>, trailing: &Coords<u32>) -> CoordsDyn
     out
 }
 
+/// [`concat`] over three groups, which is what a matrix over `[batch…, row…, col…]` assembles.
+#[cube]
+pub(crate) fn concat3(batches: &Coords<u32>, rows: &Coords<u32>, cols: &Coords<u32>) -> CoordsDyn {
+    let mut out = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..batches.len() {
+        out.push(batches.at(p));
+    }
+    #[unroll]
+    for p in 0..rows.len() {
+        out.push(rows.at(p));
+    }
+    #[unroll]
+    for p in 0..cols.len() {
+        out.push(cols.at(p));
+    }
+
+    out
+}
+
 /// Whether every coordinate of `pos` falls inside `shape`.
 #[cube]
 pub(crate) fn within(shape: &Coords<u32>, pos: CoordsDyn) -> bool {

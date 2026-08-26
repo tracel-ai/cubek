@@ -669,14 +669,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
-    /// coordinate is not a physical one, so the only read surface that describes the tile is the
-    /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a
-    /// [`direct`](Projection::direct) operand, and for a fragment or a tensor map, which have no
-    /// buffer to gather from.
+    /// Whether this tile's buffer is addressed through a mapping whose windows may *overlap*: a
+    /// physical cell does not determine the logical position, so the only read surface that
+    /// describes the tile is the N-D one ([`nd`](Tile::nd)) and no window of it is dense.
+    ///
+    /// False for a [`direct`](Projection::direct) operand, and equally for one whose axes
+    /// [partition](Composition::Digits) a physical axis: a partition is a bijection, so its
+    /// windows tile rather than overlap and every dense path still describes it. A fragment or a
+    /// tensor map has no buffer to gather from.
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
-        comptime!(!projection.is_direct())
+        comptime!(projection.composition() == Composition::Affine)
     }
 
     /// Whether this tile evaluates values from coordinates instead of a backing buffer.

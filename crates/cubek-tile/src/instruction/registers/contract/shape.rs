@@ -81,6 +81,38 @@ impl ContractShape {
         }
     }
 
+    /// Whether a 2-D reading describes both operands, and the axes it reads them over.
+    ///
+    /// The question the leaf routes on. A contraction the operand carries as one run of axes has a
+    /// `k` edge — one axis, several partitioning one, or a convolution's taps beside its channels
+    /// — and reads as a matrix. One it does not is read a cell at a time.
+    pub fn matrix_groups(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixGroups, MatrixGroups)> {
+        let lhs_groups = MatrixGroups::find(lhs, self.mr, self.kc)?;
+        let rhs_groups = match self.served > 1 {
+            true => MatrixGroups::find(rhs, self.cols, self.kc)?,
+            false => MatrixGroups::find(rhs, self.kc, self.cols)?,
+        };
+        Some((lhs_groups, rhs_groups))
+    }
+
+    /// Which of the lhs's axes form the `mr x kc` matrix the 2-D nest reads it as.
+    ///
+    /// Asked, not stored: a gathered operand has no matrix at all, which is the whole reason the
+    /// N-D nest exists, and this same shape is what it runs from. An operand whose contracted axis
+    /// is partitioned reads as one `k` edge over several axes, and only the edges say which.
+    pub fn lhs_groups(&self, lhs: &Space) -> MatrixGroups {
+        MatrixGroups::of(lhs, self.mr, self.kc)
+    }
+
+    /// The rhs's twin. A folded step lines it along the contraction, so its matrix is `(col, k)`;
+    /// at one served value it lines along the accumulator and reads `(k, col)`.
+    pub fn rhs_groups(&self, rhs: &Space) -> MatrixGroups {
+        match self.served > 1 {
+            true => MatrixGroups::of(rhs, self.cols, self.kc),
+            false => MatrixGroups::of(rhs, self.kc, self.cols),
+        }
+    }
+
     /// The accumulator's batch axes: everything above the row and the column.
     pub fn batch_extents(&self) -> Vec<usize> {
         (0..self.space.rank() - 2)

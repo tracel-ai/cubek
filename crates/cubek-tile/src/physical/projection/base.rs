@@ -4,7 +4,8 @@
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale, StorageTiling,
+    Axis, Composition, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale,
+    StorageTiling,
 };
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
@@ -414,6 +415,64 @@ impl Projection {
     /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
     /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell,
     /// applies a constant offset, or divides.
+    /// How this operand's logical coordinates sit on its buffer's physical axes: [`Digits`] where
+    /// every physical axis is partitioned by the axes addressing it, so a logical position
+    /// determines a cell and no two share one; [`Affine`] where any axis may overlap.
+    ///
+    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one —
+    /// one axis per physical axis, in order — and a [`Digits`] projection of higher logical rank
+    /// answers the same for the same reason: nothing aliases, every window is a box.
+    ///
+    /// [`Digits`]: Composition::Digits
+    /// [`Affine`]: Composition::Affine
+    pub fn composition(&self) -> Composition {
+        match self
+            .physical
+            .iter()
+            .all(|m| m.composition() == Composition::Digits && m.divisor().is_unit())
+        {
+            true => Composition::Digits,
+            false => Composition::Affine,
+        }
+    }
+
+    /// Refuse a [`Digits`](Composition::Digits) claim the extents contradict: coarsest first, each
+    /// coefficient must be the product of the finer axes' extents, so the terms really partition
+    /// the physical axis instead of overlapping on it.
+    ///
+    /// Checked here rather than at construction because a map holds coefficients and the extents
+    /// live in the space; this is the one place both are in hand.
+    pub fn validate_composition(&self, extent_of: impl Fn(Axis) -> usize) {
+        for (pa, map) in self.physical.iter().enumerate() {
+            let radices = map.claimed_radices();
+            if radices.is_empty() {
+                continue;
+            }
+            assert!(
+                map.offset() == Offset::Static(0),
+                "Projection: physical axis {pa} claims to be partitioned by its axes, but carries \
+                 the offset {:?}; a partition starts at 0",
+                map.offset()
+            );
+            // Finest last, so walk back up multiplying extents: the finest digit steps by one,
+            // and each coarser one steps over everything below it. Only the extents *below* the
+            // coarsest term are ever read, which is what keeps a `Dynamic` top-level axis (whose
+            // size is a runtime fact) out of a comptime check: the identity reads none at all.
+            let mut expected = 1;
+            for (i, (axis, coefficient)) in radices.iter().enumerate().rev() {
+                assert!(
+                    *coefficient == expected,
+                    "Projection: physical axis {pa} claims its axes partition it, so {axis:?} \
+                     must step by {expected} (the extents below it); it steps by {coefficient}"
+                );
+                if i == 0 {
+                    break;
+                }
+                expected *= extent_of(*axis);
+            }
+        }
+    }
+
     pub fn is_invertible(&self) -> bool {
         self.physical.iter().all(|m| {
             m.offset() == Offset::Static(0)
@@ -1079,5 +1138,67 @@ mod tests {
         assert_eq!(p.dynamic_scale_index(0, 1), None);
         assert_eq!(p.dynamic_divisor_index(0), Some(1));
         assert_eq!(p.dynamic_scale_index(1, 0), Some(2));
+    }
+
+    /// A projection is a partition when every one of its axes is, whatever the ranks: three
+    /// logical axes over two physical ones still answers `Digits` when the pair partitions its
+    /// axis, which is what keeps a blocked operand on the dense path.
+    #[test]
+    fn a_partition_of_higher_logical_rank_is_still_dense() {
+        let blocked = Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::digits(&[(B, 32), (R, 1)]),
+            ],
+        );
+        assert_eq!(blocked.composition(), Composition::Digits);
+        assert!(!blocked.is_direct());
+
+        let gathered = Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::affine(&[(B, 32), (R, 1)]),
+            ],
+        );
+        assert_eq!(gathered.composition(), Composition::Affine);
+    }
+
+    /// The radices are checked against the extents, which is the only place the claim can be
+    /// wrong: `⌊k / 32⌋` blocks of 32 need the inner axis to hold exactly 32.
+    #[test]
+    fn a_partition_whose_radices_match_the_extents_is_accepted() {
+        let extents = |axis| match axis {
+            x if x == B => 4,
+            x if x == R => 32,
+            _ => 8,
+        };
+        Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::digits(&[(B, 32), (R, 1)]),
+            ],
+        )
+        .validate_composition(extents);
+    }
+
+    #[test]
+    #[should_panic(expected = "must step by 32")]
+    fn a_partition_whose_radices_contradict_the_extents_is_refused() {
+        let extents = |axis| match axis {
+            x if x == B => 4,
+            x if x == R => 32,
+            _ => 8,
+        };
+        Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::digits(&[(B, 16), (R, 1)]),
+            ],
+        )
+        .validate_composition(extents);
     }
 }

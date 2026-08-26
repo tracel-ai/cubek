@@ -360,6 +360,9 @@ impl<T: Numeric> Tile<T> {
         // padded stage width, which `StridedTileSource` already checked for the specs it builds;
         // this catches hand-built ones too.
         comptime!(projection.validate(vector_size));
+        // A `Digits` claim is about the axes' extents, and this is the one place the projection
+        // and the space are both in hand.
+        comptime!(projection.validate_composition(|axis| space.extent(axis)));
         comptime!(spec.validate_stage_width(vector_size, packing != Packing::Plain));
         let coord_rank = comptime!(projection.coordinate_rank());
         comptime!(assert!(
@@ -1783,9 +1786,10 @@ impl<T: Numeric> MemData<T> {
             comptime!(&space),
             false,
             comptime!(self.store.vector_size),
+            comptime!(MatrixGroups::trailing_pair(&space)),
             i,
         );
-        self.masked_mut::<W, Coords2d, BatchMatrix>(layout)
+        self.masked_mut::<W, Coords2d, GroupedMatrix>(layout)
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
