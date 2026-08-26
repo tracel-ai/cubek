@@ -90,13 +90,54 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
    axis the line runs along is the step's own business — `K` past one served value, the
    accumulator's columns at one.
 
+## The block is an axis
+
+An axis exists when an operand *distinguishes* it. A quantized operand's scales vary over the block
+index and not over the position inside the block, so those are two axes:
+
+```
+axes:   M, N, KB, KI          extent(KB) = K/B,  extent(KI) = B
+
+A (values)   (M, KB, KI)   physical [M, K],   K = digits(KB, KI)
+S (scales)   (M, KB)       physical [M, K/B], direct
+B (rhs)      (KB, KI, N)   physical [K, N],   K = digits(KB, KI)
+C (out)      (M, N)        direct
+```
+
+The scales stop being special: they are the operand that omits `KI`. Invariance is then
+*structural* (omission), not derived — no divisor, no `⌊k/B⌋`, no `ScaleLayout`, and no rule about
+what a line may straddle, because a cut cuts `KB` or cuts `KI` and cannot straddle two axes.
+Depth of the scale hierarchy = number of splits, so two levels is `digits(KBO, KBI, KI)` and
+recursion does the rest.
+
+You split only the axes with a *non-trivial* block: per-tensor and per-row need none (they are pure
+omission), the common quant cases need one, a 2-D block needs two. A split propagates to every
+operand spanning that axis, unquantized ones included — that is the rank of the problem, not
+overhead.
+
+**Landed (phases 0 and 1).** `Composition` names whether a physical axis's terms *tile* it or may
+overlap on it; `digits` claims the first, `affine` the second, and the identity is derived rather
+than claimed. `Projection::validate_composition` checks the claim against the extents where the
+projection and the space first meet. Three gates then stop calling a partition a gather:
+`Tile::gathered` asks the composition; the matrix view takes the groups it reads over
+(`MatrixGroups`) instead of assuming the last two axes, which collapsed `BatchMatrix` and
+`GroupedMatrix` into one layout over a batch prefix, a row group and a column group; and the leaf
+routes on whether those groups *exist* rather than on an axis count. `tests/tile/blocked.rs` pins
+it with no quantization in sight.
+
+Two things fell out: split-K and the two-contracted-axis matmul now take the *direct* nest, because
+their contracted axes do form one `k` edge; and the block-vs-cut alignment rule is now enforced by
+construction rather than by an assert.
+
 ## Next, in order
 
 | # | item | notes |
 |---|---|---|
-| 3 | **the N-D nest** | `memory_scaled` serves the 2-D nest and refuses the rest loudly. It was built once (read the scale at the cell through `cell_read`, no `ScaleSide` needed) and dropped in the port: `gather.rs` split into `gather/` upstream, and the per-cell read is the *degenerate* form anyway — see "the block is an axis" below. Rebuild it against the new module only if something needs it before that lands |
+| 2 | **`Tile::scaled`, and the scaled verb deleted** | a tile whose read multiplies, each side through its own projection: `mm(&x, &w.scaled(&s))`. Under the split `s` does not span `KI`, so its address does not move in the inner loop *structurally* — which was `mm_scaled`'s only advantage. Port `scaled.rs` and `packed.rs` onto it, then delete `mm_scaled`, `mma_scaled`, `ScaleSide` and every `_scaled` leaf twin |
+| 3 | **two levels, and a second blocked axis** | `digits(KBO, KBI, KI)` for mxfp4's shape; `[bm, bn]` blocks splitting `M` and `N` |
 | 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
-| 5 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
+| 5 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
+| 6 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
 
 ### Item 4, surveyed
 
