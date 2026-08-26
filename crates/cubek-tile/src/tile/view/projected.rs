@@ -3,7 +3,7 @@
 //! *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
 //!
 //! Under the direct mapping the two coincide and this layout is never built; the matmul leaves keep
-//! reading through [`BatchMatrix`](super::BatchMatrix). Under a gathering mapping they differ in
+//! reading through [`GroupedMatrix`](super::GroupedMatrix). Under a gathering mapping they differ in
 //! rank: a 2-D convolution input carries five logical axes over three physical ones, and two
 //! logical coordinates (an output step and a tap) address the same physical axis.
 //!
@@ -24,7 +24,7 @@ use crate::*;
 /// The layouts a windowed tile re-views through: any [`Layout`] from a coordinate `C` onto the
 /// window's `CoordsDyn`, cloneable in both worlds so the transparent read can address the values
 /// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
-/// a new concept; [`BatchMatrix`](super::BatchMatrix) and [`AxisProjection`] are the two the leaves
+/// a new concept; [`GroupedMatrix`](super::GroupedMatrix) and [`AxisProjection`] are the two the leaves
 /// read through, and [`StepUp`] rides the same bounds under a fill.
 pub trait LogicalLayout:
     Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>

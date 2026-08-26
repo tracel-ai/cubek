@@ -1,6 +1,6 @@
 //! The 2-D matrix views over a [`Tile`]. Two [`Layout`]s re-view the tile's N-D [`Space`] as a
-//! plain [`Coords2d`] `(row, col)` matrix: [`BatchMatrix`] pins the leading axes and exposes the
-//! trailing two, [`GroupedMatrix`] flattens every axis into the two edges. [`Tile::matrix`] and
+//! plain [`Coords2d`] `(row, col)` matrix: [`GroupedMatrix`] pins a batch prefix and exposes a
+//! row group and a column group, each spanning as many axes as its edge needs. [`Tile::matrix`] and
 //! friends then wrap the result as a [`MatrixView`] (a [`MaskedView`] carrying the comptime
 //! overhang-`check` flag). Used by the matmul leaves and [`copy_2d()`].
 
@@ -11,7 +11,7 @@ use cubecl::{
 
 use crate::*;
 
-/// A masked 2-D ([`BatchMatrix`]) view: one batch matrix of a [`Tile`].
+/// A masked 2-D ([`GroupedMatrix`]) view: one matrix of a [`Tile`].
 pub type MatrixView<'a, T> = MaskedView<'a, T, Coords2d>;
 /// The mutable twin of [`MatrixView`].
 pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
@@ -38,11 +38,9 @@ pub struct GroupedMatrix {
     tile_shape: Coords2d,
 }
 
-/// A 2-D matrix view over a projected tile.
-pub type ProjectedBatchMatrix = Projected<GroupedMatrix>;
-
-/// What an mma fragment reads its stage through: a [`GroupedMatrix`] over the operand's mapping.
-pub type ProjectedGroupedMatrix = Projected<GroupedMatrix>;
+/// A [`GroupedMatrix`] over the operand's mapping: what every 2-D reader of a tile sees, from the
+/// matmul leaves to an mma fragment's stage.
+pub type ProjectedMatrix = Projected<GroupedMatrix>;
 
 #[cube]
 impl GroupedMatrix {
@@ -59,17 +57,6 @@ impl GroupedMatrix {
             col_extents,
             tile_shape: (rows as u32, cols as u32).runtime(),
         }
-    }
-
-    /// [`new`](Self::new) over a tile's whole box: no batch prefix, every axis in one group or the
-    /// other. What an mma fragment reads.
-    pub fn whole(
-        row_extents: Coords<u32>,
-        col_extents: Coords<u32>,
-        #[comptime] rows: usize,
-        #[comptime] cols: usize,
-    ) -> Self {
-        GroupedMatrix::new(Coords::<u32>::new(), row_extents, col_extents, rows, cols)
     }
 }
 
@@ -152,13 +139,46 @@ impl MatrixGroups {
             row_split -= 1;
             middle *= space.extent_at(row_split);
         }
-        match middle == rows {
-            true => Some(MatrixGroups {
-                row_split,
-                col_split,
-            }),
-            false => None,
+        if middle != rows {
+            return None;
         }
+        // A degenerate leading axis multiplies nothing, so it belongs to the row group rather than
+        // to a batch prefix that would pin it to the same `0`. Absorbing it keeps one answer per
+        // question: without this a rank-3 box with a `1` on top groups two ways.
+        while row_split > 0 && space.extent_at(row_split - 1) == 1 {
+            row_split -= 1;
+        }
+        Some(MatrixGroups {
+            row_split,
+            col_split,
+        })
+    }
+
+    /// [`of`](Self::of) over a tile's *whole* box, no batch prefix: every axis lands in one group
+    /// or the other, and the column group holds the innermost (vectorized) axis whole. What an mma
+    /// fragment reads, where `cols` is stated in scalars and the view serves it as lines.
+    pub fn whole(space: &Space, rows: usize, cols: usize, vector_size: usize) -> Self {
+        let rank = space.rank();
+        let groups = MatrixGroups::of(space, rows, cols);
+        assert!(
+            groups.row_split == 0,
+            "MatrixGroups::whole: this tile has axes above its {rows} rows, so its box is a \
+             batch of matrices rather than one"
+        );
+        // The view serves lines along `col`, so the vectorized axis has to land in the column
+        // group, whole: the column edge and the innermost extent are both counted in lines, and a
+        // partial line would divide one of them to a different group product.
+        assert!(
+            groups.col_split < rank,
+            "MatrixGroups::whole: the innermost (vectorized) axis must be part of the column group"
+        );
+        let innermost = space.extent_at(rank - 1);
+        assert!(
+            innermost.is_multiple_of(vector_size),
+            "MatrixGroups::whole: the innermost extent {innermost} is not a whole number of \
+             {vector_size}-wide lines"
+        );
+        groups
     }
 
     /// [`find`](Self::find) where the caller has already established that the matrix exists.
@@ -255,46 +275,9 @@ pub(crate) fn batch_matrix(
     )
 }
 
-/// Where the space's axes split into a leading group whose extents multiply to `rows` and a
-/// trailing group whose extents multiply to `cols`, both scalar: the position the trailing group
-/// starts at.
-///
-/// The two edges pin the split, so a caller states the matrix it wants rather than how the tile's
-/// axes are grouped into it. A `(rows, cols)` pair that is not a face of this box is a mismatched
-/// fragment, caught here rather than read out of bounds.
-pub(crate) fn matrix_split(space: &Space, rows: usize, cols: usize, vector_size: usize) -> usize {
-    let rank = space.rank();
-    let mut split = rank;
-    let mut trailing = 1;
-    // Find the split point that matches the column count.
-    while split > 0 && trailing < cols {
-        split -= 1;
-        trailing *= space.extent_at(split);
-    }
-    let leading: usize = (0..split).map(|p| space.extent_at(p)).product();
-    assert!(
-        trailing == cols && leading == rows,
-        "matrix_split: no split of this tile's axes gives a {rows}x{cols} matrix (the trailing \
-         axes multiply to {trailing}, the leading ones to {leading})"
-    );
-    // The innermost axis is the vectorized one, and the view serves lines along `col`, so it has
-    // to land in the trailing group, whole: the column edge and the innermost extent are both
-    // counted in lines, and a partial line would divide one of them to a different group product.
-    assert!(
-        split < rank,
-        "matrix_split: the innermost (vectorized) axis must be part of the column group"
-    );
-    let innermost = space.extent_at(rank - 1);
-    assert!(
-        innermost.is_multiple_of(vector_size),
-        "matrix_split: the innermost extent {innermost} is not a whole number of {vector_size}-wide lines"
-    );
-    split
-}
-
-/// The tile's whole logical box as one `rows x cols` matrix, its axes split by
-/// [`matrix_split`]. `cols` is scalar, as a fragment states it; the view serves lines, so the
-/// column edge and the innermost extent both divide by the width.
+/// The tile's whole logical box as one `rows x cols` matrix, its axes grouped by
+/// [`MatrixGroups::whole`]. `cols` is scalar, as a fragment states it; the view serves lines, so
+/// the column edge and the innermost extent both divide by the width.
 #[cube]
 pub(crate) fn grouped_matrix(
     #[comptime] space: &Space,
@@ -303,9 +286,10 @@ pub(crate) fn grouped_matrix(
     #[comptime] cols: usize,
 ) -> GroupedMatrix {
     let rank = comptime!(space.rank());
-    let split = comptime!(matrix_split(space, rows, cols, vector_size));
+    let split = comptime!(MatrixGroups::whole(space, rows, cols, vector_size).col_split);
 
-    GroupedMatrix::whole(
+    GroupedMatrix::new(
+        Coords::<u32>::new(),
         const_coords(comptime!(line_extents(space, vector_size, 0, split))),
         const_coords(comptime!(line_extents(space, vector_size, split, rank))),
         rows,
@@ -324,10 +308,10 @@ pub(crate) fn projected_batch_matrix(
     #[comptime] vector_size: usize,
     #[comptime] groups: MatrixGroups,
     i: usize,
-) -> ProjectedBatchMatrix {
+) -> ProjectedMatrix {
     // A partition is not a gather: its windows tile, so the window still sizes every logical axis.
     let gathered = comptime!(projection.composition() == Composition::Affine);
-    ProjectedBatchMatrix::new(
+    ProjectedMatrix::new(
         batch_matrix(bound, comptime!(&space), gathered, vector_size, groups, i),
         axis_projection(comptime!(space), comptime!(projection), map, vector_size),
     )
@@ -343,8 +327,8 @@ pub(crate) fn projected_grouped_matrix(
     #[comptime] vector_size: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
-) -> ProjectedGroupedMatrix {
-    ProjectedGroupedMatrix::new(
+) -> ProjectedMatrix {
+    ProjectedMatrix::new(
         grouped_matrix(comptime!(&space), vector_size, rows, cols),
         axis_projection(comptime!(space), comptime!(projection), map, vector_size),
     )
@@ -367,7 +351,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(MatrixGroups::trailing_pair(&self.space)),
                     i,
                 );
-                g.masked::<W, Coords2d, ProjectedBatchMatrix>(layout, comptime!(Guard::Checked))
+                g.masked::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix: a plane tile has no memory view")
@@ -396,7 +380,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(MatrixGroups::trailing_pair(&self.space)),
                     i,
                 );
-                g.masked_mut::<W, Coords2d, ProjectedBatchMatrix>(layout)
+                g.masked_mut::<W, Coords2d, ProjectedMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix_mut: a plane tile has no memory view")
@@ -457,7 +441,7 @@ impl<T: Numeric> Tile<T> {
                     groups,
                     i,
                 );
-                g.matrix_transparent::<I, WP, W, ProjectedBatchMatrix>(layout)
+                g.matrix_transparent::<I, WP, W, ProjectedMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::matrix_transparent: a plane tile has no memory view")
@@ -519,7 +503,7 @@ impl<T: Numeric> Tile<T> {
                     rows,
                     cols,
                 );
-                g.matrix_transparent::<I, WP, W, ProjectedGroupedMatrix>(layout)
+                g.matrix_transparent::<I, WP, W, ProjectedMatrix>(layout)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::fragment_matrix: a plane tile has no memory view")
@@ -546,7 +530,7 @@ mod tests {
     #[test]
     fn a_rank_two_operand_splits_between_its_axes() {
         let s = flat_space(&[(OH, 8), (CI, 4)]);
-        assert_eq!(matrix_split(&s, 8, 4, 1), 1);
+        assert_eq!(MatrixGroups::whole(&s, 8, 4, 1).col_split, 1);
     }
 
     /// The convolution shape: the trailing *two* axes are the contraction, so `k` is their
@@ -554,14 +538,14 @@ mod tests {
     #[test]
     fn a_contraction_over_two_axes_splits_before_both() {
         let s = flat_space(&[(OH, 8), (RH, 2), (CI, 4)]);
-        assert_eq!(matrix_split(&s, 8, 8, 1), 1);
+        assert_eq!(MatrixGroups::whole(&s, 8, 8, 1).col_split, 1);
     }
 
     /// Both edges spanning several axes, which is what a 2-D convolution's input needs.
     #[test]
     fn both_groups_may_span_several_axes() {
         let s = flat_space(&[(OH, 3), (RH, 4), (CI, 2)]);
-        assert_eq!(matrix_split(&s, 12, 2, 2), 2);
+        assert_eq!(MatrixGroups::whole(&s, 12, 2, 2).col_split, 2);
     }
 
     /// The smallest column group that reaches `cols` wins, so a degenerate leading axis stays in
@@ -570,15 +554,15 @@ mod tests {
     #[test]
     fn a_degenerate_leading_axis_stays_in_the_row_group() {
         let s = flat_space(&[(OH, 1), (RH, 2), (CI, 4)]);
-        assert_eq!(matrix_split(&s, 1, 8, 1), 1);
+        assert_eq!(MatrixGroups::whole(&s, 1, 8, 1).col_split, 1);
     }
 
     /// No split gives the asked-for edges: the extents multiply to 32, and 8x8 is not a face.
     #[test]
-    #[should_panic(expected = "no split of this tile's axes")]
+    #[should_panic(expected = "no grouping of this tile's axes")]
     fn a_mismatched_fragment_is_refused() {
         let s = flat_space(&[(OH, 8), (RH, 2), (CI, 2)]);
-        matrix_split(&s, 8, 8, 1);
+        MatrixGroups::whole(&s, 8, 8, 1);
     }
 
     /// The column group must contain the innermost axis: the view serves lines along `col`, so a
@@ -587,7 +571,7 @@ mod tests {
     #[should_panic(expected = "innermost (vectorized) axis")]
     fn the_vectorized_axis_must_land_in_the_column_group() {
         let s = flat_space(&[(OH, 8), (CI, 4)]);
-        matrix_split(&s, 32, 1, 1);
+        MatrixGroups::whole(&s, 32, 1, 1);
     }
 
     /// The column edge and the innermost extent are both counted in lines, so a width that does
@@ -596,6 +580,6 @@ mod tests {
     #[should_panic(expected = "whole number of 4-wide lines")]
     fn a_partial_innermost_line_is_refused() {
         let s = flat_space(&[(OH, 8), (CI, 6)]);
-        matrix_split(&s, 8, 6, 4);
+        MatrixGroups::whole(&s, 8, 6, 4);
     }
 }

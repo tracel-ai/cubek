@@ -218,10 +218,10 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
-/// [`mma_leaf`] with the lhs scaled: the memory accumulator alone, which is the form that runs the
-/// software instruction and so the only one whose step has a scale to apply. A fragment accumulator
-/// contracts through a hardware instruction that takes two operands and no scales; that is the
-/// scaled-mma rung, a different instruction, not this one under a flag.
+/// [`mma_leaf`] with one operand scaled: the two accumulators that run the software instruction,
+/// in memory or promoted to registers, which are the forms whose step has a scale to apply. A
+/// fragment accumulator contracts through a hardware instruction that takes two operands and no
+/// scales, so a scaled contraction there is a different instruction, not this one under a flag.
 #[cube]
 pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     acc: &mut Tile<E>,

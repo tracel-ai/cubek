@@ -1512,7 +1512,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
-    /// so the leaf masks without being asked. `layout` is a [`BatchMatrix`] for the 2-D matmul
+    /// so the leaf masks without being asked. `layout` is a [`GroupedMatrix`] for the 2-D matmul
     /// leaves and an [`AxisProjection`] for a gathered N-D read.
     pub(crate) fn masked<W: Size, C: Coordinates, L: TileLayout<C>>(
         &self,
@@ -1706,8 +1706,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves
-    /// read. `L` is [`BatchMatrix`] for a direct operand and
-    /// [`ProjectedBatchMatrix`](super::ProjectedBatchMatrix) for a gathered one; both answer the
+    /// read. `L` is [`GroupedMatrix`] for a direct operand and
+    /// [`ProjectedMatrix`](super::ProjectedMatrix) for a gathered one; both answer the
     /// same [`Coords2d`] surface.
     pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size, L: TileLayout<Coords2d>>(
         &self,
@@ -2763,7 +2763,7 @@ impl Layout for GmemLayout {
 
 /// The layout [`Tile::at`] applies: shift every axis to `origin` and crop it to
 /// `extent`. Same rank as the source; the rank-reducing 2-D slice is
-/// [`BatchMatrix`](super::BatchMatrix).
+/// [`GroupedMatrix`](super::GroupedMatrix).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Window {
