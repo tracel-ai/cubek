@@ -7,7 +7,7 @@
 mod coordinate;
 mod filter;
 mod geometry;
-mod kernel;
+mod compute;
 mod launch;
 mod space;
 

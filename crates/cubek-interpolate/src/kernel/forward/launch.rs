@@ -2,7 +2,7 @@ use super::{
     coordinate::Rational,
     filter::{BicubicFilter, BilinearFilter, Lanczos3Filter, NearestFilter, SeparableFilterFamily},
     geometry::TileGeometry,
-    kernel::interpolate_tile_kernel,
+    compute::interpolate_tile_kernel,
     space::{self, CHANNEL},
 };
 use crate::{
@@ -78,7 +78,7 @@ impl TileConfig {
 ///
 /// The config is required: this path is under evaluation and every choice it makes is meant to be
 /// stated by whatever is measuring it.
-pub fn interpolate_tile_launch<R: Runtime>(
+pub(crate) fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
