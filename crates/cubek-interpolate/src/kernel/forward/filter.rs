@@ -2,8 +2,8 @@ use crate::definition::{InterpolateMode, ModeProperties, mode_properties};
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 use cubek_tile::{
-    AffineCoordinate, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe,
-    SeparableProduct, Sum, TapMask,
+    AffineCoordinate, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe, SeparableProduct,
+    Sum, TapMask,
 };
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
@@ -103,5 +103,24 @@ impl<E: Float> SeparableFilter<E> for Lanczos3Filter {
             coordinate: distance,
             lobes: 3,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_mode_properties<F: SeparableFilterFamily>(mode: InterpolateMode) {
+        assert_eq!(mode_properties(mode), F::mode_properties());
+    }
+
+    #[test]
+    fn filters_use_the_mode_properties() {
+        assert_mode_properties::<NearestFilter>(InterpolateMode::Nearest(
+            crate::definition::NearestMode::Exact,
+        ));
+        assert_mode_properties::<BilinearFilter>(InterpolateMode::Bilinear);
+        assert_mode_properties::<BicubicFilter>(InterpolateMode::Bicubic);
+        assert_mode_properties::<Lanczos3Filter>(InterpolateMode::Lanczos3);
     }
 }
