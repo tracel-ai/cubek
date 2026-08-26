@@ -38,7 +38,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     // which is what a partitioned axis is.
     let flat = comptime!(
         ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
-            .matrix_groups(&lhs.space, &rhs.space)
+            .matrix_axes(&lhs.space, &rhs.space)
             .is_some()
     );
     let nd = comptime!(

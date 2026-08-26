@@ -41,7 +41,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         &lhs.space, &rhs.space, space, served, lw, rw, aw,
     ));
     comptime!(assert!(
-        shape.matrix_groups(&lhs.space, &rhs.space).is_some(),
+        shape.matrix_axes(&lhs.space, &rhs.space).is_some(),
         "contract: the 2-D nest reads each operand as one matrix, and no grouping of these axes \
          gives one; the N-D nest reads them a cell at a time"
     ));
@@ -79,16 +79,16 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let aw = comptime!(shape.aw);
     let matrices = comptime!(shape.matrices());
 
-    let lhs_groups = comptime!(shape.lhs_groups(&lhs.space));
-    let rhs_groups = comptime!(shape.rhs_groups(&rhs.space));
+    let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_groups, mat);
-        let rhs_mat = rhs.matrix_packed::<V>(rhs_groups, mat);
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
         // The contraction's own algebra: its products accumulate under the semiring's add.
         let mut acc_view = acc.matrix_accumulate::<A>(
             mat,
@@ -315,17 +315,17 @@ fn nest_scaled<
     let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
     let lane_fanout = comptime!(config.lane_fanout);
 
-    let lhs_groups = comptime!(MatrixGroups::of(&lhs.space, mr, kc));
-    let rhs_groups = comptime!(match served > 1 {
-        true => MatrixGroups::of(&rhs.space, cols, kc),
-        false => MatrixGroups::of(&rhs.space, kc, cols),
+    let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
+    let rhs_axes = comptime!(match served > 1 {
+        true => MatrixAxes::of(&rhs.space, cols, kc),
+        false => MatrixAxes::of(&rhs.space, kc, cols),
     });
-    let scales_groups = comptime!(MatrixGroups::trailing_pair(&scales.space));
+    let scales_axes = comptime!(MatrixAxes::trailing_pair(&scales.space));
 
     for mat in 0..matrices {
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_groups, mat);
-        let rhs_mat = rhs.matrix_packed::<V>(rhs_groups, mat);
-        let scales_mat = scales.matrix_packed::<S>(scales_groups, mat);
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
+        let scales_mat = scales.matrix_packed::<S>(scales_axes, mat);
         let mut acc_view =
             acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
 

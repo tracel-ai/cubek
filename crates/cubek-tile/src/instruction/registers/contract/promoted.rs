@@ -59,11 +59,11 @@ impl<T: Numeric> RegisterData<T> {
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
-        let lhs_groups = comptime!(MatrixGroups::of(&lhs.space, mr, kc));
-        let rhs_groups = comptime!(MatrixGroups::of(&rhs.space, kc, cols));
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_groups, 0usize);
+        let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
+        let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
         // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
-        let rhs_mat = rhs.matrix_packed::<RA>(rhs_groups, 0usize);
+        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
@@ -126,12 +126,12 @@ impl<T: Numeric> RegisterData<T> {
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
-        let lhs_groups = comptime!(MatrixGroups::of(&lhs.space, mr, kc));
-        let rhs_groups = comptime!(MatrixGroups::of(&rhs.space, kc, cols));
-        let scales_groups = comptime!(MatrixGroups::trailing_pair(&scales.space));
-        let lhs_mat = lhs.matrix_packed::<L>(lhs_groups, 0usize);
-        let rhs_mat = rhs.matrix_packed::<RA>(rhs_groups, 0usize);
-        let scales_mat = scales.matrix_packed::<S>(scales_groups, 0usize);
+        let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
+        let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
+        let scales_axes = comptime!(MatrixAxes::trailing_pair(&scales.space));
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
+        let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
+        let scales_mat = scales.matrix_packed::<S>(scales_axes, 0usize);
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
