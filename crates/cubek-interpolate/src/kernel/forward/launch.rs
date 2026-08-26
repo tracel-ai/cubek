@@ -86,6 +86,12 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     dtype: ElemType,
     config: InterpolateConfig,
 ) -> Result<(), InterpolateError> {
+    if config.input_residence == Residence::Smem
+        && client.properties().hardware.num_cpu_cores.is_some()
+    {
+        return Err(InterpolateError::SharedMemoryUnsupportedOnCpu);
+    }
+
     let geometry = config.geometry(
         output.shape[3],
         client.properties().hardware.plane_size_max as usize,
@@ -130,6 +136,18 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     let row = Rational::of(get_transform(input_h, output_h, options));
     let col = Rational::of(get_transform(input_w, output_w, options));
     let lanes = client.properties().hardware.plane_size_max as usize;
+
+    // Cheap to check before any of the space/vectorization work below: a cube this wide is
+    // refused outright rather than built and then rejected by the device at dispatch.
+    let max_units = client.properties().hardware.max_units_per_cube as usize;
+    let units_per_cube = geometry.planes_per_cube * lanes;
+    if units_per_cube > max_units {
+        return Err(InterpolateError::UnitsPerCubeExceeded {
+            requested: units_per_cube,
+            available: max_units,
+        });
+    }
+
     let (space, in_operand) = space::interpolate_space(
         output.shape[0],
         output_h,

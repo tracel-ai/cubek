@@ -10,7 +10,6 @@ use cubecl::{
     zspace::Shape,
 };
 use cubek_test_utils::{RunSamples, TestInput};
-use cubek_tile::Residence;
 
 use crate::{
     definition::{InterpolateCost, InterpolateProblem},
@@ -27,23 +26,7 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
 
-    let hardware = &client.properties().hardware;
-    let is_cpu = hardware.num_cpu_cores.is_some();
-
-    if is_cpu && strategy.input_residence == Residence::Smem {
-        return Err("interpolation shared memory strategy is not used on CPU".to_string());
-    }
-
     let dtype = f32::elem_type_native();
-
-    let lanes = hardware.plane_size_max as usize;
-    let units_per_cube = strategy.planes_per_cube * lanes;
-    if units_per_cube > hardware.max_units_per_cube as usize {
-        return Err(format!(
-            "kernel units per cube ({units_per_cube}) exceeds device max ({})",
-            hardware.max_units_per_cube
-        ));
-    }
 
     let bench = InterpolateBench {
         problem: problem.clone(),

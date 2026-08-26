@@ -10,6 +10,12 @@ pub enum InterpolateError {
     )]
     SharedMemoryLimitExceeded { requested: usize, available: usize },
 
+    #[error("Shared memory residence is not supported on CPU")]
+    SharedMemoryUnsupportedOnCpu,
+
+    #[error("Requested {requested} units per cube exceeds the device limit of {available} units")]
+    UnitsPerCubeExceeded { requested: usize, available: usize },
+
     #[error(
         "Interpolate expects 4D tensors (NHWC), but got input rank {input} and output rank {output}"
     )]
