@@ -172,7 +172,12 @@ impl Projection {
             &self
                 .axes
                 .iter()
-                .map(|&axis| self.carriers(axis).len())
+                .map(|&axis| match self.addresses(axis) {
+                    // A broadcast axis is spread over no physical axis, which is not a tiling of
+                    // it: one fragment, the same answer an untiled axis gives.
+                    false => 1,
+                    true => self.carriers(axis).len(),
+                })
                 .collect::<Vec<_>>(),
         )
     }
@@ -218,6 +223,13 @@ impl Projection {
         );
         let finer = carriers.iter().copied().filter(|&q| q > pa).collect();
         (finer, (carriers[0] != pa).then_some(pa))
+    }
+
+    /// Whether this operand addresses `axis` at all. An axis it spans but maps to nothing is a
+    /// *broadcast*: the operand is defined over that axis and constant along it, which is how one
+    /// scale covers a block and how a per-row bias covers a row.
+    pub fn addresses(&self, axis: Axis) -> bool {
+        self.physical.iter().any(|m| m.addresses(axis))
     }
 
     /// The physical axes carrying `axis`, in buffer order: one entry unless the axis is
@@ -506,21 +518,27 @@ impl Projection {
         // would mix lines into an element count.
         if vector_size > 1 {
             let innermost = self.axes[self.axes.len() - 1];
+            let last = &self.physical[self.physical.len() - 1];
+            // A partition steps its finest digit by one, which is the same arithmetic the line
+            // count needs: consecutive positions along that axis are consecutive cells, and the
+            // coarser digits hold still across a line. A gather has to be the identity outright.
+            let steps_by_lines = match last.composition() {
+                Composition::Disjoint => last.terms().last().map(|t| t.axis) == Some(innermost),
+                Composition::Overlapping => last.is_identity(innermost),
+            };
             assert!(
-                self.physical[self.physical.len() - 1].is_identity(innermost),
-                "Projection: the innermost physical axis must be the operand's last logical axis \
-                 at coefficient 1 (it is addressed in vector lines)"
+                steps_by_lines,
+                "Projection: the innermost physical axis must step by the operand's last logical \
+                 axis at coefficient 1 (it is addressed in vector lines)"
             );
         }
         for &axis in self.axes.iter() {
+            // An axis addressing nothing is a broadcast: the operand is defined over it and
+            // constant along it. A gathered operand must be untiled gmem, so an axis it *does*
+            // address maps to exactly one physical axis.
             let count = self.physical.iter().filter(|m| m.addresses(axis)).count();
             assert!(
-                count > 0,
-                "Projection: logical axis {axis:?} addresses no physical axis"
-            );
-            // A gathered operand must be untiled gmem, so each logical axis can map to at most one physical axis.
-            assert!(
-                count == 1,
+                count <= 1,
                 "Projection: logical axis {axis:?} addresses several physical axes, so it is \
                  either storage-tiled (a gathered operand must be untiled gmem) or read off two \
                  places at once"
@@ -648,14 +666,20 @@ mod tests {
         .validate(4);
     }
 
+    /// An axis addressing nothing is a *broadcast*, not a mistake: the operand is defined over it
+    /// and constant along it, which is what lets one scale cover a block of the values beside it.
+    ///
+    /// Nothing distinguishes it from forgetting to map the axis, and that is the trade: omission
+    /// is the design's own word for invariance, so the spelling has to mean it.
     #[test]
-    #[should_panic(expected = "addresses no physical axis")]
-    fn every_axis_must_address_a_physical_axis() {
-        Projection::new(
+    fn an_axis_addressing_nothing_is_a_broadcast() {
+        let p = Projection::new(
             &[A, R, B],
             &[PhysicalAxisMap::affine(&[(A, 2)]), PhysicalAxisMap::of(B)],
-        )
-        .validate(4);
+        );
+        p.validate(4);
+        assert!(!p.addresses(R));
+        assert!(p.addresses(A) && p.addresses(B));
     }
 
     /// A plain projection is never constrained: storage tiling is exactly what it is for.

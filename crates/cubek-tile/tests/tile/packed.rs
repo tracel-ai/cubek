@@ -18,7 +18,9 @@ use cubek_tile::*;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
-const K: Axis = Axis(2);
+/// The contraction as the two axes a scale block makes of it: which block, and where inside it.
+const KB: Axis = Axis(2);
+const KI: Axis = Axis(3);
 
 /// Pack `values` into words, `32 / bits` per word, low field first: what a q4 tensor holds.
 /// Eight lines, no scheme.
@@ -246,33 +248,42 @@ fn run_matmul(field: QuantValue) {
         .zeros()
         .generate_without_host_data();
 
-    // One scale per `(row, block of K)`: `⌊k / BLOCK⌋` along the contracted axis.
+    // One scale per `(row, block)`: the operand carries `KI` and addresses nothing with it.
     let scales_spec = TileSpec::new(Projection::new(
-        &[M, K],
-        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(K).over(BLOCK)],
+        &[M, KB, KI],
+        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
     ));
-    // The K cut is the packed line, so one line is one word and never straddles a scale block.
+    // A region sits inside one block, and the packed line is one word of it.
     let space = Tiling::new()
-        .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .extents(&[(M, ROWS), (N, COLS), (KB, BLOCKS), (KI, BLOCK)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(ROWS))
                 .axis(N, Cut::sequential(COLS))
-                .axis(K, Cut::sequential(factor))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(factor))
         })
         .build()
         .with_instruction(Instruction::registers(16));
 
+    let contracted = PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)]);
     packed_matmul::launch::<TestRuntime>(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]).packed(field),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), contracted.clone()],
+            ))
+            .packed(field),
         ),
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[K, N]),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[contracted, PhysicalAxisMap::of(N)],
+            )),
         ),
         TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), scales_spec),
         TileArgLaunch::new(
@@ -368,23 +379,25 @@ fn run_matmul_rhs(field: QuantValue, bn: usize) {
         .zeros()
         .generate_without_host_data();
 
+    // The contraction splits, because that is what the scales need an axis for. The columns keep
+    // the rational spelling: splitting an axis the *accumulator* spans needs the output's edges
+    // stated, which nothing does yet.
     let scales_spec = TileSpec::new(Projection::new(
-        &[K, N],
-        &[
-            PhysicalAxisMap::of(K).over(BLOCK_K),
-            PhysicalAxisMap::of(N).over(bn),
-        ],
+        &[KB, KI, N],
+        &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
     ));
     let space = Tiling::new()
-        .extents(&[(M, ROWS), (N, cols), (K, DEPTH)])
+        .extents(&[(M, ROWS), (N, cols), (KB, BLOCKS_K), (KI, BLOCK_K)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(ROWS))
                 .axis(N, Cut::sequential(cols))
-                .axis(K, Cut::sequential(BLOCK_K))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(BLOCK_K))
         })
         .build()
         .with_instruction(Instruction::registers(16));
 
+    let contracted = PhysicalAxisMap::disjoint(&[(KB, BLOCK_K), (KI, 1)]);
     packed_matmul_rhs::launch::<TestRuntime>(
         &client,
         space.cube_count(),
@@ -392,11 +405,18 @@ fn run_matmul_rhs(field: QuantValue, bn: usize) {
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), contracted.clone()],
+            )),
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[K, N]).packed(field),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[contracted, PhysicalAxisMap::of(N)],
+            ))
+            .packed(field),
         ),
         TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), scales_spec),
         TileArgLaunch::new(
@@ -490,18 +510,20 @@ fn an_i8_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     let scales_spec = TileSpec::new(Projection::new(
-        &[M, K],
-        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(K).over(BLOCK)],
+        &[M, KB, KI],
+        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
     ));
     let space = Tiling::new()
-        .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .extents(&[(M, ROWS), (N, COLS), (KB, BLOCKS), (KI, BLOCK)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(ROWS))
                 .axis(N, Cut::sequential(COLS))
-                .axis(K, Cut::sequential(BLOCK))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(BLOCK))
         })
         .build()
         .with_instruction(Instruction::registers(16));
+    let contracted = PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)]);
 
     native_matmul::launch::<TestRuntime>(
         &client,
@@ -509,11 +531,17 @@ fn an_i8_operand_contracts_against_its_scales() {
         space.cube_dim(&client),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), contracted.clone()],
+            )),
         ),
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[K, N]),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[contracted, PhysicalAxisMap::of(N)],
+            )),
         ),
         TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), scales_spec),
         TileArgLaunch::new(
@@ -581,21 +609,20 @@ fn run_gemv(field: QuantValue) {
         .generate_without_host_data();
 
     let scales_spec = TileSpec::new(Projection::new(
-        &[K, N],
-        &[
-            PhysicalAxisMap::of(K).over(BLOCK_K),
-            PhysicalAxisMap::of(N).over(bn),
-        ],
+        &[KB, KI, N],
+        &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
     ));
     let space = Tiling::new()
-        .extents(&[(M, 1), (N, cols), (K, DEPTH)])
+        .extents(&[(M, 1), (N, cols), (KB, BLOCKS_K), (KI, BLOCK_K)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(1))
                 .axis(N, Cut::cube(CubeAxis::X, bn))
-                .axis(K, Cut::sequential(BLOCK_K))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(BLOCK_K))
         })
         .build()
         .with_instruction(Instruction::registers(16));
+    let contracted = PhysicalAxisMap::disjoint(&[(KB, BLOCK_K), (KI, 1)]);
 
     // One entry per level: the accumulator opens at the outermost and lives to the leaf.
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
@@ -608,11 +635,18 @@ fn run_gemv(field: QuantValue) {
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), contracted.clone()],
+            )),
         ),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
-            TileSpec::direct(&[K, N]).packed(field),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[contracted, PhysicalAxisMap::of(N)],
+            ))
+            .packed(field),
         ),
         TileArgLaunch::new(s_tensor.binding().into_tensor_arg(), scales_spec),
         TileArgLaunch::new(

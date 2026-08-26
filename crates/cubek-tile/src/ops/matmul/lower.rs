@@ -287,8 +287,8 @@ impl<E: Numeric> PlaneTile<E> {
                 d.mma(lhs, rhs)
             }
             PlaneTile::Register(d) => {
-                strided_2d(lhs, rhs, out);
-                d.mma(lhs, rhs, semiring)
+                strided_2d(lhs, rhs, comptime!(out.clone()));
+                d.mma(lhs, rhs, out, semiring)
             }
         }
     }
@@ -331,18 +331,26 @@ fn hardware_semiring(#[comptime] semiring: Semiring) {
     ));
 }
 
-/// Asserts that operands are not gathered and have a single contracted axis.
+/// Asserts that operands are not gathered and read as one matrix each.
+///
+/// A fragment contracts over one `k` edge, which is not the same as one contracted *axis*: axes
+/// the operand carries as one run flatten into an edge, and a partitioned contraction is exactly
+/// that. What it cannot read is a contraction its axes give no edge for.
 #[cube]
 fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
+    let flat = comptime!({
+        let rank = out.rank();
+        let kc = Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out);
+        MatrixAxes::find(&lhs.space, out.extent_at(rank - 2), kc).is_some()
+            && MatrixAxes::find(&rhs.space, kc, out.extent_at(rank - 1)).is_some()
+    });
     comptime!(assert!(
-        !lhs_gathered
-            && !rhs_gathered
-            && Space::contracted(&[&lhs.space, &rhs.space], &out).len() == 1,
-        "mma: a cmma or plane-register fragment reads one contracted axis off a directly \
-         addressed operand; a gather or a wider reduce needs the manual-mma leaf, or an \
-         unpromoted Gmem/Smem accumulator, whose software instruction is the \
+        !lhs_gathered && !rhs_gathered && flat,
+        "mma: a cmma or plane-register fragment reads one `k` edge off a directly addressed \
+         operand; a gather, or a contraction these axes give no edge for, needs the manual-mma \
+         leaf, or an unpromoted Gmem/Smem accumulator, whose software instruction is the \
          `contract::memory` arm of `mma_leaf`"
     ));
 }

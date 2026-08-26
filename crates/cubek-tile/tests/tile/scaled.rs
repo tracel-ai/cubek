@@ -22,7 +22,9 @@ use half::f16;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
-const K: Axis = Axis(2);
+/// The contraction, as the two axes a block makes of it: which block, and where inside it.
+const KB: Axis = Axis(2);
+const KI: Axis = Axis(3);
 
 const ROWS: usize = 4;
 const COLS: usize = 4;
@@ -67,29 +69,51 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
-/// `⌊k / BLOCK⌋` along the contracted axis: one scale per block of the lhs's row.
+/// `k = kb · BLOCK + ki`: the values' physical contracted axis as the two logical ones.
+fn blocked() -> PhysicalAxisMap {
+    PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)])
+}
+
+fn lhs_spec() -> TileSpec {
+    TileSpec::new(Projection::new(
+        &[M, KB, KI],
+        &[PhysicalAxisMap::of(M), blocked()],
+    ))
+}
+
+fn rhs_spec() -> TileSpec {
+    TileSpec::new(Projection::new(
+        &[KB, KI, N],
+        &[blocked(), PhysicalAxisMap::of(N)],
+    ))
+}
+
+/// One scale per `(row, block)`: the operand carries `KI` and addresses nothing with it, so it
+/// cannot vary inside a block.
 fn scales_spec() -> TileSpec {
     TileSpec::new(Projection::new(
-        &[M, K],
-        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(K).over(BLOCK)],
+        &[M, KB, KI],
+        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
     ))
 }
 
-/// The rhs twin: one scale per `(block of K, column)`. Spanning `N` is what makes it the rhs's.
+/// The rhs twin: one scale per `(block, column)`. Spanning `N` is what makes it the rhs's.
 fn rhs_scales_spec() -> TileSpec {
     TileSpec::new(Projection::new(
-        &[K, N],
-        &[PhysicalAxisMap::of(K).over(BLOCK), PhysicalAxisMap::of(N)],
+        &[KB, KI, N],
+        &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N)],
     ))
 }
 
-fn space(cut: usize) -> Space {
+/// The walk over the contraction, cut into `blocks` blocks of `inside` values each per region.
+fn space(blocks: usize, inside: usize) -> Space {
     Tiling::new()
-        .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .extents(&[(M, ROWS), (N, COLS), (KB, BLOCKS), (KI, BLOCK)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(ROWS))
                 .axis(N, Cut::sequential(COLS))
-                .axis(K, Cut::sequential(cut))
+                .axis(KB, Cut::sequential(blocks))
+                .axis(KI, Cut::sequential(inside))
         })
         .build()
         .with_instruction(Instruction::registers(16))
@@ -154,8 +178,8 @@ fn run(space: Space, scale_dtype: ElemType) -> HostData {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
-        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
+        TileArgLaunch::new(a.binding().into_tensor_arg(), lhs_spec()),
+        TileArgLaunch::new(b.binding().into_tensor_arg(), rhs_spec()),
         TileArgLaunch::new(scales.binding().into_tensor_arg(), scales_spec()),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -182,23 +206,23 @@ fn assert_scaled(got: &HostData) {
     }
 }
 
-/// The walk cuts `K` at the block, so each region carries one scale per row.
+/// One block per region, so each region carries one scale per row.
 #[test]
 fn a_scaled_contraction_folds_the_block_scale_in() {
-    assert_scaled(&run(space(BLOCK), f32::elem_type_native()));
+    assert_scaled(&run(space(1, BLOCK), f32::elem_type_native()));
 }
 
-/// A cut finer than the block: several regions share a scale.
+/// A region inside one block: several of them share a scale, because they share a `KB`.
 #[test]
 fn a_cut_finer_than_the_block_reuses_its_scale() {
-    assert_scaled(&run(space(BLOCK / 2), f32::elem_type_native()));
+    assert_scaled(&run(space(1, BLOCK / 2), f32::elem_type_native()));
 }
 
-/// A cut coarser than the block: the scale changes within a region, so the step's own coordinate
-/// is what addresses it.
+/// A region spanning two blocks: the scale changes within it, and the step's own `KB` coordinate
+/// is what picks which.
 #[test]
 fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
-    assert_scaled(&run(space(BLOCK * 2), f32::elem_type_native()));
+    assert_scaled(&run(space(2, BLOCK), f32::elem_type_native()));
 }
 
 /// **The one that pays for the design.** The scales are an `f16` tensor and the kernel reads
@@ -206,7 +230,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
 /// A scale is whatever its tensor holds because it is a tensor.
 #[test]
 fn f16_scales_are_read_as_f16() {
-    assert_scaled(&run(space(BLOCK), f16::elem_type_native()));
+    assert_scaled(&run(space(1, BLOCK), f16::elem_type_native()));
 }
 
 /// `C[m,n] = Σ_k A[m,k] · B[k,n] · S[k/BLOCK, n]`: the rhs twin of [`reference`].
@@ -250,8 +274,8 @@ fn run_rhs(space: Space) -> HostData {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
-        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
+        TileArgLaunch::new(a.binding().into_tensor_arg(), lhs_spec()),
+        TileArgLaunch::new(b.binding().into_tensor_arg(), rhs_spec()),
         TileArgLaunch::new(scales.binding().into_tensor_arg(), rhs_scales_spec()),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -282,19 +306,19 @@ fn assert_rhs_scaled(got: &HostData) {
 /// it off the operand.
 #[test]
 fn scales_over_the_columns_scale_the_rhs() {
-    assert_rhs_scaled(&run_rhs(space(BLOCK)));
+    assert_rhs_scaled(&run_rhs(space(1, BLOCK)));
 }
 
 /// The rhs scale under a cut finer than its block: several regions share it.
 #[test]
 fn an_rhs_scale_survives_a_finer_cut() {
-    assert_rhs_scaled(&run_rhs(space(BLOCK / 2)));
+    assert_rhs_scaled(&run_rhs(space(1, BLOCK / 2)));
 }
 
 /// And under a coarser one, where the scale changes within a region.
 #[test]
 fn an_rhs_scale_changes_within_a_coarser_region() {
-    assert_rhs_scaled(&run_rhs(space(BLOCK * 2)));
+    assert_rhs_scaled(&run_rhs(space(2, BLOCK)));
 }
 
 /// [`run`] with the output stating [`Residence::Register`]: the accumulator is a register block
@@ -328,8 +352,8 @@ fn run_promoted(space: Space) -> HostData {
         &client,
         space.cube_count(),
         space.cube_dim(&client),
-        TileArgLaunch::new(a.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
-        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
+        TileArgLaunch::new(a.binding().into_tensor_arg(), lhs_spec()),
+        TileArgLaunch::new(b.binding().into_tensor_arg(), rhs_spec()),
         TileArgLaunch::new(scales.binding().into_tensor_arg(), scales_spec()),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -346,5 +370,5 @@ fn run_promoted(space: Space) -> HostData {
 /// contraction: refused before, and the same numbers as the memory-backed form.
 #[test]
 fn a_promoted_accumulator_takes_the_scaled_contraction() {
-    assert_scaled(&run_promoted(space(BLOCK)));
+    assert_scaled(&run_promoted(space(1, BLOCK)));
 }

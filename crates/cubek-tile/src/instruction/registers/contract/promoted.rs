@@ -25,6 +25,7 @@ impl<T: Numeric> RegisterData<T> {
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
+        #[comptime] out: Space,
         #[comptime] semiring: Semiring,
     ) {
         comptime!(assert!(
@@ -55,7 +56,8 @@ impl<T: Numeric> RegisterData<T> {
         ));
 
         let size!(L) = lw;
-        let kc = comptime!(rhs.space.extent_at(rhs.space.rank() - 2));
+        // Every contracted axis multiplied out: a partitioned contraction carries more than one.
+        let kc = comptime!(Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
@@ -122,14 +124,19 @@ impl<T: Numeric> RegisterData<T> {
 
         let size!(L) = lw;
         let size!(S) = 1usize;
-        let kc = comptime!(rhs.space.extent_at(rhs.space.rank() - 2));
+        let kc = comptime!(Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
+        let side = comptime!(scale_side(&scales.space, &out));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
-        let scales_axes = comptime!(MatrixAxes::trailing_pair(&scales.space));
-        let side = comptime!(scale_side(&scales.space, &out));
+        // The scales carry the values' own axes and address only the ones they span, so their
+        // matrix is the same face read through their own projection.
+        let scales_axes = comptime!(match side {
+            ScaleSide::Lhs => MatrixAxes::of(&scales.space, mr, kc),
+            ScaleSide::Rhs => MatrixAxes::of(&scales.space, kc, cols),
+        });
         // The scale folds in under the operand's view, so the block below runs the plain
         // contraction.
         let lhs_mat = match comptime!(side) {

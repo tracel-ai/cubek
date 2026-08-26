@@ -420,6 +420,11 @@ pub struct Tile<T: Numeric> {
 /// extent: a gather, where the dim holds the receptive field several axes reach over, and storage
 /// tiling, where the extent is the product over the dims the axis is split across.
 fn bound_states(projection: &Projection, axis: Axis) -> Option<usize> {
+    // A broadcast axis has no dim to read a bound off: the operand is constant along it, so its
+    // buffer holds nothing that sizes it.
+    if !projection.addresses(axis) {
+        return None;
+    }
     match projection.carriers(axis)[..] {
         [pa] if projection.physical_axis(pa).is_identity(axis) => Some(pa),
         _ => None,
@@ -1083,7 +1088,7 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(data) => {
                 let projection = comptime!(data.projection.clone());
-                if comptime!(projection.logical_axes().contains(&axis)) {
+                if comptime!(projection.addresses(axis)) {
                     let carriers = comptime!(projection.carriers(axis));
                     let mut valid = true;
                     #[unroll]
