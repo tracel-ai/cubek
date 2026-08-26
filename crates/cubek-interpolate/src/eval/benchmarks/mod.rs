@@ -11,6 +11,7 @@ pub use strategy::{
     BenchTarget, BenchTier, InterpolateBenchmarkStrategy, every_strategy, strategies, strategies_at,
 };
 
+use cubecl::benchmark::TimingMethod;
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
 use crate::definition::InterpolateProblem;
@@ -44,6 +45,10 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
+    }
+
+    fn timing_method(&self) -> TimingMethod {
+        TimingMethod::Device
     }
     fn correctness(
         &self,
@@ -95,6 +100,10 @@ impl cubek_test_utils::Category for CpuCategory {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
+    }
+
+    fn timing_method(&self) -> TimingMethod {
+        TimingMethod::Device
     }
 
     fn correctness(

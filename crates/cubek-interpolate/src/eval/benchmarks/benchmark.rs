@@ -1,17 +1,21 @@
 use cubecl::{
     Runtime, TestRuntime,
-    benchmark::{Benchmark, TimingMethod},
+    benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::ComputeClient,
     future,
     prelude::*,
     std::tensor::TensorHandle,
+    std::throughput::measure_peak_throughput,
+    throughput::{ThroughputKey, ThroughputMode},
     zspace::Shape,
 };
 use cubek_test_utils::{RunSamples, TestInput};
 use cubek_tile::Residence;
 
 use crate::{
-    definition::InterpolateProblem, interpolate, interpolate_backward, launch::InterpolateStrategy,
+    definition::{InterpolateCost, InterpolateProblem},
+    interpolate, interpolate_backward,
+    launch::InterpolateStrategy,
     launch::interpolate_tile_launch,
 };
 
@@ -58,7 +62,7 @@ pub fn bench(
         problem: problem.clone(),
         strategy: *strategy,
         device,
-        client,
+        client: client.clone(),
         dtype,
         samples: num_samples,
     };
@@ -68,7 +72,25 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations))
+    let work = InterpolateCost::new(problem.clone(), dtype).work();
+
+    Ok(RunSamples::new(durations)
+        .with_flops(work.compute_ops as f64)
+        .with_bytes(work.bytes, memory_peak_bytes_per_s(&client)))
+}
+
+/// The device's measured copy peak, in bytes/s, for the resampling to be judged against.
+///
+/// [`ThroughputMode::Memory`] is a copy, which is the access interpolation performs: it
+/// reads one tensor and writes another. `measure_peak_throughput` caches per device, so
+/// this does not need to as well.
+fn memory_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
+    let key = ThroughputKey {
+        mode: ThroughputMode::Memory,
+    };
+    let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
+
+    (peak > 0.0).then_some(peak)
 }
 
 struct InterpolateBench {
@@ -179,5 +201,14 @@ impl Benchmark for InterpolateBench {
 
     fn sync(&self) {
         future::block_on(self.client.sync()).unwrap()
+    }
+
+    /// Measure with device timestamps around the launch, so the reported duration is the
+    /// kernel's rather than the host's view of launch, output allocation and sync.
+    fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
+        self.client
+            .profile(|| self.execute(args), "interpolate-bench")
+            .map(|it| it.1)
+            .map_err(|err| format!("{err:?}"))
     }
 }

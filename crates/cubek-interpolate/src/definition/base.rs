@@ -81,6 +81,16 @@ pub fn get_halo(mode: InterpolateMode) -> usize {
     }
 }
 
+// Whether the mode's filter renormalizes by the weight it kept in bounds.
+pub fn get_requires_bound_check(mode: InterpolateMode) -> bool {
+    match mode {
+        InterpolateMode::Nearest(_) => <Nearest as Interpolate>::REQUIRES_BOUND_CHECK,
+        InterpolateMode::Bilinear => <Bilinear as Interpolate>::REQUIRES_BOUND_CHECK,
+        InterpolateMode::Bicubic => <Bicubic as Interpolate>::REQUIRES_BOUND_CHECK,
+        InterpolateMode::Lanczos3 => <Lanczos3 as Interpolate>::REQUIRES_BOUND_CHECK,
+    }
+}
+
 // Calculate the transform for the given input and output sizes and options.
 pub fn get_transform(
     input_size: usize,
