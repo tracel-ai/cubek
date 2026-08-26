@@ -1,14 +1,35 @@
 use super::InterpolateMode;
+use cubek_tile::Boundary;
 
-pub fn get_halo(mode: InterpolateMode) -> usize {
-    match mode {
-        InterpolateMode::Nearest(_) => 1,
-        InterpolateMode::Bilinear => 2,
-        InterpolateMode::Bicubic => 4,
-        InterpolateMode::Lanczos3 => 6,
-    }
+/// Filter behavior shared by the forward kernel and the cost model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModeProperties {
+    pub taps: usize,
+    pub renormalizes: bool,
+    pub boundary: Boundary,
 }
 
-pub fn get_requires_bound_check(mode: InterpolateMode) -> bool {
-    matches!(mode, InterpolateMode::Lanczos3)
+pub const fn mode_properties(mode: InterpolateMode) -> ModeProperties {
+    match mode {
+        InterpolateMode::Nearest(_) => ModeProperties {
+            taps: 1,
+            renormalizes: false,
+            boundary: Boundary::Clamp,
+        },
+        InterpolateMode::Bilinear => ModeProperties {
+            taps: 2,
+            renormalizes: false,
+            boundary: Boundary::Clamp,
+        },
+        InterpolateMode::Bicubic => ModeProperties {
+            taps: 4,
+            renormalizes: false,
+            boundary: Boundary::Clamp,
+        },
+        InterpolateMode::Lanczos3 => ModeProperties {
+            taps: 6,
+            renormalizes: true,
+            boundary: Boundary::Zero,
+        },
+    }
 }

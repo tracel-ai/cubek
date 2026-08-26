@@ -136,7 +136,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         output_w,
         output.shape[3],
         lanes,
-        F::TAPS,
+        F::mode_properties().taps,
         geometry,
         space::instruction(client),
         dtype,
@@ -150,8 +150,9 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         dtype.size(),
     );
 
-    let in_bounds = tap_range_in_bounds(row, output_h, input_h, F::TAPS, F::radius())
-        && tap_range_in_bounds(col, output_w, input_w, F::TAPS, F::radius());
+    let properties = F::mode_properties();
+    let in_bounds = tap_range_in_bounds(row, output_h, input_h, properties.taps, F::radius())
+        && tap_range_in_bounds(col, output_w, input_w, properties.taps, F::radius());
 
     // The channel block is the lane's channel run, so it is the width the contraction wants its
     // lines in. Where the tensor's own channel count cannot serve them (`C = 3` has no 4-aligned
@@ -176,7 +177,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     let requested_smem = space::stage_window_bytes(
         row,
         col,
-        F::TAPS,
+        properties.taps,
         F::radius(),
         geometry,
         stage_width.unwrap_or(vector_size),
@@ -197,7 +198,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         .operand(&in_operand)
         .gathered(space::input_projection(row, col, F::radius()))
         .checked(checked)
-        .with_boundary(checked.then_some(F::BOUNDARY))
+        .with_boundary(checked.then_some(properties.boundary))
         .vectorize(vector_size);
     if let Some(width) = stage_width {
         input_arg = input_arg.stage_width(width);

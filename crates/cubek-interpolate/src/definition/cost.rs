@@ -2,7 +2,7 @@ use cubecl::{ir::ElemType, tune::Work};
 
 use crate::definition::{
     InterpolateBackwardProblem, InterpolateForwardProblem, InterpolateMode, InterpolateProblem,
-    get_halo, get_requires_bound_check,
+    mode_properties,
 };
 
 /// Minimal representation of interpolate cost dependencies: the shapes the resampling maps
@@ -38,14 +38,14 @@ impl InterpolateCost {
     fn forward_work(&self, prob: &InterpolateForwardProblem) -> Work {
         let planes = prob.batch * prob.channels;
         let outputs = planes * prob.output_height * prob.output_width;
-        let halo = get_halo(prob.options.mode);
+        let taps = mode_properties(prob.options.mode).taps;
 
         // Each output position pulls a `halo`-wide window, so the windows together span
         // `halo` times the output extent. An upsample re-reads rows the previous window
         // already covered, which the input extent caps; a downsample coarse enough to
         // outrun the window skips the rows no window reaches, which the product caps.
-        let rows_read = prob.input_height.min(prob.output_height * halo);
-        let cols_read = prob.input_width.min(prob.output_width * halo);
+        let rows_read = prob.input_height.min(prob.output_height * taps);
+        let cols_read = prob.input_width.min(prob.output_width * taps);
 
         Work {
             compute_ops: outputs * ops_per_output(prob.options.mode),
@@ -80,26 +80,26 @@ fn ops_per_output(mode: InterpolateMode) -> usize {
         return 4;
     }
 
-    let halo = get_halo(mode);
+    let taps = mode_properties(mode).taps;
     // One weight per tap on each of the two axes.
-    let weights = 2 * halo * weight_ops(mode);
+    let weights = 2 * taps * weight_ops(mode);
     // Every tap multiplies its column weight in and adds the product into the row.
-    let taps = halo * halo * 2;
+    let contraction = taps * taps * 2;
     // Every row multiplies its row weight in and adds the product into the total.
-    let rows = halo * 2;
+    let rows = taps * 2;
 
-    weights + taps + rows + bound_check_ops(mode)
+    weights + contraction + rows + bound_check_ops(mode)
 }
 
 /// What renormalizing against the in-bounds weight adds on top of the plain contraction.
 ///
 /// Zero for the modes whose weights vanish at the window edge, which need no such guard.
 fn bound_check_ops(mode: InterpolateMode) -> usize {
-    if !get_requires_bound_check(mode) {
+    if !mode_properties(mode).renormalizes {
         return 0;
     }
 
-    let halo = get_halo(mode);
+    let taps = mode_properties(mode).taps;
     // Per tap: four comparisons and the three ands that fold them into one flag, the two
     // selects that zero an out-of-bounds value and its weight, and the extra add that
     // accumulates the weight alongside the value.
@@ -107,7 +107,7 @@ fn bound_check_ops(mode: InterpolateMode) -> usize {
     // Per row: the row weight multiplied into the row's weight sum, and that added in.
     let per_row = 2;
     // Once: clamping the total weight away from zero, and the divide it guards.
-    halo * halo * per_tap + halo * per_row + 2
+    taps * taps * per_tap + taps * per_row + 2
 }
 
 /// Arithmetic operations one `compute_weight` call emits.

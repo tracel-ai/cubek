@@ -1,7 +1,8 @@
+use crate::definition::{InterpolateMode, ModeProperties, mode_properties};
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 use cubek_tile::{
-    AffineCoordinate, Boundary, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe,
+    AffineCoordinate, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe,
     SeparableProduct, Sum, TapMask,
 };
 
@@ -11,16 +12,8 @@ type BilinearAxis<E> = Linear<TapDistance<E>>;
 type BicubicAxis<E> = Cubic<TapDistance<E>>;
 type Lanczos3Axis<E> = Lanczos<TapDistance<E>>;
 
-pub trait TapSupport {
-    const TAPS: usize;
-    const BOUNDARY: Boundary;
-    fn radius() -> usize {
-        (Self::TAPS - 1) / 2
-    }
-}
-
 #[cube]
-pub trait SeparableFilter<E: Float>: TapSupport + Send + std::marker::Sync + 'static {
+pub trait SeparableFilter<E: Float>: Send + std::marker::Sync + 'static {
     type Axis: Recipe<E> + 'static;
     fn along(distance: TapDistance<E>) -> Self::Axis;
 }
@@ -29,18 +22,24 @@ pub trait SeparableFilter<E: Float>: TapSupport + Send + std::marker::Sync + 'st
 pub type SeparableWeights<E, F> = SeparableProduct<<F as SeparableFilter<E>>::Axis>;
 
 /// Bridges host-side mode selection to the element type selected when a kernel is launched.
-pub trait SeparableFilterFamily: TapSupport + Send + std::marker::Sync + 'static {
+pub trait SeparableFilterFamily: Send + std::marker::Sync + 'static {
     type Filter<E: Float>: SeparableFilter<E>;
+    const MODE: InterpolateMode;
     const NORMALIZATION: Option<(TapMask, DivGuard)> = None;
+
+    fn mode_properties() -> ModeProperties {
+        mode_properties(Self::MODE)
+    }
+
+    fn radius() -> usize {
+        (Self::mode_properties().taps - 1) / 2
+    }
 }
 
 pub struct NearestFilter;
-impl TapSupport for NearestFilter {
-    const TAPS: usize = 1;
-    const BOUNDARY: Boundary = Boundary::Clamp;
-}
 impl SeparableFilterFamily for NearestFilter {
     type Filter<E: Float> = Self;
+    const MODE: InterpolateMode = InterpolateMode::Nearest(crate::definition::NearestMode::Exact);
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for NearestFilter {
@@ -53,12 +52,9 @@ impl<E: Float> SeparableFilter<E> for NearestFilter {
 }
 
 pub struct BilinearFilter;
-impl TapSupport for BilinearFilter {
-    const TAPS: usize = 2;
-    const BOUNDARY: Boundary = Boundary::Clamp;
-}
 impl SeparableFilterFamily for BilinearFilter {
     type Filter<E: Float> = Self;
+    const MODE: InterpolateMode = InterpolateMode::Bilinear;
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for BilinearFilter {
@@ -71,12 +67,9 @@ impl<E: Float> SeparableFilter<E> for BilinearFilter {
 }
 
 pub struct BicubicFilter;
-impl TapSupport for BicubicFilter {
-    const TAPS: usize = 4;
-    const BOUNDARY: Boundary = Boundary::Clamp;
-}
 impl SeparableFilterFamily for BicubicFilter {
     type Filter<E: Float> = Self;
+    const MODE: InterpolateMode = InterpolateMode::Bicubic;
 }
 #[cube]
 impl<E: Float> SeparableFilter<E> for BicubicFilter {
@@ -91,12 +84,9 @@ impl<E: Float> SeparableFilter<E> for BicubicFilter {
 
 /// Six-tap Lanczos filtering.
 pub struct Lanczos3Filter;
-impl TapSupport for Lanczos3Filter {
-    const TAPS: usize = 6;
-    const BOUNDARY: Boundary = Boundary::Zero;
-}
 impl SeparableFilterFamily for Lanczos3Filter {
     type Filter<E: Float> = Self;
+    const MODE: InterpolateMode = InterpolateMode::Lanczos3;
     const NORMALIZATION: Option<(TapMask, DivGuard)> = Some((
         TapMask::Masked,
         DivGuard {
