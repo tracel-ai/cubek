@@ -307,9 +307,9 @@ fn depthwise_rejects_mismatched_weight_shape() {
         let result = launch_depthwise::<TestRuntime>(
             &client,
             DepthwiseTensors {
-                input: input.binding(),
+                input: input.clone().binding(),
                 weight: weight.binding(),
-                out: out.binding(),
+                out: out.clone().binding(),
             },
             ConvolutionArgs::<2> {
                 stride: [1; 2],
