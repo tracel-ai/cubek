@@ -28,7 +28,10 @@ use cubecl::{
     prelude::*,
     quant::scheme::QuantScheme,
     std::quant::view::{KnownScale, QuantizedView as DequantView},
-    std::tensor::{View, layout::Coordinates},
+    std::tensor::{
+        View,
+        layout::{Coordinates, CoordsDyn},
+    },
 };
 
 use crate::*;
@@ -46,6 +49,28 @@ impl<T: Numeric> Tile<T> {
         recipe: R::ExpandType,
     ) -> TileExpand<T> {
         Self::__expand_procedural_resident::<R>(scope, space, recipe, StagePlan::in_place())
+    }
+
+    /// Create a procedural tile while preserving the recipe's factorization for contraction: the
+    /// consumer sees one factor per contracted axis instead of one opaque field.
+    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(
+        _space: Space,
+        _recipe: R,
+    ) -> Self {
+        unexpanded!()
+    }
+
+    pub fn __expand_procedural_separable<R: SeparableRecipe<T> + 'static>(
+        scope: &Scope,
+        space: Space,
+        recipe: R::ExpandType,
+    ) -> TileExpand<T> {
+        Self::__expand_procedural_virtual(
+            scope,
+            space,
+            VirtualRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
+            StagePlan::in_place(),
+        )
     }
 
     /// [`procedural`](Tile::procedural) with the residences stated: a level asking for a stage
@@ -646,6 +671,44 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
+
+    /// The factorization this tile's values state, if any: `Some(n)` for a recipe presenting `n`
+    /// separable factors, `None` for a tile read from a buffer or a recipe that only answers as a
+    /// whole. A rank-one factorization is `Some(1)`, which a consumer can still exploit, and so is
+    /// deliberately not the same answer as `None`.
+    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => data.factors(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
+    /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
+    /// that factor reads matters, which is what lets the contraction walk it in 1-D.
+    ///
+    /// Asking [`factors`](Tile::factors) first is the whole precondition: a tile answering `None`
+    /// has no factorization to index into, and is exactly the tile kind that cannot evaluate one.
+    pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => {
+                data.evaluate_factor_dyn(&pos, factor, comptime!(self.space.clone()))
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => {
+                panic!(
+                    "Tile::separable_factor: a tile read from a buffer states no factorization, \
+                     so `factors` answered `None` and there is no factor {factor} to evaluate"
+                )
+            }
         }
     }
 

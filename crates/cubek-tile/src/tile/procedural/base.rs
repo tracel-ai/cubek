@@ -98,6 +98,25 @@ impl<T: Numeric> ProceduralData<T> {
         self.recipe.evaluate(&absolute)
     }
 
+    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
+        self.recipe.factors()
+    }
+
+    pub(crate) fn evaluate_factor_dyn(
+        &self,
+        pos: &CoordsDyn,
+        #[comptime] factor: usize,
+        #[comptime] space: Space,
+    ) -> T {
+        let mut coords = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..comptime!(space.rank()) {
+            coords.push(pos[p]);
+        }
+        let absolute = RecipeCoords::new(&self.origin, &coords, space);
+        self.recipe.evaluate_factor(&absolute, factor)
+    }
+
     /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe
     /// has no source-local runtime extent for them.
     pub(crate) fn evaluate_masked(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {

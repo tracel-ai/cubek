@@ -1571,6 +1571,28 @@ impl<T: Numeric> MemData<T> {
         self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout, guard)
     }
 
+    /// [`nd_transparent`](MemData::nd_transparent) over the *physical* box instead of the logical
+    /// one, for a caller that folds the map itself.
+    ///
+    /// The map is the only layer dropped: the [`Window`] that owns the boundary sits below it
+    /// either way, so a coordinate past the operand's data masks exactly as it does through
+    /// [`nd_transparent`](MemData::nd_transparent). The identity step keeps the box's own bound,
+    /// which is the part a caller cannot fold away.
+    ///
+    /// The logical box test goes with the map, though, so this masks against the physical box
+    /// alone. A caller owes it the coordinates the map would have produced from inside the logical
+    /// one: a position folded from a logical coordinate out of range is no longer caught here, and
+    /// reads whatever the window says lives at it.
+    pub(crate) fn nd_physical<I: Numeric, WP: Size, W: Size>(
+        &self,
+    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+        let rank = comptime!(self.projection.physical_rank());
+        let identity = StepUp::new(self.window.extent.clone(), comptime!(vec![1; rank]));
+        // A folded caller hands in coordinates it derived itself, so it has proved nothing about
+        // them: the window's boundary and the overhang mask both stay on.
+        self.transparent::<I, WP, W, CoordsDyn, StepUp>(identity, comptime!(Guard::Checked))
+    }
+
     /// The mutable twin of [`flat`](MemData::flat).
     pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         if comptime!(self.store.quant.is_some()) {
@@ -2661,13 +2683,10 @@ impl Layout for Window {
         #[unroll]
         for i in 0..self.origin.len() {
             let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-            // Clamp negative coordinates to 0 before bounds masking.
+            // Clamp negative coordinates to 0 before bounds masking. Branchless: this runs per
+            // tap of every gathered read, where a diamond would cost more than the cast it skips.
             let shifted = if comptime!(self.signed) {
-                if abs >= 0i32 {
-                    abs.fcast::<u32>()
-                } else {
-                    0u32
-                }
+                select(abs >= 0i32, abs.fcast::<u32>(), 0u32)
             } else {
                 abs.fcast::<u32>()
             };
@@ -2676,15 +2695,11 @@ impl Layout for Window {
             let shifted = match comptime!(self.boundaries.get(i).copied().flatten()) {
                 Some(Boundary::Clamp) => {
                     let bound_i = self.bound.at(i);
-                    // A zero-extent axis has no edge cell to fold onto, and `bound - 1` would
-                    // wrap into a wild line index; it folds to `0` like an underflow instead.
-                    if bound_i == 0u32 {
-                        0u32
-                    } else if shifted >= bound_i {
-                        bound_i - 1u32
-                    } else {
-                        shifted
-                    }
+                    let edge = select(shifted >= bound_i, bound_i.fsub(1u32), shifted);
+                    // A zero-extent axis has no edge cell to fold onto, and the `bound - 1` above
+                    // wrapped into a wild line index; both arms evaluate, so it is discarded here
+                    // rather than skipped, and the axis folds to `0` like an underflow instead.
+                    select(bound_i == 0u32, 0u32, edge)
                 }
                 None | Some(Boundary::Zero) => shifted,
             };

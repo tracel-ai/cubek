@@ -4,7 +4,6 @@ use cubek_test_utils::CatalogEntry;
 
 use crate::{DepthwiseStrategy, DepthwiseTiling};
 
-
 /// One depthwise convolution: square map, square window, one filter per channel.
 ///
 /// Padding is not stated. Every one of these keeps its resolution, so it is `d·(k-1)/2` and

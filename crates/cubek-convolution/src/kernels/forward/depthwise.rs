@@ -328,7 +328,6 @@ pub fn launch_depthwise<R: Runtime>(
     );
 
     Ok(())
-
 }
 
 /// The problem, in the terms the space is built from. NHWC throughout.
