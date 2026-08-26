@@ -1,10 +1,11 @@
-//! Validation of the experimental tile-backed forward path.
+//! Validation of the forward kernel.
 
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
-    tiled::{TileConfig, interpolate_tile_launch},
+    interpolate,
+    kernel::TileConfig,
 };
 use cubek_test_utils::{TestInput, assert_equals_approx};
 use cubek_tile::Residence;
@@ -34,13 +35,13 @@ fn tile_output_shaped(options: InterpolateOptions, config: TileConfig, channels:
     let expected =
         cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &options);
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-    let result = interpolate_tile_launch(
+    let result = interpolate(
         &client,
         input.binding(),
         output.clone().binding(),
         options,
-        output.dtype,
         config,
+        output.dtype,
     );
     let actual = output_host_f32(&client, output);
     validate_test(result, actual, expected, TOLERANCE);
@@ -168,13 +169,13 @@ fn test_interpolate_tile_lanczos3_identity() {
     let expected =
         cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &options);
     let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-    let result = interpolate_tile_launch(
+    let result = interpolate(
         &client,
         input.binding(),
         output.clone().binding(),
         options,
-        output.dtype,
         BASELINE,
+        output.dtype,
     );
     let actual = output_host_f32(&client, output);
 
