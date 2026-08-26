@@ -11,5 +11,5 @@ mod geometry;
 mod launch;
 mod space;
 
-pub use geometry::*;
-pub use launch::*;
+pub use launch::InterpolateConfig;
+pub(crate) use launch::interpolate_launch;

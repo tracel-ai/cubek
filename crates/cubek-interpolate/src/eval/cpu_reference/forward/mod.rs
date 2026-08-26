@@ -10,9 +10,9 @@ pub(crate) use nearest::reference_nearest;
 
 use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::{
+    InterpolateConfig,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
-    kernel::InterpolateConfig,
 };
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{

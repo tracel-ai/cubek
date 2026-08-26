@@ -1,4 +1,8 @@
-use cubecl::{ir::ElemType, tune::Work};
+use cubecl::{
+    ir::ElemType,
+    throughput::{ThroughputKey, ThroughputMode},
+    tune::Work,
+};
 
 use crate::definition::{
     InterpolateBackwardProblem, InterpolateForwardProblem, InterpolateMode, InterpolateProblem,
@@ -32,6 +36,14 @@ impl InterpolateCost {
         match &self.problem {
             InterpolateProblem::Forward(prob) => self.forward_work(prob),
             InterpolateProblem::Backward(prob) => self.backward_work(prob),
+        }
+    }
+
+    /// Throughput key for the filter's arithmetic, which runs at the element type the
+    /// tensors are read and written in.
+    pub fn compute_key(&self) -> ThroughputKey {
+        ThroughputKey {
+            mode: ThroughputMode::ComputeDirect { dtype: self.dtype },
         }
     }
 

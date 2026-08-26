@@ -2,13 +2,12 @@
 
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
+    InterpolateConfig, Residence,
     definition::{InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
-    kernel::InterpolateConfig,
 };
 use cubek_test_utils::{TestInput, assert_equals_approx};
-use cubek_tile::Residence;
 
 use super::super::{build_output_tensor, output_host_f32, validate_test};
 use super::make_problem;

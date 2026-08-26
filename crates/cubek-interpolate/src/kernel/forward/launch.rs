@@ -53,7 +53,8 @@ impl InterpolateConfig {
         }
     }
 
-    /// Pin the lane's channel run rather than solving it. Must divide the channel count.
+    /// Pin the lane's channel run rather than solving it. A final block may overhang the channel
+    /// count; reads and writes in that padded tail are masked.
     pub const fn with_channel_block(self, block: usize) -> Self {
         Self {
             channel_block: Some(block),
@@ -62,7 +63,7 @@ impl InterpolateConfig {
     }
 
     /// The geometry these choices describe, over a plane of `lanes`.
-    pub fn geometry(&self, channels: usize, lanes: usize) -> TileGeometry {
+    pub(crate) fn geometry(&self, channels: usize, lanes: usize) -> TileGeometry {
         TileGeometry::from_config(
             channels,
             lanes,
@@ -71,6 +72,22 @@ impl InterpolateConfig {
             self.cols_per_lane,
             self.channel_block,
         )
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), InterpolateError> {
+        if self.planes_per_cube == 0 {
+            return Err(InterpolateError::ZeroPlanesPerCube);
+        }
+        if self.rows_per_plane == 0 {
+            return Err(InterpolateError::ZeroRowsPerPlane);
+        }
+        if self.cols_per_lane == 0 {
+            return Err(InterpolateError::ZeroColsPerLane);
+        }
+        if self.channel_block == Some(0) {
+            return Err(InterpolateError::ZeroChannelBlock);
+        }
+        Ok(())
     }
 }
 
@@ -127,12 +144,6 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         output.shape[1],
         output.shape[2],
     );
-    assert!(
-        input_h <= i32::MAX as usize
-            && input_w <= i32::MAX as usize
-            && output_h <= i32::MAX as usize
-            && output_w <= i32::MAX as usize
-    );
     let row = Rational::of(get_transform(input_h, output_h, options));
     let col = Rational::of(get_transform(input_w, output_w, options));
     let lanes = client.properties().hardware.plane_size_max as usize;
@@ -140,7 +151,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     // Cheap to check before any of the space/vectorization work below: a cube this wide is
     // refused outright rather than built and then rejected by the device at dispatch.
     let max_units = client.properties().hardware.max_units_per_cube as usize;
-    let units_per_cube = geometry.planes_per_cube * lanes;
+    let units_per_cube = geometry.planes_per_cube.saturating_mul(lanes);
     if units_per_cube > max_units {
         return Err(InterpolateError::UnitsPerCubeExceeded {
             requested: units_per_cube,
@@ -191,24 +202,25 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     // own overhang mask drops those columns), but the reads still have to be in bounds.
     let checked = !in_bounds || stage_width.is_some();
 
-    let max_smem = client.properties().hardware.max_shared_memory_size;
-    let requested_smem = space::stage_window_bytes(
-        row,
-        col,
-        properties.taps,
-        F::radius(),
-        geometry,
-        stage_width.unwrap_or(vector_size),
-        dtype.size(),
-    );
-
     // The residence is stated, so the only thing left to decide is whether the device can serve
     // it. Capacity is a hard limit rather than a preference, so it refuses instead of falling back.
-    if residence == Residence::Smem && requested_smem > max_smem {
-        return Err(InterpolateError::SharedMemoryLimitExceeded {
-            requested: requested_smem,
-            available: max_smem,
-        });
+    if residence == Residence::Smem {
+        let available = client.properties().hardware.max_shared_memory_size;
+        let requested = space::stage_window_bytes(
+            row,
+            col,
+            properties.taps,
+            F::radius(),
+            geometry,
+            stage_width.unwrap_or(vector_size),
+            dtype.size(),
+        );
+        if requested > available {
+            return Err(InterpolateError::SharedMemoryLimitExceeded {
+                requested,
+                available,
+            });
+        }
     }
 
     let mut input_arg = launch

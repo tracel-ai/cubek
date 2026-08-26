@@ -1,9 +1,7 @@
 use cubek_test_utils::CatalogEntry;
 use cubek_tile::Residence;
 
-use crate::kernel::InterpolateConfig;
-
-pub type InterpolateBenchmarkStrategy = InterpolateConfig;
+use crate::InterpolateConfig;
 
 /// How much of the tile geometry space one run sweeps.
 ///
@@ -133,7 +131,7 @@ fn powers_of_two(max: usize) -> impl Iterator<Item = usize> {
 fn kernel_entry(
     residence: Residence,
     (planes, rows, cols): (usize, usize, usize),
-) -> CatalogEntry<InterpolateBenchmarkStrategy> {
+) -> CatalogEntry<InterpolateConfig> {
     let (tag, label) = match residence {
         Residence::Smem => ("smem", "staged"),
         _ => ("in_place", "in-place"),
@@ -146,10 +144,7 @@ fn kernel_entry(
 }
 
 /// The catalogue at a stated tier and target.
-pub fn strategies_at(
-    tier: BenchTier,
-    target: BenchTarget,
-) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
+pub fn strategies_at(tier: BenchTier, target: BenchTarget) -> Vec<CatalogEntry<InterpolateConfig>> {
     let mut entries = Vec::new();
     for &residence in target.residences() {
         for geometry in target.geometries(tier) {
@@ -160,7 +155,7 @@ pub fn strategies_at(
 }
 
 /// The catalogue a bench run sweeps: the tier named by `CUBEK_BENCH_TIER`.
-pub fn strategies(target: BenchTarget) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
+pub fn strategies(target: BenchTarget) -> Vec<CatalogEntry<InterpolateConfig>> {
     strategies_at(BenchTier::from_env(), target)
 }
 
@@ -168,7 +163,7 @@ pub fn strategies(target: BenchTarget) -> Vec<CatalogEntry<InterpolateBenchmarkS
 ///
 /// Lookup by id goes through here, so a correctness test naming a geometry keeps resolving when
 /// the tier narrows what a bench run measures.
-pub fn every_strategy() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
+pub fn every_strategy() -> Vec<CatalogEntry<InterpolateConfig>> {
     strategies_at(BenchTier::Full, BenchTarget::Gpu)
 }
 

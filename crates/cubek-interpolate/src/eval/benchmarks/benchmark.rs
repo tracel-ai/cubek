@@ -16,10 +16,10 @@ use crate::{
     interpolate, interpolate_backward,
 };
 
-use super::InterpolateBenchmarkStrategy;
+use crate::InterpolateConfig;
 
 pub fn bench(
-    strategy: &InterpolateBenchmarkStrategy,
+    strategy: &InterpolateConfig,
     problem: &InterpolateProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -65,7 +65,7 @@ fn memory_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
 
 struct InterpolateBench {
     problem: InterpolateProblem,
-    strategy: InterpolateBenchmarkStrategy,
+    strategy: InterpolateConfig,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     dtype: ElemType,
@@ -116,19 +116,19 @@ impl Benchmark for InterpolateBench {
                         .uniform(0, -1., 1.)
                         .generate_without_host_data();
 
-                let output = TensorHandle::empty(&self.client, input_grad_shape, self.dtype);
+                let input_grad = TensorHandle::empty(&self.client, input_grad_shape, self.dtype);
 
                 interpolate_backward(
                     &self.client,
                     backward_input.binding(),
                     input.clone().binding(),
-                    output.clone().binding(),
+                    input_grad.clone().binding(),
                     prob.options,
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
 
-                Ok(output)
+                Ok(input_grad)
             }
         }
     }
