@@ -79,6 +79,12 @@ impl Walk {
                 // Mixed-radix stride for axes sharing one hardware dim: the product of the
                 // later same-scope axes' instance counts (the earlier axis is the more
                 // significant digit); `1` when this axis owns its scope.
+                //
+                // Both halves of that product, because the odometer is the partitioner's and this
+                // space may be a projection of it: the axes here carry a possibly-runtime count,
+                // and the ones this space does not span a comptime one. Dropping the second half
+                // reads a contracted axis as weight `1` and aliases every outer digit onto a
+                // single value — see [`Space::inner_weight_unspanned`].
                 let picks = comptime!(
                     ((p + 1)..rank)
                         .filter(|&q| {
@@ -87,7 +93,8 @@ impl Walk {
                         })
                         .collect::<Vec<_>>()
                 );
-                let inner_weight = instances.fproduct(picks);
+                let unspanned = comptime!(space.inner_weight_unspanned(axis));
+                let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
                 positions.push(
                     hardware_pos(comptime!(dist.scope_unchecked()))
                         .fdiv(inner_weight)

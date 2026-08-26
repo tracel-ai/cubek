@@ -1270,3 +1270,81 @@ fn resident_max_over_lane_split_k() {
         }
     }
 }
+
+/// The twin of [`resident_max_over_lane_split_k`] at a **segmented** fold: the plane splits into
+/// aligned groups, each holding one `(m, n)` cell's partials, rather than the whole plane holding
+/// one. `LaneShare::Group` where that test is `LaneShare::Plane`.
+///
+/// The drain is shared with the promoted matmul's, where reading the odometer off a projected
+/// space (the accumulator spans `{M, N}`, so the contracted `K` is not in its axis list) gave
+/// every group the same output row and left the rest untouched. `reduce_axis` reaches the same
+/// code, so it gets the same coverage: all the data is negative, so an identity leaking in from an
+/// unwritten cell wins the maximum and the assert catches it.
+#[test]
+#[ignore = "known-failing reproducer: the segmented share is still wrong on this path, and \
+            whether that is a cubek defect or an unsupported combination is not yet established \
+            — it is not what the walk fix addresses"]
+fn resident_max_over_lane_group_k() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let (group_lanes, kr, n) = (8usize, 2usize, 2usize);
+    let (groups, k) = (lanes / group_lanes, group_lanes * kr);
+    let m = groups;
+
+    let unit = |edge: usize, spread: Spread, instances: usize| {
+        Cut::new(
+            edge,
+            Distribution::Spatial {
+                scope: ComputeScope::Unit,
+                spread,
+                coverage: Coverage::Instances(instances),
+            },
+        )
+    };
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .instruction(Instruction::registers(16), |l| {
+            l.axis(M, unit(1, Spread::Contiguous, groups))
+                .axis(N, Cut::sequential(n))
+                .axis(K, unit(kr, Spread::Interleaved, group_lanes))
+        })
+        .build();
+
+    let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
+    let f32_ty = f32::elem_type_native();
+    let (in_handle, _) = TestInput::builder(client.clone(), shape![m, n, k])
+        .dtype(f32_ty)
+        .custom(values.clone())
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(f32_ty)
+        .uniform(7, 1.0, 2.0)
+        .generate_without_host_data();
+
+    resident_fold_kernel::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            in_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N, K]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        ),
+        space,
+        Monoid::Max,
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for i in 0..m {
+        for j in 0..n {
+            let want = (0..k)
+                .map(|p| values[(i * n + j) * k + p])
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert_eq!(got.get_f32(&[i, j]), want, "max mismatch at ({i}, {j})");
+        }
+    }
+}
