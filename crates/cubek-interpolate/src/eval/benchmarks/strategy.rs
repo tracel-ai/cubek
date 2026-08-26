@@ -17,8 +17,8 @@ pub enum InterpolateBenchmarkStrategy {
 /// How much of the tile geometry space one run sweeps.
 ///
 /// Read from `CUBEK_BENCH_TIER`, alongside the `CUBEK_BENCH_SAMPLES` the harness already takes.
-/// The default is [`Light`](BenchTier::Light): a full sweep is 69 geometries over every problem,
-/// which is hours, and the geometry that wins is reachable from a fraction of them.
+/// The default is [`Light`](BenchTier::Light): a full sweep is well over a hundred geometries
+/// per problem, which is hours, and the geometry that wins is reachable from a fraction of them.
 ///
 /// The tiers nest, so a wider one only ever adds: `Light ⊂ Extensive ⊂ Full`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -27,8 +27,8 @@ pub enum BenchTier {
     /// the best CUDA time and 35% of the best CPU time.
     #[default]
     Light,
-    /// The tier that finds the best config on every recorded problem. Lossless on the wgpu sweep
-    /// and on the CPU sweep, at 28 and 48 geometries respectively.
+    /// The tier that finds the best config on every recorded problem: every geometry the recorded
+    /// wgpu and CPU sweeps ever won with lies inside this box.
     Extensive,
     /// Every geometry, both residences. What a new device is characterized with.
     Full,
@@ -73,222 +73,71 @@ impl BenchTarget {
         }
     }
 
-    /// The `(planes, rows, cols)` geometries this device sweeps at `tier`.
-    fn geometries(self, tier: BenchTier) -> &'static [(usize, usize, usize)] {
+    /// The bounds this device sweeps within at `tier`.
+    fn sweep(self, tier: BenchTier) -> Sweep {
         match (self, tier) {
-            (_, BenchTier::Full) => FULL,
-            (BenchTarget::Gpu, BenchTier::Light) => GPU_LIGHT,
-            (BenchTarget::Gpu, BenchTier::Extensive) => GPU_EXTENSIVE,
-            (BenchTarget::Cpu, BenchTier::Light) => CPU_LIGHT,
-            (BenchTarget::Cpu, BenchTier::Extensive) => CPU_EXTENSIVE,
+            (_, BenchTier::Full) => Sweep::new(32, 64, 16, 512),
+            (BenchTarget::Gpu, BenchTier::Light) => Sweep::new(8, 8, 1, 8),
+            (BenchTarget::Gpu, BenchTier::Extensive) => Sweep::new(16, 64, 1, 256),
+            (BenchTarget::Cpu, BenchTier::Light) => Sweep::new(8, 16, 2, 128),
+            (BenchTarget::Cpu, BenchTier::Extensive) => Sweep::new(16, 64, 8, 512),
         }
+    }
+
+    /// The `(planes, rows, cols)` geometries this device sweeps at `tier`.
+    fn geometries(self, tier: BenchTier) -> Vec<(usize, usize, usize)> {
+        self.sweep(tier).geometries()
     }
 }
 
-/// Planes and rows over the range that ever wins on a GPU, at the one column width that does.
-const GPU_LIGHT: &[(usize, usize, usize)] = &[
-    (1, 1, 1),
-    (1, 2, 1),
-    (1, 4, 1),
-    (1, 8, 1),
-    (2, 1, 1),
-    (2, 2, 1),
-    (2, 4, 1),
-    (4, 1, 1),
-    (4, 2, 1),
-    (8, 1, 1),
-];
-
-/// [`GPU_LIGHT`] completed to the full `p, r in 1..8` core, plus the row-unrolling and
-/// plane-count extremes that carry the remaining 13% on the recorded wgpu sweep.
-const GPU_EXTENSIVE: &[(usize, usize, usize)] = &[
-    (1, 1, 1),
-    (1, 2, 1),
-    (1, 4, 1),
-    (1, 8, 1),
-    (1, 16, 1),
-    (1, 32, 1),
-    (1, 64, 1),
-    (2, 1, 1),
-    (2, 2, 1),
-    (2, 4, 1),
-    (2, 8, 1),
-    (2, 16, 1),
-    (2, 32, 1),
-    (4, 1, 1),
-    (4, 2, 1),
-    (4, 4, 1),
-    (4, 8, 1),
-    (4, 16, 1),
-    (4, 32, 1),
-    (8, 1, 1),
-    (8, 2, 1),
-    (8, 4, 1),
-    (8, 8, 1),
-    (8, 16, 1),
-    (8, 32, 1),
-    (16, 1, 1),
-    (16, 2, 1),
-    (16, 4, 1),
-];
-
-/// [`GPU_LIGHT`] plus the deep row runs and the cache-line column widths a CPU needs: the two
-/// axes that separate the recorded CPU winners from the rest.
-const CPU_LIGHT: &[(usize, usize, usize)] = &[
-    (1, 1, 1),
-    (1, 2, 1),
-    (1, 4, 1),
-    (1, 4, 2),
-    (1, 8, 1),
-    (1, 16, 1),
-    (2, 1, 1),
-    (2, 2, 1),
-    (2, 4, 1),
-    (2, 16, 1),
-    (4, 1, 1),
-    (4, 2, 1),
-    (4, 8, 2),
-    (4, 16, 1),
-    (4, 16, 2),
-    (8, 1, 1),
-];
-
-/// [`GPU_EXTENSIVE`] with the column sweep a CPU vectorizes over.
-const CPU_EXTENSIVE: &[(usize, usize, usize)] = &[
-    (1, 1, 1),
-    (1, 1, 2),
-    (1, 1, 4),
-    (1, 1, 8),
-    (1, 2, 1),
-    (1, 2, 2),
-    (1, 2, 4),
-    (1, 2, 8),
-    (1, 4, 1),
-    (1, 4, 2),
-    (1, 4, 4),
-    (1, 4, 8),
-    (1, 8, 1),
-    (1, 8, 2),
-    (1, 8, 4),
-    (1, 8, 8),
-    (1, 16, 1),
-    (1, 16, 2),
-    (1, 16, 4),
-    (1, 16, 8),
-    (1, 32, 1),
-    (1, 64, 1),
-    (2, 1, 1),
-    (2, 2, 1),
-    (2, 4, 1),
-    (2, 8, 1),
-    (2, 16, 1),
-    (2, 16, 2),
-    (2, 32, 1),
-    (4, 1, 1),
-    (4, 2, 1),
-    (4, 4, 1),
-    (4, 8, 1),
-    (4, 8, 2),
-    (4, 16, 1),
-    (4, 16, 2),
-    (4, 32, 1),
-    (8, 1, 1),
-    (8, 2, 1),
-    (8, 4, 1),
-    (8, 8, 1),
-    (8, 8, 2),
-    (8, 16, 1),
-    (8, 16, 4),
-    (8, 32, 1),
-    (16, 1, 1),
-    (16, 2, 1),
-    (16, 4, 1),
-];
-
-/// Every geometry the catalogue knows, which is what [`BenchTier::Full`] sweeps.
+/// The bounds one tier sweeps within, as the corners of a power-of-two box.
 ///
-/// Instead of a full Cartesian product that explores dead combinations (such as high p × high r ×
-/// high c that immediately exceed hardware limits or register files), it covers:
-/// - A balanced core sweep across standard dimensions (p, r in 1..8, c=1)
-/// - Extreme row-unrolling (high `r`: 16, 32, 64) with low `c` and modest `p`
-/// - High cube parallelism (high `p`: 16, 32) with low `r` and `c=1`
-/// - Wide column runs (high `c`: 2..16) with small `p` and `r` (primarily for CPU evaluation)
-const FULL: &[(usize, usize, usize)] = &[
-    // Standard baseline sweep (p, r in 1..8, c=1)
-    (1, 1, 1),
-    (1, 2, 1),
-    (1, 4, 1),
-    (1, 8, 1),
-    (2, 1, 1),
-    (2, 2, 1),
-    (2, 4, 1),
-    (2, 8, 1),
-    (4, 1, 1),
-    (4, 2, 1),
-    (4, 4, 1),
-    (4, 8, 1),
-    (8, 1, 1),
-    (8, 2, 1),
-    (8, 4, 1),
-    (8, 8, 1),
-    // Extreme row-unrolling (high r: 16, 32, 64) with low c and modest p
-    (1, 16, 1),
-    (1, 32, 1),
-    (1, 64, 1),
-    (2, 16, 1),
-    (2, 32, 1),
-    (2, 64, 1),
-    (4, 16, 1),
-    (4, 32, 1),
-    (8, 16, 1),
-    (8, 32, 1),
-    // High cube parallelism / plane count (high p: 16, 32) with low r and c=1
-    (16, 1, 1),
-    (16, 2, 1),
-    (16, 4, 1),
-    (32, 1, 1),
-    (32, 2, 1),
-    // Column unrolling / multi-column sweeps (c in 2..16, especially for CPU / vectorization)
-    (1, 1, 2),
-    (1, 2, 2),
-    (1, 4, 2),
-    (1, 8, 2),
-    (1, 16, 2),
-    (2, 2, 2),
-    (4, 2, 2),
-    (1, 1, 4),
-    (1, 2, 4),
-    (1, 4, 4),
-    (1, 8, 4),
-    (2, 2, 4),
-    (4, 2, 4),
-    (1, 1, 8),
-    (1, 2, 8),
-    (1, 4, 8),
-    (2, 2, 8),
-    (1, 1, 16),
-    (1, 2, 16),
-    (1, 4, 16),
-    (2, 1, 16),
-    // Long row runs at a cache-line column width
-    (4, 8, 2),
-    (8, 8, 2),
-    (2, 16, 2),
-    (4, 16, 2),
-    (2, 32, 2),
-    (1, 16, 4),
-    (2, 16, 4),
-    (4, 16, 4),
-    (8, 16, 4),
-    (1, 32, 4),
-    (4, 8, 4),
-    (8, 8, 4),
-    (1, 8, 8),
-    (2, 8, 8),
-    (4, 8, 8),
-    (1, 16, 8),
-    (2, 16, 8),
-];
+/// The geometries are the product of that box rather than a list, because the axes are not
+/// independent knobs a reader can reason about separately: `planes * rows * cols` is the output a
+/// cube holds live, so the three trade against one another and only their product is capped.
+/// A tier is therefore four numbers, and widening one is a deliberate edit rather than a
+/// hand-extended list whose rule has to be inferred.
+///
+/// Bounds are inclusive and every extent is a power of two. `units` caps the product, which is
+/// what keeps the corner of the box (deep rows at a high plane count) from being swept at all:
+/// those geometries exceed the register file and would only ever be refused at launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Sweep {
+    planes: usize,
+    rows: usize,
+    cols: usize,
+    units: usize,
+}
+
+impl Sweep {
+    const fn new(planes: usize, rows: usize, cols: usize, units: usize) -> Self {
+        Self {
+            planes,
+            rows,
+            cols,
+            units,
+        }
+    }
+
+    /// Every geometry inside the box, in a stable order so catalogue ids do not move between runs.
+    fn geometries(&self) -> Vec<(usize, usize, usize)> {
+        let mut out = Vec::new();
+        for planes in powers_of_two(self.planes) {
+            for rows in powers_of_two(self.rows) {
+                for cols in powers_of_two(self.cols) {
+                    if planes * rows * cols <= self.units {
+                        out.push((planes, rows, cols));
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+fn powers_of_two(max: usize) -> impl Iterator<Item = usize> {
+    core::iter::successors(Some(1usize), move |n| (n * 2 <= max).then_some(n * 2))
+}
 
 /// The two baselines the tile path is measured against. Present at every tier, since a tile time
 /// with nothing to compare it to says nothing.
@@ -337,7 +186,7 @@ pub fn strategies_at(
 ) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
     let mut entries = baselines();
     for &residence in target.residences() {
-        for &geometry in target.geometries(tier) {
+        for geometry in target.geometries(tier) {
             entries.push(tile_entry(residence, geometry));
         }
     }
@@ -365,6 +214,14 @@ mod tests {
     const TIERS: [BenchTier; 3] = [BenchTier::Light, BenchTier::Extensive, BenchTier::Full];
     const TARGETS: [BenchTarget; 2] = [BenchTarget::Gpu, BenchTarget::Cpu];
 
+    /// Whether `outer` contains `inner` whole, which is what makes the tiers nest.
+    fn contains(outer: Sweep, inner: Sweep) -> bool {
+        inner.planes <= outer.planes
+            && inner.rows <= outer.rows
+            && inner.cols <= outer.cols
+            && inner.units <= outer.units
+    }
+
     fn geometries(target: BenchTarget, tier: BenchTier) -> HashSet<(usize, usize, usize)> {
         target.geometries(tier).iter().copied().collect()
     }
@@ -382,12 +239,46 @@ mod tests {
         }
     }
 
-    /// `Full` is the whole catalogue on either device, so a characterization run is the same sweep
+    /// `Full` is the whole box on either device, so a characterization run is the same sweep
     /// wherever it happens.
     #[test]
     fn the_full_tier_is_every_geometry() {
+        let gpu = BenchTarget::Gpu.sweep(BenchTier::Full);
+        assert_eq!(gpu, BenchTarget::Cpu.sweep(BenchTier::Full));
+        assert_eq!(
+            geometries(BenchTarget::Gpu, BenchTier::Full),
+            geometries(BenchTarget::Cpu, BenchTier::Full)
+        );
+    }
+
+    /// Nesting is a property of the boxes, not of the geometries they happen to produce: a
+    /// widened cap is what the next tier is, so the containment holds before anything is expanded.
+    #[test]
+    fn the_tier_bounds_nest() {
         for target in TARGETS {
-            assert_eq!(target.geometries(BenchTier::Full).len(), FULL.len());
+            let light = target.sweep(BenchTier::Light);
+            let extensive = target.sweep(BenchTier::Extensive);
+            let full = target.sweep(BenchTier::Full);
+            assert!(contains(extensive, light), "{target:?}: light ⊄ extensive");
+            assert!(contains(full, extensive), "{target:?}: extensive ⊄ full");
+        }
+    }
+
+    /// Every extent a geometry names is a power of two and inside its tier's box. The catalogue
+    /// ids are built from these numbers, so a stray extent would mint an entry nothing can look up.
+    #[test]
+    fn every_geometry_lies_inside_its_box() {
+        for tier in TIERS {
+            for target in TARGETS {
+                let sweep = target.sweep(tier);
+                for (planes, rows, cols) in target.geometries(tier) {
+                    for extent in [planes, rows, cols] {
+                        assert!(extent.is_power_of_two(), "{extent} is not a power of two");
+                    }
+                    assert!(planes <= sweep.planes && rows <= sweep.rows && cols <= sweep.cols);
+                    assert!(planes * rows * cols <= sweep.units, "{tier:?}/{target:?}");
+                }
+            }
         }
     }
 
