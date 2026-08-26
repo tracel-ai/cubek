@@ -7,7 +7,7 @@ use cubek_interpolate::{
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
 };
-use cubek_test_utils::{TestInput, assert_equals_approx};
+use cubek_test_utils::TestInput;
 
 use super::super::{build_output_tensor, output_host_f32, validate_test};
 use super::make_problem;
@@ -27,8 +27,17 @@ fn kernel_output_with(options: InterpolateOptions, config: InterpolateConfig) {
 }
 
 fn kernel_output_shaped(options: InterpolateOptions, config: InterpolateConfig, channels: usize) {
+    kernel_output_on(options, config, [2, 8, 9, channels], [13, 15]);
+}
+
+fn kernel_output_on(
+    options: InterpolateOptions,
+    config: InterpolateConfig,
+    input_shape: [usize; 4],
+    output_size: [usize; 2],
+) {
     let client = TestRuntime::client(&Default::default());
-    let problem = make_problem([2, 8, 9, channels], [13, 15], options);
+    let problem = make_problem(input_shape, output_size, options);
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
         .uniform(123, -3.0, 3.0)
         .generate_with_f32_host_data();
@@ -140,47 +149,53 @@ fn test_interpolate_kernel_padded_channel_stage_multi_block() {
     );
 }
 
+/// Every filter under both coordinate transforms.
+///
+/// `align_corners` selects the transform, and it is a comptime input the kernel specializes on,
+/// so a mode landing on the reference under one setting says nothing about the other. `Floor` and
+/// `Exact` round the same coordinate differently, which is the other half of the same choice.
 #[test]
-fn test_interpolate_kernel_nearest_exact() {
-    kernel_output(
-        InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact))
-            .with_align_corners(false),
-    );
+fn test_interpolate_kernel_every_mode_and_transform() {
+    for mode in [
+        InterpolateMode::Nearest(NearestMode::Floor),
+        InterpolateMode::Nearest(NearestMode::Exact),
+        InterpolateMode::Bilinear,
+        InterpolateMode::Bicubic,
+        InterpolateMode::Lanczos3,
+    ] {
+        for align_corners in [true, false] {
+            kernel_output(InterpolateOptions::new(mode).with_align_corners(align_corners));
+        }
+    }
 }
 
+/// The directions the transform treats differently. The configuration tests above only ever
+/// upsample: an upsample re-reads input rows across the output rows drawn from them, a downsample
+/// skips the rows no tap window reaches, and an identity has to map every coordinate back onto
+/// itself rather than merely near it.
 #[test]
-fn test_interpolate_kernel_bicubic() {
-    kernel_output(InterpolateOptions::new(InterpolateMode::Bicubic).with_align_corners(false));
+fn test_interpolate_kernel_resampling_directions() {
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    for (input_shape, output_size) in [([2, 16, 17, 4], [7, 9]), ([2, 8, 9, 4], [8, 9])] {
+        kernel_output_on(options, BASELINE, input_shape, output_size);
+    }
 }
 
+/// A channel axis wide enough that the lanes cover the channels and never ride the columns, which
+/// is the opposite end of the split from the padded stages above.
 #[test]
-fn test_interpolate_kernel_lanczos3() {
-    kernel_output(InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false));
+fn test_interpolate_kernel_wide_channel_axis() {
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    kernel_output_shaped(options, BASELINE, 32);
 }
 
+/// Lanczos3 mapping a shape onto itself: the widest window, with every tap in place.
 #[test]
 fn test_interpolate_kernel_lanczos3_identity() {
-    let client = TestRuntime::client(&Default::default());
-    let options = InterpolateOptions::new(InterpolateMode::Lanczos3);
-    let problem = make_problem([2, 8, 9, 4], [8, 9], options);
-    let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
-        .uniform(123, -3.0, 3.0)
-        .generate_with_f32_host_data();
-    let expected =
-        cpu_reference_interpolate_from_host(&input_data, &problem.output_shape(), &options);
-    let output = build_output_tensor(&client, problem.output_shape().to_vec(), input.dtype);
-    let result = interpolate(
-        &client,
-        input.binding(),
-        output.clone().binding(),
-        options,
+    kernel_output_on(
+        InterpolateOptions::new(InterpolateMode::Lanczos3),
         BASELINE,
-        output.dtype,
+        [2, 8, 9, 4],
+        [8, 9],
     );
-    let actual = output_host_f32(&client, output);
-
-    result.unwrap();
-    assert_equals_approx(&actual, &expected, TOLERANCE)
-        .as_test_outcome()
-        .enforce();
 }

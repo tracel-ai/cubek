@@ -37,7 +37,22 @@ fn run(strategy_id: &str, problem_id: &str) {
         .enforce();
 }
 
-const STRATEGY: &str = "global_memory";
+/// The catalogue id of the baseline geometry. The old `global_memory` and `shared_memory` ids
+/// went with the strategies they named; a geometry is what the catalogue lists now.
+const STRATEGY: &str = "in_place_p4_r2_c1";
+
+/// The id above has to name a real catalogue entry. Without this, a catalogue rename leaves every
+/// test in this file panicking on lookup rather than saying what moved, and it does so behind a
+/// feature flag the default test run never compiles.
+#[test]
+fn the_strategy_id_names_a_catalogue_entry() {
+    use cubek_interpolate::eval::benchmarks::every_strategy;
+
+    assert!(
+        every_strategy().iter().any(|entry| entry.id == STRATEGY),
+        "{STRATEGY} is not in the catalogue"
+    );
+}
 
 #[test]
 fn nearest_upsample_default() {
