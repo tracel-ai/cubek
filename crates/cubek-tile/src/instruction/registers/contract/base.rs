@@ -104,7 +104,8 @@ pub(crate) fn scale_block(projection: &Projection, axis: Axis) -> usize {
 }
 
 /// Refuse a served line that straddles two scales: one line is one read and takes one scale, so
-/// the block along whichever axis the line runs must cover whole lines.
+/// the block along whichever axis the line runs must cover whole lines. The line runs along the
+/// *innermost* contracted axis, which is the one a partitioned contraction leaves at the leaf.
 ///
 /// Which axis that is depends on the step: past one served value both operands line along the
 /// contracted axis, and at one the rhs lines along the accumulator's columns instead. The lhs at
@@ -157,22 +158,29 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    // Same question the plain contraction asks: whether a 2-D reading describes the operands, not
+    // how many axes they contract over.
+    let flat = comptime!(
+        ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
+            .matrix_axes(&lhs.space, &rhs.space)
+            .is_some()
+    );
     comptime!(assert!(
-        Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1
-            && !lhs_gathered
+        flat && !lhs_gathered
             && !rhs_gathered
             && !lhs_procedural
             && !rhs_procedural
             && !(served == 1 && rw != aw),
-        "mm_scaled: the scaled contraction serves the 2-D nest — one contracted axis, operands \
-         read as batch matrices. This one needs the N-D nest, which has no scalar step \
-         coordinate to address a scale with"
+        "mm_scaled: the scaled contraction reads each operand as one matrix. This one needs the \
+         N-D nest, which addresses every operand at the cell instead"
     ));
     let side = comptime!(scale_side(&scales.space, &space));
     let scales_projection = scales.projection();
     comptime!(check_lines_hold_one_scale(
         &scales_projection,
-        Space::contracted(&[&lhs.space, &rhs.space], &space)[0],
+        *Space::contracted(&[&lhs.space, &rhs.space], &space)
+            .last()
+            .unwrap(),
         space.axis_at(space.rank() - 1),
         served,
         aw,

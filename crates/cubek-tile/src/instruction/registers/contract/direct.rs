@@ -240,10 +240,6 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    comptime!(assert!(
-        Space::contracted(&[&lhs.space, &rhs.space], &space).len() == 1,
-        "contract: the 2-D nest contracts exactly one axis"
-    ));
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     comptime!(assert!(
@@ -265,18 +261,22 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
         "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
     ));
 
+    let shape = comptime!(ContractShape::new(
+        &lhs.space, &rhs.space, space, served, lw, rw, aw,
+    ));
+
     let size!(S) = 1usize;
     if comptime!(served > 1) {
         let size!(W) = served;
         let size!(A) = 1usize;
         nest_scaled::<E, EL, W, ER, W, A, ES, S>(
-            acc, lhs, rhs, scales, space, served, lw, 1usize, side, config, semiring,
+            acc, lhs, rhs, scales, shape, side, config, semiring,
         );
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
         nest_scaled::<E, EL, W, ER, A, A, ES, S>(
-            acc, lhs, rhs, scales, space, served, lw, aw, side, config, semiring,
+            acc, lhs, rhs, scales, shape, side, config, semiring,
         );
     }
 }
@@ -298,30 +298,30 @@ fn nest_scaled<
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     scales: &Tile<ES>,
-    #[comptime] space: Space,
-    #[comptime] served: usize,
-    #[comptime] lw: usize,
-    #[comptime] aw: usize,
+    #[comptime] shape: ContractShape,
     #[comptime] side: ScaleSide,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let rank = comptime!(space.rank());
-    let merged = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-    let k = comptime!(Space::contracted(&[&lhs.space, &rhs.space], &space)[0]);
-    let kc = comptime!(merged.extent(k));
-
-    let cols = comptime!(space.extent_at(rank - 1));
-    let (mr, nr) = comptime!((space.extent_at(rank - 2), cols / aw));
-    let matrices = comptime!((0..rank - 2).map(|p| space.extent_at(p)).product::<usize>());
+    let mr = comptime!(shape.mr);
+    let nr = comptime!(shape.nr);
+    let cols = comptime!(shape.cols);
+    let kc = comptime!(shape.kc);
+    let served = comptime!(shape.served);
+    let lw = comptime!(shape.lw);
+    let aw = comptime!(shape.aw);
+    let matrices = comptime!(shape.matrices());
+    let space = comptime!(shape.space.clone());
     let lane_fanout = comptime!(config.lane_fanout);
 
-    let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
-    let rhs_axes = comptime!(match served > 1 {
-        true => MatrixAxes::of(&rhs.space, cols, kc),
-        false => MatrixAxes::of(&rhs.space, kc, cols),
+    let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
+    // The scales carry the values' own axes, `KI` among them, and address only the ones they
+    // span; their matrix is the same face read through their own projection.
+    let scales_axes = comptime!(match side {
+        ScaleSide::Lhs => MatrixAxes::of(&scales.space, mr, kc),
+        ScaleSide::Rhs => MatrixAxes::of(&scales.space, kc, cols),
     });
-    let scales_axes = comptime!(MatrixAxes::trailing_pair(&scales.space));
 
     for mat in 0..matrices {
         // The scale folds in under the view, so what the block below contracts is two ordinary

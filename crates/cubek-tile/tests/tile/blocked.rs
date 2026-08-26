@@ -156,3 +156,111 @@ fn a_partitioned_axis_contracts_the_same() {
 // meet (`Projection::validate_composition`). That refusal is unit-tested host-side in
 // `physical::projection::base`, not here: this one would fire inside the kernel, on a worker
 // thread, where `#[should_panic]` never sees it and the launch just returns zeros.
+
+/// `c = (a ⊗ s) · b` with the scales spanning the block axis and *not* the axis inside it.
+#[cube(launch)]
+fn scaled_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    scales: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+}
+
+/// One scale per `(row, block)`, halves so the reference is exact.
+fn scale_data() -> Vec<f32> {
+    (0..ROWS * BLOCKS).map(|i| (i as f32 + 1.0) / 2.0).collect()
+}
+
+/// **The split, with scales.** `S` spans `(M, KB)` and omits `KI`, so it cannot vary inside a
+/// block. One scale per block stops being an arithmetic claim (`⌊k / 32⌋`) and becomes a fact
+/// about which axes the operand spans, which is what already makes a broadcast a broadcast.
+#[test]
+fn scales_omit_the_axis_inside_the_block() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let (a, b, s) = (lhs_data(), rhs_data(), scale_data());
+
+    let space = Tiling::new()
+        .extents(&[(M, ROWS), (N, COLS), (KB, BLOCKS), (KI, BLOCK)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(ROWS))
+                .axis(N, Cut::sequential(COLS))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(BLOCK))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![ROWS, DEPTH])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let (b_t, _) = TestInput::builder(client.clone(), shape![DEPTH, COLS])
+        .dtype(dtype)
+        .custom(b.clone())
+        .generate_with_f32_host_data();
+    let (s_t, _) = TestInput::builder(client.clone(), shape![ROWS, BLOCKS])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![ROWS, COLS])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // Every axis of the problem, and `KI` addressing nothing: that omission is the whole
+    // statement that one scale covers the block.
+    let scales_spec = TileSpec::new(Projection::new(
+        &[M, KB, KI],
+        &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
+    ));
+
+    scaled_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            a_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), blocked()],
+            )),
+        ),
+        TileArgLaunch::new(
+            b_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[blocked(), PhysicalAxisMap::of(N)],
+            )),
+        ),
+        TileArgLaunch::new(s_t.binding().into_tensor_arg(), scales_spec),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..ROWS {
+        for n in 0..COLS {
+            let want: f32 = (0..DEPTH)
+                .map(|k| a[m * DEPTH + k] * s[m * BLOCKS + k / BLOCK] * b[k * COLS + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
