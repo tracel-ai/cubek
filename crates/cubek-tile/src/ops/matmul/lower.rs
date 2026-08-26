@@ -80,10 +80,13 @@ impl<Acc: Numeric> Tile<Acc> {
     /// are the same sum of terms — the scale is one more factor of each — so one verb serves both,
     /// folding once per `(row, k)` or once per `(col, k)`, whichever the operand asks for.
     ///
-    /// `s` resolves at whatever granularity its own tensor has: omitted axes broadcast, and a
-    /// [coarse](crate::Projection) axis — `⌊k / block⌋`, spelled
-    /// `PhysicalAxisMap::of(K).over(block)` — is one value per block. A served line takes one
-    /// scale, so a line may not straddle a block; state the cut that holds it.
+    /// `s` resolves at whatever granularity its own axes give it, and an axis it does not address
+    /// it cannot vary over. Where the block is an axis of the problem — `(KB, KI)`, spelled with
+    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values — the scales
+    /// leave `KI` unmapped and one scale per block follows, with nothing dividing anything. Where
+    /// it is not, a [rational](crate::Projection) axis (`PhysicalAxisMap::of(K).over(block)`)
+    /// spells the same granularity arithmetically, and then a served line may not straddle a
+    /// block: state the cut that holds it.
     pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,

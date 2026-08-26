@@ -7,7 +7,7 @@
 //!
 //! What a *quantized* operand adds on top is its scales, which are their own tensor and their own
 //! operand; folding them in is a verb the kernel writes ([`Tile::mm_scaled`], see
-//! [`scaled`](super::scaled)). The last test here is a q4 matmul spelled that way, end to end.
+//! [`scaled`](super::scaled)). The matmuls here are spelled that way, up to a whole decode gemv.
 
 use cubecl::{
     Runtime, TestRuntime, bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,

@@ -226,7 +226,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 /// below runs the plain contraction.
 ///
 /// The scales are read where the values are, never staged: one value per block is already
-/// cache-served, and a stage would materialize the expansion the coarse read exists to avoid.
+/// cache-served, and staging one would materialize the expansion reading it in place avoids.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(

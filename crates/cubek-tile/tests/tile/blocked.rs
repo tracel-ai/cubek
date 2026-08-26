@@ -7,7 +7,8 @@
 //!
 //! Why an axis would be split at all: an axis exists when an operand *distinguishes* it. A
 //! quantized operand's scales vary over the block index and not over the position inside the
-//! block, so those are two axes. This file pins the split on its own, with no scales in sight.
+//! block, so those are two axes. The first tests here pin the split with no scales at all, and
+//! the last one adds them: a scales operand that simply omits the axis inside the block.
 
 use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
