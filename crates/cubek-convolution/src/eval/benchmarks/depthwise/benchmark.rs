@@ -35,7 +35,7 @@ pub fn bench(
         .run(TimingMethod::System)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
-  
+
     Ok(RunSamples::new(durations).with_flops(problem.flops(), None))
 }
 
